@@ -6,6 +6,7 @@
 //! equality primitive shared by the kernel and direct callers.
 
 use crate::{AkitaError, FieldCore};
+use akita_field::parallel::*;
 use std::collections::BTreeMap;
 
 /// Verifier work cap for one compact-stride equality contraction.
@@ -889,21 +890,21 @@ pub const OFFSET_EQ_HIGH_BITS_CAP: usize = 16;
 /// This obeys the verifier no-panic contract: construction validates and caps
 /// both table widths, the lookups are range-checked, and no unbounded
 /// allocation is performed.
-pub struct OffsetEqWindow<'a, F: FieldCore> {
+pub struct OffsetEqWindow<F: FieldCore> {
     low_bits: usize,
     low_mask: usize,
     eq_low: Vec<F>,
     eq_high: Option<Vec<F>>,
-    high_challenges: &'a [F],
+    high_challenges: Vec<F>,
 }
 
-impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
+impl<F: FieldCore> OffsetEqWindow<F> {
     /// Build a window over `challenges` using the default low-bit cap.
     ///
     /// # Errors
     ///
     /// Returns an error if the low equality table cannot be constructed.
-    pub fn new(challenges: &'a [F]) -> Result<Self, AkitaError> {
+    pub fn new(challenges: &[F]) -> Result<Self, AkitaError> {
         Self::with_low_bits(challenges, OFFSET_EQ_LOW_BITS_CAP)
     }
 
@@ -912,7 +913,7 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
     /// # Errors
     ///
     /// Returns an error if the low equality table cannot be constructed.
-    pub fn with_low_bits(challenges: &'a [F], low_bits_cap: usize) -> Result<Self, AkitaError> {
+    pub fn with_low_bits(challenges: &[F], low_bits_cap: usize) -> Result<Self, AkitaError> {
         let low_bits = challenges
             .len()
             .min(low_bits_cap)
@@ -923,13 +924,13 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
         } else {
             (1usize << low_bits) - 1
         };
-        let high_challenges = &challenges[low_bits..];
+        let high_challenges = challenges[low_bits..].to_vec();
         // Materialize the high table too when it stays within the bounded cap.
         // This makes every `eval` a pair of lookups instead of recomputing an
         // `O(high_bits)` equality product per address, which dominated the
         // verifier setup-weight builders.
         let eq_high = if high_challenges.len() <= OFFSET_EQ_HIGH_BITS_CAP {
-            Some(crate::eq_poly::EqPolynomial::evals(high_challenges)?)
+            Some(crate::eq_poly::EqPolynomial::evals(&high_challenges)?)
         } else {
             None
         };
@@ -960,9 +961,23 @@ impl<'a, F: FieldCore> OffsetEqWindow<'a, F> {
             // A high index beyond the materialized table is out of the equality
             // domain, so it contributes zero (matching `eq_eval_at_index`).
             Some(table) => table.get(high).copied().unwrap_or_else(F::zero),
-            None => eq_eval_at_index(self.high_challenges, high),
+            None => eq_eval_at_index(&self.high_challenges, high),
         };
         eq_low * eq_high
+    }
+
+    /// Fill a contiguous physical-index interval.
+    ///
+    /// The interval is checked once; individual entries then reuse the same
+    /// bounded equality tables without semantic address reconstruction.
+    pub fn fill_interval(&self, start: usize, output: &mut [F]) -> Result<(), AkitaError> {
+        start
+            .checked_add(output.len())
+            .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
+        cfg_iter_mut!(output)
+            .enumerate()
+            .for_each(|(offset, value)| *value = self.eval(start + offset));
+        Ok(())
     }
 }
 

@@ -82,7 +82,7 @@ impl SetupContributionShape {
 
     fn terminal_relation_only() -> Self {
         let mut shape = Self::root_single_point();
-        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutDBlock;
+        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
         shape
     }
 
@@ -145,6 +145,7 @@ impl SetupContributionFixture {
             shape.num_positions_per_block,
             shape.num_live_blocks * shape.num_positions_per_block,
             shape.depth_commit,
+            shape.depth_open,
             shape.depth_open,
         )
         .expect("setup contribution fixture params");
@@ -219,10 +220,13 @@ impl SetupContributionFixture {
             group_id: 0,
             num_claims: shape.num_claims,
             num_live_blocks: shape.num_live_blocks,
-            depth_open: shape.depth_open,
+            depth_witness: shape.depth_commit,
             depth_commit: shape.depth_commit,
+            depth_open: shape.depth_open,
             depth_fold: shape.depth_fold,
-            log_basis: shape.log_basis,
+            log_basis_inner: shape.log_basis,
+            log_basis_outer: shape.log_basis,
+            log_basis_open: shape.log_basis,
             n_a: shape.n_a,
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,
@@ -232,7 +236,7 @@ impl SetupContributionFixture {
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
-            log_basis: shape.log_basis,
+            log_basis_open: shape.log_basis,
             eq_tau1,
             flat_context: Some(FlatRelationContext {
                 level_params: lp,

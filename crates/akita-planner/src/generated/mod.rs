@@ -7,6 +7,9 @@ pub struct GeneratedSetupPrefixGroup {
     pub num_positions_per_block: u32,
     pub num_live_blocks: u32,
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
     pub n_a: u32,
     pub n_b: u32,
 }
@@ -14,7 +17,9 @@ pub struct GeneratedSetupPrefixGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedFoldStep {
     pub ring_d: u32,
-    pub log_basis: u32,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
     pub position_index_bits: u32,
     pub block_index_bits: u32,
     /// Exact number of live blocks `B`; may be smaller than `2^block_index_bits`.
@@ -32,43 +37,24 @@ pub struct GeneratedFoldStepWithSetupMetadata {
     pub setup_contribution_mode: akita_types::SetupContributionMode,
 }
 
-/// Terminal direct-send step in a generated schedule.
-///
-/// `commit` is `Some` only for a **root-direct** entry (a schedule whose
-/// single step is this `Direct`): it carries the brute-forced root commit
-/// layout — the same 7-field shape as a fold step — so the runtime can
-/// expand it into the committed `LevelParams` via
-/// [`GeneratedFoldStep::expand_to_level_params`] without re-running the
-/// offline SIS derivation.
-///
-/// Terminal-direct steps that follow one or more folds ship the cleartext
-/// witness without committing, so they carry `commit: None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedDirectStep {
-    pub commit: Option<GeneratedFoldStep>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedStep {
+pub enum GeneratedFold {
     Fold(GeneratedFoldStep),
     FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
-    Direct(GeneratedDirectStep),
 }
 
-impl GeneratedStep {
-    pub fn fold_step(&self) -> Option<&GeneratedFoldStep> {
+impl GeneratedFold {
+    pub fn fold_step(&self) -> &GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&step.fold),
-            Self::Direct(_) => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &step.fold,
         }
     }
 
-    pub fn fold_step_mut(&mut self) -> Option<&mut GeneratedFoldStep> {
+    pub fn fold_step_mut(&mut self) -> &mut GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
-            Self::Direct(_) => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &mut step.fold,
         }
     }
 }
@@ -77,7 +63,7 @@ impl GeneratedStep {
 pub struct GeneratedScheduleTableEntry {
     pub final_group: akita_types::PolynomialGroupLayout,
     pub precommitteds: &'static [akita_types::PrecommittedGroupParams],
-    pub steps: &'static [GeneratedStep],
+    pub folds: &'static [GeneratedFold],
 }
 
 impl GeneratedScheduleTableEntry {
@@ -243,6 +229,7 @@ fn precommitted_group_sort_key(
     u8,
     usize,
     u32,
+    u32,
     usize,
     usize,
 ) {
@@ -260,9 +247,10 @@ fn precommitted_group_sort_key(
             akita_challenges::TensorChallengeShape::Flat => 0,
             akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => fold_low_len,
         },
-        key.log_basis,
+        key.log_basis_inner,
+        key.log_basis_outer,
         key.n_a,
-        key.conservative_n_b,
+        key.n_b,
     )
 }
 
@@ -288,9 +276,12 @@ fn precommitted_group_key_eq(
         && generated.num_positions_per_block == layout.num_positions_per_block
         && generated.num_live_blocks == layout.num_live_blocks
         && generated.fold_challenge_shape == layout.fold_challenge_shape
-        && generated.log_basis == layout.log_basis
+        && generated.log_basis_inner == layout.log_basis_inner
+        && generated.log_basis_outer == layout.log_basis_outer
         && generated.n_a == layout.n_a
-        && generated.conservative_n_b == layout.conservative_n_b
+        && generated.a_coeff_linf_bound == layout.a_coeff_linf_bound
+        && generated.n_b == layout.n_b
+        && generated.b_coeff_linf_bound == layout.b_coeff_linf_bound
 }
 
 /// Returns an error when the generated key does not match the runtime key.
@@ -305,4 +296,31 @@ pub(crate) fn validate_entry_key(
             "generated schedule key mismatch".to_string(),
         ))
     }
+}
+
+pub(crate) fn validate_certified_bases(
+    log_basis_inner: u32,
+    log_basis_outer: u32,
+    log_basis_open: u32,
+    policy: &crate::PlannerPolicy,
+    context: &str,
+) -> Result<(), akita_field::AkitaError> {
+    let (min, max) = policy.basis_range;
+    for (role, basis) in [
+        ("inner", log_basis_inner),
+        ("outer", log_basis_outer),
+        ("open", log_basis_open),
+    ] {
+        if basis < min || basis > max {
+            return Err(akita_field::AkitaError::InvalidSetup(format!(
+                "{context} {role} basis {basis} outside policy range [{min}, {max}]"
+            )));
+        }
+    }
+    if log_basis_open < log_basis_inner || log_basis_open < log_basis_outer {
+        return Err(akita_field::AkitaError::InvalidSetup(format!(
+            "{context} certified open basis must dominate inner and outer bases"
+        )));
+    }
+    Ok(())
 }

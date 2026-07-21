@@ -4,15 +4,14 @@
 //! This module keeps the Akita stage-1/stage-2 instances and the prover-internal
 //! two-round-prefix optimization beside the protocol code they depend on.
 
-pub mod akita_stage1;
-pub mod akita_stage1_tree;
 pub mod akita_stage2;
 pub mod akita_stage3;
+pub mod digit_range;
 pub mod two_round_prefix;
 
-pub use akita_stage1_tree::AkitaStage1Prover;
 pub use akita_stage2::AkitaStage2Prover;
 pub use akita_stage3::AkitaStage3Prover;
+pub use digit_range::DigitRangeProver;
 
 // --- Shared helpers ------------------------------------------------------
 

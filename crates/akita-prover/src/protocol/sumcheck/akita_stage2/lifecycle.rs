@@ -8,7 +8,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         batching_coeff: E,
         w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
         stage1_point: &[E],
-        s_claim: E,
+        range_image_evaluation: E,
         b: usize,
         alpha_evals_y: Vec<E>,
         relation_matrix_col_evals: Vec<E>,
@@ -101,13 +101,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
 
         let relation_trace_claim = relation_claim + trace_opening_claim;
-        let input_claim = batching_coeff * s_claim + relation_trace_claim;
+        let input_claim = batching_coeff * range_image_evaluation + relation_trace_claim;
 
         Ok(Self {
             w_table: WTable::Compact(w_evals_compact),
             b,
             batching_coeff,
-            s_claim,
+            range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
@@ -117,7 +117,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             col_bits,
             num_vars,
             relation_trace_claim,
-            prev_norm_claim: batching_coeff * s_claim,
+            prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
             prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
                 .then(|| stage1_point.to_vec()),
@@ -293,7 +293,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let skip_state = Stage2BivariateSkipState::new(
                 &proof,
                 &stage1_point,
-                self.s_claim,
+                self.range_image_evaluation,
                 self.relation_trace_claim,
                 self.batching_coeff,
             )

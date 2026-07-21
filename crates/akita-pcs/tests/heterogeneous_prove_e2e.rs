@@ -71,7 +71,7 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
     assert_eq!(stack.tensor().backend() as *const _, &tensor as *const _);
     assert_eq!(stack.ring_switch().backend() as *const _, &ring as *const _);
 
-    let verifier_setup = Scheme::setup_verifier(&setup);
+    let verifier_setup = Scheme::setup_verifier(&setup).expect("verifier setup");
     let commit_stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
         .expect("commit stack");
     let (commitment, hint) = akita_prover::commit::<Cfg, DensePoly<F>, CpuBackend>(
@@ -116,14 +116,10 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         .expect("valid prover opening data"),
         &mut prover_transcript,
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("heterogeneous batched prove");
 
-    assert!(
-        !proof.is_root_direct(),
-        "fixture must exercise folded recursive prove, not root-direct"
-    );
+    assert!(proof.num_fold_levels() >= 2);
 
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/heterogeneous-batched-prove");
     Scheme::batched_verify(
@@ -142,7 +138,6 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         )
         .expect("valid verifier claims"),
         BasisMode::Lagrange,
-        akita_types::SetupContributionMode::Direct,
     )
     .expect("heterogeneous batched verify");
 }

@@ -92,7 +92,7 @@ performance overhead.
   exactly `2^log_basis` entries. Release code may scan untrusted
   predecomposed inputs at public boundaries, but hot accumulation loops must
   not allocate or use checked table indexing on every coefficient.
-  Recursive-witness rows with `num_digits_commit = 1` are direct signed-i8
+  Recursive-witness rows with `num_digits_inner = 1` are direct signed-i8
   coefficients, not balanced gadget digits; they use a separate no-allocation
   raw-i8 strided path whose capacity bound is the actual signed coefficient
   norm.
@@ -181,7 +181,7 @@ performance overhead.
       `log_basis` range, and Q128 many-block small-row digit coverage exercises
       the path that would otherwise use block-parallel accumulation with an
       unsafe full width.
-- [x] Recursive witness commits with `num_digits_commit = 1` use a direct raw
+- [x] Recursive witness commits with `num_digits_inner = 1` use a direct raw
       signed-i8 strided path, so ZK blinding/sign-unit streams are not
       incorrectly treated as balanced binary digit planes.
 - [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
@@ -283,7 +283,7 @@ chunk-result matrix when a row/block accumulator can be reused.
 | Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
 | Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | A production full-field CRT quotient path would be unsafe for fp128/Q128 because even one full-field RHS term may not fit. | Remove this as a production path. The file now contains `cfg(test)` dense CRT helpers used only as fixtures. |
 | i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 6` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
-| Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_commit = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route this internal specialization through a no-allocation raw-i8 strided path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
+| Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_inner = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route this internal specialization through a no-allocation raw-i8 strided path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
 | Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
 | Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | Fused quotient code computes the actual centered bound once, uses it for capacity/LUT selection, avoids giant LUTs when the bound is too large, and calls unchecked LUT conversion only after the bound proves every coefficient is covered. |
 | Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a fixed-array, const-generic balanced-digit table sized to exactly `2^log_basis` entries. Public predecomposed digit APIs validate caller-owned rows once; lower kernels thread `log_basis` into LUT selection and capacity planning, then use allocation-free unchecked lookup in hot loops. |
@@ -334,7 +334,7 @@ Validation fixes should stay local:
   exact per-basis lookup contract, with public predecomposed digit range
   validation before unchecked hot-loop lookup;
 - recursive-witness direct signed-i8 streams do not use the balanced digit
-  LUT contract when `num_digits_commit = 1`;
+  LUT contract when `num_digits_inner = 1`;
 - sparse signed-ring construction and commit agree that values are signed units
   only.
 
@@ -396,7 +396,7 @@ Implemented order:
    log-basis-bounded predecomposed digit capacity, public predecomposed digit
    range validation, and sparse signed-ring coefficient semantics.
 7. Added the raw signed-i8 strided recursive-witness specialization for direct
-   `num_digits_commit = 1` streams.
+   `num_digits_inner = 1` streams.
 8. Ran targeted tests, full format/clippy/test, line-cap checking, and release
    profile/CI benchmark commands.
 9. Audited and documented performance in the PR body.

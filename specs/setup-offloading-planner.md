@@ -79,9 +79,9 @@ direct-only.
 - **Terminal folds are scalar and direct.** A terminal fold has no successor
   commitment, so it cannot offload its setup claim or consume an incoming setup
   group. It consumes exactly one witness group.
-- **Grouped steps are nonterminal folds.** A schedule `Direct` step and the last
-  `Fold` consume exactly one group. Any fold that consumes a setup-prefix group
-  must itself have another `Fold` as its successor. This is the canonical shape
+- **Grouped steps are nonterminal folds.** The last fold and structural terminal
+  consume exactly one group. Any fold that consumes a setup-prefix group must
+  itself have another fold as its successor. This is the canonical shape
   defined by `specs/multi-group-batching.md`.
 - **One setup-prefix identity.** `SetupPrefixSlotId` remains the canonical
   identity. `natural_len` and `n_prefix` identify the prefix domain;
@@ -467,7 +467,7 @@ For each group `g`, use the existing `LevelParamsLike` view and let:
 K_g       = group polynomial count
 B_g       = num_live_blocks_g
 L_g       = num_positions_per_block_g
-delta_c_g = num_digits_commit_g
+delta_c_g = num_digits_inner_g
 delta_o_g = num_digits_open_g
 n_a_g     = A rows
 n_b_g     = B rows
@@ -658,7 +658,8 @@ For a fold-then-direct branch:
 If an incoming setup prefix exists, this terminal candidate is infeasible. The
 planner may choose a longer fold suffix, but it may not drop the prefix, merge it
 into the witness group, or reinterpret the last fold through a grouped terminal
-codec. A root-direct schedule remains valid only for a scalar root.
+codec. The folded-only protocol has no root-direct fallback; an infeasible
+scalar root is rejected as `UnsupportedSchedule` as well.
 
 ### Fold-Again Branch
 

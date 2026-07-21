@@ -10,7 +10,7 @@ pub struct TraceWeightLayout {
     pub num_live_blocks: usize,
     pub num_digits_open: usize,
     pub block_index_bits: usize,
-    pub log_basis: u32,
+    pub log_basis_open: u32,
     pub witness_layout: WitnessLayout,
     pub opening_source_len: usize,
     pub group_id: usize,

@@ -7,8 +7,9 @@ use akita_field::AkitaError;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
-    CleartextWitnessShape, CommitmentRingDims, DirectStep, FoldStep, LevelParams, RingRole,
-    RingView, Schedule, Step,
+    CommitmentRingDims, FoldStep, LevelParams, RingRole, RingView, Schedule,
+    SegmentTypedWitnessShape, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalWitnessPlan,
 };
 
 const NUM_VARS: usize = 16;
@@ -48,30 +49,47 @@ fn test_seed(gen_ring_dim: usize) -> AkitaSetupSeed {
     }
 }
 
+fn test_level_params(ring_dimension: usize) -> LevelParams {
+    LevelParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        ring_dimension,
+        3,
+        1,
+        1,
+        1,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(ring_dimension)
+            .expect("supported test ring dimension"),
+    )
+    .with_decomp(8, 32, 2, 2, 2)
+    .expect("valid test level params")
+}
+
 #[test]
 fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
     let schedule = Schedule {
-        steps: vec![
-            Step::Fold({
-                let mut step = FoldStep {
-                    params: LevelParams::log_basis_stub(3),
-                    current_w_len: 256,
-                    next_w_len: 128,
-                    level_bytes: 0,
-                };
-                step.params.ring_dimension = 128;
-                step.params.role_dims = CommitmentRingDims::uniform(128);
-                step.params.num_live_blocks = 4;
-                step.params.num_positions_per_block = 8;
-                step
-            }),
-            Step::Direct(DirectStep {
-                current_w_len: 64,
-                witness_shape: CleartextWitnessShape::FieldElements(64),
-                direct_bytes: 0,
-                params: None,
-            }),
-        ],
+        folds: vec![FoldStep {
+            params: test_level_params(128),
+            current_w_len: 256,
+            next_w_len: 128,
+            level_bytes: 0,
+        }],
+        terminal: TerminalWitnessPlan {
+            current_w_len: 64,
+            witness_shape: SegmentTypedWitnessShape {
+                layout: TailSegmentLayout {
+                    ring_dimension: 64,
+                    log_basis_open: 3,
+                    groups: vec![TailSegmentGroupLayout {
+                        z_coords: 1,
+                        e_field_elems: 64,
+                        t_field_elems: 0,
+                        z_payload_bytes: 1,
+                    }],
+                    logical_num_elems: 64,
+                },
+            },
+            terminal_bytes: 0,
+        },
         total_bytes: 0,
     };
     let err = validate_schedule_ring_dims(&schedule, &test_seed(64))

@@ -172,7 +172,7 @@ that
    reads for role-specific data),
 2. extracts the ring dimension of the **specific role** this operation
    touches (`d_a`, `d_b`, or `d_d` from [`CommitmentRingDims`]),
-3. invokes `akita_types::dispatch_ring_dim_result!(role_d, |D| kernel::<D>(…))`
+3. invokes `akita_types::dispatch_for_field!(slot, F, role_d, |D| kernel::<D>(…))`
    exactly once for that operation,
 4. converts any D-typed kernel output back to D-free storage inside the
    dispatch arm,
@@ -201,7 +201,7 @@ progress:
 // cutover is cosmetic. Detection: the dispatch arm calls a function that
 // reads schedule types (i.e. orchestration), not a kernel.
 pub fn batched_prove(...) -> ... {
-    dispatch_ring_dim_result!(root_d, |D| typed_batched_prove::<..., D>(...))
+    dispatch_for_field!(slot, F, root_d, |D| typed_batched_prove::<..., D>(...))
 }
 
 // F2: LEVEL MONOMORPHIZATION (added and reverted in commits 7ec52460 /
@@ -210,7 +210,7 @@ pub fn batched_prove(...) -> ... {
 // ~250-line fold body 4x, forces every schedule-aware helper below it to
 // carry const D or re-dispatch (double dispatch plus `ring_dim == D`
 // consistency gates), and cannot express per-role dims within one level.
-dispatch_ring_dim_result!(level_d, |D| prove_fold::<..., D>(...))
+dispatch_for_field!(slot, F, level_d, |D| prove_fold::<..., D>(...))
 ```
 
 A function is a kernel — and may sit inside a dispatch arm — only if it
@@ -318,7 +318,7 @@ enter through `validate_role_dispatch` keyed on the matching `d_a` / `d_b` /
       public PCS API, not a special test-only typed path.
 - [x] **Per-role operation dispatch (litmus):** prover and verifier fold paths
       admit `d_a`, `d_b`, `d_d` from `CommitmentRingDims` with separate
-      `dispatch_ring_dim_result!` per operation (EOR, relation build, ring
+      `dispatch_for_field!` per operation (EOR, relation build, ring
       switch, stage2, stage3, relation claim). No `uniform_dim()` fused path
       remains on the prove/verify hot path.
 - [x] Zero **prover** and **verifier** discriminator violations (`const D` +
@@ -433,7 +433,7 @@ schedule-bound protocol context
           |
           v
 operation dispatch boundary (per operation, per role)
-  dispatch_ring_dim_result!(dims.d_a() | d_b() | d_d(), ...)
+  dispatch_for_field!(slot, F, dims.d_a() | d_b() | d_d(), ...)
   borrow RingView / typed local slices
   D-free orchestration between dispatches
           |
@@ -602,7 +602,7 @@ Replace top-level `batched_verify::<..., D>` with D-free replay that:
    prover operation map,
 5. returns errors for malformed inputs.
 
-**Forbidden:** `dispatch_ring_dim_result!(level_d, |D| { prepare_fold_data::<D>;
+**Forbidden:** `dispatch_for_field!(slot, F, level_d, |D| { prepare_fold_data::<D>;
 verify_fold::<D>(...) })` in `verify_suffix` (F2). The verifier must mirror the
 prover: D-free fold orchestration, typed kernels only inside single-role dispatch
 arms.
@@ -631,7 +631,7 @@ at runtime, producing double dispatch plus `ring_dimension == D` consistency
 gates (the state the prover was in mid-2026-07); (3) it is structurally
 incapable of per-role dimensions within one level, which is the motivating
 end state of this whole cutover. If a proposed design contains
-`dispatch_ring_dim_result!(level_d, |D| <any function that reads schedule
+`dispatch_for_field!(slot, F, level_d, |D| <any function that reads schedule
 types>::<D>(…))`, it is this alternative and must not be built.
 
 #### Split into stacked PRs

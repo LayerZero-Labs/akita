@@ -5,11 +5,10 @@ use akita_field::unreduced::HasWide;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_types::CleartextWitnessProof;
 
 use crate::compute::{
-    CpuBackend, CpuPreparedSetup, DirectRootWitnessSource, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorProjectionKernel,
+    CpuBackend, CpuPreparedSetup, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorProjectionKernel,
 };
 use crate::{DensePoly, OneHotIndex, OneHotPoly};
 
@@ -246,18 +245,5 @@ where
         polys: &'view [&'view Self],
     ) -> Result<Self::TensorBatchView<'view>, AkitaError> {
         Ok(MultilinearPolynomialBatchView { polys })
-    }
-}
-
-impl<F, const D: usize, I> DirectRootWitnessSource<F, D> for MultilinearPolynomial<F, I>
-where
-    F: FieldCore + CanonicalField,
-    I: OneHotIndex,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-            Self::OneHot(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-        }
     }
 }

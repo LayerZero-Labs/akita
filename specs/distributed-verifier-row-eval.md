@@ -860,7 +860,7 @@ let e_len_j = depth_open * inputs.num_claims * blocks_per_chunk;
 let t_len_j = depth_open * lp.a_key.row_len() * inputs.num_t_vectors * blocks_per_chunk;
 let chunk_stride = z_len_j + e_len_j + t_len_j;
 
-let r_len_total = inputs.num_rows * r_decomp_levels::<F>(lp.log_basis);
+let r_len_total = inputs.num_rows * r_decomp_levels::<F>(lp.log_basis_open);
 
 let (chunks, chunk_lengths): (Vec<_>, Vec<_>) = (0..w)
     .map(|j| {

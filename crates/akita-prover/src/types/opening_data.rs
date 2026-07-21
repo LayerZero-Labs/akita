@@ -235,14 +235,14 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         group_order.sort_by_key(|(start, _, _)| *start);
 
         let mut coeffs = Vec::new();
-        let commitment_ring_dim = params.role_dims().d_a();
+        let commitment_ring_dim = params.role_dims().d_b();
         for (_, expected_rows, group_index) in group_order {
             let commitment = self.opening_claims.group_commitment(group_index)?;
             let rows = commitment.rows();
             if !rows.can_decode_vec(commitment_ring_dim) {
                 return Err(AkitaError::InvalidInput(format!(
                     "fold commitment row shape mismatch for group {group_index}: \
-                     coeff_len {} is not divisible by d_a {commitment_ring_dim}",
+                     coeff_len {} is not divisible by d_b {commitment_ring_dim}",
                     rows.coeff_len()
                 )));
             }

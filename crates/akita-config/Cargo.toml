@@ -102,6 +102,7 @@ akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
 akita-schedules = { version = "0.1.0", path = "../akita-schedules", optional = true, default-features = false }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
@@ -114,6 +115,11 @@ path = "src/bin/gen_schedule_tables.rs"
 name = "schedule_catalog_miswire"
 path = "tests/schedule_catalog_miswire.rs"
 required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-full"]
+
+[[test]]
+name = "generated_tables"
+path = "tests/generated_tables.rs"
+required-features = ["all-schedules"]
 
 [lints]
 workspace = true

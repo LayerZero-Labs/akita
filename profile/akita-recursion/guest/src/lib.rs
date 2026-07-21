@@ -20,6 +20,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
+use akita_field::AkitaError;
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::BasisMode;
@@ -30,6 +31,13 @@ use jolt::{end_cycle_tracking, start_cycle_tracking};
 type F = fp128::Field;
 const D: usize = 64;
 type Cfg = fp128::D64OneHot;
+
+fn verification_status(result: Result<(), AkitaError>) -> u32 {
+    match result {
+        Ok(()) => 0,
+        Err(_) => 2,
+    }
+}
 
 const _: () = {
     // Hard-fail at compile time if the guest monomorphization drifts away from
@@ -94,7 +102,7 @@ fn akita_verify(input: &[u8]) -> u32 {
     let openings = [decoded.opening];
 
     // We call `batched_verify` directly (rather than the public
-    // `AkitaCommitmentScheme::<D, Cfg>::batched_verify` wrapper) to skip
+    // `AkitaCommitmentScheme::<Cfg>::batched_verify` wrapper) to skip
     // its `Instant::now()` + final `tracing::info!` wall-clock log. The
     // Jolt RISC-V runtime panics on `std::time::Instant::now()` (no
     // `clock_gettime` support), so the scheme entry point would abort
@@ -108,12 +116,18 @@ fn akita_verify(input: &[u8]) -> u32 {
         &mut transcript,
         decoded.verifier_opening_batch(&openings),
         BasisMode::Lagrange,
-        decoded.setup_contribution_mode,
     );
     end_cycle_tracking("akita_verify");
 
-    match result {
-        Ok(()) => 0,
-        Err(err) => panic!("recursive verifier rejected proof: {err:?}"),
+    verification_status(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verifier_rejection_returns_documented_status() {
+        assert_eq!(verification_status(Err(AkitaError::InvalidProof)), 2);
     }
 }

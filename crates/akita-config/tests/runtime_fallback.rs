@@ -31,9 +31,21 @@ fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_type
         "{label}: total_bytes diverge"
     );
     assert_eq!(
-        format!("{:?}", lhs.steps),
-        format!("{:?}", rhs.steps),
-        "{label}: step sequences diverge"
+        format!("{:?}", lhs.folds),
+        format!("{:?}", rhs.folds),
+        "{label}: fold sequences diverge"
+    );
+    assert_eq!(
+        lhs.terminal.current_w_len, rhs.terminal.current_w_len,
+        "{label}: terminal witness lengths diverge"
+    );
+    assert_eq!(
+        lhs.terminal.witness_shape, rhs.terminal.witness_shape,
+        "{label}: terminal witness shapes diverge"
+    );
+    assert_eq!(
+        lhs.terminal.terminal_bytes, rhs.terminal.terminal_bytes,
+        "{label}: terminal byte counts diverge"
     );
 }
 
@@ -72,7 +84,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
 fn dp_fallback_fires_for_non_shipped_keys() {
     check_table_miss_fallback::<fp128::D64OneHot>(14);
     check_table_miss_fallback::<fp128::D64Full>(16);
-    check_table_miss_fallback::<fp32::D64OneHot>(12);
+    check_table_miss_fallback::<fp32::D128OneHot>(16);
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {

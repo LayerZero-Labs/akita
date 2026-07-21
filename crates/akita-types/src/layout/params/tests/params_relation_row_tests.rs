@@ -102,7 +102,7 @@ fn relation_rhs_row_count_matches_level_params() {
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
     for layout in [
         RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
     ] {
         let rhs_layout = relation_rhs_layout_for(&lp, &batch, layout).expect("rhs layout");
         assert_eq!(
@@ -117,7 +117,7 @@ fn relation_rhs_row_count_matches_level_params() {
     let (grouped_lp, grouped_batch) = sample_multi_group_root_params();
     for layout in [
         RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
     ] {
         let rhs_layout =
             relation_rhs_layout_for(&grouped_lp, &grouped_batch, layout).expect("rhs layout");

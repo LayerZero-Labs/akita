@@ -168,15 +168,15 @@ impl WitnessUnitLayout {
     pub fn z_index(
         &self,
         num_positions_per_block: usize,
-        depth_commit: usize,
+        depth_witness: usize,
         depth_fold: usize,
         position: usize,
-        commit_digit: usize,
+        witness_digit: usize,
         fold_digit: usize,
     ) -> Result<usize, AkitaError> {
         let expected_len = checked_mul3(
             num_positions_per_block,
-            depth_commit,
+            depth_witness,
             depth_fold,
             "witness Z shape overflow",
         )?;
@@ -186,19 +186,19 @@ impl WitnessUnitLayout {
             ));
         }
         if position >= num_positions_per_block
-            || commit_digit >= depth_commit
+            || witness_digit >= depth_witness
             || fold_digit >= depth_fold
         {
             return Err(AkitaError::InvalidInput(
                 "witness Z semantic index out of range".into(),
             ));
         }
-        let position_commit = depth_commit
+        let position_witness = depth_witness
             .checked_mul(position)
-            .and_then(|base| base.checked_add(commit_digit))
+            .and_then(|base| base.checked_add(witness_digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
         let local = depth_fold
-            .checked_mul(position_commit)
+            .checked_mul(position_witness)
             .and_then(|base| base.checked_add(fold_digit))
             .ok_or_else(|| AkitaError::InvalidSetup("witness Z index overflow".into()))?;
         checked_range_index(&self.z_range, local, "witness Z")
@@ -244,14 +244,16 @@ impl WitnessLayout {
             let params = lp.group_params(opening_batch, group_index)?;
             let group = opening_batch.group_layout(group_index)?;
             let num_claims = group.num_polynomials();
+            let depth_witness = params.num_digits_inner();
+            let depth_commit = params.num_digits_outer();
             let depth_open = params.num_digits_open();
-            let depth_commit = params.num_digits_commit();
             let depth_fold =
                 lp.num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())?;
             if num_claims == 0
                 || params.num_live_blocks() == 0
                 || params.num_positions_per_block() == 0
                 || depth_open == 0
+                || depth_witness == 0
                 || depth_commit == 0
                 || depth_fold == 0
                 || params.a_rows_len() == 0
@@ -264,7 +266,7 @@ impl WitnessLayout {
                 Self::resolve_chunk_block_ranges(params.num_live_blocks(), num_chunks)?;
             let z_len = checked_mul3(
                 params.num_positions_per_block(),
-                depth_commit,
+                depth_witness,
                 depth_fold,
                 "witness Z width overflow",
             )?;
@@ -280,7 +282,7 @@ impl WitnessLayout {
                 let t_len = num_claims
                     .checked_mul(chunk_num_live_blocks)
                     .and_then(|n| n.checked_mul(params.a_rows_len()))
-                    .and_then(|n| n.checked_mul(depth_open))
+                    .and_then(|n| n.checked_mul(depth_commit))
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".into()))?;
                 let z_range = checked_range(cursor, z_len, "witness Z range overflow")?;
                 let e_range = checked_range(z_range.end, e_len, "witness E range overflow")?;
@@ -737,7 +739,7 @@ mod tests {
             1,
             akita_challenges::SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(4, 25, 2, 2)
+        .with_decomp(4, 25, 1, 2, 2)
         .expect("test params");
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =
@@ -752,6 +754,10 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(2, lp.field_bits_for_cache())
             .expect("fold depth");
+        assert_ne!(
+            lp.num_digits_inner, lp.num_digits_outer,
+            "fixture must distinguish witness and commitment depths"
+        );
         assert_eq!(unit.global_block_range(), 4..7);
         assert_eq!(
             unit.e_index(2, 2, 1, 6, 1).expect("e"),
@@ -762,8 +768,8 @@ mod tests {
             unit.t_range().start + 1 + 2
         );
         assert_eq!(
-            unit.z_index(4, 2, depth_fold, 1, 1, 0).expect("z"),
-            unit.z_range().start + depth_fold * (1 + 2)
+            unit.z_index(4, 1, depth_fold, 1, 0, 0).expect("z"),
+            unit.z_range().start + depth_fold
         );
         assert_eq!(
             layout.r_index(2, 2, 1).expect("r"),
@@ -803,7 +809,7 @@ mod tests {
             .expect("fold depth");
         assert!(unit.e_index(2, 2, 2, 0, 0).is_err());
         assert!(unit.t_index(2, 1, 2, 0, 0, 1, 0).is_err());
-        assert!(unit.z_index(4, 2, depth_fold, 4, 0, 0).is_err());
+        assert!(unit.z_index(4, 1, depth_fold, 4, 0, 0).is_err());
         assert!(layout.r_index(2, 3, 0).is_err());
     }
 

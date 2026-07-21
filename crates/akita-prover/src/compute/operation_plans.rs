@@ -41,11 +41,13 @@ pub struct CommitInnerPlan {
     /// Number of ring-element positions in each root block.
     pub num_positions_per_block: usize,
     /// Number of balanced digits used for the A-side commit.
-    pub num_digits_commit: usize,
+    pub num_digits_inner: usize,
     /// Number of balanced digits used when opening (recomposition width).
-    pub num_digits_open: usize,
-    /// Logarithm of the gadget basis.
-    pub log_basis: u32,
+    pub num_digits_outer: usize,
+    /// Logarithm of the committed source-witness gadget basis.
+    pub log_basis_inner: u32,
+    /// Logarithm of the committed `t_hat` gadget basis.
+    pub log_basis_outer: u32,
 }
 
 impl CommitInnerPlan {
@@ -54,9 +56,10 @@ impl CommitInnerPlan {
         Self {
             n_a: params.a_key.row_len(),
             num_positions_per_block: params.num_positions_per_block,
-            num_digits_commit: params.num_digits_commit,
-            num_digits_open: params.num_digits_open,
-            log_basis: params.log_basis,
+            num_digits_inner: params.num_digits_inner,
+            num_digits_outer: params.num_digits_outer,
+            log_basis_inner: params.log_basis_inner,
+            log_basis_outer: params.log_basis_outer,
         }
     }
 }
@@ -202,8 +205,10 @@ pub struct RingSwitchRelationPlan {
     pub n_b: usize,
     /// Number of A-side quotient rows to produce.
     pub n_a: usize,
-    /// Logarithm of the gadget basis used to produce `e_hat` and `t_hat`.
-    pub log_basis: u32,
+    /// Logarithm of the D/opening gadget basis used to produce `e_hat`.
+    pub log_basis_open: u32,
+    /// Logarithm of the B/outer gadget basis used to produce `t_hat`.
+    pub log_basis_outer: u32,
 }
 
 /// Scalar operation parameters for additional public-row quotient rows.

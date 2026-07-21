@@ -2,12 +2,13 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-pub(super) use akita_field::{CanonicalField, FieldCore};
+pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::ProverOpeningData;
+use akita_serialization::{AkitaSerialize, Compress};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -16,6 +17,10 @@ pub(super) use akita_types::{
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
+
+#[cfg(feature = "logging-transcript")]
+use akita_transcript::TranscriptEvent;
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -59,6 +64,92 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
+}
+
+/// Canonical byte encoding of an ordered logging-transcript event stream.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for event in events {
+        match event {
+            TranscriptEvent::Preamble {
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(0);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Absorb {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(1);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Squeeze { label, len } => {
+                bytes.push(2);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(&u64::try_from(*len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Wire {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(3);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+/// Canonical Stage 1 payload bytes in fold-wire order.
+pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
+where
+    FF: FieldCore + AkitaSerialize,
+{
+    let mut bytes = Vec::new();
+    for stage in &proof.stages {
+        stage
+            .sumcheck_proof
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize Stage 1 sumcheck");
+        for claim in &stage.child_claims {
+            claim
+                .serialize_with_mode(&mut bytes, Compress::Yes)
+                .expect("serialize Stage 1 child claim");
+        }
+    }
+    proof
+        .range_image_evaluation
+        .serialize_with_mode(&mut bytes, Compress::Yes)
+        .expect("serialize Stage 1 range-image claim");
+    bytes
+}
+
+/// Stable digest used by versioned protocol epochs.
+pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
+where
+    FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
+    transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
+    transcript
+        .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
+        .to_bytes_le_vec()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
@@ -299,94 +390,29 @@ pub(super) fn assert_terminal_event_order_if_present(
     let remainder =
         first_label_index_after(events, sparse_seed_end, labels::ABSORB_TERMINAL_W_REMAINDER)
             .expect("terminal transcript must absorb final-witness remainder");
-    let (alpha, alpha_end) =
-        first_logical_label_span_after(events, remainder, labels::CHALLENGE_RING_SWITCH)
-            .expect("terminal transcript must squeeze ring-switch alpha");
-    let (tau1, tau1_end) =
-        first_logical_label_span_after(events, alpha_end, labels::CHALLENGE_TAU1)
-            .expect("terminal transcript must squeeze tau1");
-    let (stage2_round, _) =
-        first_logical_label_span_after(events, tau1_end, labels::CHALLENGE_SUMCHECK_ROUND)
-            .expect("terminal transcript must squeeze stage-2 sumcheck after tau1");
-
-    for (range, label, message) in [
+    for (label, message) in [
         (
-            e_hat + 1..remainder,
             labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha must not precede witness remainder",
+            "terminal must not squeeze alpha",
         ),
+        (labels::CHALLENGE_TAU1, "terminal must not squeeze tau1"),
         (
-            e_hat + 1..remainder,
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 must not precede alpha",
-        ),
-        (
-            e_hat + 1..remainder,
             labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
+            "terminal must not squeeze stage-2 rounds",
         ),
         (
-            remainder + 1..alpha,
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 must not precede alpha",
-        ),
-        (
-            remainder + 1..alpha,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            alpha_end..tau1,
-            labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha limbs must be contiguous before tau1",
-        ),
-        (
-            alpha_end..tau1,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            alpha_end..events.len(),
-            labels::CHALLENGE_RING_SWITCH,
-            "terminal alpha limbs must be contiguous before tau1",
-        ),
-        (
-            tau1_end..events.len(),
-            labels::CHALLENGE_TAU1,
-            "terminal tau1 limbs must be contiguous before stage-2 sumcheck",
-        ),
-        (
-            tau1_end..stage2_round,
-            labels::CHALLENGE_SUMCHECK_ROUND,
-            "terminal stage-2 sumcheck must not precede tau1",
-        ),
-        (
-            e_hat..stage2_round,
             labels::CHALLENGE_SUMCHECK_BATCH,
-            "terminal transcript window must not squeeze stage-2 batch challenge",
+            "terminal must not squeeze stage-2 batching",
         ),
+        (labels::CHALLENGE_TAU0, "terminal must not squeeze tau0"),
     ] {
-        assert_no_logical_label(events, range, label, message);
+        assert_no_logical_label(events, e_hat + 1..events.len(), label, message);
     }
 
     assert!(e_hat < sparse_seed, "e_hat must precede sparse seed");
     assert!(
         sparse_seed < remainder,
         "sparse seed must precede witness remainder"
-    );
-    assert!(remainder < alpha, "remainder must precede alpha");
-    assert!(alpha < tau1, "alpha must precede tau1");
-    assert!(
-        tau1 < stage2_round,
-        "tau1 must precede terminal stage-2 sumcheck"
-    );
-    assert!(
-        events[e_hat..]
-            .iter()
-            .all(|event| event_label(event).is_none_or(|candidate| {
-                !is_label_or_extension_limb(candidate, labels::CHALLENGE_TAU0)
-            })),
-        "terminal transcript window must not squeeze tau0"
     );
     Some(e_hat)
 }

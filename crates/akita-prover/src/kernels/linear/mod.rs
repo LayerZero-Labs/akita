@@ -15,9 +15,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use crate::kernels::crt_ntt::NttSlotCache;
+use akita_types::PreparedNttSlot;
 #[cfg(test)]
-use crate::kernels::crt_ntt::{select_crt_ntt_params, ProtocolCrtNttParams};
+use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 
 mod block_parallel;
 mod capacity;

@@ -54,7 +54,7 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "v_bytes",
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
-    "stage1_s_claim_bytes",
+    "stage1_range_image_evaluation_bytes",
     "stage2_sumcheck_bytes",
     "stage3_sumcheck_bytes",
     "next_w_commitment_bytes",
@@ -295,6 +295,7 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_bytes",
     "final_w_num_elems",
     "final_w_bits_per_elem",
+    "tail_log_basis_open",
     "tail_log_basis",
     "tail_z_prefix_bytes",
     "tail_z_golomb_bytes",
@@ -307,11 +308,8 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_ring_elems",
     "tail_t_field_elems",
     "tail_t_ring_elems",
-    "tail_r_field_elems",
-    "tail_r_ring_elems",
     "tail_e_bytes",
     "tail_t_bytes",
-    "tail_r_bytes",
     "z_rice_low_bits_wire",
     "z_rice_low_bits_cap",
     "z_coords",
@@ -357,8 +355,10 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
         summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
     elif "z_beta_inf" in kvs:
         summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
-    if summary.get("tail_log_basis") is not None:
-        summary["terminal_log_basis"] = summary["tail_log_basis"]
+    tail_log_basis_open = summary.get("tail_log_basis_open", summary.get("tail_log_basis"))
+    if tail_log_basis_open is not None:
+        summary["tail_log_basis_open"] = tail_log_basis_open
+        summary["terminal_log_basis"] = tail_log_basis_open
 
 
 def render_tail_encoding(current: dict[str, object]) -> None:
@@ -396,10 +396,13 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if encoding != "segment_typed":
         return
 
-    if current.get("tail_num_elems") is not None and current.get("tail_log_basis") is not None:
+    if (
+        current.get("tail_num_elems") is not None
+        and current.get("tail_log_basis_open") is not None
+    ):
         print(
             f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"gadget basis width `{current['tail_log_basis']}` bits, "
+            f"D/open gadget basis width `{current['tail_log_basis_open']}` bits, "
             "folded-witness (`z`) segment first on the wire"
         )
 
@@ -429,7 +432,6 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             "tail_t_field_elems",
             "tail_t_ring_elems",
         ),
-        ("Quotient-tail (`r`)", "tail_r_bytes", "tail_r_field_elems", "tail_r_ring_elems"),
     ):
         seg_bytes = current.get(bytes_key)
         field_coeffs = current.get(field_key)
@@ -445,15 +447,14 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     if all(
         current.get(key) is not None
-        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_r_bytes")
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
     ):
         wire_total = (
             int(current["tail_z_bytes"])
             + int(current["tail_e_bytes"])
             + int(current["tail_t_bytes"])
-            + int(current["tail_r_bytes"])
         )
-        print(f"  - Wire total (z+e+t+r): `{fmt_bytes(float(wire_total))} bytes`")
+        print(f"  - Wire total (z+e+t): `{fmt_bytes(float(wire_total))} bytes`")
 
     z_budget = current.get("tail_z_budget_bytes")
     z_slack = current.get("tail_z_slack_bytes")
@@ -709,6 +710,8 @@ def extract_summary(
             summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
             summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif " INFO verifier NTT cache size" in line and kvs.get("label") == mode:
+            summary["verifier_ntt_cache_bytes"] = int(kvs["verifier_ntt_cache_bytes"])
         elif "CRT NTT profile" in line and kvs.get("label") == mode:
             summary["crt_profile"] = kvs["crt_profile"]
             summary["crt_num_primes"] = int(kvs["crt_num_primes"])
@@ -806,15 +809,18 @@ def extract_summary(
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
-                "log_basis": int(kvs["log_basis"]),
+                "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
+                "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
+                "log_basis_open": int(kvs.get("log_basis_open") or kvs["log_basis"]),
                 "position_index_bits": position_index_bits,
                 "block_index_bits": block_index_bits,
                 "num_positions_per_block": num_positions_per_block,
                 "num_live_blocks": num_live_blocks,
                 "num_live_ring_elements_per_claim": num_live_ring_elements_per_claim,
                 "block_index_domain_size": block_index_domain_size,
-                "delta_commit": int(kvs["delta_commit"]),
-                "delta_open": int(kvs["delta_open"]),
+                "num_digits_inner": int(kvs.get("num_digits_inner") or kvs["delta_commit"]),
+                "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
+                "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
                 "current_w_len": int(kvs["current_w_len"]),
                 "next_w_len": int(kvs["next_w_len"]),
@@ -1006,6 +1012,7 @@ SUMMARY_CSV_COLUMNS = (
     "setup_ring_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
+    "verifier_ntt_cache_bytes",
     "crt_profile",
     "crt_num_primes",
     "crt_prime_modulus_bits",
@@ -1311,6 +1318,18 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
             level.setdefault("d_a", legacy_d)
             level.setdefault("d_b", legacy_d)
             level.setdefault("d_d", legacy_d)
+            legacy_log_basis = level.get("log_basis")
+            if legacy_log_basis is not None:
+                level.setdefault("log_basis_inner", legacy_log_basis)
+                level.setdefault("log_basis_outer", legacy_log_basis)
+                level.setdefault("log_basis_open", legacy_log_basis)
+            legacy_commit_digits = level.get("delta_commit")
+            if legacy_commit_digits is not None:
+                level.setdefault("num_digits_inner", legacy_commit_digits)
+            legacy_open_digits = level.get("delta_open")
+            if legacy_open_digits is not None:
+                level.setdefault("num_digits_outer", legacy_open_digits)
+                level.setdefault("num_digits_open", legacy_open_digits)
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
     # All production CRT profiles currently use moduli below 2^30 stored in
@@ -1399,6 +1418,13 @@ def fmt_bytes(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def fmt_mib_with_exact_bytes(value_bytes: float) -> str:
+    return (
+        f"{fmt_mib_from_bytes(value_bytes)}<br>"
+        f"<sub>{fmt_bytes(value_bytes)} bytes</sub>"
+    )
+
+
 def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
@@ -1432,8 +1458,9 @@ REPORT_METRICS = [
     Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
-    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_from_bytes),
-    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_from_bytes),
+    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_with_exact_bytes),
+    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_with_exact_bytes),
+    Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_with_exact_bytes),
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
@@ -1612,6 +1639,7 @@ def render_matrix_summary(
         "Setup and preparation",
         "Setup vector size",
         "Prepared NTT cache size",
+        "Verifier NTT cache size",
         "Commit",
         "Prove",
         "Verify",
@@ -1647,6 +1675,14 @@ def render_matrix_summary(
                 main_baseline is not None,
             ),
             optional_value_with_main_delta(
+                current,
+                baseline,
+                "verifier_ntt_cache_bytes",
+                fmt_mib_from_bytes,
+                " MiB",
+                main_baseline is not None,
+            ),
+            optional_value_with_main_delta(
                 current, baseline, "commit_s", fmt_seconds, " s", main_baseline is not None
             ),
             optional_value_with_main_delta(
@@ -1672,8 +1708,8 @@ def render_matrix_summary(
                 current,
                 baseline,
                 "proof_size_bytes",
-                lambda value: f"{value / 1024.0:.1f}",
-                " KiB",
+                fmt_bytes,
+                " bytes",
                 main_baseline is not None,
             ),
         ]
@@ -1756,20 +1792,23 @@ def render_planned_levels(
     print("#### Security and proof sizing")
     print()
     print(
-        "| Fold level | A rows | B rows | D rows | Gadget basis bits | "
-        "Fold-challenge L1 bound | Commit digits | Opening digits | Folded-witness digits | "
+        "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
+        "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
         "Next-witness field elements | Planned fold-level proof bytes |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
         print(
             f"| L{level['level']} | {level_value(level, baseline, 'n_a')} | "
             f"{level_value(level, baseline, 'n_b')} | {level_value(level, baseline, 'n_d')} | "
-            f"{level_value(level, baseline, 'log_basis')} | "
+            f"{level_value(level, baseline, 'log_basis_inner')} | "
+            f"{level_value(level, baseline, 'log_basis_outer')} | "
+            f"{level_value(level, baseline, 'log_basis_open')} | "
             f"{level_value(level, baseline, 'challenge_l1_mass')} | "
-            f"{level_value(level, baseline, 'delta_commit')} | "
-            f"{level_value(level, baseline, 'delta_open')} | "
+            f"{level_value(level, baseline, 'num_digits_inner')} | "
+            f"{level_value(level, baseline, 'num_digits_outer')} | "
+            f"{level_value(level, baseline, 'num_digits_open')} | "
             f"{level_value(level, baseline, 'delta_fold')} | "
             f"{level_value(level, baseline, 'next_w_len')} | "
             f"{level_value(level, baseline, 'level_bytes', fmt_bytes, ' bytes')} |"
@@ -1829,7 +1868,7 @@ def render_proof_levels(
     print(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
         "Extension-opening sumcheck | Grinding nonce | Opening commitment (`v`) | "
-        "Stage 1 sumcheck | Stage 1 transition claims | Folded-witness claim (`s`) | "
+        "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
         "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness commitment | "
         "Next-witness evaluation |"
     )
@@ -1854,7 +1893,7 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'v_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
-            f"{proof_component_value(level, baseline, 'stage1_s_claim_bytes')} | "
+            f"{proof_component_value(level, baseline, 'stage1_range_image_evaluation_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage2_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage3_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'next_w_commitment_bytes')} | "

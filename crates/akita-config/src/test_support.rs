@@ -10,9 +10,7 @@
 //! directly and never need this module.
 
 use akita_field::AkitaError;
-use akita_types::{
-    AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout};
 
 use crate::CommitmentConfig;
 
@@ -44,28 +42,19 @@ where
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
-    if let Some(root) = akita_types::schedule_root_fold_step(&schedule) {
-        let layout = root.params.clone();
-        tracing::info!(
-            num_vars,
-            num_polynomials,
-            total_bytes = schedule.total_bytes,
-            root_m = layout.position_index_bits(),
-            root_r = layout.block_index_bits(),
-            root_lb = layout.log_basis,
-            "batched root split: read from runtime schedule"
-        );
-        return Ok(layout);
-    }
+    let layout = schedule.root_fold()?.params.clone();
     tracing::info!(
         num_vars,
         num_polynomials,
-        "batched root split: schedule is direct-only, falling back to config root layout"
+        total_bytes = schedule.total_bytes,
+        root_m = layout.position_index_bits(),
+        root_r = layout.block_index_bits(),
+        root_lb_inner = layout.log_basis_inner,
+        root_lb_outer = layout.log_basis_outer,
+        root_lb_open = layout.log_basis_open,
+        "batched root split: read from runtime schedule"
     );
-    // Size the fallback for the requested batch (`num_polynomials`), not a
-    // singleton — otherwise the per-poly inputs would be smaller than the
-    // batched commit layout `Scheme::commit` actually uses.
-    Cfg::get_params_for_batched_commitment(&OpeningClaimsLayout::new(num_vars, num_polynomials)?)
+    Ok(layout)
 }
 /// Minimal setup seed for schedule ring-dimension integration tests.
 #[must_use]

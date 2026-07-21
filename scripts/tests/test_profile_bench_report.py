@@ -124,15 +124,18 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "n_b": 3,
                 "n_d": 4,
                 "challenge_l1_mass": 8,
-                "log_basis": 5,
+                "log_basis_inner": 5,
+                "log_basis_outer": 5,
+                "log_basis_open": 5,
                 "position_index_bits": 7,
                 "block_index_bits": 3,
                 "num_positions_per_block": 128,
                 "num_live_blocks": 6,
                 "num_live_ring_elements_per_claim": 768,
                 "block_index_domain_size": 8,
-                "delta_commit": 4,
-                "delta_open": 5,
+                "num_digits_inner": 4,
+                "num_digits_outer": 5,
+                "num_digits_open": 5,
                 "delta_fold": 6,
                 "current_w_len": 1024,
                 "next_w_len": 2048,
@@ -208,14 +211,20 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertNotIn("r_pos", report)
 
     def test_proof_breakdown_marks_absent_components(self) -> None:
-        from scripts.profile_bench_report import extract_summary, render_proof_levels
+        from scripts.profile_bench_report import (
+            extract_summary,
+            proof_level_component_bytes,
+            render_proof_levels,
+        )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=12 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=20 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
-            'stage2_sumcheck_bytes=8 root_variant=terminal\n'
+            'stage1_range_image_evaluation_bytes=16 '
+            'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
+        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -223,6 +232,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertIn("Fold-level bytes", report)
+        self.assertIn("Range-image evaluation", report)
         self.assertIn("—", report)
         self.assertIn("+0.00% vs main", report)
         self.assertIn("final witness", report)
@@ -272,6 +282,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertIn("Prepared NTT cache size", report)
         self.assertIn("4.0 MiB", report)
         self.assertIn("8.0 MiB", report)
+        self.assertIn("4,096 bytes", report)
         self.assertIn("nv32Onehot256", report)
         self.assertIn("D=64", report)
         self.assertNotIn("Proof B", report)
@@ -306,16 +317,16 @@ class ProfileBenchReportTests(unittest.TestCase):
         proof_level = {
             "level": 0,
             "d": 64,
-            "total_bytes": 12,
-            "present_byte_fields": ["fold_grind_nonce_bytes", "stage2_sumcheck_bytes"],
+            "total_bytes": 4,
+            "present_byte_fields": ["fold_grind_nonce_bytes"],
             "extension_opening_partials_bytes": 0,
             "extension_opening_sumcheck_bytes": 0,
             "fold_grind_nonce_bytes": 4,
             "v_bytes": 0,
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
-            "stage1_s_claim_bytes": 0,
-            "stage2_sumcheck_bytes": 8,
+            "stage1_range_image_evaluation_bytes": 0,
+            "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_commitment_bytes": 0,
             "next_w_eval_bytes": 0,
@@ -328,6 +339,8 @@ class ProfileBenchReportTests(unittest.TestCase):
             "setup_contribution_mode": "direct",
             "exit_code": 0,
             "setup_s": 2.0,
+            "setup_vector_bytes": 4 * 1024 * 1024,
+            "setup_ntt_cache_bytes": 8 * 1024 * 1024,
             "commit_s": 3.0,
             "prove_total_s": 4.0,
             "verify_total_s": 0.005,
@@ -363,6 +376,8 @@ class ProfileBenchReportTests(unittest.TestCase):
 
         self.assertIn("Delta versus main", report)
         self.assertIn("unchanged", report)
+        self.assertIn("4.0<br><sub>4,194,304 bytes</sub>", report)
+        self.assertIn("8.0<br><sub>8,388,608 bytes</sub>", report)
         self.assertIn("A ring dimension", report)
         self.assertIn("Proof size by fold level", report)
         self.assertNotIn("Proof framing", report)

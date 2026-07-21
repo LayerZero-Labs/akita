@@ -153,6 +153,34 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self::from_centered_i32_negacyclic_backend::<ScalarBackend>(coeffs, params)
     }
 
+    /// Convert centered i32 coefficients into negacyclic CRT+NTT form using a
+    /// precomputed Montgomery lookup table.
+    pub fn from_centered_i32_with_lut(
+        coeffs: &[i32; D],
+        params: &CrtNttParamSet<W, K, D>,
+        lut: &CenteredMontLut<W, K>,
+    ) -> Self {
+        let mut limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for (k, ((limb, prime), tw)) in limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            let reducer = CenteredPrimeReducer::new(*prime);
+            for (dst, &coefficient) in limb.iter_mut().zip(coeffs) {
+                *dst = lut.get(k, coefficient).unwrap_or_else(|| {
+                    <ScalarBackend as NttPrimeOps<W, D>>::from_canonical(
+                        *prime,
+                        reducer.reduce_i64(i64::from(coefficient)),
+                    )
+                });
+            }
+            <ScalarBackend as NttTransform<W, D>>::forward_ntt(limb, *prime, tw);
+        }
+        Self { limbs }
+    }
+
     /// Like [`Self::from_i8_with_params`] but uses a precomputed
     /// [`DigitMontLut`] to replace per-coefficient `from_canonical`
     /// (Montgomery multiply) with a table lookup.

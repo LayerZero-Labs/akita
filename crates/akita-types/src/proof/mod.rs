@@ -19,7 +19,6 @@ pub mod stage1;
 pub mod terminal_witness;
 
 mod containers;
-mod direct_witness;
 mod hints;
 mod levels;
 mod shapes;
@@ -45,14 +44,10 @@ pub use commitment::{
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,
 };
-pub use direct_witness::{
-    segment_typed_witness_shape_from_groups, CleartextWitnessProof, CleartextWitnessShape,
-};
 pub use hints::AkitaCommitmentHint;
 pub use levels::{
-    AkitaBatchedFoldRoot, AkitaBatchedProof, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    AkitaTerminalStage2Proof, ExtensionOpeningReductionProof, SetupSumcheckProof,
+    AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, SetupSumcheckProof,
     TerminalLevelProof,
 };
 pub use relation::{
@@ -81,34 +76,30 @@ pub use setup_prefix::{
     SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 pub use shapes::{
-    AkitaBatchedProofShape, AkitaProofStepShape, AkitaStage1StageShape,
-    ExtensionOpeningReductionShape, LevelProofShape, SetupProductSumcheckShape,
-    TerminalLevelProofShape, SETUP_SUMCHECK_DEGREE,
+    AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,
+    NextWitnessBindingShape, SetupProductSumcheckShape, TerminalLevelProofShape,
+    SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    stage1_tree_stage_shapes, validate_stage1_tree_basis,
+    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
-    build_segment_typed_witness, build_segment_typed_witness_from_groups,
-    decode_terminal_z_golomb_payload, e_folded_segment_bytes, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
-    expand_segment_typed_to_i8_digits, segment_typed_witness_upper_bound_bytes,
-    segment_typed_z_payload_bytes, tail_golomb_rice_z_params, tail_segment_layout_from_groups,
-    tail_segment_multiplicities_from_layout, tail_segment_multiplicities_from_layout_for_params,
-    terminal_golomb_grind_tail_t_vectors, validate_segment_typed_z_payload,
-    z_fold_decoded_from_segment, z_fold_encoding_stats_from_segment, SegmentTypedWitness,
-    SegmentTypedWitnessGroupParts, SegmentTypedWitnessShape, TailSegmentGroupLayout,
-    TailSegmentLayout,
+    build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
+    decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,
+    emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
+    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
+    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
+    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
+    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessGroupParts,
+    SegmentTypedWitnessShape, TailSegmentGroupLayout, TailSegmentLayout,
 };
-pub use terminal_witness::{RelationOnlyStage2Inputs, TerminalWitnessTranscriptParts};
+pub use terminal_witness::TerminalWitnessTranscriptParts;
 
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore, HalvingField};
+use akita_field::{CanonicalField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};

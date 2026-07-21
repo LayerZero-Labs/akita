@@ -12,11 +12,10 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
-    dispatch_for_field, root_tensor_projection_enabled, schedule_root_fold_step,
-    validate_role_dims, validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup,
-    AkitaScheduleLookupKey, Commitment, DigitBlocks, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
+    validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    Commitment, DigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupParams, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -138,22 +137,30 @@ where
             "commit params require nonzero num_live_blocks and num_positions_per_block".to_string(),
         ));
     }
-    if params.num_digits_commit == 0 || params.num_digits_open == 0 {
+    if params.num_digits_inner == 0 || params.num_digits_outer == 0 || params.num_digits_open == 0 {
         return Err(AkitaError::InvalidSetup(
             "commit params require nonzero digit depths".to_string(),
         ));
     }
-    validate_i8_setup_log_basis(params.log_basis, "for i8 commitment decomposition")?;
+    validate_i8_setup_log_basis(
+        params.log_basis_inner,
+        "for i8 witness commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(
+        params.log_basis_outer,
+        "for i8 outer commitment decomposition",
+    )?;
+    validate_i8_setup_log_basis(params.log_basis_open, "for i8 opening decomposition")?;
     let dims = params.role_dims();
     validate_role_dims(dims)?;
     validate_role_dims_for_field::<F>(dims)?;
     let expected_a_width = params
         .num_positions_per_block
-        .checked_mul(params.num_digits_commit)
+        .checked_mul(params.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
     if params.a_key.col_len() != expected_a_width {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params A width {} does not match num_positions_per_block * num_digits_commit = {expected_a_width}",
+            "commit params A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
             params.a_key.col_len()
         )));
     }
@@ -163,19 +170,12 @@ where
             params.b_key.col_len()
         )));
     }
-    // TODO: re-enable this D-side nonzero check (or scope it to non-root-direct
-    // schedules) once root-direct commit params no longer carry a
-    // zero-width D-key placeholder. Root-direct schedules don't run
-    // the relation fold (which is what consumes D), so the planner
-    // deliberately emits `d_key.col_len = 0`. This check should
-    // eventually be gated on schedule shape (root-direct vs. fold-root)
-    // rather than disabled outright.
-    // if params.d_key.col_len() == 0 {
-    //     return Err(AkitaError::InvalidSetup(format!(
-    //         "commit params require nonzero D width, got D={}",
-    //         params.d_key.col_len()
-    //     )));
-    // }
+    if params.d_key.col_len() == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "commit params require nonzero D width, got D={}",
+            params.d_key.col_len()
+        )));
+    }
     let setup_len = setup
         .shared_matrix
         .total_ring_elements_at_dyn(params.ring_dimension)?;
@@ -372,13 +372,13 @@ where
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_live_blocks,
         params.a_key.row_len(),
-        params.num_digits_open,
+        params.num_digits_outer,
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let num_live_blocks = params.num_live_blocks;
     let n_a = params.a_key.row_len();
-    let num_digits_open = params.num_digits_open;
-    let log_basis = params.log_basis;
+    let num_digits_open = params.num_digits_outer;
+    let log_basis = params.log_basis_outer;
     // A-role operation: per-poly inner commit + digit decomposition. The digit
     // planes leave the arm as one FLAT `Vec<i8>` carrier (the per-matrix seam
     // between the inner A-role and outer B-role commitment halves) plus the
@@ -502,9 +502,7 @@ where
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
-    let Some(root_fold) = schedule_root_fold_step(&schedule) else {
-        return Ok(None);
-    };
+    let root_fold = schedule.root_fold()?;
     let ring_d = root_fold.params.role_dims().d_a();
     Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         ring_d,
@@ -525,7 +523,8 @@ where
         return Ok(false);
     }
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
+    schedule.root_fold()?;
+    Ok(true)
 }
 
 /// Commit a group of polynomials under config `Cfg`.
@@ -758,7 +757,8 @@ where
         return Ok(false);
     }
     let schedule = Cfg::runtime_schedule(key.clone())?;
-    Ok(schedule_root_fold_step(&schedule).is_some())
+    schedule.root_fold()?;
+    Ok(true)
 }
 
 /// Commit the final polynomial bundle for a multi-group root commitment.
@@ -792,7 +792,7 @@ where
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
-    let params = Cfg::multi_group_root_commit_params(&schedule)?;
+    let params = schedule.root_fold()?.params.clone();
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
@@ -986,7 +986,7 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_decomp(2, 4, 2, 2)
+        .with_decomp(2, 4, 2, 2, 2)
         .unwrap();
 
         assert!(matches!(

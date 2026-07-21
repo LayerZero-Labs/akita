@@ -5,10 +5,11 @@ use crate::protocol::extension_opening_reduction::{
     SPARSE_TENSOR_FACTOR_MAX_LAZY_ROUNDS,
 };
 use crate::protocol::ring_switch::{
-    ring_switch_build_w, ring_switch_finalize, NextWitnessCommitment, RingSwitchOutput,
+    ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
+    RingSwitchBuildOutput, RingSwitchOutput,
 };
+use crate::protocol::sumcheck::AkitaStage2Prover;
 use crate::protocol::sumcheck::AkitaStage3Prover;
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
 use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
@@ -27,7 +28,7 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -38,19 +39,17 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::evaluation_trace_row_weight,
     recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
-    root_current_w_len, root_tensor_projection_enabled, sample_public_row_coefficients,
-    schedule_is_root_direct, schedule_num_fold_levels, schedule_root_fold_step,
+    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_current_w_len,
+    root_tensor_projection_enabled, sample_public_row_coefficients,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaBatchedRootProof,
-    AkitaCommitmentHint, AkitaExpandedSetup, AkitaIntermediateStage2Proof, AkitaLevelProof,
-    AkitaStage1Proof, AkitaStage2Proof, BasisMode, CleartextWitnessProof, Commitment,
-    ExecutionSchedule, ExtensionOpeningReductionProof, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
-    RingVec, RingView, Schedule, SetupContributionMode, SetupPrefixProverRegistry,
-    SetupSumcheckProof, Step, TerminalLevelProof, TraceTable,
+    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
+    AkitaStage2Proof, BasisMode, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
+    FoldLevelProof, LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
+    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
+    SegmentTypedWitness, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
+    TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 
@@ -75,22 +74,24 @@ mod tests;
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
 pub(in crate::protocol::core) use fold_kernels::*;
-pub use prove::{batched_prove, prove, prove_root_direct};
-pub use root_fold::{prove_root, prove_terminal_root_fold_with_params};
+pub use prove::{batched_prove, prove};
+pub use root_fold::prove_root;
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
 pub struct ProveLevelOutput<F: FieldCore, E: FieldCore> {
     /// Fold proof produced at this level.
-    pub level_proof: AkitaLevelProof<F, E>,
+    pub level_proof: FoldLevelProof<F, E>,
     /// Suffix prover state for the next level.
     pub next_state: SuffixProverState<F, E>,
 }
 
 /// Outcome of the recursive fold suffix after the root level.
 pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
-    /// Recursive suffix proof steps: intermediate folds followed by terminal.
-    pub steps: Vec<AkitaLevelProof<F, E>>,
+    /// Non-terminal recursive folds following the root.
+    pub recursive_folds: Vec<FoldLevelProof<F, E>>,
+    /// Required terminal fold.
+    pub terminal: TerminalLevelProof<F, E>,
     /// Total fold-level count reached, including the root level and the
     /// terminal level.
     pub num_levels: usize,

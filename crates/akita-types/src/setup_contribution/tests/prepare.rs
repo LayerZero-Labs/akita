@@ -2,13 +2,18 @@ use super::*;
 
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
-    let mut lp = LevelParams::log_basis_stub(3);
-    lp.ring_dimension = 64;
-    lp.role_dims = crate::CommitmentRingDims::uniform(64);
-    lp.num_live_blocks = 3;
-    lp.num_positions_per_block = 8;
-    lp.num_digits_commit = 2;
-    lp.num_digits_open = 3;
+    let mut lp = LevelParams::params_only(
+        crate::SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        1,
+        1,
+        1,
+        akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
+            .expect("supported test ring dimension"),
+    )
+    .with_decomp(8, 24, 2, 3, 3)
+    .expect("valid test level params");
     lp.a_key = crate::AjtaiKeyParams::new_unchecked(
         crate::sis::DEFAULT_SIS_SECURITY_POLICY,
         crate::sis::SisTableDigest::CURRENT,
@@ -32,7 +37,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     lp.cached_num_digits_block_claims = 2;
     lp.cached_num_digits_fold_value = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithoutDBlock;
+    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let rows = lp
         .relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)
         .unwrap();

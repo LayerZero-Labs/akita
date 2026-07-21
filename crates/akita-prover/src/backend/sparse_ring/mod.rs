@@ -416,9 +416,7 @@ where
     /// Materialize the dense field-evaluation table directly from the flat
     /// coefficient positions.
     ///
-    /// This is the D-free field-materialization shared by the tensor helpers
-    /// and the [`DirectRootWitnessSource`] impl (which wraps it in a
-    /// [`akita_types::CleartextWitnessProof::FieldElements`] payload).
+    /// This is the D-free field materialization used by the tensor helpers.
     ///
     /// # Errors
     ///
@@ -558,10 +556,10 @@ where
             prepared,
             plan.n_a,
             plan.num_positions_per_block,
-            plan.num_digits_commit,
+            plan.num_digits_inner,
         )?;
         let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
         CommitInnerWitness::from_parts(t, decomposed_inner_rows)
     }
 
@@ -645,7 +643,7 @@ where
         prepared: &B::PreparedSetup,
         n_a: usize,
         num_positions_per_block: usize,
-        num_digits_commit: usize,
+        num_digits_inner: usize,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
         B: CommitmentComputeBackend<F>,
@@ -656,7 +654,7 @@ where
             SparseRingCommitRowsPlan {
                 n_a,
                 num_positions_per_block,
-                num_digits_commit,
+                num_digits_inner,
                 blocks: blocks.table(),
             },
         )
@@ -780,7 +778,7 @@ pub(crate) fn column_sweep_sparse<F, const D: usize>(
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     num_positions_per_block: usize,
-    num_digits_commit: usize,
+    num_digits_inner: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     F: FieldCore + CanonicalField + HasWide,
@@ -860,7 +858,7 @@ where
                                 continue;
                             }
                             let a_wide =
-                                WideCyclotomicRing::from_ring(&a_row[pos * num_digits_commit]);
+                                WideCyclotomicRing::from_ring(&a_row[pos * num_digits_inner]);
                             for &(local_b, coeff_idx, value) in &pos_entries[start..end] {
                                 shift_signed_unit_into(
                                     &a_wide,
@@ -876,7 +874,7 @@ where
                     for local_b in 0..tile_len {
                         for entry in blocks[block_start + tile_start + local_b] {
                             col_entries.push((
-                                entry.pos_in_block() * num_digits_commit,
+                                entry.pos_in_block() * num_digits_inner,
                                 local_b as u32,
                                 entry.coeff_idx,
                                 entry.value,

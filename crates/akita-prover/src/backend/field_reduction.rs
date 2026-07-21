@@ -3,17 +3,16 @@
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, CanonicalField, FromPrimitiveInt, MulBaseUnreduced};
 use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{pack_tensor_base_lift_i8_digits, CleartextWitnessProof, FpExtEncoding};
+use akita_types::{pack_tensor_base_lift_i8_digits, FpExtEncoding};
 use std::sync::Arc;
 
 use super::dense::{DenseBatchView, DenseView};
 use super::sparse_ring::{SparseRingBatchView, SparseRingView};
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{
@@ -158,27 +157,6 @@ where
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         Ok(RootTensorProjectionBatchView { polys })
-    }
-}
-
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for RootTensorProjectionPoly<F>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        match self {
-            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::direct_root_witness(poly),
-            Self::Sparse(poly) => {
-                DirectRootWitnessSource::<F, D>::direct_root_witness(poly.as_ref())
-            }
-        }
-    }
-
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        match self {
-            Self::Dense(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly),
-            Self::Sparse(poly) => DirectRootWitnessSource::<F, D>::base_evals(poly.as_ref()),
-        }
     }
 }
 

@@ -15,7 +15,7 @@ where
         prepared: &B::PreparedSetup,
         n_a: usize,
         num_positions_per_block: usize,
-        num_digits_commit: usize,
+        num_digits_inner: usize,
         log_basis: u32,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
@@ -25,16 +25,16 @@ where
         let n = coeffs.len();
         let num_live_blocks = n.div_ceil(num_positions_per_block);
 
-        if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits_commit, log_basis) {
+        if let Some(digit_planes) = self.digit_planes_for::<D>(num_digits_inner, log_basis) {
             let digit_block_slices =
-                digit_block_slices(digit_planes, n, num_positions_per_block, num_digits_commit);
+                digit_block_slices(digit_planes, n, num_positions_per_block, num_digits_inner);
             return backend.dense_commit_rows(
                 prepared,
                 DenseCommitRowsPlan {
                     n_a,
                     input: DenseCommitInput::CachedDigits {
                         digit_block_slices,
-                        log_basis,
+                        log_basis_inner: log_basis,
                     },
                 },
             );
@@ -57,8 +57,8 @@ where
                 n_a,
                 input: DenseCommitInput::CoeffBlocks {
                     block_slices,
-                    num_digits_commit,
-                    log_basis,
+                    num_digits_inner,
+                    log_basis_inner: log_basis,
                 },
             },
         )

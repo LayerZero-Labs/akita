@@ -138,7 +138,7 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
             (w * (w + 1)) as i16
         })
         .collect::<Vec<_>>();
-    build_stage1_bivariate_skip_proof_from_s_compact(
+    build_stage1_bivariate_skip_proof_from_compact_range_image(
         &s_compact,
         tau0,
         b,
@@ -152,11 +152,11 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_m_compact<
 /// `s = w(w+1)` table already materialized by the prover.
 #[tracing::instrument(
     skip_all,
-    name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_s_compact"
+    name = "two_round_prefix::build_stage1_bivariate_skip_proof_from_compact_range_image"
 )]
-pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
+pub(crate) fn build_stage1_bivariate_skip_proof_from_compact_range_image<
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
-    S: crate::protocol::sumcheck::akita_stage1::CompactSValue,
+    S: crate::protocol::sumcheck::digit_range::direct_range_leaf::CompactRangeImageValue,
 >(
     s_compact: &[S],
     tau0: &[E],
@@ -197,10 +197,16 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b4_lookup_index_from_digits([
-                            stage1_b4_s_digit_from_m_compact_s(col[base].compact_s()),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 1].compact_s()),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 2].compact_s()),
-                            stage1_b4_s_digit_from_m_compact_s(col[base + 3].compact_s()),
+                            stage1_b4_digit_from_compact_range_image(col[base].range_image_value()),
+                            stage1_b4_digit_from_compact_range_image(
+                                col[base + 1].range_image_value(),
+                            ),
+                            stage1_b4_digit_from_compact_range_image(
+                                col[base + 2].range_image_value(),
+                            ),
+                            stage1_b4_digit_from_compact_range_image(
+                                col[base + 3].range_image_value(),
+                            ),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
                         accum_lookup_vector_signed(
@@ -227,45 +233,51 @@ pub(crate) fn build_stage1_bivariate_skip_proof_from_s_compact<
                 .collect()
         }
         8 => {
-            let (pos, neg) = cfg_fold_reduce!(
+            let class_weights = cfg_fold_reduce!(
                 0..live_x_cols,
-                || {
-                    (
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
-                        [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT],
-                    )
-                },
-                |(mut pos, mut neg), x_col| {
+                || [E::zero(); 256],
+                |mut histogram, x_col| {
                     let col = &s_compact[x_col * y_len..(x_col + 1) * y_len];
                     let eq_x_weight = eq_x[x_col];
                     for (y_quad, &eq_y_weight) in eq_y_suffix.iter().take(y_quads).enumerate() {
                         let base = 4 * y_quad;
                         let lookup_idx = stage1_b8_lookup_index_from_digits([
-                            stage1_b8_s_digit_from_m_compact_s(col[base].compact_s()),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 1].compact_s()),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 2].compact_s()),
-                            stage1_b8_s_digit_from_m_compact_s(col[base + 3].compact_s()),
+                            stage1_b8_digit_from_compact_range_image(col[base].range_image_value()),
+                            stage1_b8_digit_from_compact_range_image(
+                                col[base + 1].range_image_value(),
+                            ),
+                            stage1_b8_digit_from_compact_range_image(
+                                col[base + 2].range_image_value(),
+                            ),
+                            stage1_b8_digit_from_compact_range_image(
+                                col[base + 3].range_image_value(),
+                            ),
                         ]);
                         let weight = eq_x_weight * eq_y_weight;
-                        accum_lookup_vector_signed(
-                            &mut pos,
-                            &mut neg,
-                            weight,
-                            &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
-                        );
+                        histogram[lookup_idx] += weight;
                     }
-                    (pos, neg)
+                    histogram
                 },
-                |(mut pos_a, mut neg_a), (pos_b, neg_b)| {
-                    for (dst, src) in pos_a.iter_mut().zip(pos_b.iter()) {
-                        *dst += *src;
+                |mut left, right| {
+                    for (dst, src) in left.iter_mut().zip(right) {
+                        *dst += src;
                     }
-                    for (dst, src) in neg_a.iter_mut().zip(neg_b.iter()) {
-                        *dst += *src;
-                    }
-                    (pos_a, neg_a)
+                    left
                 }
             );
+
+            let mut pos = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            let mut neg = [E::MulU64Accum::zero(); STAGE1_PREFIX_EVAL_COUNT];
+            for (lookup_idx, class_weight) in class_weights.into_iter().enumerate() {
+                if !class_weight.is_zero() {
+                    accum_lookup_vector_signed(
+                        &mut pos,
+                        &mut neg,
+                        class_weight,
+                        &STAGE1_B8_PREFIX_LOOKUP_TABLE[lookup_idx],
+                    );
+                }
+            }
             (0..STAGE1_PREFIX_EVAL_COUNT)
                 .map(|idx| reduce_signed_accum::<E>(pos[idx], neg[idx]))
                 .collect()

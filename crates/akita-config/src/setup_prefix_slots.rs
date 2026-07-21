@@ -6,7 +6,7 @@ use akita_field::AkitaError;
 use akita_planner::suffix_opening_layout;
 use akita_types::{
     active_setup_field_len, config::SetupContributionMode, padded_setup_prefix_len, Schedule,
-    SetupPrefixSlotId, Step, SETUP_OFFLOAD_D_SETUP,
+    SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::generated_families::recursive_group_batch_candidates_for_capacity;
@@ -47,11 +47,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
     let mut incoming_setup_prefix: Option<usize> = None;
     let mut is_first_fold = true;
 
-    for (index, step) in schedule.steps.iter().enumerate() {
-        let Step::Fold(fold) = step else {
-            continue;
-        };
-
+    for (index, fold) in schedule.folds.iter().enumerate() {
         let opening_layout = if is_first_fold {
             is_first_fold = false;
             root_layout.clone()
@@ -64,16 +60,11 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
                 let natural_len = active_setup_field_len(&fold.params, &opening_layout)?;
                 let n_prefix = padded_setup_prefix_len(natural_len);
 
-                let successor = schedule.steps.get(index + 1).ok_or_else(|| {
+                let successor_fold = schedule.folds.get(index + 1).ok_or_else(|| {
                     AkitaError::InvalidSetup(
                         "recursive fold must have a nonterminal successor".to_string(),
                     )
                 })?;
-                let Step::Fold(successor_fold) = successor else {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive fold successor must be another fold".to_string(),
-                    ));
-                };
                 if successor_fold.params.setup_prefix.is_none() {
                     return Err(AkitaError::InvalidSetup(
                         "recursive fold successor must carry a setup prefix".to_string(),

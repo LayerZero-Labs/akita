@@ -9,7 +9,6 @@ use crate::compute::plans::{
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
-use crate::kernels::crt_ntt::{build_ntt_slot, NttCacheMap, NttSlotCache};
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
     mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
@@ -20,7 +19,10 @@ use crate::kernels::linear::{
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
-use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
+use akita_types::{
+    build_negacyclic_and_cyclic_ntt_slot, dispatch_for_field, AkitaExpandedSetup, NttCacheKey,
+    PreparedNttSlot, PreparedNttSlotAny,
+};
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -37,7 +39,7 @@ pub struct CpuBackend;
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
-    shared_ntt: Mutex<NttCacheMap>,
+    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<PreparedNttSlotAny>>>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
@@ -84,7 +86,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
-        f: impl FnOnce(&NttSlotCache<D>) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttSlot<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
         let slot = {
@@ -131,12 +133,14 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
-) -> Result<crate::kernels::crt_ntt::NttSlotCacheAny, AkitaError> {
+) -> Result<PreparedNttSlotAny, AkitaError> {
     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
-        Ok(build_ntt_slot(view)?.into())
+        let slot = build_negacyclic_and_cyclic_ntt_slot(view)?;
+        let any: PreparedNttSlotAny = slot.into();
+        Ok(any)
     })
 }
 
@@ -272,7 +276,7 @@ where
     ) -> Result<Self::PreparedSetup, AkitaError> {
         Ok(CpuPreparedSetup {
             expanded,
-            shared_ntt: Mutex::new(NttCacheMap::new()),
+            shared_ntt: Mutex::new(HashMap::new()),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             setup_contract_ntt_keys: Mutex::new(HashSet::new()),
         })
@@ -298,7 +302,7 @@ where
         &self,
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-        f: impl FnOnce(&crate::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttSlotAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let slot = {
             let cache = prepared
@@ -335,7 +339,7 @@ where
         match plan.input {
             DenseCommitInput::CachedDigits {
                 digit_block_slices,
-                log_basis,
+                log_basis_inner,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
                 prepared.with_shared_ntt::<D, _>(|ntt| {
@@ -344,17 +348,17 @@ where
                         plan.n_a,
                         row_width,
                         &digit_block_slices,
-                        log_basis,
+                        log_basis_inner,
                     )
                 })
             }
             DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_commit,
-                log_basis,
+                num_digits_inner,
+                log_basis_inner,
             } => {
                 let row_width = block_slices.first().map_or(Ok(0usize), |block| {
-                    block.len().checked_mul(num_digits_commit).ok_or_else(|| {
+                    block.len().checked_mul(num_digits_inner).ok_or_else(|| {
                         AkitaError::InvalidSetup("dense coefficient row width overflow".to_string())
                     })
                 })?;
@@ -364,8 +368,8 @@ where
                             ntt,
                             row_width,
                             &block_slices,
-                            num_digits_commit,
-                            log_basis,
+                            num_digits_inner,
+                            log_basis_inner,
                         )?
                         .into_iter()
                         .map(|ring| vec![ring])
@@ -378,8 +382,8 @@ where
                             plan.n_a,
                             row_width,
                             &block_slices,
-                            num_digits_commit,
-                            log_basis,
+                            num_digits_inner,
+                            log_basis_inner,
                         )
                     })
                 }
@@ -398,7 +402,7 @@ where
     {
         let active_a_cols = plan
             .num_positions_per_block
-            .checked_mul(plan.num_digits_commit)
+            .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
             .expanded
@@ -411,7 +415,7 @@ where
                     &blocks.block_slices()?,
                     plan.n_a,
                     active_a_cols,
-                    plan.num_digits_commit,
+                    plan.num_digits_inner,
                 )
             }
             OneHotCommitBlocks::MultiChunk(blocks) => {
@@ -420,7 +424,7 @@ where
                     &blocks.block_slices()?,
                     plan.n_a,
                     active_a_cols,
-                    plan.num_digits_commit,
+                    plan.num_digits_inner,
                 )
             }
         })
@@ -437,7 +441,7 @@ where
     {
         let active_a_cols = plan
             .num_positions_per_block
-            .checked_mul(plan.num_digits_commit)
+            .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
         let a_view = prepared
             .expanded
@@ -451,7 +455,7 @@ where
             &plan.blocks.block_slices()?,
             plan.n_a,
             plan.num_positions_per_block,
-            plan.num_digits_commit,
+            plan.num_digits_inner,
         ))
     }
 
@@ -462,14 +466,14 @@ where
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
         let row_width = plan
             .num_positions_per_block
-            .checked_mul(plan.num_digits_commit)
+            .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
-        if plan.num_digits_commit == 1 {
+        if plan.num_digits_inner == 1 {
             let blocks = plan
                 .coeffs
                 .chunks(plan.num_positions_per_block)
                 .collect::<Vec<_>>();
-            // The `num_digits_commit == 1` recursive witness is a raw signed-i8
+            // The `num_digits_inner == 1` recursive witness is a raw signed-i8
             // coefficient stream. Degree-one fields yield balanced gadget digits
             // (fast predecomposed-digit kernel), but extension-field tensor
             // base-lift packing sums gadget digits and can push coefficients
@@ -477,10 +481,17 @@ where
             // raw ring mat-vec instead of the balanced-digit LUT kernel.
             let known_balanced = plan
                 .known_balanced_log_basis
-                .is_some_and(|source_log_basis| plan.log_basis >= source_log_basis);
-            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis) {
+                .is_some_and(|source_log_basis| plan.log_basis_inner >= source_log_basis);
+            if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis_inner)
+            {
                 prepared.with_shared_ntt::<D, _>(|ntt| {
-                    mat_vec_mul_ntt_digits_i8(ntt, plan.n_rows, row_width, &blocks, plan.log_basis)
+                    mat_vec_mul_ntt_digits_i8(
+                        ntt,
+                        plan.n_rows,
+                        row_width,
+                        &blocks,
+                        plan.log_basis_inner,
+                    )
                 })
             } else {
                 prepared.with_shared_ntt::<D, _>(|ntt| {
@@ -505,8 +516,8 @@ where
                     plan.n_rows,
                     row_width,
                     &blocks,
-                    plan.num_digits_commit,
-                    plan.log_basis,
+                    plan.num_digits_inner,
+                    plan.log_basis_inner,
                 )
             })
         }
@@ -585,7 +596,8 @@ where
                 plan.t_hat,
                 plan.z_segment,
                 plan.z_folded_centered_inf_norm,
-                plan.log_basis,
+                plan.log_basis_open,
+                plan.log_basis_outer,
             )?;
             Ok(RingSwitchRelationRows {
                 d_cyclic,
@@ -613,6 +625,7 @@ where
                 &[][..],
                 plan.z_segment,
                 plan.z_folded_centered_inf_norm,
+                1,
                 1,
             )?;
             Ok(a_quotients)
@@ -804,9 +817,9 @@ mod tests {
     }
 
     #[test]
-    fn cpu_ring_switch_relation_rows_match_direct_kernel() {
+    fn cpu_ring_switch_relation_rows_use_distinct_open_and_outer_bases() {
         let prepared = prepared();
-        let e_hat = vec![[1i8; D], [2i8; D]];
+        let e_hat = vec![[1i8; D], [-1i8; D]];
         let t_hat = vec![[-1i8; D], [3i8; D]];
         let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D]];
         let via_backend = CpuBackend
@@ -820,7 +833,8 @@ mod tests {
                     t_hat: &t_hat,
                     z_segment: &z_segment,
                     z_folded_centered_inf_norm: 3,
-                    log_basis: 3,
+                    log_basis_open: 2,
+                    log_basis_outer: 3,
                 },
             )
             .expect("backend ring-switch relation rows");

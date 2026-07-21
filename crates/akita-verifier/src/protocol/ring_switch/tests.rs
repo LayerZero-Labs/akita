@@ -42,7 +42,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         1,
         fold_challenge_config(),
     )
-    .with_decomp(1, 1, 1, 1)
+    .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
     let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 4, 1).unwrap();
     let setup_groups = vec![SetupContributionGroupInputs {
@@ -81,7 +81,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         1,
         fold_challenge_config(),
     )
-    .with_decomp(4, 25, 1, 3)
+    .with_decomp(4, 25, 1, 3, 3)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 2).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
@@ -124,10 +124,13 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         group_id: 0,
         num_claims: 2,
         num_live_blocks: 7,
+        depth_witness: 1,
+        depth_commit: 3,
         depth_open: 3,
-        depth_commit: 1,
         depth_fold: 1,
-        log_basis: 2,
+        log_basis_inner: 1,
+        log_basis_outer: 2,
+        log_basis_open: 2,
         n_a: 2,
         a_row_start: 1,
         b_row_start: 3,
@@ -148,6 +151,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         &x_challenges,
         consistency_weight,
         &a_row_weights,
+        &gadget,
         &gadget,
     )
     .unwrap();
@@ -179,7 +183,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                             .t_index(
                                 group.num_claims,
                                 group.n_a,
-                                group.depth_open,
+                                group.depth_commit,
                                 claim,
                                 global_block,
                                 a_row,

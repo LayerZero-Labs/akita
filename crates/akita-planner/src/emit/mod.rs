@@ -12,15 +12,14 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DirectStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout,
+    PrecommittedGroupParams, Schedule, SetupContributionMode,
 };
 
 use crate::catalog_identity::expected_catalog_identity;
 use crate::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
+    GeneratedFold, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup,
-    GeneratedStep,
 };
 use crate::PlannerPolicy;
 
@@ -49,7 +48,9 @@ const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
     GeneratedFoldStep {
         ring_d: p.ring_dimension as u32,
-        log_basis: p.log_basis,
+        log_basis_inner: p.log_basis_inner,
+        log_basis_outer: p.log_basis_outer,
+        log_basis_open: p.log_basis_open,
         position_index_bits: p.position_index_bits() as u32,
         block_index_bits: p.block_index_bits() as u32,
         num_live_blocks: p.num_live_blocks as u32,
@@ -75,41 +76,39 @@ fn setup_prefix_group_from_params(
                 num_positions_per_block: group.layout.num_positions_per_block as u32,
                 num_live_blocks: group.layout.num_live_blocks as u32,
                 fold_challenge_shape: group.layout.fold_challenge_shape,
+                log_basis_inner: group.layout.log_basis_inner,
+                log_basis_outer: group.layout.log_basis_outer,
+                log_basis_open: group.log_basis_open,
                 n_a: group.a_key.row_len() as u32,
                 n_b: group.b_key.row_len() as u32,
             }
         })
 }
 
-fn schedule_to_generated_steps(
+fn schedule_to_generated_folds(
     _key: &AkitaScheduleLookupKey,
     schedule: &Schedule,
-) -> Vec<GeneratedStep> {
+) -> Vec<GeneratedFold> {
     schedule
-        .steps
+        .folds
         .iter()
         .enumerate()
-        .map(|(idx, step)| match step {
-            Step::Fold(fold) => {
-                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
-                let setup_prefix_group =
-                    setup_prefix_group_from_params(&fold.params, include_setup_prefix_group);
-                let fold_step = fold_step_from_params(&fold.params);
-                if setup_prefix_group.is_some()
-                    || fold.params.setup_contribution_mode != SetupContributionMode::Direct
-                {
-                    GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {
-                        fold: fold_step,
-                        setup_prefix_group,
-                        setup_contribution_mode: fold.params.setup_contribution_mode,
-                    })
-                } else {
-                    GeneratedStep::Fold(fold_step)
-                }
+        .map(|(idx, fold)| {
+            let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
+            let setup_prefix_group =
+                setup_prefix_group_from_params(&fold.params, include_setup_prefix_group);
+            let fold_step = fold_step_from_params(&fold.params);
+            if setup_prefix_group.is_some()
+                || fold.params.setup_contribution_mode != SetupContributionMode::Direct
+            {
+                GeneratedFold::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {
+                    fold: fold_step,
+                    setup_prefix_group,
+                    setup_contribution_mode: fold.params.setup_contribution_mode,
+                })
+            } else {
+                GeneratedFold::Fold(fold_step)
             }
-            Step::Direct(direct) => GeneratedStep::Direct(GeneratedDirectStep {
-                commit: direct.params.as_ref().map(fold_step_from_params),
-            }),
         })
         .collect()
 }
@@ -125,15 +124,18 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 fn emit_precommitted_group_key(layout: &PrecommittedGroupParams) -> String {
     let challenge_shape = emit_root_fold_shape(layout.fold_challenge_shape);
     format!(
-        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis: {}, n_a: {}, conservative_n_b: {} }}",
+        "PrecommittedGroupParams {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis_inner: {}, log_basis_outer: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
         challenge_shape,
-        layout.log_basis,
+        layout.log_basis_inner,
+        layout.log_basis_outer,
         layout.n_a,
-        layout.conservative_n_b,
+        layout.a_coeff_linf_bound,
+        layout.n_b,
+        layout.b_coeff_linf_bound,
     )
 }
 
@@ -155,9 +157,11 @@ fn emit_compact_fold_struct(p: &LevelParams) -> String {
     let fold = fold_step_from_params(p);
     format!(
         "GeneratedFoldStep {{ \
-         ring_d: {}, log_basis: {}, position_index_bits: {}, block_index_bits: {}, num_live_blocks: {}, n_a: {}, n_b: {}, n_d: {} }}",
+         ring_d: {}, log_basis_inner: {}, log_basis_outer: {}, log_basis_open: {}, position_index_bits: {}, block_index_bits: {}, num_live_blocks: {}, n_a: {}, n_b: {}, n_d: {} }}",
         fold.ring_d,
-        fold.log_basis,
+        fold.log_basis_inner,
+        fold.log_basis_outer,
+        fold.log_basis_open,
         fold.position_index_bits,
         fold.block_index_bits,
         fold.num_live_blocks,
@@ -177,12 +181,15 @@ fn emit_setup_contribution_mode(mode: SetupContributionMode) -> &'static str {
 fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
     match group {
         Some(group) => format!(
-            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, n_a: {}, n_b: {} }})",
+            "Some(GeneratedSetupPrefixGroup {{ natural_len: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, fold_challenge_shape: {}, log_basis_inner: {}, log_basis_outer: {}, log_basis_open: {}, n_a: {}, n_b: {} }})",
             group.natural_len,
             group.num_live_ring_elements_per_claim,
             group.num_positions_per_block,
             group.num_live_blocks,
             emit_root_fold_shape(group.fold_challenge_shape),
+            group.log_basis_inner,
+            group.log_basis_outer,
+            group.log_basis_open,
             group.n_a,
             group.n_b,
         ),
@@ -193,26 +200,16 @@ fn emit_setup_prefix_group(group: Option<GeneratedSetupPrefixGroup>) -> String {
 fn emit_fold_step(p: &LevelParams, include_setup_prefix_group: bool) -> String {
     let setup_prefix_group = setup_prefix_group_from_params(p, include_setup_prefix_group);
     if setup_prefix_group.is_none() && p.setup_contribution_mode == SetupContributionMode::Direct {
-        return format!("GeneratedStep::Fold({})", emit_compact_fold_struct(p));
+        return format!("GeneratedFold::Fold({})", emit_compact_fold_struct(p));
     }
 
     format!(
-        "GeneratedStep::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {{ fold: {}, \
+        "GeneratedFold::FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata {{ fold: {}, \
          setup_prefix_group: {}, setup_contribution_mode: {} }})",
         emit_compact_fold_struct(p),
         emit_setup_prefix_group(setup_prefix_group),
         emit_setup_contribution_mode(p.setup_contribution_mode),
     )
-}
-
-fn emit_direct(direct: &DirectStep) -> String {
-    match &direct.params {
-        Some(commit) => format!(
-            "        GeneratedStep::Direct(GeneratedDirectStep {{ commit: Some({}) }}),",
-            emit_compact_fold_struct(commit)
-        ),
-        None => "        GeneratedStep::Direct(GeneratedDirectStep { commit: None }),".to_string(),
-    }
 }
 
 fn emit_schedule_entry(
@@ -223,25 +220,18 @@ fn emit_schedule_entry(
 ) -> Result<(), String> {
     writeln!(
         out,
-        "    GeneratedScheduleTableEntry {{ {key_str}, steps: &[",
+        "    GeneratedScheduleTableEntry {{ {key_str}, folds: &[",
     )
     .map_err(|e| e.to_string())?;
 
-    for (idx, step) in schedule.steps.iter().enumerate() {
-        match step {
-            Step::Fold(fold) => {
-                let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
-                writeln!(
-                    out,
-                    "        {},",
-                    emit_fold_step(&fold.params, include_setup_prefix_group)
-                )
-                .map_err(|e| e.to_string())?;
-            }
-            Step::Direct(direct) => {
-                writeln!(out, "{}", emit_direct(direct)).map_err(|e| e.to_string())?;
-            }
-        }
+    for (idx, fold) in schedule.folds.iter().enumerate() {
+        let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
+        writeln!(
+            out,
+            "        {},",
+            emit_fold_step(&fold.params, include_setup_prefix_group)
+        )
+        .map_err(|e| e.to_string())?;
     }
 
     writeln!(out, "    ] }},").map_err(|e| e.to_string())
@@ -358,14 +348,25 @@ fn materialized_entries(
 ) -> Result<Vec<(AkitaScheduleLookupKey, Schedule)>, String> {
     let mut entries = Vec::new();
     for key in &spec.keys {
-        let schedule =
-            (spec.regen)(*key).map_err(|e| format!("{}: regen {key:?}: {e}", spec.module_name))?;
-        entries.push((AkitaScheduleLookupKey::single(*key), schedule));
+        match (spec.regen)(*key) {
+            Ok(schedule) => entries.push((AkitaScheduleLookupKey::single(*key), schedule)),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
+            Err(error) => {
+                return Err(format!("{}: regen {key:?}: {error}", spec.module_name));
+            }
+        }
     }
     for key in &spec.group_batch_keys {
-        let schedule = (spec.regen_group_batch)(key.clone())
-            .map_err(|e| format!("{}: regen multi-group {key:?}: {e}", spec.module_name))?;
-        entries.push((key.clone(), schedule));
+        match (spec.regen_group_batch)(key.clone()) {
+            Ok(schedule) => entries.push((key.clone(), schedule)),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
+            Err(error) => {
+                return Err(format!(
+                    "{}: regen multi-group {key:?}: {error}",
+                    spec.module_name
+                ));
+            }
+        }
     }
     entries
         .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
@@ -373,10 +374,7 @@ fn materialized_entries(
 }
 
 fn schedule_uses_fold_with_setup(schedule: &Schedule) -> bool {
-    schedule.steps.iter().enumerate().any(|(idx, step)| {
-        let Step::Fold(fold) = step else {
-            return false;
-        };
+    schedule.folds.iter().enumerate().any(|(idx, fold)| {
         let include_setup_prefix_group = idx > 0 && fold.params.setup_prefix.is_some();
         include_setup_prefix_group
             || fold.params.setup_contribution_mode != SetupContributionMode::Direct
@@ -397,9 +395,9 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     if uses_fold_with_setup {
         writeln!(
             out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedFoldStep, \
              GeneratedFoldStepWithSetupMetadata, GeneratedScheduleCatalogIdentity, \
-             GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedStep, \
+             GeneratedScheduleTableEntry, GeneratedSetupPrefixGroup, GeneratedFold, \
              PolynomialGroupLayout, PrecommittedGroupParams, SetupContributionMode, \
              SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
         )
@@ -407,8 +405,8 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     } else {
         writeln!(
             out,
-            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedDirectStep, GeneratedFoldStep, \
-             GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedStep, \
+            "use super::{{\n    ChunkedWitnessCfg, DecompositionParams, GeneratedFoldStep, \
+             GeneratedScheduleCatalogIdentity, GeneratedScheduleTableEntry, GeneratedFold, \
              PolynomialGroupLayout, PrecommittedGroupParams, SisModulusProfileId, \
              SisSecurityPolicyId, SisTableDigest, TensorChallengeShape,\n}};"
         )
@@ -417,7 +415,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     writeln!(out).map_err(|e| e.to_string())?;
 
     let mut memory_entries: Vec<GeneratedScheduleTableEntry> = Vec::new();
-    let mut leaked_steps: Vec<&'static [GeneratedStep]> = Vec::new();
+    let mut leaked_folds: Vec<&'static [GeneratedFold]> = Vec::new();
 
     writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
     writeln!(
@@ -429,13 +427,13 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
     for (key, schedule) in materialized {
         let key_str = emit_entry_fields(&key);
         emit_schedule_entry(&mut out, &key, &key_str, &schedule)?;
-        let steps = schedule_to_generated_steps(&key, &schedule);
-        let steps_ref = Box::leak(steps.into_boxed_slice());
-        leaked_steps.push(steps_ref);
+        let folds = schedule_to_generated_folds(&key, &schedule);
+        let folds_ref = Box::leak(folds.into_boxed_slice());
+        leaked_folds.push(folds_ref);
         memory_entries.push(GeneratedScheduleTableEntry {
             final_group: key.final_group,
             precommitteds: Box::leak(key.precommitteds.into_boxed_slice()),
-            steps: steps_ref,
+            folds: folds_ref,
         });
     }
     debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(

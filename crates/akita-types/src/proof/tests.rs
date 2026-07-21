@@ -9,11 +9,43 @@ use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
+fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
+    let layout = TailSegmentLayout {
+        ring_dimension: 64,
+        log_basis_open: 3,
+        groups: vec![TailSegmentGroupLayout {
+            z_coords: 1,
+            e_field_elems: coeffs.len(),
+            t_field_elems: 0,
+            z_payload_bytes: 1,
+        }],
+        logical_num_elems: coeffs.len(),
+    };
+    SegmentTypedWitness {
+        layout,
+        z_payloads: vec![Vec::new()],
+        e_fields: RingVec::from_coeffs(coeffs),
+        t_fields: RingVec::from_coeffs(Vec::new()),
+    }
+}
+
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
-    let err = CleartextWitnessShape::FieldElements(DEFAULT_MAX_SEQUENCE_LEN + 1)
-        .check()
-        .unwrap_err();
+    let err = SegmentTypedWitnessShape {
+        layout: TailSegmentLayout {
+            ring_dimension: 64,
+            log_basis_open: 3,
+            groups: vec![TailSegmentGroupLayout {
+                z_coords: 1,
+                e_field_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
+                t_field_elems: 0,
+                z_payload_bytes: 1,
+            }],
+            logical_num_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
+        },
+    }
+    .check()
+    .unwrap_err();
     assert!(matches!(
         err,
         SerializationError::LengthLimitExceeded { .. }
@@ -43,21 +75,6 @@ fn flat_ring_vec_checked_decoders_reject_zero_dimension() {
 }
 
 #[test]
-fn batched_proof_shape_validation_recurses_into_witness_shapes() {
-    let shape = AkitaBatchedProofShape::ZeroFold {
-        witness_shapes: vec![CleartextWitnessShape::FieldElements(
-            DEFAULT_MAX_SEQUENCE_LEN + 1,
-        )],
-    };
-
-    let err = shape.check().unwrap_err();
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
-#[test]
 fn level_shape_validation_checks_extension_opening_reduction() {
     let oversized = LevelProofShape {
         extension_opening_reduction: Some(ExtensionOpeningReductionShape::standard(
@@ -68,7 +85,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
-        next_commit_coeffs: 1,
+        next_witness_binding: NextWitnessBindingShape::OuterCommitment { coeffs: 1 },
     };
 
     let err = oversized.check().unwrap_err();
@@ -106,54 +123,23 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     ));
 }
 
-#[test]
-fn terminal_shape_deserialization_validates_shape() {
-    let mut bytes = Vec::new();
-    false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
-    (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
-        .serialize_compressed(&mut bytes)
-        .unwrap(); // stage2_sumcheck
-
-    let err = TerminalLevelProofShape::deserialize_compressed(&bytes[..], &())
-        .expect_err("oversized terminal sumcheck shape must be rejected");
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
-#[test]
-fn terminal_level_proof_deserialization_validates_context_shape() {
-    let shape = TerminalLevelProofShape {
-        extension_opening_reduction: None,
-        stage2_sumcheck: vec![0; MAX_PROOF_SHAPE_SEQUENCE_LEN + 1],
-        final_witness: CleartextWitnessShape::FieldElements(0),
-    };
-
-    let err = TerminalLevelProof::<F, F>::deserialize_compressed(&[][..], &shape)
-        .expect_err("oversized terminal proof context shape must be rejected");
-    assert!(matches!(
-        err,
-        SerializationError::LengthLimitExceeded { .. }
-    ));
-}
-
 fn tiny_stage1() -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
         stages: Vec::new(),
-        s_claim: F::zero(),
+        range_image_evaluation: F::zero(),
     }
 }
 
 fn tiny_stage2<const D: usize>() -> AkitaStage2Proof<F, F> {
-    AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+    AkitaStage2Proof {
         sumcheck_proof: SumcheckProof {
             round_polys: Vec::new(),
         },
-        next_w_commitment: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()])
-            .into_compact(),
+        next_witness_binding: NextWitnessBinding::OuterCommitment(
+            RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        ),
         next_w_eval: F::zero(),
-    })
+    }
 }
 
 fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
@@ -170,7 +156,7 @@ fn tiny_reduction() -> ExtensionOpeningReductionProof<F> {
 #[test]
 fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     const D: usize = 8;
-    let without_reduction = AkitaLevelProof::new::<D>(
+    let without_reduction = FoldLevelProof::new::<D>(
         vec![CyclotomicRing::<F, D>::zero()],
         tiny_stage1(),
         tiny_stage2::<D>(),
@@ -188,21 +174,27 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(bytes.len(), without_reduction.serialized_size(Compress::No));
 
     let decoded =
-        AkitaLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
+        FoldLevelProof::<F, F>::deserialize_uncompressed(&*bytes, &without_reduction.shape())
             .expect("deserialize proof without extension-opening reduction");
     assert!(decoded.extension_opening_reduction().is_none());
     assert_eq!(decoded, without_reduction);
 
-    let with_reduction = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-        Some(tiny_reduction()),
-        vec![CyclotomicRing::<F, D>::zero()],
-        tiny_stage1(),
-        SumcheckProof {
-            round_polys: Vec::new(),
+    let with_reduction = FoldLevelProof {
+        extension_opening_reduction: Some(tiny_reduction()),
+        v: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+        fold_grind_nonce: 0,
+        stage1: tiny_stage1(),
+        stage2: AkitaStage2Proof {
+            sumcheck_proof: SumcheckProof {
+                round_polys: Vec::new(),
+            },
+            next_witness_binding: NextWitnessBinding::OuterCommitment(
+                RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
+            ),
+            next_w_eval: F::zero(),
         },
-        RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
-        F::zero(),
-    );
+        stage3_sumcheck_proof: None,
+    };
     let reduction_bytes = extension_opening_reduction_serialized_size(
         with_reduction.extension_opening_reduction(),
         Compress::No,
@@ -218,7 +210,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     with_reduction
         .serialize_uncompressed(&mut bytes_with_reduction)
         .expect("serialize proof with extension-opening reduction");
-    let decoded_with_reduction = AkitaLevelProof::<F, F>::deserialize_uncompressed(
+    let decoded_with_reduction = FoldLevelProof::<F, F>::deserialize_uncompressed(
         &*bytes_with_reduction,
         &with_reduction.shape(),
     )
@@ -226,38 +218,56 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     assert_eq!(decoded_with_reduction, with_reduction);
 }
 
-fn tiny_terminal_stage2() -> SumcheckProof<F> {
-    SumcheckProof {
-        round_polys: Vec::new(),
-    }
+#[test]
+fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
+    const D: usize = 8;
+    let outer = FoldLevelProof::new::<D>(
+        vec![CyclotomicRing::<F, D>::zero()],
+        tiny_stage1(),
+        tiny_stage2::<D>(),
+    );
+    let outer_commitment_bytes = outer
+        .next_w_commitment()
+        .expect("ordinary recursive edge carries an outer commitment")
+        .serialized_size(Compress::No);
+
+    let mut terminal_inner = outer.clone();
+    terminal_inner.stage2_mut().next_witness_binding = NextWitnessBinding::TerminalInnerState;
+    assert_eq!(terminal_inner.next_w_commitment(), None);
+    assert_eq!(
+        outer.serialized_size(Compress::No) - terminal_inner.serialized_size(Compress::No),
+        outer_commitment_bytes,
+        "the schedule-selected terminal-inner proof body must remove exactly the outer-u bytes"
+    );
+
+    let mut bytes = Vec::new();
+    terminal_inner
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize terminal-inner edge without a proof-body tag");
+    assert_eq!(bytes.len(), terminal_inner.serialized_size(Compress::No));
+
+    let shape = terminal_inner.shape();
+    assert_eq!(
+        shape.next_witness_binding,
+        NextWitnessBindingShape::TerminalInnerState
+    );
+    let decoded = FoldLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &shape)
+        .expect("shape-driven deserialize terminal-inner edge");
+    assert_eq!(decoded, terminal_inner);
 }
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    let final_witness = CleartextWitnessProof::FieldElements(RingVec::from_coeffs(vec![
-        F::one(),
-        -F::one(),
-        F::zero(),
-        F::from_u64(2),
-    ]));
+    let final_witness = test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
 
-    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
-        None,
-        tiny_terminal_stage2(),
-        final_witness.clone(),
-        7,
-    );
+    let without_reduction =
+        TerminalLevelProof::new_with_extension_opening_reduction(None, final_witness.clone(), 7);
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
         .extension_opening_reduction
         .is_none());
-    assert_eq!(
-        AkitaBatchedRootProof::new_terminal(without_reduction.clone())
-            .fold_grind_nonce()
-            .expect("terminal root has fold nonce"),
-        7
-    );
+    assert_eq!(without_reduction.fold_grind_nonce, 7);
 
     let mut bytes = Vec::new();
     without_reduction
@@ -272,7 +282,6 @@ fn terminal_level_proof_serde_round_trip() {
 
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
-        tiny_terminal_stage2(),
         final_witness,
         0,
     );
@@ -291,6 +300,34 @@ fn terminal_level_proof_serde_round_trip() {
         .shape()
         .check()
         .expect("terminal shape with reduction passes Valid::check()");
+}
+
+#[test]
+fn direct_terminal_relation_proof_serde_round_trip() {
+    let final_witness = test_terminal_witness(vec![F::one(), -F::one()]);
+    let proof = TerminalLevelProof {
+        extension_opening_reduction: None,
+        fold_grind_nonce: 3,
+        final_witness,
+    };
+
+    let mut bytes = Vec::new();
+    proof
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize direct terminal proof");
+    assert_eq!(bytes.len(), proof.serialized_size(Compress::No));
+    let decoded = TerminalLevelProof::<F, F>::deserialize_uncompressed(&bytes[..], &proof.shape())
+        .expect("deserialize direct terminal proof");
+    assert_eq!(decoded, proof);
+
+    let mut shape_bytes = Vec::new();
+    proof
+        .shape()
+        .serialize_uncompressed(&mut shape_bytes)
+        .expect("serialize direct terminal shape");
+    let decoded_shape = TerminalLevelProofShape::deserialize_uncompressed(&shape_bytes[..], &())
+        .expect("deserialize direct terminal shape");
+    assert_eq!(decoded_shape, proof.shape());
 }
 
 /// Local reproduction of the (deleted) typed `RingSliceSerializer`: serialize a

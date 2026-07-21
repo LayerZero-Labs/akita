@@ -106,6 +106,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
 
     /// Derive a verifier setup from this prover setup.
     ///
+    /// This copies protocol-independent setup state. Verifier setup initializes
+    /// a non-serialized lazy terminal NTT-prefix cache; direct terminal checks
+    /// prepare exact or covering prefixes on demand.
+    ///
     /// # Errors
     ///
     /// Returns an error if prover prefix-slot metadata cannot be converted into
@@ -113,10 +117,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        Ok(AkitaVerifierSetup {
-            expanded: self.expanded.clone(),
+        Ok(AkitaVerifierSetup::from_parts(
+            self.expanded.clone(),
             prefix_slots,
-        })
+        ))
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -305,9 +309,12 @@ mod tests {
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
                 fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-                log_basis: 1,
+                log_basis_inner: 1,
+                log_basis_outer: 1,
                 n_a: 1,
-                conservative_n_b: 1,
+                a_coeff_linf_bound: 1,
+                n_b: 1,
+                b_coeff_linf_bound: 1,
             },
             a_key: AjtaiKeyParams::new_unchecked(
                 DEFAULT_SIS_SECURITY_POLICY,
@@ -329,7 +336,9 @@ mod tests {
                 1,
                 64,
             ),
-            num_digits_commit: 1,
+            log_basis_open: 1,
+            num_digits_inner: 1,
+            num_digits_outer: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,
         };

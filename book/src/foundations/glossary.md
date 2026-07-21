@@ -10,7 +10,7 @@ sync with `specs/archive/2026-Q2/w-to-e-notation.md`.
 
 Plain-language definitions of the load-bearing terms: root vs recursive level,
 fold, ring switch, extension-opening reduction, digit-innermost layout, one-hot vs dense,
-ZeroFold / terminal-root / fold families, schedule, `LevelParams`, the A/B/D
+folded-only proof family, schedule, `LevelParams`, the A/B/D
 roles, weak binding, fold price.
 
 **Sources to fold in**

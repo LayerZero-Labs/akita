@@ -3,6 +3,7 @@ use crate::{
     LevelParams, LevelParamsLike, OpeningClaimsLayout, RelationMatrixRowLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
+use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
 
@@ -161,7 +162,7 @@ impl SetupContributionGroupInputs {
             ));
         }
         let n_a = self.n_a_for(level_params, opening_batch)?;
-        let n_b = self.n_b_for(level_params, opening_batch)?;
+        let n_b = self.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
         let a_range =
             level_params.a_row_range(opening_batch, self.group_id, relation_matrix_row_layout)?;
         let b_range = level_params.commitment_row_range(
@@ -202,16 +203,6 @@ impl SetupContributionGroupInputs {
             .a_rows_len())
     }
 
-    fn n_b_for(
-        &self,
-        level_params: &LevelParams,
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
-    }
-
     pub(crate) fn num_live_blocks(
         &self,
         level_params: &LevelParams,
@@ -232,6 +223,26 @@ impl SetupContributionGroupInputs {
             .num_positions_per_block())
     }
 
+    pub(crate) fn depth_witness(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .num_digits_inner())
+    }
+
+    pub(crate) fn depth_commit(
+        &self,
+        level_params: &LevelParams,
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<usize, AkitaError> {
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .num_digits_outer())
+    }
+
     pub(crate) fn depth_open(
         &self,
         level_params: &LevelParams,
@@ -242,24 +253,14 @@ impl SetupContributionGroupInputs {
             .num_digits_open())
     }
 
-    pub(crate) fn depth_commit(
-        &self,
-        level_params: &LevelParams,
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .num_digits_commit())
-    }
-
-    pub(crate) fn log_basis(
+    pub(crate) fn log_basis_open(
         &self,
         level_params: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<u32, AkitaError> {
         Ok(self
             .group_params_for(level_params, opening_batch)?
-            .log_basis())
+            .log_basis_open())
     }
 
     pub(crate) fn n_a(
@@ -276,10 +277,15 @@ impl SetupContributionGroupInputs {
         &self,
         level_params: &LevelParams,
         opening_batch: &OpeningClaimsLayout,
+        relation_matrix_row_layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
-        Ok(self
-            .group_params_for(level_params, opening_batch)?
-            .b_rows_len())
+        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
+            Ok(self
+                .group_params_for(level_params, opening_batch)?
+                .b_rows_len())
+        } else {
+            Ok(0)
+        }
     }
 
     pub(crate) fn t_vector_width(
@@ -288,9 +294,9 @@ impl SetupContributionGroupInputs {
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         let n_a = self.n_a(level_params, opening_batch)?;
-        let depth_open = self.depth_open(level_params, opening_batch)?;
+        let depth_commit = self.depth_commit(level_params, opening_batch)?;
         let num_live_blocks = self.num_live_blocks(level_params, opening_batch)?;
-        n_a.checked_mul(depth_open)
+        n_a.checked_mul(depth_commit)
             .and_then(|n| n.checked_mul(num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("setup B vector width overflow".into()))
     }
@@ -309,28 +315,39 @@ impl SetupContributionGroupInputs {
     }
 }
 
-pub struct SetupContributionPlan<E> {
+pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
     pub(crate) projection_geometry: SetupProjectionGeometry,
+    pub(crate) eq_window: OffsetEqWindow<E>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
-    /// Prepared A-role (Z) column equality slice for the group at `index` in
-    /// plan (witness relation) order, laid out as
-    /// `z_eq_slice[position * depth_commit + commit_digit]` and already
-    /// contracted over units and fold digits.
-    ///
-    /// Exposed so the ring-switch verifier can reuse this slice for the
-    /// structured Z relation contribution instead of recomputing the same
-    /// equality evaluations, per the setup-contribution reuse in Fix 6.
+    /// Equality window shared by every direct contribution over this opening point.
     #[must_use]
-    pub fn group_z_eq_slice(&self, index: usize) -> Option<&[E]> {
-        self.groups
-            .get(index)
-            .map(|group| group.z_eq_slice.as_slice())
+    pub fn eq_window(&self) -> &OffsetEqWindow<E> {
+        &self.eq_window
+    }
+
+    /// Prepared D/B/A column equality slices for the group at `index` in plan
+    /// (witness relation) order.
+    ///
+    /// The D-role slice is laid out `(claim, block, opening_digit)`, the B-role
+    /// slice `(claim, block, A_row, opening_digit)`, and the A-role slice
+    /// `(position, commit_digit)` after contraction over units and fold digits.
+    /// The direct ring-switch verifier reuses all three instead of evaluating
+    /// the same opening equality addresses a second time.
+    #[must_use]
+    pub fn group_column_eq_slices(&self, index: usize) -> Option<(&[E], &[E], &[E])> {
+        self.groups.get(index).map(|group| {
+            (
+                group.e_eq_slice.as_slice(),
+                group.t_eq_slice.as_slice(),
+                group.z_eq_slice.as_slice(),
+            )
+        })
     }
 }
 

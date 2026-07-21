@@ -5,15 +5,15 @@ macro_rules! dispatch_slot {
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
         match $slot {
-            NttSlotCache::Q32 { neg, params: p, .. } => {
+            PreparedNttSlot::Q32 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
-            NttSlotCache::Q64 { neg, params: p, .. } => {
+            PreparedNttSlot::Q64 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
-            NttSlotCache::Q128 { neg, params: p, .. } => {
+            PreparedNttSlot::Q128 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
@@ -33,7 +33,7 @@ macro_rules! dispatch_slot {
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8")]
 pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -58,7 +58,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// almost always wasted work on dense witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense")]
 pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -80,7 +80,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
 pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
@@ -102,7 +102,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
 #[allow(clippy::too_many_arguments)]
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_strided")]
 pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     coeffs: &[CyclotomicRing<F, D>],
@@ -127,13 +127,13 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
 ///
-/// This is the `num_digits_commit = 1` specialization of
+/// This is the `num_digits_inner = 1` specialization of
 /// [`mat_vec_mul_ntt_i8`]. It skips the `CyclotomicRing -> i8 digit plane`
 /// decomposition entirely because the caller already holds each coefficient as a
 /// balanced digit plane for a validated `log_basis <= 6`.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8")]
 pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],
@@ -165,7 +165,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// every plane, so this variant uses the same math without the zero checks.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
 pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],
@@ -193,7 +193,7 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8_trusted<
     F: FieldCore + CanonicalField,
     const D: usize,
 >(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],
@@ -213,7 +213,7 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8_trusted<
 /// Strided variant of [`mat_vec_mul_ntt_digits_i8`] for recursive witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8_strided")]
 pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
@@ -247,11 +247,11 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
 ///
 /// Unlike [`mat_vec_mul_ntt_digits_i8_strided`], this path does not assume the
 /// input rows are balanced gadget digits for `log_basis`. It is used for
-/// `num_digits_commit = 1`, where the recursive witness is already the
+/// `num_digits_inner = 1`, where the recursive witness is already the
 /// committed signed-i8 coefficient stream.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_i8_strided")]
 pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     coeffs: &[[i8; D]],
@@ -273,13 +273,13 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
 ///
 /// The block/column layout and output shape match
 /// [`mat_vec_mul_ntt_digits_i8`], but this path does not assume the rows are
-/// balanced gadget digits: it is the `num_digits_commit = 1` commit path for a
+/// balanced gadget digits: it is the `num_digits_inner = 1` commit path for a
 /// recursive witness whose extension-field tensor base-lift packing can push
 /// coefficients past the balanced range. Coefficients too large for the CRT
 /// lift are rejected as `AkitaError` rather than panicking.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_digits_i8")]
 pub fn mat_vec_mul_ntt_raw_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],

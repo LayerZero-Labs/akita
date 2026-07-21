@@ -4,10 +4,18 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao                      |
 | Created     | 2026-06-08                     |
-| Status      | proposed                       |
+| Status      | superseded                     |
 | PR          |                                |
+| Superseded by | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) for Stage 1/2 architecture |
 
 ## Summary
+
+> **Superseded implementation direction.** The diagnosis, proof-format/batching/compute
+> separation, Boolean-only invariant, and byte-identical fast-path contract remain useful.
+> The proposed `akita-protocol` crate, general descriptor algebra, mandatory Tier-A engine,
+> and `LevelProtocolPlan` are not the implementation target. Follow
+> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), which incorporates
+> the smaller flat pair-scan/fused-fold design and mixed-dimension landing zone.
 
 Akita's sumchecks are hard to read, hard to audit, and hard to extend.
 The per-stage math is hand-inlined separately on the prover and verifier, the prover fuses several sumchecks over one witness inside a bespoke inner loop, and every new sumcheck (the y-ring trace term, the setup-offloading product sumcheck) is added by editing a monolithic stage driver.

@@ -1,13 +1,12 @@
 use super::*;
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::proof::{segment_typed_witness_shape_from_groups, SegmentTypedWitness};
 use crate::tail_golomb_rice_z_params;
 use crate::{
-    direct_witness_bytes, extension_opening_reduction_proof_bytes, level_proof_bytes,
-    stage1_tree_stage_shapes, sumcheck_rounds, AkitaBatchedRootProof, AkitaIntermediateStage2Proof,
-    AkitaLevelProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    CleartextWitnessProof, ExtensionOpeningReductionProof, RelationMatrixRowLayout, RingVec,
-    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    extension_opening_reduction_proof_bytes, level_proof_bytes, segment_typed_witness_bytes,
+    sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RelationMatrixRowLayout,
+    RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SisModulusProfileId,
+    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -32,36 +31,30 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         2,
         fold_challenge_config,
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .unwrap();
     let field_bits = 128u32;
     let num_poly = 3usize;
 
-    for layout in [
-        RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutDBlock,
-    ] {
-        let single =
-            w_ring_element_count_with_counts_for_layout_bits(field_bits, &lp, num_poly, 1, layout)
-                .unwrap();
-        // num_chunks = 1 must be byte-identical to the single-chunk delegate.
-        assert_eq!(
-            w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, 1).unwrap(),
-            single
-        );
+    let single =
+        intermediate_w_ring_element_count_with_counts_bits(field_bits, &lp, num_poly, 1).unwrap();
+    // num_chunks = 1 must be byte-identical to the single-chunk delegate.
+    assert_eq!(
+        intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, 1).unwrap(),
+        single
+    );
 
-        let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
-        for num_chunks in [2usize, 4, 8] {
-            let chunked =
-                w_ring_element_count_for_chunks(field_bits, &lp, num_poly, layout, num_chunks)
-                    .unwrap();
-            // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
-            // a single summed quotient that keeps the single-machine row count
-            // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
-            // (num_chunks - 1) full-width copies.
-            assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
-            assert!(chunked > single, "chunked layout must grow vs single chunk");
-        }
+    let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
+    for num_chunks in [2usize, 4, 8] {
+        let chunked =
+            intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, num_chunks)
+                .unwrap();
+        // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
+        // a single summed quotient that keeps the single-machine row count
+        // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
+        // (num_chunks - 1) full-width copies.
+        assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
+        assert!(chunked > single, "chunked layout must grow vs single chunk");
     }
 }
 
@@ -79,21 +72,21 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
         2,
         fold_challenge_config,
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .unwrap();
     // Non-power-of-two chunk count.
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 6),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 6),
         Err(AkitaError::InvalidSetup(_))
     ));
     // num_chunks does not divide num_live_blocks (8 % 16 != 0).
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 16),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 16),
         Err(AkitaError::InvalidSetup(_))
     ));
     // Zero chunks.
     assert!(matches!(
-        w_ring_element_count_for_chunks(128, &lp, 1, RelationMatrixRowLayout::WithDBlock, 0),
+        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 0),
         Err(AkitaError::InvalidSetup(_))
     ));
 }
@@ -101,19 +94,15 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
 fn segment_typed_final_witness(
     lp: &LevelParams,
     num_claims: usize,
-) -> (CleartextWitnessProof<F>, CleartextWitnessShape) {
+) -> (SegmentTypedWitness<F>, SegmentTypedWitnessShape) {
     let field_bits = F::modulus_bits();
-    let shape = segment_typed_witness_shape_from_groups(
+    let shape = SegmentTypedWitnessShape::from_groups(
         lp,
         field_bits,
         [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
-        1,
     )
     .expect("segment-typed witness shape");
-    let CleartextWitnessShape::SegmentTyped(ref segment_shape) = shape else {
-        panic!("expected segment-typed witness shape");
-    };
-    let layout = segment_shape.layout.clone();
+    let layout = shape.layout.clone();
     let group = layout.groups[0];
     let (rice_low_bits, zigzag_w) =
         tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
@@ -124,65 +113,8 @@ fn segment_typed_final_witness(
         z_payloads: vec![z_payload],
         e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
         t_fields: RingVec::from_coeffs(vec![F::zero(); group.t_field_elems]),
-        r_fields: RingVec::from_coeffs(vec![F::zero(); layout.r_field_elems]),
     };
-    (CleartextWitnessProof::SegmentTyped(witness), shape)
-}
-
-#[test]
-fn root_direct_schedule_uses_field_element_payload() {
-    let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        1,
-        1,
-        1,
-        akita_challenges::SparseChallengeConfig::pm1_only(1),
-    );
-    let schedule =
-        root_direct_schedule(8, dummy_commit_params.clone()).expect("root-direct schedule");
-    assert_eq!(schedule.total_bytes, 0);
-
-    let [Step::Direct(step)] = schedule.steps.as_slice() else {
-        panic!("root-direct schedule should contain one direct step");
-    };
-    assert_eq!(step.current_w_len, 8);
-    assert_eq!(step.witness_shape, CleartextWitnessShape::FieldElements(8));
-    assert_eq!(step.direct_bytes, 0);
-    assert_eq!(step.params.as_ref(), Some(&dummy_commit_params));
-}
-
-#[test]
-fn root_direct_schedule_uses_multi_group_witness_len() {
-    let layout = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(2, 1),
-        PolynomialGroupLayout::new(3, 2),
-        PolynomialGroupLayout::new(4, 1),
-    ])
-    .expect("multi-group layout");
-    let witness_len = layout.root_direct_witness_len().expect("witness len");
-    assert_eq!(witness_len, 4 + 16 + 16);
-
-    let dummy_commit_params = LevelParams::params_only(
-        crate::SisModulusProfileId::Q128OffsetA7F7,
-        64,
-        3,
-        1,
-        1,
-        1,
-        akita_challenges::SparseChallengeConfig::pm1_only(3),
-    );
-    let schedule =
-        root_direct_schedule(witness_len, dummy_commit_params).expect("root-direct schedule");
-    let [Step::Direct(step)] = schedule.steps.as_slice() else {
-        panic!("root-direct schedule should contain one direct step");
-    };
-    assert_eq!(step.current_w_len, witness_len);
-    assert_eq!(
-        step.witness_shape,
-        CleartextWitnessShape::FieldElements(witness_len)
-    );
+    (witness, shape)
 }
 
 fn dummy_sumcheck<F: FieldCore>(rounds: usize, degree: usize) -> SumcheckProof<F> {
@@ -213,14 +145,16 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
 
 fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
-        stages: stage1_tree_stage_shapes(rounds, b)
+        stages: DigitRangePlan::new(b)
+            .expect("test range basis")
+            .stage_shapes(rounds)
             .into_iter()
             .map(|shape| AkitaStage1StageProof {
                 sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
                 child_claims: vec![F::zero(); shape.child_claims],
             })
             .collect(),
-        s_claim: F::zero(),
+        range_image_evaluation: F::zero(),
     }
 }
 
@@ -240,18 +174,21 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         .checked_mul(next_lp.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << lp.log_basis;
+    let b = 1usize << lp.log_basis_open;
 
-    let proof = AkitaLevelProof::Intermediate {
+    let proof = FoldLevelProof {
         extension_opening_reduction: None,
         v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
-        stage2: AkitaStage2Proof::Intermediate(AkitaIntermediateStage2Proof {
+        stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
-            next_w_commitment: RingVec::from_coeffs(vec![F::zero(); next_commit_coeffs]),
+            next_witness_binding: NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                F::zero();
+                next_commit_coeffs
+            ])),
             next_w_eval: F::zero(),
-        }),
+        },
         stage3_sumcheck_proof: None,
     };
     Ok(proof.serialized_size(Compress::No))
@@ -282,7 +219,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         assert_eq!(
                 level_proof_bytes(
@@ -291,9 +228,10 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                )
+                .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
@@ -317,21 +255,19 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
-        let rounds = sumcheck_rounds(D, next_w_len);
 
         let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
         let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
-            dummy_sumcheck(rounds, 3),
             final_witness,
             0,
         );
 
         // The planner accounts for the final witness separately
-        // (`direct_witness_bytes` on the terminal direct step). Subtract
+        // (`segment_typed_witness_bytes` on the terminal plan). Subtract
         // it from the serialized terminal level to compare against
         // `terminal_level_proof_bytes`.
         let serialized_without_witness =
@@ -344,15 +280,16 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 &lp,
                 None,
                 next_w_len,
-                num_claims,
-                RelationMatrixRowLayout::WithoutDBlock,
-            ),
+                RelationMatrixRowLayout::WithoutCommitmentBlocks,
+                None,
+            )
+            .unwrap(),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less final_witness) at log_basis={log_basis}"
         );
 
-        let scheduled_bytes = direct_witness_bytes(128, &witness_shape);
+        let scheduled_bytes = segment_typed_witness_bytes(128, &witness_shape);
         assert!(
             scheduled_bytes >= final_witness_bytes_runtime,
             "scheduled direct witness budget must cover serialized segment-typed witness \
@@ -386,7 +323,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, next_w_len);
         let b = 1usize << log_basis;
@@ -395,16 +332,15 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             next_lp.b_key.row_len()
         ])
         .into_compact();
-        let level_proof = AkitaLevelProof::new_two_stage_many_with_extension_opening_reduction::<D>(
-            None,
+        let level_proof = FoldLevelProof::new::<D>(
             vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
             dummy_stage1_proof(rounds, b),
-            dummy_sumcheck(rounds, 3),
-            next_commitment,
-            F::zero(),
+            AkitaStage2Proof {
+                sumcheck_proof: dummy_sumcheck(rounds, 3),
+                next_witness_binding: NextWitnessBinding::OuterCommitment(next_commitment),
+                next_w_eval: F::zero(),
+            },
         );
-        let root_proof = AkitaBatchedRootProof::new(level_proof);
-
         assert_eq!(
                 level_proof_bytes(
                     128,
@@ -412,10 +348,11 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     next_w_len,
-                    1,
                     RelationMatrixRowLayout::WithDBlock,
-                ),
-                root_proof.serialized_size(Compress::No),
+                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                )
+                .unwrap(),
+                level_proof.serialized_size(Compress::No),
                 "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
     }
@@ -500,9 +437,12 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
             num_positions_per_block: 16,
             num_live_blocks: 1usize << 14,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -522,9 +462,12 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
             num_positions_per_block: 16,
             num_live_blocks: 4,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -543,9 +486,12 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
             num_positions_per_block: 4,
             num_live_blocks: 4,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -563,9 +509,12 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         num_positions_per_block: 16,
         num_live_blocks: 1,
         fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-        log_basis: 2,
+        log_basis_inner: 1,
+        log_basis_outer: 2,
         n_a: 3,
-        conservative_n_b: 4,
+        a_coeff_linf_bound: 1,
+        n_b: 4,
+        b_coeff_linf_bound: 1,
     };
     let err = layout
         .validate_frozen_precommit(64)

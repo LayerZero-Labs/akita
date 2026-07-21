@@ -24,7 +24,7 @@
 //! expanded [`LevelParams`] (SIS buckets + derived matrix widths,
 //! which the compact 7-tuple drops), step kinds / witness shapes, and total
 //! proof bytes. This is strictly stronger than diffing the compact
-//! `GeneratedStep` tuples: it catches any drift where the table-hit
+//! generated fold tuples: it catches any drift where the table-hit
 //! expansion would carry a different `a_key.coeff_linf_bound()` (or width, or
 //! rank) than the DP used, not just a different stored tuple.
 //!
@@ -40,7 +40,7 @@ use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleLookupKey, DirectStep, FoldStep, PolynomialGroupLayout, Schedule, Step,
+    AkitaScheduleLookupKey, FoldStep, PolynomialGroupLayout, Schedule, TerminalWitnessPlan,
 };
 
 #[cfg(feature = "all-schedules")]
@@ -330,8 +330,8 @@ impl Mismatch {
 /// witness shapes).
 fn render_schedule(schedule: &Schedule) -> String {
     format!(
-        "total_bytes={} steps={:?}",
-        schedule.total_bytes, schedule.steps
+        "total_bytes={} folds={:?} terminal={:?}",
+        schedule.total_bytes, schedule.folds, schedule.terminal
     )
 }
 
@@ -342,34 +342,25 @@ fn fold_steps_equal(left: &FoldStep, right: &FoldStep) -> bool {
         && left.params == right.params
 }
 
-fn direct_steps_equal(left: &DirectStep, right: &DirectStep) -> bool {
+fn direct_steps_equal(left: &TerminalWitnessPlan, right: &TerminalWitnessPlan) -> bool {
     left.current_w_len == right.current_w_len
         && left.witness_shape == right.witness_shape
-        && left.direct_bytes == right.direct_bytes
-        && left.params == right.params
-}
-
-fn steps_equal(left: &Step, right: &Step) -> bool {
-    match (left, right) {
-        (Step::Fold(left), Step::Fold(right)) => fold_steps_equal(left, right),
-        (Step::Direct(left), Step::Direct(right)) => direct_steps_equal(left, right),
-        _ => false,
-    }
+        && left.terminal_bytes == right.terminal_bytes
 }
 
 fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
     if left.total_bytes != right.total_bytes {
         return false;
     }
-    if left.steps.len() != right.steps.len() {
+    if left.folds.len() != right.folds.len() {
         return false;
     }
-    for (l, r) in left.steps.iter().zip(right.steps.iter()) {
-        if !steps_equal(l, r) {
+    for (l, r) in left.folds.iter().zip(right.folds.iter()) {
+        if !fold_steps_equal(l, r) {
             return false;
         }
     }
-    true
+    direct_steps_equal(&left.terminal, &right.terminal)
 }
 
 fn worker_count() -> usize {
@@ -379,60 +370,56 @@ fn worker_count() -> usize {
         .min(4)
 }
 
+fn compare_schedule_results(
+    family: &GeneratedFamily,
+    key: PolynomialGroupLayout,
+    table_backed: Result<Schedule, AkitaError>,
+    regenerated: Result<Schedule, AkitaError>,
+) -> Option<Mismatch> {
+    match (table_backed, regenerated) {
+        (Ok(table_backed), Ok(regenerated)) => {
+            if schedules_equal(&table_backed, &regenerated) {
+                None
+            } else {
+                Some(Mismatch {
+                    family: family.module_name,
+                    key: format!("{key:?}"),
+                    table_backed: render_schedule(&table_backed),
+                    regenerated: render_schedule(&regenerated),
+                })
+            }
+        }
+        (Err(AkitaError::UnsupportedSchedule(_)), Err(AkitaError::UnsupportedSchedule(_))) => None,
+        (table_backed, regenerated) => Some(Mismatch {
+            family: family.module_name,
+            key: format!("{key:?}"),
+            table_backed: table_backed
+                .map(|schedule| render_schedule(&schedule))
+                .unwrap_or_else(|error| format!("error: {error}")),
+            regenerated: regenerated
+                .map(|schedule| render_schedule(&schedule))
+                .unwrap_or_else(|error| format!("error: {error}")),
+        }),
+    }
+}
+
 #[cfg(feature = "all-schedules")]
 fn compare_scalar_key(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Option<Mismatch> {
-    let table_backed = table_backed_expanded(family, catalog, key).unwrap_or_else(|e| {
-        panic!(
-            "table-backed schedule failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-    let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-        panic!(
-            "DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-
-    if schedules_equal(&table_backed, &regenerated) {
-        return None;
-    }
-    Some(Mismatch {
-        family: family.module_name,
-        key: format!("{key:?}"),
-        table_backed: render_schedule(&table_backed),
-        regenerated: render_schedule(&regenerated),
-    })
+    compare_schedule_results(
+        family,
+        key,
+        table_backed_expanded(family, catalog, key),
+        (family.regen)(key),
+    )
 }
 
 #[cfg(not(feature = "all-schedules"))]
 fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> Option<Mismatch> {
-    let table_backed = (family.table_backed)(key).unwrap_or_else(|e| {
-        panic!(
-            "table-backed schedule failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-    let regenerated = (family.regen)(key).unwrap_or_else(|e| {
-        panic!(
-            "DP regen failed for family {} key={key:?}: {e}",
-            family.module_name
-        )
-    });
-
-    if schedules_equal(&table_backed, &regenerated) {
-        return None;
-    }
-    Some(Mismatch {
-        family: family.module_name,
-        key: format!("{key:?}"),
-        table_backed: render_schedule(&table_backed),
-        regenerated: render_schedule(&regenerated),
-    })
+    compare_schedule_results(family, key, (family.table_backed)(key), (family.regen)(key))
 }
 
 #[cfg(feature = "all-schedules")]

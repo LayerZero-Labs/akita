@@ -23,12 +23,10 @@
 //! [`RingSwitchReplay`], and [`AkitaStage1Verifier`]. They are not part of the
 //! verifier's intended downstream API.
 
-mod proof;
 mod protocol;
 mod stages;
 
 pub use akita_types::CommitmentVerifier;
-pub use proof::cleartext_witness_opening_matches;
 pub use protocol::{
     batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
