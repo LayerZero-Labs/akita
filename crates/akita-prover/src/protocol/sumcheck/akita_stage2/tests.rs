@@ -11,9 +11,9 @@ type F = Prime128Offset275;
 pub(super) struct Stage2Params<'a> {
     stage1_point: &'a [F],
     b: usize,
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    live_lane_count: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,25 +27,25 @@ struct DirectRelationRangeImageEvaluation {
 fn direct_relation_range_image_evaluation(
     batching_coeff: F,
     w_compact: &[i8],
-    alpha_evals_y: &[F],
-    relation_matrix_col_evals: &[F],
+    common_alpha_factor: &[F],
+    relation_lane_weights: &[F],
     evaluation_trace_weights: &[F],
     params: &Stage2Params<'_>,
 ) -> DirectRelationRangeImageEvaluation {
-    let x_len = 1usize << params.col_bits;
-    let y_len = 1usize << params.ring_bits;
-    assert_eq!(w_compact.len(), params.live_x_cols * y_len);
-    assert_eq!(alpha_evals_y.len(), y_len);
-    assert_eq!(relation_matrix_col_evals.len(), x_len);
+    let lane_capacity = 1usize << params.lane_bits;
+    let coeff_count = 1usize << params.coefficient_bits;
+    assert_eq!(w_compact.len(), params.live_lane_count * coeff_count);
+    assert_eq!(common_alpha_factor.len(), coeff_count);
+    assert_eq!(relation_lane_weights.len(), lane_capacity);
     assert_eq!(evaluation_trace_weights.len(), w_compact.len());
-    let padded = if params.live_x_cols == (1usize << params.col_bits) {
+    let padded = if params.live_lane_count == (1usize << params.lane_bits) {
         w_compact.to_vec()
     } else {
         pad_compact_witness(
             w_compact,
-            params.live_x_cols,
-            params.col_bits,
-            params.ring_bits,
+            params.live_lane_count,
+            params.lane_bits,
+            params.coefficient_bits,
         )
     };
     let equality_weights = EqPolynomial::evals(params.stage1_point).unwrap();
@@ -57,10 +57,10 @@ fn direct_relation_range_image_evaluation(
     for (physical_index, &digit) in padded.iter().enumerate() {
         let digit = F::from_i64(i64::from(digit));
         range_image += equality_weights[physical_index] * digit * (digit + F::one());
-        let column = physical_index / y_len;
-        let coefficient = physical_index % y_len;
-        relation += digit * alpha_evals_y[coefficient] * relation_matrix_col_evals[column];
-        if column < params.live_x_cols {
+        let column = physical_index / coeff_count;
+        let coefficient = physical_index % coeff_count;
+        relation += digit * common_alpha_factor[coefficient] * relation_lane_weights[column];
+        if column < params.live_lane_count {
             evaluation_trace += digit * evaluation_trace_weights[physical_index];
         }
     }
@@ -75,16 +75,16 @@ fn direct_relation_range_image_evaluation(
 fn new_stage2_test_prover(
     batching_coeff: F,
     w_compact: Vec<i8>,
-    alpha_evals_y: Vec<F>,
-    relation_matrix_col_evals: Vec<F>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
     let zero_trace_weights = vec![F::zero(); w_compact.len()];
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
         &w_compact,
-        &alpha_evals_y,
-        &relation_matrix_col_evals,
+        &common_alpha_factor,
+        &relation_lane_weights,
         &zero_trace_weights,
         &params,
     );
@@ -94,16 +94,16 @@ fn new_stage2_test_prover(
         params.stage1_point,
         direct.range_image,
         params.b,
-        alpha_evals_y,
-        relation_matrix_col_evals,
-        params.live_x_cols,
-        params.col_bits,
-        params.ring_bits,
+        common_alpha_factor,
+        relation_lane_weights,
+        params.live_lane_count,
+        params.lane_bits,
+        params.coefficient_bits,
         direct.relation,
         PreparedProverEvaluationTrace::from_dense(
             zero_trace_weights,
-            params.live_x_cols,
-            1usize << params.ring_bits,
+            params.live_lane_count,
+            1usize << params.coefficient_bits,
         ),
         F::zero(),
     )
@@ -113,16 +113,16 @@ fn new_stage2_test_prover(
 pub(super) fn new_stage2_test_prover_with_trace(
     batching_coeff: F,
     w_compact: Vec<i8>,
-    alpha_evals_y: Vec<F>,
-    relation_matrix_col_evals: Vec<F>,
+    common_alpha_factor: Vec<F>,
+    relation_lane_weights: Vec<F>,
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
         &w_compact,
-        &alpha_evals_y,
-        &relation_matrix_col_evals,
+        &common_alpha_factor,
+        &relation_lane_weights,
         &trace_compact,
         &params,
     );
@@ -132,16 +132,16 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.stage1_point,
         direct.range_image,
         params.b,
-        alpha_evals_y,
-        relation_matrix_col_evals,
-        params.live_x_cols,
-        params.col_bits,
-        params.ring_bits,
+        common_alpha_factor,
+        relation_lane_weights,
+        params.live_lane_count,
+        params.lane_bits,
+        params.coefficient_bits,
         direct.relation,
         PreparedProverEvaluationTrace::from_dense(
             trace_compact,
-            params.live_x_cols,
-            1usize << params.ring_bits,
+            params.live_lane_count,
+            1usize << params.coefficient_bits,
         ),
         direct.evaluation_trace,
     )
@@ -150,42 +150,42 @@ pub(super) fn new_stage2_test_prover_with_trace(
 
 pub(super) fn pad_trace_compact(
     trace_compact: &[F],
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    live_lane_count: usize,
+    lane_bits: usize,
+    coefficient_bits: usize,
 ) -> Vec<F> {
-    let y_len = 1usize << ring_bits;
-    let x_len = 1usize << col_bits;
-    assert_eq!(trace_compact.len(), live_x_cols * y_len);
-    let mut padded = vec![F::zero(); x_len * y_len];
-    for x in 0..live_x_cols {
-        let src = x * y_len;
-        let dst = x * y_len;
-        padded[dst..dst + y_len].copy_from_slice(&trace_compact[src..src + y_len]);
+    let coeff_count = 1usize << coefficient_bits;
+    let lane_capacity = 1usize << lane_bits;
+    assert_eq!(trace_compact.len(), live_lane_count * coeff_count);
+    let mut padded = vec![F::zero(); lane_capacity * coeff_count];
+    for x in 0..live_lane_count {
+        let src = x * coeff_count;
+        let dst = x * coeff_count;
+        padded[dst..dst + coeff_count].copy_from_slice(&trace_compact[src..src + coeff_count]);
     }
     padded
 }
 
 #[test]
 fn direct_fused_equation_matches_checked_stage2_input_claim() {
-    for (live_x_cols, col_bits, ring_bits) in [
+    for (live_lane_count, lane_bits, coefficient_bits) in [
         (5usize, 3usize, 2usize),
         (8usize, 3usize, 2usize),
         // Partial live relation-lane prefix over a four-coordinate common block.
         (23usize, 5usize, 2usize),
     ] {
-        let y_len = 1usize << ring_bits;
-        let x_len = 1usize << col_bits;
-        let digit_witness = (0..live_x_cols * y_len)
+        let coeff_count = 1usize << coefficient_bits;
+        let lane_capacity = 1usize << lane_bits;
+        let digit_witness = (0..live_lane_count * coeff_count)
             .map(|index| ((index * 11 + 3) % 8) as i8 - 4)
             .collect::<Vec<_>>();
-        let stage1_point = (0..col_bits + ring_bits)
+        let stage1_point = (0..lane_bits + coefficient_bits)
             .map(|index| F::from_u64(index as u64 + 17))
             .collect::<Vec<_>>();
-        let alpha_evals_y = (0..y_len)
+        let common_alpha_factor = (0..coeff_count)
             .map(|index| F::from_u64(3 * index as u64 + 5))
             .collect::<Vec<_>>();
-        let relation_matrix_col_evals = (0..x_len)
+        let relation_lane_weights = (0..lane_capacity)
             .map(|index| F::from_u64(7 * index as u64 + 11))
             .collect::<Vec<_>>();
         let evaluation_trace_weights = (0..digit_witness.len())
@@ -195,23 +195,23 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
         let params = Stage2Params {
             stage1_point: &stage1_point,
             b: 8,
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
         };
         let direct = direct_relation_range_image_evaluation(
             batching_coeff,
             &digit_witness,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
+            &common_alpha_factor,
+            &relation_lane_weights,
             &evaluation_trace_weights,
             &params,
         );
         let prover = new_stage2_test_prover_with_trace(
             batching_coeff,
             digit_witness,
-            alpha_evals_y,
-            relation_matrix_col_evals,
+            common_alpha_factor,
+            relation_lane_weights,
             evaluation_trace_weights,
             params,
         );
@@ -265,9 +265,9 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         Stage2Params {
             stage1_point: &stage1_point,
             b: 8,
-            live_x_cols: live_relation_lanes,
-            col_bits: lane_bits,
-            ring_bits: common_bits,
+            live_lane_count: live_relation_lanes,
+            lane_bits,
+            coefficient_bits: common_bits,
         },
     );
     let mut flattened = new_stage2_test_prover_with_trace(
@@ -279,9 +279,9 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         Stage2Params {
             stage1_point: &stage1_point,
             b: 8,
-            live_x_cols: live_relation_lanes * common_coeff_count,
-            col_bits: num_vars,
-            ring_bits: 0,
+            live_lane_count: live_relation_lanes * common_coeff_count,
+            lane_bits: num_vars,
+            coefficient_bits: 0,
         },
     );
 
@@ -304,20 +304,20 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
 
 fn relation_round_reference(
     w_compact: &[i8],
-    alpha_compact: &[F],
-    relation_matrix_col_evals_compact: &[F],
-    ring_bits: usize,
+    common_alpha_factor: &[F],
+    relation_lane_weights: &[F],
+    coefficient_bits: usize,
 ) -> UniPoly<F> {
     let half = w_compact.len() / 2;
-    let current_y_mask = (1usize << ring_bits).wrapping_sub(1);
+    let current_coefficient_mask = (1usize << coefficient_bits).wrapping_sub(1);
     let mut evals = [F::zero(); 3];
     for j in 0..half {
         let w_0 = F::from_i64(w_compact[2 * j] as i64);
         let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
-        let a_0 = alpha_compact[(2 * j) & current_y_mask];
-        let a_1 = alpha_compact[(2 * j + 1) & current_y_mask];
-        let m_0 = relation_matrix_col_evals_compact[(2 * j) >> ring_bits];
-        let m_1 = relation_matrix_col_evals_compact[(2 * j + 1) >> ring_bits];
+        let a_0 = common_alpha_factor[(2 * j) & current_coefficient_mask];
+        let a_1 = common_alpha_factor[(2 * j + 1) & current_coefficient_mask];
+        let m_0 = relation_lane_weights[(2 * j) >> coefficient_bits];
+        let m_1 = relation_lane_weights[(2 * j + 1) >> coefficient_bits];
         evals[0] += w_0 * a_0 * m_0;
         evals[1] += w_1 * a_1 * m_1;
         let w_2 = w_1 + w_1 - w_0;
@@ -350,19 +350,19 @@ fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniP
 
 fn fold_compact_prefix_x_reference(
     w_compact: &[i8],
-    live_x_cols: usize,
-    y_len: usize,
+    live_lane_count: usize,
+    coeff_count: usize,
     r: F,
 ) -> Vec<F> {
-    let next_live_x_cols = live_x_cols.div_ceil(2);
-    let mut out = vec![F::zero(); y_len * next_live_x_cols];
-    for (y, row_out) in out.chunks_mut(next_live_x_cols).enumerate() {
-        let row_start = y * live_x_cols;
-        let row = &w_compact[row_start..row_start + live_x_cols];
+    let next_live_lane_count = live_lane_count.div_ceil(2);
+    let mut out = vec![F::zero(); coeff_count * next_live_lane_count];
+    for (y, row_out) in out.chunks_mut(next_live_lane_count).enumerate() {
+        let row_start = y * live_lane_count;
+        let row = &w_compact[row_start..row_start + live_lane_count];
         for (pair_x, dst) in row_out.iter_mut().enumerate() {
             let left = 2 * pair_x;
             let w_0 = F::from_i64(row[left] as i64);
-            let w_1 = if left + 1 < live_x_cols {
+            let w_1 = if left + 1 < live_lane_count {
                 F::from_i64(row[left + 1] as i64)
             } else {
                 F::zero()
@@ -404,16 +404,16 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
 
 #[test]
 fn stage2_compact_round0_matches_unfused_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let n = 1usize << (col_bits + ring_bits);
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let lane_bits = 3usize;
+    let coefficient_bits = 2usize;
+    let n = 1usize << (lane_bits + coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 2))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
+    let common_alpha_factor: Vec<F> = (0..(1usize << coefficient_bits))
         .map(|i| F::from_u64((3 * i as u64) + 5))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((7 * i as u64) + 11))
         .collect();
 
@@ -423,23 +423,23 @@ fn stage2_compact_round0_matches_unfused_reference() {
         let prover = new_stage2_test_prover(
             F::from_u64(13),
             w_compact.clone(),
-            alpha_evals_y.clone(),
-            relation_matrix_col_evals.clone(),
+            common_alpha_factor.clone(),
+            relation_lane_weights.clone(),
             Stage2Params {
                 stage1_point: &stage1_point,
                 b,
-                live_x_cols: 1usize << col_bits,
-                col_bits,
-                ring_bits,
+                live_lane_count: 1usize << lane_bits,
+                lane_bits,
+                coefficient_bits,
             },
         );
         let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
         let virt_ref = virtual_round_reference(&prover.split_eq, &w_compact);
         let relation_ref = relation_round_reference(
             &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            ring_bits,
+            &common_alpha_factor,
+            &relation_lane_weights,
+            coefficient_bits,
         );
 
         assert_eq!(
@@ -455,62 +455,63 @@ fn stage2_compact_round0_matches_unfused_reference() {
 
 #[test]
 fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
-    let ring_bits = 2usize;
+    let coefficient_bits = 2usize;
     for b in [4usize, 8, 16, 32] {
         let half = (b / 2) as i8;
-        for live_x_cols in [5usize, 6usize] {
-            let col_bits = live_x_cols.next_power_of_two().trailing_zeros() as usize;
-            let x_len = 1usize << col_bits;
-            let y_len = 1usize << ring_bits;
-            let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+        for live_lane_count in [5usize, 6usize] {
+            let lane_bits = live_lane_count.next_power_of_two().trailing_zeros() as usize;
+            let lane_capacity = 1usize << lane_bits;
+            let coeff_count = 1usize << coefficient_bits;
+            let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
                 .map(|i| ((i * 7 + 5) % b) as i8 - half)
                 .collect();
-            let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-            let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+            let w_padded =
+                pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+            let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
                 .map(|i| F::from_u64((i as u64) + 31))
                 .collect();
-            let alpha_evals_y: Vec<F> = (0..y_len)
+            let common_alpha_factor: Vec<F> = (0..coeff_count)
                 .map(|i| F::from_u64((5 * i as u64) + 7))
                 .collect();
-            let relation_matrix_col_evals: Vec<F> = (0..x_len)
+            let relation_lane_weights: Vec<F> = (0..lane_capacity)
                 .map(|i| F::from_u64((11 * i as u64) + 13))
                 .collect();
 
             let mut prefix_prover = new_stage2_test_prover(
                 F::from_u64(17),
                 w_prefix.clone(),
-                alpha_evals_y.clone(),
-                relation_matrix_col_evals.clone(),
+                common_alpha_factor.clone(),
+                relation_lane_weights.clone(),
                 Stage2Params {
                     stage1_point: &stage1_point,
                     b,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
+                    live_lane_count,
+                    lane_bits,
+                    coefficient_bits,
                 },
             );
             let mut padded_prover = new_stage2_test_prover(
                 F::from_u64(17),
                 w_padded.clone(),
-                alpha_evals_y.clone(),
-                relation_matrix_col_evals.clone(),
+                common_alpha_factor.clone(),
+                relation_lane_weights.clone(),
                 Stage2Params {
                     stage1_point: &stage1_point,
                     b,
-                    live_x_cols: 1usize << col_bits,
-                    col_bits,
-                    ring_bits,
+                    live_lane_count: 1usize << lane_bits,
+                    lane_bits,
+                    coefficient_bits,
                 },
             );
             let mut prefix_claim = prefix_prover.input_claim();
             let mut padded_claim = padded_prover.input_claim();
 
-            for round in 0..(col_bits + ring_bits) {
+            for round in 0..(lane_bits + coefficient_bits) {
                 let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
                 let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
                 assert_eq!(
                     prefix_poly, padded_poly,
-                    "round {round} polynomial mismatch live_x_cols={live_x_cols} b={b}"
+                    "round {round} polynomial mismatch live_lane_count={live_lane_count} b={b}"
                 );
 
                 let challenge = F::from_u64((round as u64) + 37);
@@ -528,30 +529,30 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
 
 #[test]
 fn stage2_zero_gated_round0_matches_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 1usize;
+    let lane_bits = 3usize;
+    let coefficient_bits = 1usize;
     let w_compact = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 41))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..(1usize << ring_bits))
+    let common_alpha_factor: Vec<F> = (0..(1usize << coefficient_bits))
         .map(|i| F::from_u64((3 * i as u64) + 43))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((5 * i as u64) + 47))
         .collect();
 
     let prover = new_stage2_test_prover(
         F::from_u64(19),
         w_compact.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         Stage2Params {
             stage1_point: &stage1_point,
             b: 8,
-            live_x_cols: 1usize << col_bits,
-            col_bits,
-            ring_bits,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
         },
     );
     let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
@@ -563,46 +564,46 @@ fn stage2_zero_gated_round0_matches_reference() {
         relation_poly,
         relation_round_reference(
             &w_compact,
-            &alpha_evals_y,
-            &relation_matrix_col_evals,
-            ring_bits
+            &common_alpha_factor,
+            &relation_lane_weights,
+            coefficient_bits
         )
     );
 }
 
 #[test]
 fn stage2_fused_round2_transition_matches_two_pass_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 2usize;
-    let live_x_cols = 6usize;
+    let lane_bits = 3usize;
+    let coefficient_bits = 2usize;
+    let live_lane_count = 6usize;
     let b = 8usize;
     let half = (b / 2) as i8;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| ((i * 11 + 7) % b) as i8 - half)
         .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 71))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((5 * i as u64) + 73))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((13 * i as u64) + 79))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
     };
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(83),
         w_prefix.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         params,
     );
     let round0 = prover.compute_round_univariate(0, prover.input_claim());
@@ -611,18 +612,22 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(97);
 
-    let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
+    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_to_round2(
+        &w_prefix,
+        live_lane_count,
+        coeff_count,
+        r0,
+        r1,
+    );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
-    let expected_relation_matrix_col_evals_compact =
-        prover.relation_matrix_col_evals_compact.clone();
+        AkitaStage2Prover::<F>::fold_alpha_to_round2(&common_alpha_factor, r0, r1);
+    let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(83),
         w_prefix.clone(),
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         params,
     );
     let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
@@ -637,10 +642,10 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.alpha_compact = expected_alpha_round2.clone();
+    expected.common_alpha_factor = expected_alpha_round2.clone();
     expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
-    expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
+    expected.relation_lane_weights = expected_relation_lane_weights.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -651,11 +656,8 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.alpha_compact, expected_alpha_round2);
-    assert_eq!(
-        prover.relation_matrix_col_evals_compact,
-        expected_relation_matrix_col_evals_compact
-    );
+    assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
+    assert_eq!(prover.relation_lane_weights, expected_relation_lane_weights);
     assert!(!prover.can_use_two_round_prefix());
     assert!(!prover.using_two_round_prefix());
     assert!(prover.prefix_r_stage1.is_none());
@@ -665,37 +667,37 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
 
 #[test]
 fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
-    let col_bits = 3usize;
-    let ring_bits = 4usize;
-    let live_x_cols = 6usize;
+    let lane_bits = 3usize;
+    let coefficient_bits = 4usize;
+    let live_lane_count = 6usize;
     let b = 8usize;
     let half = (b / 2) as i8;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| ((i * 13 + 9) % b) as i8 - half)
         .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 101))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((7 * i as u64) + 103))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((17 * i as u64) + 107))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
     };
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(109),
         w_prefix.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         params,
     );
     let round0 = prover.compute_round_univariate(0, prover.input_claim());
@@ -704,18 +706,22 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(127);
 
-    let expected_w_full =
-        AkitaStage2Prover::<F>::fold_compact_to_round2(&w_prefix, live_x_cols, y_len, r0, r1);
+    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_to_round2(
+        &w_prefix,
+        live_lane_count,
+        coeff_count,
+        r0,
+        r1,
+    );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
-    let expected_relation_matrix_col_evals_compact =
-        prover.relation_matrix_col_evals_compact.clone();
+        AkitaStage2Prover::<F>::fold_alpha_to_round2(&common_alpha_factor, r0, r1);
+    let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
         F::from_u64(109),
         w_prefix,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         params,
     );
     let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
@@ -730,10 +736,10 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .evaluate(&r1);
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
-    expected.alpha_compact = expected_alpha_round2.clone();
+    expected.common_alpha_factor = expected_alpha_round2.clone();
     expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
-    expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
+    expected.relation_lane_weights = expected_relation_lane_weights.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
 
     prover.ingest_challenge(1, r1);
@@ -744,47 +750,44 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
             panic!("expected fused stage2 transition to materialize full table")
         }
     }
-    assert_eq!(prover.alpha_compact, expected_alpha_round2);
-    assert_eq!(
-        prover.relation_matrix_col_evals_compact,
-        expected_relation_matrix_col_evals_compact
-    );
+    assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
+    assert_eq!(prover.relation_lane_weights, expected_relation_lane_weights);
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
 #[test]
 fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
-    let col_bits = 5usize;
-    let ring_bits = 2usize;
-    let live_x_cols = 12usize;
+    let lane_bits = 5usize;
+    let coefficient_bits = 2usize;
+    let live_lane_count = 12usize;
     let b = 8usize;
     let half = (b / 2) as i8;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| ((i * 9 + 7) % b) as i8 - half)
         .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 131))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((7 * i as u64) + 137))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((11 * i as u64) + 139))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
     };
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(149),
         w_prefix.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         params,
     );
     let round0 = prover.compute_round_univariate(0, prover.input_claim());
@@ -799,8 +802,8 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     let mut expected = new_stage2_test_prover(
         F::from_u64(149),
         w_prefix,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         params,
     );
     let expected_round0 = expected.compute_round_univariate(0, expected.input_claim());
@@ -816,27 +819,25 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WTable::Full(w_full) => w_full.clone(),
         WTable::Compact(_) => panic!("expected later prefix state to be full"),
     };
-    let current_relation_matrix_col_evals_compact =
-        expected.relation_matrix_col_evals_compact.clone();
-    let current_y_len = expected.alpha_compact.len();
+    let current_relation_lane_weights = expected.relation_lane_weights.clone();
+    let current_coeff_count = expected.common_alpha_factor.len();
     let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
         &current_w_full,
-        expected.live_x_cols,
-        current_y_len,
+        expected.live_lane_count,
+        current_coeff_count,
         r2,
     );
-    let expected_next_relation_matrix_col_evals_compact =
-        AkitaStage2Prover::<F>::fold_m_prefix(&current_relation_matrix_col_evals_compact, r2);
+    let expected_next_relation_lane_weights =
+        AkitaStage2Prover::<F>::fold_m_prefix(&current_relation_lane_weights, r2);
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()
         .expect("round2 norm poly should be cached")
         .evaluate(&r2);
     expected.split_eq.bind(r2);
-    expected.live_x_cols = expected.live_x_cols.div_ceil(2);
+    expected.live_lane_count = expected.live_lane_count.div_ceil(2);
     expected.rounds_completed += 1;
-    expected.relation_matrix_col_evals_compact =
-        expected_next_relation_matrix_col_evals_compact.clone();
+    expected.relation_lane_weights = expected_next_relation_lane_weights.clone();
     let (virt_terms, rel_coeffs) =
         expected.compute_round_full_prefix_x_terms(&expected_next_w_full);
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
@@ -848,51 +849,51 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
         WTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
     }
     assert_eq!(
-        prover.relation_matrix_col_evals_compact,
-        expected_next_relation_matrix_col_evals_compact
+        prover.relation_lane_weights,
+        expected_next_relation_lane_weights
     );
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round3));
 }
 
 #[test]
 fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
-    let col_bits = 16usize;
-    let ring_bits = 6usize;
-    let live_x_cols = 34_519usize;
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
     let b = 8usize;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((3 * i as u64) + 167))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((5 * i as u64) + 173))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((7 * i as u64) + 179))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
     };
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(191),
         w_prefix.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         params,
     );
     let mut direct = new_stage2_test_prover(
         F::from_u64(191),
         w_prefix,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         params,
     );
     direct.prefix_r_stage1 = None;
@@ -900,7 +901,7 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
 
-    for round in 0..(col_bits + ring_bits) {
+    for round in 0..(lane_bits + coefficient_bits) {
         let prover_poly = prover.compute_round_univariate(round, prover_claim);
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
@@ -921,56 +922,56 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
 
 #[test]
 fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
-    let col_bits = 16usize;
-    let ring_bits = 6usize;
-    let live_x_cols = 34_519usize;
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
     let b = 8usize;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| if (i * 73 + 19) % 17 == 0 { -1 } else { 0 })
         .collect();
-    let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let w_padded = pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((3 * i as u64) + 223))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((5 * i as u64) + 227))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((7 * i as u64) + 229))
         .collect();
 
     let mut prefix_prover = new_stage2_test_prover(
         F::from_u64(233),
         w_prefix,
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         Stage2Params {
             stage1_point: &stage1_point,
             b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
         },
     );
     let mut padded_prover = new_stage2_test_prover(
         F::from_u64(233),
         w_padded,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         Stage2Params {
             stage1_point: &stage1_point,
             b,
-            live_x_cols: 1usize << col_bits,
-            col_bits,
-            ring_bits,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
         },
     );
 
     let mut prefix_claim = prefix_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
 
-    for round in 0..(col_bits + ring_bits) {
+    for round in 0..(lane_bits + coefficient_bits) {
         let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(
@@ -991,44 +992,44 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
 
 #[test]
 fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
-    let col_bits = 16usize;
-    let ring_bits = 6usize;
-    let live_x_cols = 34_519usize;
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
     let b = 8usize;
     let half = (b / 2) as i8;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| ((i * 29 + 17) % b) as i8 - half)
         .collect();
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((17 * i as u64) + 241))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((19 * i as u64) + 251))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((23 * i as u64) + 257))
         .collect();
     let params = Stage2Params {
         stage1_point: &stage1_point,
         b,
-        live_x_cols,
-        col_bits,
-        ring_bits,
+        live_lane_count,
+        lane_bits,
+        coefficient_bits,
     };
 
     let mut prover = new_stage2_test_prover(
         F::from_u64(263),
         w_prefix.clone(),
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         params,
     );
     let mut direct = new_stage2_test_prover(
         F::from_u64(263),
         w_prefix,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         params,
     );
     direct.prefix_r_stage1 = None;
@@ -1036,7 +1037,7 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
 
-    for round in 0..(col_bits + ring_bits) {
+    for round in 0..(lane_bits + coefficient_bits) {
         let prover_poly = prover.compute_round_univariate(round, prover_claim);
         let direct_poly = direct.compute_round_univariate(round, direct_claim);
         assert_eq!(
@@ -1067,57 +1068,57 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
 
 #[test]
 fn stage2_large_odd_dense_prefix_matches_padded_reference() {
-    let col_bits = 16usize;
-    let ring_bits = 6usize;
-    let live_x_cols = 34_519usize;
+    let lane_bits = 16usize;
+    let coefficient_bits = 6usize;
+    let live_lane_count = 34_519usize;
     let b = 8usize;
     let half = (b / 2) as i8;
-    let y_len = 1usize << ring_bits;
-    let w_prefix: Vec<i8> = (0..(live_x_cols * y_len))
+    let coeff_count = 1usize << coefficient_bits;
+    let w_prefix: Vec<i8> = (0..(live_lane_count * coeff_count))
         .map(|i| ((i * 31 + 11) % b) as i8 - half)
         .collect();
-    let w_padded = pad_compact_witness(&w_prefix, live_x_cols, col_bits, ring_bits);
-    let stage1_point: Vec<F> = (0..(col_bits + ring_bits))
+    let w_padded = pad_compact_witness(&w_prefix, live_lane_count, lane_bits, coefficient_bits);
+    let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((31 * i as u64) + 271))
         .collect();
-    let alpha_evals_y: Vec<F> = (0..y_len)
+    let common_alpha_factor: Vec<F> = (0..coeff_count)
         .map(|i| F::from_u64((37 * i as u64) + 277))
         .collect();
-    let relation_matrix_col_evals: Vec<F> = (0..(1usize << col_bits))
+    let relation_lane_weights: Vec<F> = (0..(1usize << lane_bits))
         .map(|i| F::from_u64((41 * i as u64) + 281))
         .collect();
 
     let mut prefix_prover = new_stage2_test_prover(
         F::from_u64(283),
         w_prefix,
-        alpha_evals_y.clone(),
-        relation_matrix_col_evals.clone(),
+        common_alpha_factor.clone(),
+        relation_lane_weights.clone(),
         Stage2Params {
             stage1_point: &stage1_point,
             b,
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            live_lane_count,
+            lane_bits,
+            coefficient_bits,
         },
     );
     let mut padded_prover = new_stage2_test_prover(
         F::from_u64(283),
         w_padded,
-        alpha_evals_y,
-        relation_matrix_col_evals,
+        common_alpha_factor,
+        relation_lane_weights,
         Stage2Params {
             stage1_point: &stage1_point,
             b,
-            live_x_cols: 1usize << col_bits,
-            col_bits,
-            ring_bits,
+            live_lane_count: 1usize << lane_bits,
+            lane_bits,
+            coefficient_bits,
         },
     );
 
     let mut prefix_claim = prefix_prover.input_claim();
     let mut padded_claim = padded_prover.input_claim();
 
-    for round in 0..(col_bits + ring_bits) {
+    for round in 0..(lane_bits + coefficient_bits) {
         let prefix_poly = prefix_prover.compute_round_univariate(round, prefix_claim);
         let padded_poly = padded_prover.compute_round_univariate(round, padded_claim);
         assert_eq!(

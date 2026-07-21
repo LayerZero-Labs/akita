@@ -123,13 +123,13 @@ where
                 let physical_coefficient_start = physical_column_start
                     .checked_mul(D)
                     .ok_or_else(|| AkitaError::InvalidSetup("trace address overflow".into()))?;
-                let coefficient_count = unit
+                let coeff_count = unit
                     .num_live_blocks()
                     .checked_mul(parameters.opening_digit_weights().len())
                     .and_then(|count| count.checked_mul(D))
                     .ok_or_else(|| AkitaError::InvalidSetup("trace segment overflow".into()))?;
                 let end = physical_coefficient_start
-                    .checked_add(coefficient_count)
+                    .checked_add(coeff_count)
                     .ok_or_else(|| AkitaError::InvalidSetup("trace segment end overflow".into()))?;
                 if end > inputs.digit_witness_domain.live_len() {
                     return Err(AkitaError::InvalidProof);

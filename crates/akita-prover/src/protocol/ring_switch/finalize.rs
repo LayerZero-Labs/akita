@@ -109,6 +109,9 @@ where
         let live_x_cols = w.len() / coeff_count;
         let col_bits = lane_capacity.trailing_zeros() as usize;
         let ring_bits = coeff_count.trailing_zeros() as usize;
+        // This is the Stage-1 transcript permutation boundary, not the Stage-2
+        // coefficient split. On mixed paths tau0 is already sampled in flat
+        // physical-address order, so zero means "no permutation," not "no low bits."
         let digit_range_equality_low_variable_count =
             if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
                 opening_ring_dim.trailing_zeros() as usize

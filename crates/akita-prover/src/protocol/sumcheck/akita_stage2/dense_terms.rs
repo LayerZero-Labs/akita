@@ -12,13 +12,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        let folding_y_round = self.in_y_round();
-        let current_x_width = self.current_x_width();
-        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
-        let current_y_width = self.current_y_width();
-        let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
-        let alpha_compact = &self.alpha_compact;
-        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
+        let folding_y_round = self.in_coefficient_round();
+        let current_lane_width = self.current_lane_width();
+        let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
+        let current_coefficient_width = self.current_coefficient_width();
+        let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
+        let common_alpha_factor = &self.common_alpha_factor;
+        let relation_lane_weights = &self.relation_lane_weights;
         debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -48,17 +48,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                         let (a0, a1, m0, m1) = if folding_y_round {
                             (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
-                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
+                                common_alpha_factor[(2 * j) & current_coefficient_mask],
+                                common_alpha_factor[(2 * j + 1) & current_coefficient_mask],
+                                relation_lane_weights[(2 * j) >> current_coefficient_width],
+                                relation_lane_weights[(2 * j + 1) >> current_coefficient_width],
                             )
                         } else {
                             (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
-                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
+                                common_alpha_factor[(2 * j) >> current_lane_width],
+                                common_alpha_factor[(2 * j + 1) >> current_lane_width],
+                                relation_lane_weights[(2 * j) & current_lane_mask],
+                                relation_lane_weights[(2 * j + 1) & current_lane_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -125,17 +125,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                         let (a0, a1, m0, m1) = if folding_y_round {
                             (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
-                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
+                                common_alpha_factor[(2 * j) & current_coefficient_mask],
+                                common_alpha_factor[(2 * j + 1) & current_coefficient_mask],
+                                relation_lane_weights[(2 * j) >> current_coefficient_width],
+                                relation_lane_weights[(2 * j + 1) >> current_coefficient_width],
                             )
                         } else {
                             (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
-                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
+                                common_alpha_factor[(2 * j) >> current_lane_width],
+                                common_alpha_factor[(2 * j + 1) >> current_lane_width],
+                                relation_lane_weights[(2 * j) & current_lane_mask],
+                                relation_lane_weights[(2 * j + 1) & current_lane_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -185,13 +185,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
         let num_second = e_second.len();
-        let folding_y_round = self.in_y_round();
-        let current_x_width = self.current_x_width();
-        let current_x_mask = (1usize << current_x_width).wrapping_sub(1);
-        let current_y_width = self.current_y_width();
-        let current_y_mask = (1usize << current_y_width).wrapping_sub(1);
-        let alpha_compact = &self.alpha_compact;
-        let relation_matrix_col_evals_compact = &self.relation_matrix_col_evals_compact;
+        let folding_y_round = self.in_coefficient_round();
+        let current_lane_width = self.current_lane_width();
+        let current_lane_mask = (1usize << current_lane_width).wrapping_sub(1);
+        let current_coefficient_width = self.current_coefficient_width();
+        let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
+        let common_alpha_factor = &self.common_alpha_factor;
+        let relation_lane_weights = &self.relation_lane_weights;
         debug_assert_eq!(w_full.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
@@ -213,17 +213,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                         let (a0, a1, m0, m1) = if folding_y_round {
                             (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
-                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
+                                common_alpha_factor[(2 * j) & current_coefficient_mask],
+                                common_alpha_factor[(2 * j + 1) & current_coefficient_mask],
+                                relation_lane_weights[(2 * j) >> current_coefficient_width],
+                                relation_lane_weights[(2 * j + 1) >> current_coefficient_width],
                             )
                         } else {
                             (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
-                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
+                                common_alpha_factor[(2 * j) >> current_lane_width],
+                                common_alpha_factor[(2 * j + 1) >> current_lane_width],
+                                relation_lane_weights[(2 * j) & current_lane_mask],
+                                relation_lane_weights[(2 * j + 1) & current_lane_mask],
                             )
                         };
                         let p0 = a0 * m0;
@@ -277,17 +277,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                         let (a0, a1, m0, m1) = if folding_y_round {
                             (
-                                alpha_compact[(2 * j) & current_y_mask],
-                                alpha_compact[(2 * j + 1) & current_y_mask],
-                                relation_matrix_col_evals_compact[(2 * j) >> current_y_width],
-                                relation_matrix_col_evals_compact[(2 * j + 1) >> current_y_width],
+                                common_alpha_factor[(2 * j) & current_coefficient_mask],
+                                common_alpha_factor[(2 * j + 1) & current_coefficient_mask],
+                                relation_lane_weights[(2 * j) >> current_coefficient_width],
+                                relation_lane_weights[(2 * j + 1) >> current_coefficient_width],
                             )
                         } else {
                             (
-                                alpha_compact[(2 * j) >> current_x_width],
-                                alpha_compact[(2 * j + 1) >> current_x_width],
-                                relation_matrix_col_evals_compact[(2 * j) & current_x_mask],
-                                relation_matrix_col_evals_compact[(2 * j + 1) & current_x_mask],
+                                common_alpha_factor[(2 * j) >> current_lane_width],
+                                common_alpha_factor[(2 * j + 1) >> current_lane_width],
+                                relation_lane_weights[(2 * j) & current_lane_mask],
+                                relation_lane_weights[(2 * j + 1) & current_lane_mask],
                             )
                         };
                         let p0 = a0 * m0;

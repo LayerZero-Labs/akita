@@ -21,12 +21,12 @@ fn fold_prepared_trace_at_point<E: FieldCore>(
     coeff_count: usize,
     point: &[E],
 ) -> E {
-    let ring_bits = coeff_count.trailing_zeros() as usize;
+    let coefficient_bits = coeff_count.trailing_zeros() as usize;
     let mut live_columns = live_len / coeff_count;
-    for &challenge in &point[..ring_bits] {
+    for &challenge in &point[..coefficient_bits] {
         trace.fold_coefficients(challenge);
     }
-    for &challenge in &point[ring_bits..] {
+    for &challenge in &point[coefficient_bits..] {
         trace.fold_lanes(challenge);
         live_columns = live_columns.div_ceil(2);
     }

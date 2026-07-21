@@ -5,8 +5,8 @@
 //! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
 //! index the largest coefficient block aligned for both every relation role and
 //! the outgoing witness ring representation; the remaining coordinates index
-//! relation lanes and padded witness capacity. The legacy `ring_bits`, `col_bits`,
-//! x, and y implementation names refer only to that point partition.
+//! relation lanes and padded witness capacity. Any remaining x and y kernel
+//! names refer only to that point partition.
 //!
 //! Let `common_alpha` be the multilinear extension of
 //! `[1, alpha, ..., alpha^(common_relation_witness_coeff_count - 1)]`. Let the
@@ -15,7 +15,7 @@
 //!
 //! `relation_lane_weight(lane) = sum_i eq(tau1, i) * M_alpha(i, lane)`.
 //!
-//! The table stored in `relation_matrix_col_evals` is exactly this lane weight.
+//! The table stored in `relation_lane_weights` is exactly this lane weight.
 //!
 //! If
 //!
@@ -226,11 +226,11 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    alpha_compact: Vec<E>,
-    relation_matrix_col_evals_compact: Vec<E>,
+    common_alpha_factor: Vec<E>,
+    relation_lane_weights: Vec<E>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
-    live_x_cols: usize,
-    col_bits: usize,
+    live_lane_count: usize,
+    lane_bits: usize,
     num_vars: usize,
     relation_trace_claim: E,
     prev_norm_claim: E,
@@ -257,8 +257,9 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     // Fused relation (`alpha * m`) + trace-weight addend for one witness
     // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
-    // (`col * y_len + ring_slot`). Y-round kernels pass `2*j` and
-    // `2*j+1`; x-prefix fusion passes column-relative indices directly.
+    // (`lane * coeff_count + coefficient`). Coefficient-round kernels
+    // pass `2*j` and `2*j+1`; lane-prefix fusion passes lane-relative indices
+    // directly.
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
@@ -273,10 +274,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        let y_len = self.alpha_compact.len();
+        let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
-            .pair_flat(witness_idx0, witness_idx1, y_len);
+            .pair_flat(witness_idx0, witness_idx1, coeff_count);
         accumulate_relation_coeffs(rel, w0, dw, t0, t1);
     }
 
@@ -293,16 +294,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         p1: E,
     ) {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        let y_len = self.alpha_compact.len();
+        let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
-            .pair_flat(witness_idx0, witness_idx1, y_len);
+            .pair_flat(witness_idx0, witness_idx1, coeff_count);
         accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
     }
 
     #[inline]
     pub(super) fn fold_evaluation_trace_for_current_round(&mut self, challenge: E) {
-        if self.in_y_round() {
+        if self.in_coefficient_round() {
             self.evaluation_trace.fold_coefficients(challenge);
         } else {
             self.evaluation_trace.fold_lanes(challenge);

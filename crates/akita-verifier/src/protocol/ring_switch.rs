@@ -225,6 +225,9 @@ where
             coeff_count.trailing_zeros() as usize,
         )
     };
+    // This is the Stage-1 transcript permutation boundary, not the Stage-2
+    // coefficient split. On mixed paths tau0 is already sampled in flat
+    // physical-address order, so zero means "no permutation," not "no low bits."
     let digit_range_equality_low_variable_count = if uniform {
         opening_ring_dim.trailing_zeros() as usize
     } else {
