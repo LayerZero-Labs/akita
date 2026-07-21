@@ -405,43 +405,177 @@ where
     })
 }
 
-enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
-    Recursive {
-        lp: &'a LevelParams,
-        layout: akita_types::TraceWeightLayout,
-        trace_coeff: E,
-        trace_opening_claim: E,
-        prepared_point: PreparedOpeningPoint<F, E>,
-        trace_basis: BasisMode,
-        trace_eval_scale: E,
-    },
-    Root {
-        lp: &'a LevelParams,
-        layout: akita_types::TraceWeightLayout,
-        prepared_point: PreparedOpeningPoint<F, E>,
-        trace_block_opening: Vec<E>,
-        trace_basis: BasisMode,
-        row_coefficients: Vec<E>,
-        trace_coeff: E,
-        trace_eval_target: E,
-        trace_claim_scales: Option<Vec<E>>,
-        opening_batch: OpeningClaimsLayout,
-    },
-    MultiGroupRoot {
-        lp: &'a LevelParams,
-        layout: akita_types::TraceWeightLayout,
-        prepared_points: Vec<PreparedOpeningPoint<F, E>>,
-        row_coefficients: Vec<E>,
-        trace_coeff: E,
-        trace_eval_target: E,
-        trace_claim_scales: Option<Vec<E>>,
-        opening_batch: OpeningClaimsLayout,
-        live_x_cols: usize,
-        trace_basis: BasisMode,
-    },
+/// Recursive (non-root) fold trace wire: a single prepared opening point folded
+/// with a scalar eval scale.
+struct RecursiveTraceWire<'a, F: FieldCore, E: FieldCore> {
+    lp: &'a LevelParams,
+    layout: akita_types::TraceWeightLayout,
+    trace_coeff: E,
+    trace_opening_claim: E,
+    prepared_point: PreparedOpeningPoint<F, E>,
+    trace_basis: BasisMode,
+    trace_eval_scale: E,
 }
 
-impl<'a, F, E> TraceWireAtRoleA<'a, F, E>
+/// Scalar (single-group) root fold trace wire.
+struct RootTraceWire<'a, F: FieldCore, E: FieldCore> {
+    lp: &'a LevelParams,
+    layout: akita_types::TraceWeightLayout,
+    prepared_point: PreparedOpeningPoint<F, E>,
+    trace_block_opening: Vec<E>,
+    trace_basis: BasisMode,
+    row_coefficients: Vec<E>,
+    trace_coeff: E,
+    trace_eval_target: E,
+    trace_claim_scales: Option<Vec<E>>,
+    opening_batch: OpeningClaimsLayout,
+}
+
+/// Grouped (`G > 1`) root fold trace wire: one prepared opening point per group.
+struct MultiGroupRootTraceWire<'a, F: FieldCore, E: FieldCore> {
+    lp: &'a LevelParams,
+    layout: akita_types::TraceWeightLayout,
+    prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    row_coefficients: Vec<E>,
+    trace_coeff: E,
+    trace_eval_target: E,
+    trace_claim_scales: Option<Vec<E>>,
+    opening_batch: OpeningClaimsLayout,
+    live_x_cols: usize,
+    trace_basis: BasisMode,
+}
+
+/// Fused evaluation-trace claim shaped for stage 2, tagged by fold topology.
+/// Each variant carries only the inputs its topology needs and knows how to
+/// build its own [`TraceClaim`]; the shared structured/dense remap is applied
+/// once in [`TraceWireAtRoleA::into_claim`].
+enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
+    Recursive(RecursiveTraceWire<'a, F, E>),
+    Root(RootTraceWire<'a, F, E>),
+    MultiGroupRoot(MultiGroupRootTraceWire<'a, F, E>),
+}
+
+impl<F, E> RecursiveTraceWire<'_, F, E>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    fn into_trace_claim<const D: usize>(
+        self,
+        destination_ring_dim: usize,
+    ) -> Result<TraceClaim<F, E, D>, AkitaError> {
+        let trace_terms = trace_terms_recursive(
+            &self.prepared_point,
+            self.lp,
+            self.trace_basis,
+            self.trace_eval_scale,
+        )?;
+        let dense_evals = if destination_ring_dim == D {
+            None
+        } else {
+            let public = trace_public_weights_recursive::<F, E, D>(
+                &self.prepared_point,
+                self.trace_eval_scale,
+            )?;
+            let live_x_cols = akita_types::opening_domain_len(self.layout.opening_source_len)?;
+            Some(
+                build_trace_table_scaled(&self.layout, &public, live_x_cols, E::one())?
+                    .materialize_dense(live_x_cols, D),
+            )
+        };
+        Ok(TraceClaim {
+            layout: self.layout,
+            trace_coeff: self.trace_coeff,
+            trace_opening_claim: self.trace_opening_claim,
+            trace_terms,
+            trace_term_batches: Vec::new(),
+            dense_evals,
+        })
+    }
+}
+
+impl<F, E> RootTraceWire<'_, F, E>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    fn into_trace_claim<const D: usize>(
+        self,
+        destination_ring_dim: usize,
+    ) -> Result<TraceClaim<F, E, D>, AkitaError> {
+        let mut claim = build_trace_claim_root::<F, E, D>(
+            self.layout,
+            self.lp,
+            &self.opening_batch,
+            &self.prepared_point,
+            &self.trace_block_opening,
+            self.trace_basis,
+            &self.row_coefficients,
+            self.trace_coeff,
+            self.trace_eval_target,
+            self.trace_claim_scales.as_deref(),
+        )?;
+        if destination_ring_dim != D {
+            let public = trace_public_weights_root_terms::<F, E, D>(
+                self.lp.num_live_blocks,
+                &self.opening_batch,
+                &self.prepared_point,
+                &self.row_coefficients,
+                self.trace_claim_scales.as_deref(),
+            )?;
+            let live_x_cols = akita_types::opening_domain_len(claim.layout.opening_source_len)?;
+            claim.dense_evals = Some(
+                build_trace_table_scaled(&claim.layout, &public, live_x_cols, E::one())?
+                    .materialize_dense(live_x_cols, D),
+            );
+        }
+        Ok(claim)
+    }
+}
+
+impl<F, E> MultiGroupRootTraceWire<'_, F, E>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
+{
+    fn into_trace_claim<const D: usize>(
+        self,
+        destination_ring_dim: usize,
+    ) -> Result<TraceClaim<F, E, D>, AkitaError> {
+        let mut claim = build_trace_claim_multi_group_root::<F, E, D>(
+            self.layout,
+            self.lp,
+            &self.opening_batch,
+            &self.prepared_points,
+            &self.row_coefficients,
+            self.trace_claim_scales.as_deref(),
+            self.trace_basis,
+            self.trace_coeff,
+            self.trace_eval_target,
+            self.live_x_cols,
+        )?;
+        if destination_ring_dim != D {
+            claim.dense_evals = Some(
+                build_multi_group_root_stage2_trace_table::<F, E>(
+                    D,
+                    &claim.layout.witness_layout,
+                    claim.layout.opening_source_len,
+                    self.lp,
+                    &self.opening_batch,
+                    &self.prepared_points,
+                    &self.row_coefficients,
+                    self.trace_claim_scales.as_deref(),
+                    E::one(),
+                    self.live_x_cols,
+                )?
+                .into_ring_dense()?,
+            );
+        }
+        Ok(claim)
+    }
+}
+
+impl<F, E> TraceWireAtRoleA<'_, F, E>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FpExtEncoding<F> + ExtField<F> + FieldCore + FromPrimitiveInt,
@@ -453,123 +587,9 @@ where
         physical_field_len: usize,
     ) -> Result<TraceClaim<F, E, D>, AkitaError> {
         let mut claim = match self {
-            Self::Recursive {
-                lp,
-                layout,
-                trace_coeff,
-                trace_opening_claim,
-                prepared_point,
-                trace_basis,
-                trace_eval_scale,
-            } => {
-                let trace_terms =
-                    trace_terms_recursive(&prepared_point, lp, trace_basis, trace_eval_scale)?;
-                let dense_evals = if destination_ring_dim == D {
-                    None
-                } else {
-                    let public = trace_public_weights_recursive::<F, E, D>(
-                        &prepared_point,
-                        trace_eval_scale,
-                    )?;
-                    let live_x_cols = akita_types::opening_domain_len(layout.opening_source_len)?;
-                    Some(
-                        build_trace_table_scaled(&layout, &public, live_x_cols, E::one())?
-                            .materialize_dense(live_x_cols, D),
-                    )
-                };
-                Ok(TraceClaim {
-                    layout,
-                    trace_coeff,
-                    trace_opening_claim,
-                    trace_terms,
-                    trace_term_batches: Vec::new(),
-                    dense_evals,
-                })
-            }
-            Self::Root {
-                lp,
-                layout,
-                prepared_point,
-                trace_block_opening,
-                trace_basis,
-                row_coefficients,
-                trace_coeff,
-                trace_eval_target,
-                trace_claim_scales,
-                opening_batch,
-            } => {
-                let mut claim = build_trace_claim_root::<F, E, D>(
-                    layout,
-                    lp,
-                    &opening_batch,
-                    &prepared_point,
-                    &trace_block_opening,
-                    trace_basis,
-                    &row_coefficients,
-                    trace_coeff,
-                    trace_eval_target,
-                    trace_claim_scales.as_deref(),
-                )?;
-                if destination_ring_dim != D {
-                    let public = trace_public_weights_root_terms::<F, E, D>(
-                        lp.num_live_blocks,
-                        &opening_batch,
-                        &prepared_point,
-                        &row_coefficients,
-                        trace_claim_scales.as_deref(),
-                    )?;
-                    let live_x_cols =
-                        akita_types::opening_domain_len(claim.layout.opening_source_len)?;
-                    claim.dense_evals = Some(
-                        build_trace_table_scaled(&claim.layout, &public, live_x_cols, E::one())?
-                            .materialize_dense(live_x_cols, D),
-                    );
-                }
-                Ok(claim)
-            }
-            Self::MultiGroupRoot {
-                lp,
-                layout,
-                prepared_points,
-                row_coefficients,
-                trace_coeff,
-                trace_eval_target,
-                trace_claim_scales,
-                opening_batch,
-                live_x_cols,
-                trace_basis,
-            } => {
-                let mut claim = build_trace_claim_multi_group_root::<F, E, D>(
-                    layout,
-                    lp,
-                    &opening_batch,
-                    &prepared_points,
-                    &row_coefficients,
-                    trace_claim_scales.as_deref(),
-                    trace_basis,
-                    trace_coeff,
-                    trace_eval_target,
-                    live_x_cols,
-                )?;
-                if destination_ring_dim != D {
-                    claim.dense_evals = Some(
-                        build_multi_group_root_stage2_trace_table::<F, E>(
-                            D,
-                            &claim.layout.witness_layout,
-                            claim.layout.opening_source_len,
-                            lp,
-                            &opening_batch,
-                            &prepared_points,
-                            &row_coefficients,
-                            trace_claim_scales.as_deref(),
-                            E::one(),
-                            live_x_cols,
-                        )?
-                        .into_ring_dense()?,
-                    );
-                }
-                Ok(claim)
-            }
+            Self::Recursive(wire) => wire.into_trace_claim::<D>(destination_ring_dim),
+            Self::Root(wire) => wire.into_trace_claim::<D>(destination_ring_dim),
+            Self::MultiGroupRoot(wire) => wire.into_trace_claim::<D>(destination_ring_dim),
         }?;
         if destination_ring_dim == D {
             remap_trace_claim_structured(&mut claim, destination_source_len, physical_field_len)?;
@@ -845,7 +865,7 @@ where
             .as_ref()
             .and_then(|points| points.first())
             .ok_or(AkitaError::InvalidProof)?;
-        Some(TraceWireAtRoleA::Recursive {
+        Some(TraceWireAtRoleA::Recursive(RecursiveTraceWire {
             lp,
             layout,
             trace_coeff: evaluation_trace_weight,
@@ -853,7 +873,7 @@ where
             prepared_point: prepared_point.clone(),
             trace_basis: trace.basis,
             trace_eval_scale: trace.eval_scale,
-        })
+        }))
     } else if lp.has_precommitted_groups() {
         // Grouped root: dense trace-weight table (per-group `num_live_blocks`,
         // `num_digits_open`, and group-major e-hat offset). The layout is inert
@@ -883,7 +903,7 @@ where
             .as_ref()
             .ok_or(AkitaError::InvalidProof)?
             .clone();
-        Some(TraceWireAtRoleA::MultiGroupRoot {
+        Some(TraceWireAtRoleA::MultiGroupRoot(MultiGroupRootTraceWire {
             lp,
             layout,
             prepared_points,
@@ -894,7 +914,7 @@ where
             opening_batch: opening_batch.clone(),
             live_x_cols,
             trace_basis: trace.basis,
-        })
+        }))
     } else {
         let num_trace_blocks = opening_batch
             .num_total_polynomials()
@@ -908,7 +928,7 @@ where
             trace_ring_bits,
             num_trace_blocks,
         )?;
-        Some(TraceWireAtRoleA::Root {
+        Some(TraceWireAtRoleA::Root(RootTraceWire {
             lp,
             layout,
             prepared_point: trace
@@ -928,7 +948,7 @@ where
             trace_eval_target: trace.eval_target,
             trace_claim_scales: trace.claim_scales.clone(),
             opening_batch: opening_batch.clone(),
-        })
+        }))
     };
     Ok(trace_wire)
 }
