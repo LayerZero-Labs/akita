@@ -401,22 +401,23 @@ Tracked so they are not silently lost. Each notes a fix path.
    `--test verifier_differential`). *Fix:* update the stale field access in that
    test; likely belongs to whichever PR renamed the field. Untouched here.
 
-4. **`use super::*` glob: `fold.rs` deferred.** Phase 2 replaced the production
-   `use super::*` wall with explicit imports in `verify.rs`, `root_fold.rs`, and
-   `suffix.rs` (which also let `core.rs` shed the imports that existed only to
-   feed those globs). `fold.rs`'s glob is intentionally left until the M-eval PR
-   lands: `fold.rs` is the per-fold engine that directly drives stage-2 and the
-   relation evaluation, so de-globbing it now (a large import-block rewrite)
-   would collide with that PR. `core.rs` stays a partial import wall until then.
+4. **`use super::*` glob: `fold.rs` — now unblocked.** Phase 2 replaced the
+   production `use super::*` wall with explicit imports in `verify.rs`,
+   `root_fold.rs`, and `suffix.rs` (which also let `core.rs` shed the imports
+   that existed only to feed those globs). `fold.rs`'s glob was originally held
+   back because it drives stage-2 and relation evaluation and would have collided
+   with the M-eval PR; with that PR cancelled (see the lifted constraint below),
+   the `fold.rs` de-glob and the `core.rs` wall shed complete Phase 2.
    Test-module `#[cfg(test)] use super::*;` globs are left as idiomatic.
 
-**Hands-off constraint (active).** A separate PR is in flight reworking the
-verifier's **M (relation-matrix) evaluation logic**, which spans `stages/stage2`,
-`stages/stage3`, the setup-contribution artifacts (`protocol/slice_mle/**`,
-`SetupContributionPlan`), and the `ring_switch` evaluator
-(`eval_at_point`/`eval_flat_at_point`). Phases 2+ under this spec must **not**
-touch that surface until the M-eval PR lands; module re-org and de-dup on those
-files is deferred and re-scoped afterward.
+**Hands-off constraint — LIFTED (2026-07-20).** The originally-planned separate
+PR reworking the verifier's **M (relation-matrix) evaluation logic** will not
+land, so that surface — `stages/stage2`, `stages/stage3`, the setup-contribution
+artifacts (`protocol/slice_mle/**`, `SetupContributionPlan`), and the
+`ring_switch` evaluator (`eval_at_point`/`eval_flat_at_point`) — is now **in
+scope** for this spec. This unblocks completing the `fold.rs` de-glob (Phase 2)
+and the `eval_at_point` / stage-2 breakup (Phase 3). The frozen `batched_verify`
+contract and the no-panic / zkVM-guest invariants still bind everywhere.
 
 ## References
 

@@ -1,11 +1,43 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
-use super::*;
-use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
-use akita_types::{
-    build_multi_group_root_stage2_trace_table, dispatch_for_field, DigitRangeEqualityPoint,
-    DigitRangePlan, EXTENSION_OPENING_REDUCTION_DEGREE,
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, MulBaseUnreduced, RandomSampling,
 };
+use akita_serialization::AkitaSerialize;
+use akita_sumcheck::SumcheckInstanceVerifierExt;
+use akita_transcript::labels::{
+    ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION,
+    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_SUMCHECK_CLAIM,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+};
+use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::{
+    assemble_relation_rhs, build_multi_group_root_stage2_trace_table,
+    build_trace_claim_multi_group_root, build_trace_claim_root, build_trace_table_scaled,
+    derive_tensor_extension_opening_claim_from_partials, dispatch_for_field,
+    ensure_trace_stage2_supported, prepare_opening_point,
+    proof::relation::evaluation_trace_row_weight, relation_claim_from_layout_extension,
+    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point,
+    tensor_equality_factor_eval_at_point, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, trace_public_weights_recursive,
+    trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, DigitRangeEqualityPoint,
+    DigitRangePlan, ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding,
+    LevelParams, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
+    SegmentTypedWitness, SetupSumcheckProof, TerminalWitnessTranscriptParts, TraceClaim,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
+};
+
+use crate::protocol::ring_switch::{
+    ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
+};
+use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
+use crate::stages::stage2::AkitaStage2Verifier;
+use crate::stages::SetupSumcheckVerifier;
+
+use super::FoldVerifyOutput;
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,

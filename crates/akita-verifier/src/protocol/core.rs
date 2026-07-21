@@ -5,41 +5,10 @@
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
 mod verify;
-use crate::protocol::ring_switch::{
-    ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
-};
-use crate::stages::stage1::{derive_multi_group_stage1_challenges, AkitaStage1Verifier};
-use crate::stages::stage2::AkitaStage2Verifier;
-use crate::stages::SetupSumcheckVerifier;
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, MulBaseUnreduced, RandomSampling,
-};
-use akita_serialization::AkitaSerialize;
-use akita_sumcheck::SumcheckInstanceVerifierExt;
-use akita_transcript::labels::{
-    ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_RANGE_IMAGE_EVALUATION,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_STAGE3_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
-};
-use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
-use akita_types::derive_tensor_extension_opening_claim_from_partials;
-use akita_types::{
-    assemble_relation_rhs, build_trace_claim_multi_group_root, build_trace_claim_root,
-    build_trace_table_scaled, ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point,
-    tensor_equality_factor_eval_at_point, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_terms_recursive, trace_weight_layout_from_segment,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode,
-    ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, SegmentTypedWitness, SetupSumcheckProof,
-    TerminalWitnessTranscriptParts, TraceClaim,
-};
-use akita_types::{
-    tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_transcript::labels::ABSORB_TERMINAL_E_HAT;
+use akita_transcript::Transcript;
+use akita_types::{SegmentTypedWitness, TerminalWitnessTranscriptParts};
 
 mod fold;
 mod root_fold;
