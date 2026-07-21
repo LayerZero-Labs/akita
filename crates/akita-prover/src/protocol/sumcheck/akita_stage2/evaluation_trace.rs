@@ -1,7 +1,7 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
-use akita_field::{AkitaError, ExtField, FieldCore};
-use akita_types::{basis_weights_prefix, EvaluationTraceWeights, TraceSparseColumn, TraceTable};
+use akita_field::{AkitaError, FieldCore};
+use akita_types::{basis_weights_prefix, EvaluationTraceWeights};
 
 /// One opening block/digit contribution over contiguous common-coordinate columns.
 struct PreparedOpeningSupport<E: FieldCore> {
@@ -10,47 +10,82 @@ struct PreparedOpeningSupport<E: FieldCore> {
     inner_trace_index: usize,
 }
 
+#[derive(Clone)]
+struct PreparedColumnTerm<E: FieldCore> {
+    factor: E,
+    source_index: usize,
+    lane: usize,
+}
+
+struct PreparedTraceSource<E: FieldCore> {
+    values: Vec<E>,
+    lane_count: usize,
+}
+
 /// Canonical prover preparation of the evaluation trace's exact live E support.
 ///
 /// Block, claim, and digit scalars are compiled once. The source-coordinate trace stays
-/// factored so the Stage 2 cutover can contract it directly after initial challenges.
-/// Until that cutover, `into_stage2_fold_table` is the sole bridge to the existing
-/// foldable trace storage.
+/// factored while coefficient coordinates are folded; column challenges then merge the
+/// prepared support directly. No full coefficient-domain trace table is materialized.
 pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
-    opening_support: Vec<PreparedOpeningSupport<E>>,
-    source_inner_traces: Vec<std::sync::Arc<[E]>>,
+    column_terms: Vec<Vec<PreparedColumnTerm<E>>>,
+    sources: Vec<PreparedTraceSource<E>>,
     live_column_count: usize,
-    common_relation_witness_coeff_count: usize,
-    all_source_rings_match_common: bool,
+    coeff_count: usize,
 }
 
 impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
+    #[cfg(test)]
+    pub(crate) fn from_dense(dense: Vec<E>, live_column_count: usize, coeff_count: usize) -> Self {
+        assert_eq!(dense.len(), live_column_count * coeff_count);
+        let mut column_terms = vec![Vec::new(); live_column_count];
+        let sources = dense
+            .chunks_exact(coeff_count)
+            .enumerate()
+            .map(|(column, values)| {
+                column_terms[column].push(PreparedColumnTerm {
+                    factor: E::one(),
+                    source_index: column,
+                    lane: 0,
+                });
+                PreparedTraceSource {
+                    values: values.to_vec(),
+                    lane_count: 1,
+                }
+            })
+            .collect();
+        Self {
+            column_terms,
+            sources,
+            live_column_count,
+            coeff_count,
+        }
+    }
+
     /// Compile checked semantic trace terms into exact opening support.
     #[tracing::instrument(
         skip_all,
         name = "PreparedProverEvaluationTrace::new",
         fields(
             terms = weights.terms().len(),
-            common_relation_witness_coeff_count,
+            coeff_count,
             physical_field_len = weights.physical_field_len()
         )
     )]
     pub(crate) fn new(
         weights: &EvaluationTraceWeights<E>,
-        common_relation_witness_coeff_count: usize,
+        coeff_count: usize,
         output_scale: E,
     ) -> Result<Self, AkitaError> {
-        if common_relation_witness_coeff_count == 0
-            || !common_relation_witness_coeff_count.is_power_of_two()
-            || !weights
-                .physical_field_len()
-                .is_multiple_of(common_relation_witness_coeff_count)
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || !weights.physical_field_len().is_multiple_of(coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "evaluation-trace common-coordinate geometry is malformed".into(),
             ));
         }
-        let live_column_count = weights.physical_field_len() / common_relation_witness_coeff_count;
+        let live_column_count = weights.physical_field_len() / coeff_count;
         let opening_support_count =
             weights
                 .terms()
@@ -77,20 +112,17 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 AkitaError::InvalidInput("evaluation-trace support allocation failed".into())
             })?;
         let mut source_inner_traces = Vec::with_capacity(weights.terms().len());
-        let mut all_source_rings_match_common = true;
         for term in weights.terms() {
             let source_ring_dimension = term.source_ring_dimension();
             if source_ring_dimension == 0
                 || !source_ring_dimension.is_power_of_two()
-                || !source_ring_dimension.is_multiple_of(common_relation_witness_coeff_count)
+                || !source_ring_dimension.is_multiple_of(coeff_count)
                 || term.inner_trace().len() != source_ring_dimension
             {
                 return Err(AkitaError::InvalidSetup(
                     "evaluation-trace source ring is incompatible with Stage 2".into(),
                 ));
             }
-            all_source_rings_match_common &=
-                source_ring_dimension == common_relation_witness_coeff_count;
             let block_weights = basis_weights_prefix(
                 term.block_opening_point(),
                 term.block_opening_basis(),
@@ -145,14 +177,13 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                                     "evaluation-trace digit address overflow".into(),
                                 )
                             })?;
-                        if !coefficient_start.is_multiple_of(common_relation_witness_coeff_count) {
+                        if !coefficient_start.is_multiple_of(coeff_count) {
                             return Err(AkitaError::InvalidSetup(
                                 "evaluation-trace support is not common-coordinate aligned".into(),
                             ));
                         }
-                        let first_column = coefficient_start / common_relation_witness_coeff_count;
-                        let column_count =
-                            source_ring_dimension / common_relation_witness_coeff_count;
+                        let first_column = coefficient_start / coeff_count;
+                        let column_count = source_ring_dimension / coeff_count;
                         let support_end =
                             first_column.checked_add(column_count).ok_or_else(|| {
                                 AkitaError::InvalidSetup(
@@ -177,98 +208,164 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         if opening_support.len() != opening_support_count {
             return Err(AkitaError::InvalidProof);
         }
-        opening_support.sort_unstable_by_key(|support| support.first_column);
+        let sources = source_inner_traces
+            .into_iter()
+            .map(|values| PreparedTraceSource {
+                lane_count: values.len() / coeff_count,
+                values: values.as_ref().to_vec(),
+            })
+            .collect::<Vec<_>>();
+        let mut column_terms = vec![Vec::new(); live_column_count];
+        for support in opening_support {
+            let source = sources
+                .get(support.inner_trace_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            for lane in 0..source.lane_count {
+                let column = support.first_column.checked_add(lane).ok_or_else(|| {
+                    AkitaError::InvalidSetup("evaluation-trace column overflow".into())
+                })?;
+                column_terms
+                    .get_mut(column)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .push(PreparedColumnTerm {
+                        factor: support.factor,
+                        source_index: support.inner_trace_index,
+                        lane,
+                    });
+            }
+        }
         Ok(Self {
-            opening_support,
-            source_inner_traces,
+            column_terms,
+            sources,
             live_column_count,
-            common_relation_witness_coeff_count,
-            all_source_rings_match_common,
+            coeff_count,
         })
     }
 
-    /// Bridge the prepared support to the current Stage 2 state machine.
-    ///
-    /// The bridge preserves the existing scalar/same-ring sparse policy and dense policy
-    /// for extension or mixed source rings. It disappears when Stage 2 consumes prepared
-    /// support directly.
-    #[tracing::instrument(
-        skip_all,
-        name = "PreparedProverEvaluationTrace::into_stage2_fold_table",
-        fields(
-            opening_support = self.opening_support.len(),
-            common_relation_witness_coeff_count = self.common_relation_witness_coeff_count,
-            live_column_count = self.live_column_count
+    #[inline]
+    pub(crate) fn get(&self, column: usize, coefficient: usize, coeff_count: usize) -> E {
+        debug_assert_eq!(self.coeff_count, coeff_count);
+        let Some(terms) = self.column_terms.get(column) else {
+            return E::zero();
+        };
+        terms.iter().fold(E::zero(), |evaluation, term| {
+            let Some(source) = self.sources.get(term.source_index) else {
+                return evaluation;
+            };
+            let index = term.lane * self.coeff_count + coefficient;
+            evaluation
+                + source
+                    .values
+                    .get(index)
+                    .copied()
+                    .map_or_else(E::zero, |value| term.factor * value)
+        })
+    }
+
+    #[inline]
+    pub(crate) fn pair_at_columns(
+        &self,
+        column0: usize,
+        column1: usize,
+        coefficient: usize,
+        coeff_count: usize,
+    ) -> (E, E) {
+        (
+            self.get(column0, coefficient, coeff_count),
+            self.get(column1, coefficient, coeff_count),
         )
-    )]
-    pub(crate) fn into_stage2_fold_table<F>(self) -> Result<TraceTable<E>, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F>,
-    {
-        let sparse = E::EXT_DEGREE == 1 && self.all_source_rings_match_common;
-        if !sparse {
-            let physical_field_len = self
-                .live_column_count
-                .checked_mul(self.common_relation_witness_coeff_count)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("evaluation-trace fold table length overflow".into())
-                })?;
-            let mut dense = vec![E::zero(); physical_field_len];
-            for support in self.opening_support {
-                let source_inner_trace = self
-                    .source_inner_traces
-                    .get(support.inner_trace_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let coefficient_start = support
-                    .first_column
-                    .checked_mul(self.common_relation_witness_coeff_count)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "evaluation-trace fold table address overflow".into(),
-                        )
-                    })?;
-                let coefficient_end = coefficient_start
-                    .checked_add(source_inner_trace.len())
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "evaluation-trace fold table range overflow".into(),
-                        )
-                    })?;
-                let destination = dense
-                    .get_mut(coefficient_start..coefficient_end)
-                    .ok_or(AkitaError::InvalidProof)?;
-                for (slot, &inner) in destination.iter_mut().zip(source_inner_trace.iter()) {
-                    *slot += support.factor * inner;
+    }
+
+    #[inline]
+    pub(crate) fn pair_flat(&self, index0: usize, index1: usize, coeff_count: usize) -> (E, E) {
+        (
+            self.get(index0 / coeff_count, index0 % coeff_count, coeff_count),
+            self.get(index1 / coeff_count, index1 % coeff_count, coeff_count),
+        )
+    }
+
+    pub(crate) fn quad_at(&self, column: usize, base: usize, coeff_count: usize) -> [E; 4] {
+        std::array::from_fn(|offset| self.get(column, base + offset, coeff_count))
+    }
+
+    pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
+        let actual = self
+            .live_column_count
+            .checked_mul(self.coeff_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("evaluation-trace length overflow".into()))?;
+        if actual != witness_len {
+            return Err(AkitaError::InvalidSize {
+                expected: witness_len,
+                actual,
+            });
+        }
+        if self.column_terms.len() != self.live_column_count
+            || self.sources.iter().any(|source| {
+                source.values.len() != source.lane_count.saturating_mul(self.coeff_count)
+            })
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+        Ok(())
+    }
+
+    pub(crate) fn fold_y(&mut self, challenge: E) {
+        let next_coeff_count = self.coeff_count / 2;
+        for source in &mut self.sources {
+            let mut folded = Vec::with_capacity(source.lane_count * next_coeff_count);
+            for lane in 0..source.lane_count {
+                let start = lane * self.coeff_count;
+                for coefficient in 0..next_coeff_count {
+                    let left = source.values[start + 2 * coefficient];
+                    let right = source.values[start + 2 * coefficient + 1];
+                    folded.push(left + challenge * (right - left));
                 }
             }
-            return Ok(TraceTable::ring_dense(dense));
+            source.values = folded;
         }
+        self.coeff_count = next_coeff_count;
+    }
 
-        let mut columns = Vec::new();
-        for support in self.opening_support {
-            let source_inner_trace = self
-                .source_inner_traces
-                .get(support.inner_trace_index)
-                .ok_or(AkitaError::InvalidProof)?;
-            for (lane, inner_trace) in source_inner_trace
-                .chunks_exact(self.common_relation_witness_coeff_count)
-                .enumerate()
-            {
-                columns.push(TraceSparseColumn {
-                    col: support.first_column + lane,
-                    values: inner_trace
-                        .iter()
-                        .map(|&inner| support.factor * inner)
-                        .collect(),
-                });
-            }
+    pub(crate) fn fold_y2(&mut self, r0: E, r1: E) {
+        self.fold_y(r0);
+        self.fold_y(r1);
+    }
+
+    pub(crate) fn fold_x(&mut self, challenge: E) {
+        let next_live_column_count = self.live_column_count.div_ceil(2);
+        let mut folded = vec![Vec::new(); next_live_column_count];
+        for (column, terms) in self.column_terms.drain(..).enumerate() {
+            let scale = if column % 2 == 0 {
+                E::one() - challenge
+            } else {
+                challenge
+            };
+            let target = &mut folded[column / 2];
+            target.extend(terms.into_iter().map(|mut term| {
+                term.factor *= scale;
+                term
+            }));
         }
-        Ok(TraceTable::field_sparse(
-            columns,
-            self.live_column_count,
-            self.common_relation_witness_coeff_count,
-        ))
+        self.column_terms = folded;
+        self.live_column_count = next_live_column_count;
+    }
+
+    pub(crate) fn fold_for_w_update(&mut self, challenge: E, folding_x_round: bool) {
+        if folding_x_round {
+            self.fold_x(challenge);
+        } else {
+            self.fold_y(challenge);
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn materialize_dense(&self) -> Vec<E> {
+        (0..self.live_column_count)
+            .flat_map(|column| {
+                (0..self.coeff_count)
+                    .map(move |coefficient| self.get(column, coefficient, self.coeff_count))
+            })
+            .collect()
     }
 }
 

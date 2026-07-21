@@ -16,7 +16,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         col_bits: usize,
         ring_bits: usize,
         relation_claim: E,
-        trace_table: TraceTable<E>,
+        evaluation_trace: PreparedProverEvaluationTrace<E>,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let w_evals_compact = w_evals_compact.into();
@@ -71,7 +71,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: relation_matrix_col_evals.len(),
             });
         }
-        trace_table.validate_len(witness_len)?;
+        evaluation_trace.validate_len(witness_len)?;
 
         // Self-consistency check: the materialized relation-weight table must
         // reproduce `relation_claim` (which is established independently by
@@ -110,7 +110,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
             alpha_compact: alpha_evals_y,
             relation_matrix_col_evals_compact: relation_matrix_col_evals,
-            trace_table,
+            evaluation_trace,
             live_x_cols,
             col_bits,
             num_vars,
@@ -280,7 +280,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 w_compact,
                 &self.alpha_compact,
                 &self.relation_matrix_col_evals_compact,
-                &self.trace_table,
+                &self.evaluation_trace,
                 &stage1_point,
                 self.b,
                 self.live_x_cols,

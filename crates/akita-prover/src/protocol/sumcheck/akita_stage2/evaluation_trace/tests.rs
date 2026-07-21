@@ -16,24 +16,23 @@ type F = fp128::Field;
 const D: usize = Cfg::D;
 const NUM_VARIABLES: usize = 16;
 
-fn fold_trace_table_at_point<E: FieldCore>(
-    mut table: TraceTable<E>,
+fn fold_prepared_trace_at_point<E: FieldCore>(
+    mut trace: PreparedProverEvaluationTrace<E>,
     live_len: usize,
-    common_relation_witness_coeff_count: usize,
+    coeff_count: usize,
     point: &[E],
 ) -> E {
-    let ring_bits = common_relation_witness_coeff_count.trailing_zeros() as usize;
-    let mut live_columns = live_len / common_relation_witness_coeff_count;
-    let mut ring_len = common_relation_witness_coeff_count;
+    let ring_bits = coeff_count.trailing_zeros() as usize;
+    let mut live_columns = live_len / coeff_count;
     for &challenge in &point[..ring_bits] {
-        table.fold_y(challenge);
-        ring_len /= 2;
+        trace.fold_y(challenge);
     }
     for &challenge in &point[ring_bits..] {
-        table.fold_x(live_columns, ring_len, challenge);
+        trace.fold_x(challenge);
         live_columns = live_columns.div_ceil(2);
     }
-    table.get(0, 0, 1)
+    assert_eq!(live_columns, 1);
+    trace.get(0, 0, 1)
 }
 
 fn materialize_semantic_trace_oracle<E: FieldCore>(
@@ -140,28 +139,11 @@ where
         .collect::<Vec<_>>();
     let expected_table = materialize_semantic_trace_oracle(&semantic_trace, output_scale);
 
-    for common_relation_witness_coeff_count in [D, D / 2, D / 4] {
-        let prepared = PreparedProverEvaluationTrace::new(
-            &semantic_trace,
-            common_relation_witness_coeff_count,
-            output_scale,
-        )
-        .unwrap();
-        let table = prepared.into_stage2_fold_table::<F>().unwrap();
-        if E::EXT_DEGREE == 1 && common_relation_witness_coeff_count == D {
-            assert!(matches!(&table, TraceTable::FieldSparse(_)));
-        } else {
-            assert!(matches!(&table, TraceTable::RingDense(_)));
-        }
-        assert_eq!(
-            table.materialize_dense(
-                live_len / common_relation_witness_coeff_count,
-                common_relation_witness_coeff_count,
-            ),
-            expected_table,
-        );
-        let folded =
-            fold_trace_table_at_point(table, live_len, common_relation_witness_coeff_count, &point);
+    for coeff_count in [D, D / 2, D / 4] {
+        let prepared =
+            PreparedProverEvaluationTrace::new(&semantic_trace, coeff_count, output_scale).unwrap();
+        assert_eq!(prepared.materialize_dense(), expected_table,);
+        let folded = fold_prepared_trace_at_point(prepared, live_len, coeff_count, &point);
         assert_eq!(
             folded,
             output_scale * semantic_trace.evaluate_at_point(&point).unwrap()

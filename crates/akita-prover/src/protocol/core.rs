@@ -48,7 +48,7 @@ use akita_types::{
     ExtensionOpeningReductionProof, FoldLevelProof, LevelParams, OpeningClaims,
     OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
     RingVec, RingView, Schedule, SegmentTypedWitness, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalLevelProof, TraceTable,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalLevelProof,
 };
 use std::sync::Arc;
 

@@ -90,7 +90,6 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
-use akita_types::TraceTable;
 use std::mem;
 use std::time::Instant;
 
@@ -229,7 +228,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 
     alpha_compact: Vec<E>,
     relation_matrix_col_evals_compact: Vec<E>,
-    trace_table: TraceTable<E>,
+    evaluation_trace: PreparedProverEvaluationTrace<E>,
     live_x_cols: usize,
     col_bits: usize,
     num_vars: usize,
@@ -276,7 +275,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         accumulate_relation_coeffs(rel, w0, dw, p0, p1);
         let y_len = self.alpha_compact.len();
         let (t0, t1) = self
-            .trace_table
+            .evaluation_trace
             .pair_flat(witness_idx0, witness_idx1, y_len);
         accumulate_relation_coeffs(rel, w0, dw, t0, t1);
     }
@@ -296,16 +295,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
         let y_len = self.alpha_compact.len();
         let (t0, t1) = self
-            .trace_table
+            .evaluation_trace
             .pair_flat(witness_idx0, witness_idx1, y_len);
         accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
     }
 
     #[inline]
     pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
-        let y_len = self.alpha_compact.len();
-        self.trace_table
-            .fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
+        self.evaluation_trace.fold_for_w_update(r, folding_x_round);
     }
 }
 

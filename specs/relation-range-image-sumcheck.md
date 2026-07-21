@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | implementation in progress; verifier characterization slice |
+| Status | implementation in progress; atomic Stage 2 trace-consumer cutover |
 | Branch | `quang/relation-range-image-rewrite` |
 | Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
@@ -14,10 +14,10 @@
 
 This document specifies the intended reimplementation of the direct/non-offloaded fused
 sum-check over the digit witness. The current PR head has landed checked geometry,
-relation-weight factorization, prepared evaluation-trace support, and direct mixed-role
-verifier differential coverage. It has **not** yet replaced the existing Stage 2 prover
-state machine, removed its x/y and `TraceTable` representations, or demonstrated genuine
-mixed-role proving end to end.
+relation-weight factorization, prepared evaluation-trace support, direct mixed-role
+verifier differential coverage, and direct consumption of prepared trace support by the
+Stage 2 prover. The trace consumer no longer materializes a `TraceTable`; genuine
+mixed-role proving end to end remains outstanding.
 
 The sum-check has three semantic terms:
 
@@ -400,16 +400,14 @@ claim coefficients, opening points, group/chunk ownership, basis, and source dim
 Each descriptor retains compact chunk geometry shared by every claim in the group, not
 one copy of the prover physical segments per claim. It contracts the rank-one block,
 digit, and inner-coordinate factors in closed form. It must not scan or materialize the
-prover physical trace segments. The current Stage 2 prover compiles
+prover physical trace segments. The Stage 2 prover compiles
 `EvaluationTraceWeights` into the prover-owned `PreparedProverEvaluationTrace`: one
 scaled factor per exact live opening block/digit, one shared source-inner vector per
-claim, and common-coordinate column ranges. `into_stage2_fold_table` then adapts that
-support to the existing foldable `TraceTable` policy: scalar same-dimension claims use
-sparse
-columns, while extension or mixed-dimension claims use one exact-live flat dense table.
-The prepared support survives the fused prover cutover; the bridge and `TraceTable`
-disappear in Step 6. Deleted historical trace implementations may remain only under
-`cfg(test)` as differential oracles.
+claim, and common-coordinate column ranges. Coefficient rounds fold each shared source
+trace once per lane; column rounds merge only live prepared terms. The former
+`into_stage2_fold_table` bridge is deleted, and production proving no longer allocates
+an exact-live flat coefficient table for the trace term. Deleted historical trace
+implementations may remain only under `cfg(test)` as differential oracles.
 
 The implementation differential-tests the current coordinate algebra against the direct
 E-linear formula. Where the packing map admits the expected adjoint, each inner vector is

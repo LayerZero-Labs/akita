@@ -666,10 +666,10 @@ where
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
         source_ring_dimension = ring_d,
-        common_relation_witness_coeff_count = 1usize << rs.ring_bits,
+        coeff_count = 1usize << rs.ring_bits,
     )
     .entered();
-    let trace_compact = dispatch_for_field!(
+    let evaluation_trace = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         ring_d,
@@ -689,8 +689,7 @@ where
                 &semantic_trace,
                 1usize << rs.ring_bits,
                 evaluation_trace_weight,
-            )?
-            .into_stage2_fold_table::<F>()
+            )
         }
     )?;
     drop(trace_preparation_span);
@@ -707,7 +706,7 @@ where
         &stage1_point,
         range_image_evaluation,
         relation_claim,
-        trace_compact,
+        evaluation_trace,
         trace_opening_claim,
         relation_range_image_plan,
     )
@@ -914,7 +913,7 @@ fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
-    trace_compact: TraceTable<E>,
+    evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
 ) -> Result<Stage2ProveResult<E>, AkitaError>
@@ -961,7 +960,7 @@ where
         derived_col_bits,
         rs.ring_bits,
         relation_claim,
-        trace_compact,
+        evaluation_trace,
         trace_opening_claim,
     )
     .map_err(|err| {

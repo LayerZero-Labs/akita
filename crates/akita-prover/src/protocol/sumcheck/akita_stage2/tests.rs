@@ -4,7 +4,6 @@ use super::*;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::pad_compact_witness;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128Offset275;
-use akita_types::{TraceSparseColumn, TraceTable};
 
 type F = Prime128Offset275;
 
@@ -101,7 +100,11 @@ fn new_stage2_test_prover(
         params.col_bits,
         params.ring_bits,
         direct.relation,
-        TraceTable::ring_dense(zero_trace_weights),
+        PreparedProverEvaluationTrace::from_dense(
+            zero_trace_weights,
+            params.live_x_cols,
+            1usize << params.ring_bits,
+        ),
         F::zero(),
     )
     .unwrap()
@@ -135,42 +138,11 @@ pub(super) fn new_stage2_test_prover_with_trace(
         params.col_bits,
         params.ring_bits,
         direct.relation,
-        TraceTable::ring_dense(trace_compact),
-        direct.evaluation_trace,
-    )
-    .unwrap()
-}
-
-pub(super) fn new_stage2_test_prover_with_trace_table(
-    batching_coeff: F,
-    w_compact: Vec<i8>,
-    alpha_evals_y: Vec<F>,
-    relation_matrix_col_evals: Vec<F>,
-    trace_table: TraceTable<F>,
-    trace_claim_table: &[F],
-    params: Stage2Params<'_>,
-) -> AkitaStage2Prover<F> {
-    let direct = direct_relation_range_image_evaluation(
-        batching_coeff,
-        &w_compact,
-        &alpha_evals_y,
-        &relation_matrix_col_evals,
-        trace_claim_table,
-        &params,
-    );
-    AkitaStage2Prover::new(
-        batching_coeff,
-        w_compact,
-        params.stage1_point,
-        direct.range_image,
-        params.b,
-        alpha_evals_y,
-        relation_matrix_col_evals,
-        params.live_x_cols,
-        params.col_bits,
-        params.ring_bits,
-        direct.relation,
-        trace_table,
+        PreparedProverEvaluationTrace::from_dense(
+            trace_compact,
+            params.live_x_cols,
+            1usize << params.ring_bits,
+        ),
         direct.evaluation_trace,
     )
     .unwrap()
@@ -666,6 +638,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
+    expected.evaluation_trace.fold_y2(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -758,6 +731,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
+    expected.evaluation_trace.fold_y2(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
