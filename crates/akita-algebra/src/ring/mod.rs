@@ -7,6 +7,7 @@ pub mod partial_split_ntt;
 
 pub use crt_ntt_repr::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
+    MixedCrtNtt, MixedCrtNttParamSet,
 };
 pub use cyclotomic::{CyclotomicRing, WideCyclotomicRing};
 pub use eval::{

@@ -49,6 +49,20 @@ The safe accumulation width \\( n_{\mathrm{safe}} \\) before a pointwise
 accumulator can overflow the CRT range, and capacity-aware chunking with
 intermediate Garner reconstruction.
 
+For a matrix width `W`, ring degree `D`, centered matrix coefficients bounded
+by `floor(q/2)`, and signed RHS coefficients bounded by `B`, centered CRT
+reconstruction is unique exactly under the implemented strict bound
+
+```text
+2 * W * D * floor(q/2) * B < product(CRT primes).
+```
+
+Balanced base `2^L` digits have `B = 2^(L-1)`. Bases through 8 use i8. The
+large-basis arithmetic path uses i16 for bases 9 through 16 and appends a 12289
+residue only when the existing field profile fails the bound. The extra prime
+supports every protocol ring degree and is a derived, non-serialized cache
+artifact; ordinary i8 schedules neither build it nor pay its memory cost.
+
 **Sources to fold in**
 
 - Paper App B.2.4 `sec:akita-crt-capacity`.

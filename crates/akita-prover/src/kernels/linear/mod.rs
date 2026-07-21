@@ -6,7 +6,7 @@ use akita_algebra::ntt::avx::{self, AvxNttMode};
 use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
@@ -28,6 +28,7 @@ mod decompose;
 mod digits;
 mod fused_quotients;
 mod i8_matvec;
+mod mixed_i16;
 mod ntt_matvec;
 mod single_cyclic;
 #[cfg(test)]
@@ -54,6 +55,7 @@ use digits::*;
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
 use i8_matvec::*;
+pub use mixed_i16::mat_vec_mul_mixed_ntt_digits_i16;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8_trusted;
 pub use ntt_matvec::{
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_digits_i8_strided,

@@ -2,14 +2,16 @@
 
 use akita_algebra::ntt::butterfly::{forward_ntt, inverse_ntt, NttTwiddles};
 use akita_algebra::tables::{
-    q128_primes, q32_garner, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES,
+    q128_primes, q32_garner, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_MODULUS, Q32_NUM_PRIMES,
+    Q32_PRIMES,
 };
 use akita_algebra::{
-    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, MontCoeff, PackedPartialSplitEval16,
-    PartialSplitEval16, PartialSplitNtt16,
+    CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, MixedCrtNtt,
+    MixedCrtNttParamSet, MontCoeff, PackedPartialSplitEval16, PartialSplitEval16,
+    PartialSplitNtt16,
 };
 use akita_field::packed::HasPacking;
-use akita_field::{Fp64, HalvingField, Prime128Offset159};
+use akita_field::{Fp64, HalvingField, Prime128Offset159, Prime128OffsetA7F7};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 
 type F = Fp64<{ Q32_MODULUS }>;
@@ -18,9 +20,15 @@ type N = CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, 64>;
 type F128 = Prime128Offset159;
 type R128 = CyclotomicRing<F128, 32>;
 type N128 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 32>;
+type MixedN128 = MixedCrtNtt<Q128_NUM_PRIMES, 32>;
 type PF128 = <F128 as HasPacking>::Packing;
+type ProductionF128 = Prime128OffsetA7F7;
+type ProductionR128D64 = CyclotomicRing<ProductionF128, 64>;
+type ProductionN128D64 = CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, 64>;
+type ProductionMixedN128D64 = MixedCrtNtt<Q128_NUM_PRIMES, 64>;
 const CACHE_MAT_ROWS: usize = 8;
 const CACHE_MAT_COLS: usize = 16;
+const PRODUCTION_CACHE_MAT_COLS: usize = 128;
 const MUL_BATCH_FACTORS: [usize; 3] = [1, 4, 16];
 
 fn sample_ring(seed: u64) -> R {
@@ -53,8 +61,45 @@ fn sample_centered_i8(seed: u64) -> [i8; 32] {
     })
 }
 
+fn sample_centered_i16(seed: u64) -> [i16; 32] {
+    std::array::from_fn(|i| {
+        let x = seed
+            .wrapping_mul(43)
+            .wrapping_add((i as u64).wrapping_mul(17));
+        (x % 2048) as i16 - 1024
+    })
+}
+
 fn sample_ring_q128m159_tag(seed: u64, tag: u64) -> R128 {
     sample_ring_q128m159(seed.wrapping_mul(131).wrapping_add(tag))
+}
+
+fn sample_production_ring_q128_d64(seed: u64) -> ProductionR128D64 {
+    let coeffs = std::array::from_fn(|i| {
+        let x = seed
+            .wrapping_mul(29)
+            .wrapping_add((i as u64).wrapping_mul(13));
+        ProductionF128::from_i64((x % 257) as i64 - 128)
+    });
+    ProductionR128D64::from_coefficients(coeffs)
+}
+
+fn sample_production_i8_d64(seed: u64) -> [i8; 64] {
+    std::array::from_fn(|i| {
+        let x = seed
+            .wrapping_mul(43)
+            .wrapping_add((i as u64).wrapping_mul(17));
+        ((x % 256) as i16 - 128) as i8
+    })
+}
+
+fn sample_production_i16_d64(seed: u64) -> [i16; 64] {
+    std::array::from_fn(|i| {
+        let x = seed
+            .wrapping_mul(43)
+            .wrapping_add((i as u64).wrapping_mul(17));
+        (x % 2048) as i16 - 1024
+    })
 }
 
 fn pack_split_batch(batch: &[PartialSplitEval16<F128>]) -> Vec<PackedPartialSplitEval16<PF128>> {
@@ -87,6 +132,21 @@ fn bench_ntt_single_prime_round_trip(c: &mut Criterion) {
             forward_ntt(&mut a, prime, &tw);
             inverse_ntt(&mut a, prime, &tw);
             black_box(a)
+        })
+    });
+}
+
+fn bench_ntt_i16_tail_round_trip(c: &mut Criterion) {
+    let prime = I16_TAIL_PRIME;
+    let tw = NttTwiddles::<i16, 64>::compute(prime);
+    let base: [MontCoeff<i16>; 64] =
+        std::array::from_fn(|i| prime.from_canonical(((i * 5 + 7) as i16) % prime.p));
+    c.bench_function("ntt_i16_tail_forward_inverse_d64", |b| {
+        b.iter(|| {
+            let mut values = base;
+            forward_ntt(&mut values, prime, &tw);
+            inverse_ntt(&mut values, prime, &tw);
+            black_box(values)
         })
     });
 }
@@ -672,10 +732,232 @@ fn bench_crt_simd_cached_matvec_i8_rhs_q128m159(c: &mut Criterion) {
     );
 }
 
+fn bench_mixed_crt_cached_matvec_i16_rhs_q128m159(c: &mut Criterion) {
+    let params = MixedCrtNttParamSet::new(
+        CrtNttParamSet::new(q128_primes()),
+        CrtNttParamSet::new([I16_TAIL_PRIME]),
+    );
+    let matrix: Vec<Vec<MixedN128>> = (0..CACHE_MAT_ROWS)
+        .map(|row| {
+            (0..CACHE_MAT_COLS)
+                .map(|column| {
+                    MixedN128::from_ring(
+                        &sample_ring_q128m159_tag(23, (row * CACHE_MAT_COLS + column) as u64),
+                        &params,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let vector: Vec<MixedN128> = (0..CACHE_MAT_COLS)
+        .map(|column| MixedN128::from_i16(&sample_centered_i16(41 + column as u64), &params))
+        .collect();
+
+    c.bench_function(
+        "ring_mixed_crt_ntt_cached_matvec_i16_rhs_d32_q128m159_k5_plus_i16",
+        |b| {
+            b.iter(|| {
+                let out: Vec<R128> = matrix
+                    .iter()
+                    .map(|row| {
+                        let mut accumulator = MixedN128::zero();
+                        for (matrix_entry, vector_entry) in row.iter().zip(vector.iter()) {
+                            accumulator.add_assign_pointwise_mul(
+                                matrix_entry,
+                                black_box(vector_entry),
+                                &params,
+                            );
+                        }
+                        accumulator.to_ring(&params)
+                    })
+                    .collect();
+                black_box(out)
+            })
+        },
+    );
+}
+
+fn bench_crt_cached_dot_components_q128m159(c: &mut Criterion) {
+    let wide_params = CrtNttParamSet::new(q128_primes());
+    let mixed_params =
+        MixedCrtNttParamSet::new(wide_params.clone(), CrtNttParamSet::new([I16_TAIL_PRIME]));
+    let wide_matrix: Vec<N128> = (0..CACHE_MAT_COLS)
+        .map(|column| {
+            N128::from_ring_with_params(&sample_ring_q128m159_tag(23, column as u64), &wide_params)
+        })
+        .collect();
+    let wide_vector: Vec<N128> = (0..CACHE_MAT_COLS)
+        .map(|column| {
+            N128::from_i8_with_params(&sample_centered_i8(41 + column as u64), &wide_params)
+        })
+        .collect();
+    let mixed_matrix: Vec<MixedN128> = (0..CACHE_MAT_COLS)
+        .map(|column| {
+            MixedN128::from_ring(&sample_ring_q128m159_tag(23, column as u64), &mixed_params)
+        })
+        .collect();
+    let mixed_vector: Vec<MixedN128> = (0..CACHE_MAT_COLS)
+        .map(|column| MixedN128::from_i16(&sample_centered_i16(41 + column as u64), &mixed_params))
+        .collect();
+    let mut wide_product = N128::zero();
+    let mut mixed_product = MixedN128::zero();
+    for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
+        wide_product.add_assign_pointwise_mul_with_params(matrix_entry, vector_entry, &wide_params);
+    }
+    for (matrix_entry, vector_entry) in mixed_matrix.iter().zip(&mixed_vector) {
+        mixed_product.add_assign_pointwise_mul(matrix_entry, vector_entry, &mixed_params);
+    }
+
+    c.bench_function("ring_crt_ntt_cached_dot_pointwise_d32_q128m159_k5", |b| {
+        b.iter(|| {
+            let mut accumulator = N128::zero();
+            for (matrix_entry, vector_entry) in wide_matrix.iter().zip(&wide_vector) {
+                accumulator.add_assign_pointwise_mul_with_params(
+                    matrix_entry,
+                    black_box(vector_entry),
+                    &wide_params,
+                );
+            }
+            black_box(accumulator)
+        })
+    });
+    c.bench_function(
+        "ring_mixed_crt_ntt_cached_dot_pointwise_d32_q128m159_k5_plus_i16",
+        |b| {
+            b.iter(|| {
+                let mut accumulator = MixedN128::zero();
+                for (matrix_entry, vector_entry) in mixed_matrix.iter().zip(&mixed_vector) {
+                    accumulator.add_assign_pointwise_mul(
+                        matrix_entry,
+                        black_box(vector_entry),
+                        &mixed_params,
+                    );
+                }
+                black_box(accumulator)
+            })
+        },
+    );
+    c.bench_function("ring_crt_ntt_reconstruct_d32_q128m159_k5", |b| {
+        b.iter(|| black_box(&wide_product).to_ring_with_params::<F128>(&wide_params))
+    });
+    c.bench_function(
+        "ring_mixed_crt_ntt_reconstruct_d32_q128m159_k5_plus_i16",
+        |b| b.iter(|| black_box(&mixed_product).to_ring::<F128>(&mixed_params)),
+    );
+}
+
+fn bench_digit_lut_i8_range_q128m159(c: &mut Criterion) {
+    let params: CrtNttParamSet<i32, Q128_NUM_PRIMES, 32> = CrtNttParamSet::new(q128_primes());
+    let mut group = c.benchmark_group("digit_mont_lut_q128m159_k5");
+    group.bench_function("construct_l6", |b| {
+        b.iter(|| DigitMontLut::new_with_digit_bound(black_box(&params), 32))
+    });
+    group.bench_function("construct_l8", |b| {
+        b.iter(|| DigitMontLut::new_with_digit_bound(black_box(&params), 128))
+    });
+    group.finish();
+}
+
+fn bench_production_crt_cached_matvec_d64_q128a7f7(c: &mut Criterion) {
+    let wide_params: CrtNttParamSet<i32, Q128_NUM_PRIMES, 64> = CrtNttParamSet::new(q128_primes());
+    let mixed_params =
+        MixedCrtNttParamSet::new(wide_params.clone(), CrtNttParamSet::new([I16_TAIL_PRIME]));
+    let wide_matrix: Vec<Vec<ProductionN128D64>> = (0..CACHE_MAT_ROWS)
+        .map(|row| {
+            (0..PRODUCTION_CACHE_MAT_COLS)
+                .map(|column| {
+                    ProductionN128D64::from_ring_with_params(
+                        &sample_production_ring_q128_d64(
+                            23 + (row * PRODUCTION_CACHE_MAT_COLS + column) as u64,
+                        ),
+                        &wide_params,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let wide_vector: Vec<ProductionN128D64> = (0..PRODUCTION_CACHE_MAT_COLS)
+        .map(|column| {
+            ProductionN128D64::from_i8_with_params(
+                &sample_production_i8_d64(41 + column as u64),
+                &wide_params,
+            )
+        })
+        .collect();
+    let mixed_matrix: Vec<Vec<ProductionMixedN128D64>> = (0..CACHE_MAT_ROWS)
+        .map(|row| {
+            (0..PRODUCTION_CACHE_MAT_COLS)
+                .map(|column| {
+                    ProductionMixedN128D64::from_ring(
+                        &sample_production_ring_q128_d64(
+                            23 + (row * PRODUCTION_CACHE_MAT_COLS + column) as u64,
+                        ),
+                        &mixed_params,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let mixed_vector: Vec<ProductionMixedN128D64> = (0..PRODUCTION_CACHE_MAT_COLS)
+        .map(|column| {
+            ProductionMixedN128D64::from_i16(
+                &sample_production_i16_d64(41 + column as u64),
+                &mixed_params,
+            )
+        })
+        .collect();
+
+    c.bench_function(
+        "ring_crt_ntt_cached_matvec_i8_rhs_d64_q128a7f7_8x128_k5",
+        |b| {
+            b.iter(|| {
+                let out: Vec<ProductionR128D64> = wide_matrix
+                    .iter()
+                    .map(|row| {
+                        let mut accumulator = ProductionN128D64::zero();
+                        for (matrix_entry, vector_entry) in row.iter().zip(&wide_vector) {
+                            accumulator.add_assign_pointwise_mul_with_params(
+                                matrix_entry,
+                                black_box(vector_entry),
+                                &wide_params,
+                            );
+                        }
+                        accumulator.to_ring_with_params(&wide_params)
+                    })
+                    .collect();
+                black_box(out)
+            })
+        },
+    );
+    c.bench_function(
+        "ring_mixed_crt_ntt_cached_matvec_i16_rhs_d64_q128a7f7_8x128_k5_plus_i16",
+        |b| {
+            b.iter(|| {
+                let out: Vec<ProductionR128D64> = mixed_matrix
+                    .iter()
+                    .map(|row| {
+                        let mut accumulator = ProductionMixedN128D64::zero();
+                        for (matrix_entry, vector_entry) in row.iter().zip(&mixed_vector) {
+                            accumulator.add_assign_pointwise_mul(
+                                matrix_entry,
+                                black_box(vector_entry),
+                                &mixed_params,
+                            );
+                        }
+                        accumulator.to_ring(&mixed_params)
+                    })
+                    .collect();
+                black_box(out)
+            })
+        },
+    );
+}
+
 criterion_group!(
     ring_ntt,
     bench_ring_schoolbook_mul,
     bench_ntt_single_prime_round_trip,
+    bench_ntt_i16_tail_round_trip,
     bench_crt_round_trip,
     bench_ring_schoolbook_mul_q128m159,
     bench_partial_split_mul_q128m159,
@@ -693,6 +975,10 @@ criterion_group!(
     bench_crt_simd_cached_matvec_q128m159,
     bench_partial_split_cached_matvec_i8_rhs_q128m159,
     bench_partial_split_packed_cached_matvec_i8_rhs_q128m159,
-    bench_crt_simd_cached_matvec_i8_rhs_q128m159
+    bench_crt_simd_cached_matvec_i8_rhs_q128m159,
+    bench_mixed_crt_cached_matvec_i16_rhs_q128m159,
+    bench_crt_cached_dot_components_q128m159,
+    bench_digit_lut_i8_range_q128m159,
+    bench_production_crt_cached_matvec_d64_q128a7f7
 );
 criterion_main!(ring_ntt);

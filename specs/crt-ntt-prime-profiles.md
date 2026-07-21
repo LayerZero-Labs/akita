@@ -216,11 +216,16 @@ larger ring degree.
     Protocol code must continue to request operations such as dense commit rows,
     digit rows, cyclic rows, and ring-switch relation rows, not inspect
     backend-specific buffers.
-13. Production CRT profiles are homogeneous in limb width (`i16` or `i32`) unless
-    a later measured experiment proves a mixed-width profile is worth the added
+13. Base production CRT profiles are homogeneous in limb width. The optional
+    exactness tail is the measured exception: one 12289/i16 residue is appended
+    only when the canonical accumulation bound requires it, preserving the
+    base cache for i8 schedules while adding 10--25% rather than another 30-bit
+    limb. A later experiment may replace this choice only if it proves a
+    different mixed-width profile is worth the added
     representation complexity.
-    The current `CyclotomicCrtNtt<W, K, D>` and `CrtNttParamSet<W, K, D>` model
-    assume one `W` per profile, and SIMD kernels assume homogeneous lanes.
+    Each component `CyclotomicCrtNtt<W, K, D>` remains homogeneous; the mixed
+    representation composes an i32 prefix and an i16 tail so each SIMD kernel
+    still sees native homogeneous lanes.
 14. `MAX_CRT_RING_DEGREE = 256`; `D in {32, 64, 128, 256}` are the only supported
     ring degrees.
     Every i16 NTT prime must satisfy `512 | (p - 1)` (a primitive `2 * 256`-th

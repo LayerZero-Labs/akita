@@ -19,7 +19,7 @@ use akita_schedules::{
 use akita_types::SisModulusProfileId;
 
 #[cfg(feature = "schedules-default")]
-const MAX_I8_LOG_BASIS: u32 = 6;
+const MAX_I8_LOG_BASIS: u32 = 8;
 #[cfg(feature = "schedules-default")]
 const RAW_I8_RHS_MAX_ABS: u64 = 128;
 #[test]

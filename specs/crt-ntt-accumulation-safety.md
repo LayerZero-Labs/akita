@@ -9,6 +9,77 @@
 
 ## Summary
 
+### 2026-07 large-basis extension
+
+The original fix deliberately kept all balanced digits in i8. The inner
+commitment decomposition now has an arithmetic capability for larger bases
+without changing existing schedules: balanced base `2^L` digits use i8 for
+`1 <= L <= 8` and signed i16 for `9 <= L <= 16`.
+
+The exact coefficient bound is
+
+```text
+2 * W * D * floor(q / 2) * B < P
+```
+
+where `B = 2^(L-1)` for balanced digits. `select_crt_ntt_capability` evaluates
+that strict inequality with overflow-safe multi-limb arithmetic. It retains the
+base i32 profile when sufficient and otherwise appends exactly one residue
+modulo 12289. The tail prime has `v2(p - 1) = 12`, hence supports every Akita
+negacyclic degree through `D = 2048`. A schedule that fits the base product does
+not construct tail twiddles, transforms, or matrix cache entries.
+
+At each field tier's maximum ring degree, the resulting safe matrix widths are:
+
+| field profile | D | base 10 | base 10 + tail | base 11 | base 11 + tail |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Q32/2xi32 | 2048 | 255 | 3,145,624 | 127 | 1,572,812 |
+| Q64/3xi32 | 1024 | 127 | 1,572,760 | 63 | 786,380 |
+| Q128/5xi32 | 512 | 15 | 196,592 | 7 | 98,296 |
+
+The physical representation is mixed rather than pretending all primes have a
+common machine width: the existing `CyclotomicCrtNtt<i32, K, D>` prefix and one
+`CyclotomicCrtNtt<i16, 1, D>` tail. Mixed Garner reconstruction computes the
+prefix digits with the existing table, one cross-prime tail digit, and Horner
+accumulation directly in the target field. This adds exactly two bytes per
+cached coefficient only when selected (25% Q32, 16.7% Q64, 10% Q128).
+
+Release Criterion measurements on Apple Silicon/NEON provide the current
+backend baseline (the committed `ring_ntt` benchmark is reproducible on x86 to
+collect AVX2/AVX-512 numbers). The end-to-end comparison uses the production
+`Prime128OffsetA7F7` field, `D = 64`, and an 8-by-128 cached matvec; 128
+accumulated columns cross the base-profile exactness boundary for base 10 and
+therefore exercise a schedule for which the tail is actually relevant.
+
+| operation | base | i16/mixed | delta |
+| --- | ---: | ---: | ---: |
+| one D64 forward+inverse residue | i32: 196.1 ns | i16/12289: 264.9 ns | 1.35x per residue |
+| production Q128 D64 cached 8x128 matvec | 5xi32+i8: 281-360 us | 5xi32+1xi16+i16: 321-395 us | +9.8% to +14.0% |
+
+The NEON implementation uses eight direct i16 lanes for independent pointwise
+Montgomery products, but retains widening four-lane chains inside the
+dependency-heavy NTT butterflies: applying the eight-lane `sqdmulh` form to the
+whole transform regressed the D64 round trip by about 8%. Mixed reconstruction
+precomputes the affine final Garner digit and performs one modular reduction
+per coefficient instead of `K` dependent reductions; this improved the
+diagnostic D32 mixed reconstruction by 10.5% and its cached matvec by 5.5%.
+The remaining production overhead is paid only after the exactness selector
+chooses the tail. These measurements do not establish x86 performance: the
+AVX2 low/high-half transform and pointwise tests/benchmarks are present, but
+must run on an x86 host before making an x86 throughput claim.
+
+The D64 absolute timings were bimodal across macOS scheduler/core placement,
+so the table reports two adjacent base/mixed trial pairs rather than treating
+their absolute latency as stable. Their relative overhead is the useful local
+signal; controlled pinned-core CI remains necessary for a release claim.
+
+The i8 cutoff is `L = 8`, not `L = 6`: L7 digits are in `[-64, 63]` and L8
+digits are in `[-128, 127]`. The fixed five-prime Montgomery LUT occupies about
+5 KiB and initializes only its active range. On the same host, construction was
+about 0.315 us for L6 and 0.713 us for L8. Keeping L7/L8 on this path avoids the
+tail representation entirely; the planner may choose these bases once they are
+Pareto-optimal even though the current generated schedules still top out at L6.
+
 Several prover linear kernels accumulate products modulo auxiliary CRT primes
 and run Garner reconstruction only once at the end. That is machine-overflow
 safe, but it is semantically exact only while every true integer coefficient
@@ -27,7 +98,7 @@ module, capacity-aware chunking for the affected fused, i8, digit, single-row,
 cyclic, and block-parallel kernels, and local validation/hardening for i8
 `log_basis`, digit lookup, centered lookup, and sparse signed-ring inputs.
 Akita-owned predecomposed digit paths use the validated balanced
-base-`2^log_basis` digit bound (`log_basis <= 6`) for both capacity planning
+base-`2^log_basis` digit bound (`log_basis <= 8`) for both capacity planning
 and the optimized allocation-free per-basis digit LUT. Direct non-LUT `i8`
 conversion remains available for raw arbitrary-byte helpers. The full-field
 generic quotient helper is no longer a production path; the remaining dense CRT
@@ -74,7 +145,7 @@ performance overhead.
 
 - Checked boundaries must reject malformed but type-correct inputs before they
   reach optimized kernels. In particular: `log_basis` values used with i8
-  decomposition must be checked as `1..=6`; LUT-backed digit paths are for
+  decomposition must be checked as `1..=8`; LUT-backed digit paths are for
   balanced `[-2^(log_basis-1), 2^(log_basis-1))` digits. Public APIs that
   receive caller-owned predecomposed digits scan those rows once and reject
   out-of-range digits with `AkitaError`; lower Akita-owned kernels use that
@@ -87,9 +158,9 @@ performance overhead.
 - Capacity planning and LUT sizing must distinguish digit provenance. Raw
   direct digit conversion can handle the full `i8` domain without using the
   balanced LUT. Prover-owned digit planes produced by Akita balanced
-  decomposition use `B = 1 << (log_basis - 1)`, whose worst case is `32` at
-  `log_basis = 6`; the const-generic `DigitMontLut` intentionally covers
-  exactly `2^log_basis` entries. Release code may scan untrusted
+  decomposition use `B = 1 << (log_basis - 1)`, whose worst case is `128` at
+  `log_basis = 8`; `DigitMontLut` has 256 fixed slots and initializes exactly
+  the active `2^log_basis` entries. Release code may scan untrusted
   predecomposed inputs at public boundaries, but hot accumulation loops must
   not allocate or use checked table indexing on every coefficient.
   Recursive-witness rows with `num_digits_inner = 1` are direct signed-i8
@@ -126,9 +197,10 @@ performance overhead.
 
 ### Non-Goals
 
-- Do not widen the Q128 CRT table, add more auxiliary primes, or select a
-  larger CRT product as the primary fix. The bug is unbounded pre-lift work;
-  the fix is to never let work exceed the lift range.
+- Do not widen the Q128 CRT table unconditionally or use a larger CRT product
+  as the fix for unbounded work. The large-basis extension above is a bounded,
+  exactness-selected capability: it materializes one i16 residue only when a
+  concrete `(q, D, W, B)` schedule cannot fit the base product.
 
 - Do not reduce generated schedules, lower supported problem sizes, or change
   planner policy to avoid the bug.
@@ -166,7 +238,7 @@ performance overhead.
 - [x] Block-parallel digit kernels apply the same effective width clamp and
       safety policy as the generic digit kernels, and dispatch only when the
       full effective width is safe.
-- [x] `log_basis > 6` in commitment/prover paths fails with `AkitaError`
+- [x] `log_basis > 8` in commitment/prover paths fails with `AkitaError`
       before reaching i8 decomposition assertions.
 - [x] Understated `z_pre_max_abs` / `z_pre_centered_inf_norm` cannot underplan
       capacity or reach an unchecked centered LUT access. Fused quotient code
@@ -210,7 +282,7 @@ New or updated tests live near the affected code:
   behavior.
 - `crates/akita-pcs/tests/algebra/ntt_crt.rs` for lower-level CRT
   reconstruction capacity and partial-split non-regression tests.
-- `crates/akita-prover/src/api/commitment.rs` tests for `log_basis > 6`
+- `crates/akita-prover/src/api/commitment.rs` tests for `log_basis > 8`
   rejection before decomposition.
 - `crates/akita-prover/src/backend/sparse_ring.rs` tests for the sparse
   signed-unit contract.
@@ -282,12 +354,12 @@ chunk-result matrix when a row/block accumulator can be reused.
 |------|---------------------|-------|------------------------|
 | Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
 | Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | A production full-field CRT quotient path would be unsafe for fp128/Q128 because even one full-field RHS term may not fit. | Remove this as a production path. The file now contains `cfg(test)` dense CRT helpers used only as fixtures. |
-| i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 6` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
+| i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 8` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
 | Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_inner = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route this internal specialization through a no-allocation raw-i8 strided path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
 | Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
 | Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | Fused quotient code computes the actual centered bound once, uses it for capacity/LUT selection, avoids giant LUTs when the bound is too large, and calls unchecked LUT conversion only after the bound proves every coefficient is covered. |
 | Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a fixed-array, const-generic balanced-digit table sized to exactly `2^log_basis` entries. Public predecomposed digit APIs validate caller-owned rows once; lower kernels thread `log_basis` into LUT selection and capacity planning, then use allocation-free unchecked lookup in hot loops. |
-| Commit log basis | `api/commitment.rs`, `protocol/ring_switch.rs`, `protocol/quadratic_equation.rs`, `kernels/linear/ntt_matvec.rs` | Commit validation accepted `1..=128`; i8 decomposition supports `1..=6`. | Centralize `MAX_I8_LOG_BASIS = 6` in `validation.rs` and reject invalid setup/input log bases before decomposition. |
+| Commit log basis | `api/commitment.rs`, `protocol/ring_switch.rs`, `protocol/quadratic_equation.rs`, `kernels/linear/ntt_matvec.rs` | Commit validation accepted `1..=128`; i8 decomposition supports `1..=8`. | Centralize `MAX_I8_LOG_BASIS = 8` in `validation.rs` and reject invalid setup/input log bases before decomposition. |
 | Sparse signed-ring contract | `backend/sparse_ring.rs` | Constructor accepted any nonzero `i8`; commit assumed signed units and used `unreachable!`. | Sparse ring construction now rejects all coefficients except `-1` and `1`, matching the commit path. |
 
 ### Architecture
@@ -330,7 +402,7 @@ Validation fixes should stay local:
 - commitment parameter validation rejects unsupported i8 `log_basis` values;
 - fused centered quotient capacity uses the actual coefficient bound rather
   than trusting caller hints;
-- LUT-backed digit kernels use the `log_basis <= 6` balanced capacity and
+- LUT-backed digit kernels use the `log_basis <= 8` balanced capacity and
   exact per-basis lookup contract, with public predecomposed digit range
   validation before unchecked hot-loop lookup;
 - recursive-witness direct signed-i8 streams do not use the balanced digit
@@ -372,7 +444,7 @@ PR body and summarizes:
 - the measured performance impact and the commands used.
 
 No user-facing README changes are required. The public behavioral changes are
-local error hardening: i8 `log_basis` must be `1..=6`, and sparse ring
+local error hardening: i8 `log_basis` must be `1..=8`, and sparse ring
 coefficients must be signed units.
 
 ## Execution

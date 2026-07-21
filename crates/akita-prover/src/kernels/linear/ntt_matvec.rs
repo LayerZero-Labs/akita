@@ -130,7 +130,7 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
 /// This is the `num_digits_inner = 1` specialization of
 /// [`mat_vec_mul_ntt_i8`]. It skips the `CyclotomicRing -> i8 digit plane`
 /// decomposition entirely because the caller already holds each coefficient as a
-/// balanced digit plane for a validated `log_basis <= 6`.
+/// balanced digit plane for a validated `log_basis <= 8`.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8")]
 pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &PreparedNttSlot<D>,

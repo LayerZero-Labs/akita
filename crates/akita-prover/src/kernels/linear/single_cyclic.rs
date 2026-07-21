@@ -3,7 +3,7 @@ use super::*;
 /// Column-tiled mat-vec for a single pre-decomposed i8 digit vector.
 ///
 /// Same tiling strategy as [`mat_vec_mul_ntt_i8`] but for a single
-/// input vector of i8 digit planes (already decomposed with `log_basis <= 6`).
+/// input vector of i8 digit planes (already decomposed with `log_basis <= 8`).
 /// Tiles the matrix columns to keep each tile in L2, eliminating the full `ntt_vec`
 /// materialization of the non-tiled path.
 /// Tile width is auto-computed from ring parameters and target L2 cache size.

@@ -211,7 +211,7 @@ pub(super) fn mat_vec_mul_i8_block_parallel_with_params_impl<
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(blocks)
         .map(|block| {
@@ -396,7 +396,7 @@ pub(super) fn mat_vec_mul_i8_dense_single_row_with_params<
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let mat_row = &ntt_mat[0];
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     if inner_width <= safe_width && inner_width == max_data_width {
         return cfg_into_iter!(blocks)
@@ -575,7 +575,7 @@ pub(super) fn mat_vec_mul_i8_strided_block_parallel_with_params<
     let digit_bound = balanced_digit_abs_bound(log_basis);
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, digit_bound);
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     cfg_into_iter!(0..num_live_blocks)
         .map(|block_idx| {

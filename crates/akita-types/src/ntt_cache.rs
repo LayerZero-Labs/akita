@@ -2,11 +2,11 @@
 
 use akita_algebra::ntt::prime::PrimeWidth;
 use akita_algebra::ntt::tables::{
-    q128_primes, validate_profile_crt_ring_degree, Q128_MAX_RING_D, Q128_MODULUS, Q128_NUM_PRIMES,
-    Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D, Q64_MODULUS,
-    Q64_NUM_PRIMES, Q64_PRIMES,
+    q128_primes, validate_profile_crt_ring_degree, I16_TAIL_PRIME, Q128_MAX_RING_D, Q128_MODULUS,
+    Q128_NUM_PRIMES, Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D,
+    Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt};
+use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, MixedCrtNtt, MixedCrtNttParamSet};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
@@ -58,6 +58,40 @@ pub enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
     Q128(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
+}
+
+/// Minimum exact CRT representation required by one accumulation schedule.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum CrtAccumulationProfile {
+    /// The field's existing i32 CRT profile is sufficient.
+    Base,
+    /// One additional 12289 residue is required.
+    I16Tail,
+}
+
+/// Exact CRT parameters selected for one accumulation schedule.
+#[derive(Clone)]
+#[allow(missing_docs, clippy::large_enum_variant)]
+pub enum ProtocolCrtNttCapability<const D: usize> {
+    Q32Base(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
+    Q32I16Tail(MixedCrtNttParamSet<Q32_NUM_PRIMES, D>),
+    Q64Base(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
+    Q64I16Tail(MixedCrtNttParamSet<Q64_NUM_PRIMES, D>),
+    Q128Base(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
+    Q128I16Tail(MixedCrtNttParamSet<Q128_NUM_PRIMES, D>),
+}
+
+impl<const D: usize> ProtocolCrtNttCapability<D> {
+    /// Physical residue profile chosen by the exactness bound.
+    #[must_use]
+    pub const fn profile(&self) -> CrtAccumulationProfile {
+        match self {
+            Self::Q32Base(_) | Self::Q64Base(_) | Self::Q128Base(_) => CrtAccumulationProfile::Base,
+            Self::Q32I16Tail(_) | Self::Q64I16Tail(_) | Self::Q128I16Tail(_) => {
+                CrtAccumulationProfile::I16Tail
+            }
+        }
+    }
 }
 
 /// Select the canonical CRT+NTT parameter set for protocol field `F` and degree `D`.
@@ -187,6 +221,89 @@ fn crt_width_is_safe<F: CanonicalField, const D: usize>(
     required < *crt_product
 }
 
+fn crt_product<W: PrimeWidth, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+) -> SmallNat {
+    let mut product = SmallNat::one();
+    for prime in &params.primes {
+        product.mul_u128(prime.p.to_i64() as u128);
+    }
+    product
+}
+
+fn required_profile_for_params<F, W, const K: usize, const D: usize>(
+    params: &CrtNttParamSet<W, K, D>,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<CrtAccumulationProfile, AkitaError>
+where
+    F: CanonicalField,
+    W: PrimeWidth,
+{
+    let mut product = crt_product(params);
+    if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
+        return Ok(CrtAccumulationProfile::Base);
+    }
+    product.mul_u128(I16_TAIL_PRIME.p as u128);
+    if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
+        return Ok(CrtAccumulationProfile::I16Tail);
+    }
+    Err(AkitaError::InvalidSetup(format!(
+        "CRT accumulation exceeds base plus i16-tail capacity for D={D}, width={width}, rhs_abs_bound={rhs_abs_bound}"
+    )))
+}
+
+/// Select the minimum exact CRT parameters for a concrete accumulation.
+///
+/// Exact centered reconstruction requires
+/// `2 * width * D * floor(q/2) * rhs_abs_bound < product(CRT primes)`.
+/// The 12289 tail is constructed only when the base product fails this strict
+/// inequality.
+pub fn select_crt_ntt_capability<F: CanonicalField, const D: usize>(
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<ProtocolCrtNttCapability<D>, AkitaError> {
+    let tail = || CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+    Ok(match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q32(params) => {
+            match required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(
+                &params,
+                width,
+                rhs_abs_bound,
+            )? {
+                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q32Base(params),
+                CrtAccumulationProfile::I16Tail => {
+                    ProtocolCrtNttCapability::Q32I16Tail(MixedCrtNttParamSet::new(params, tail()))
+                }
+            }
+        }
+        ProtocolCrtNttParams::Q64(params) => {
+            match required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(
+                &params,
+                width,
+                rhs_abs_bound,
+            )? {
+                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q64Base(params),
+                CrtAccumulationProfile::I16Tail => {
+                    ProtocolCrtNttCapability::Q64I16Tail(MixedCrtNttParamSet::new(params, tail()))
+                }
+            }
+        }
+        ProtocolCrtNttParams::Q128(params) => {
+            match required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(
+                &params,
+                width,
+                rhs_abs_bound,
+            )? {
+                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q128Base(params),
+                CrtAccumulationProfile::I16Tail => {
+                    ProtocolCrtNttCapability::Q128I16Tail(MixedCrtNttParamSet::new(params, tail()))
+                }
+            }
+        }
+    })
+}
+
 /// Conservative maximum matrix width that one signed CRT accumulator can hold.
 ///
 /// The bound covers all `D` convolution coefficients and centered setup entries:
@@ -207,10 +324,7 @@ pub fn max_safe_crt_accumulation_width<
     if modulus <= 1 || D == 0 {
         return None;
     }
-    let mut crt_product = SmallNat::one();
-    for prime in &params.primes {
-        crt_product.mul_u128(prime.p.to_i64() as u128);
-    }
+    let crt_product = crt_product(params);
     if !crt_width_is_safe::<F, D>(&crt_product, 1, rhs_abs_bound) {
         return None;
     }
@@ -281,6 +395,112 @@ impl<const D: usize> PreparedNttSlot<D> {
             }
         }
     }
+}
+
+/// Prepared negacyclic matrix selected by an exact accumulation bound.
+#[derive(Debug)]
+#[allow(missing_docs, clippy::large_enum_variant)]
+pub enum PreparedNttCapabilitySlot<const D: usize> {
+    Q32Base {
+        neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
+    },
+    Q32I16Tail {
+        neg: Vec<MixedCrtNtt<Q32_NUM_PRIMES, D>>,
+        params: MixedCrtNttParamSet<Q32_NUM_PRIMES, D>,
+    },
+    Q64Base {
+        neg: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
+    },
+    Q64I16Tail {
+        neg: Vec<MixedCrtNtt<Q64_NUM_PRIMES, D>>,
+        params: MixedCrtNttParamSet<Q64_NUM_PRIMES, D>,
+    },
+    Q128Base {
+        neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
+        params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
+    },
+    Q128I16Tail {
+        neg: Vec<MixedCrtNtt<Q128_NUM_PRIMES, D>>,
+        params: MixedCrtNttParamSet<Q128_NUM_PRIMES, D>,
+    },
+}
+
+impl<const D: usize> PreparedNttCapabilitySlot<D> {
+    /// Physical exactness profile materialized by this slot.
+    #[must_use]
+    pub const fn profile(&self) -> CrtAccumulationProfile {
+        match self {
+            Self::Q32Base { .. } | Self::Q64Base { .. } | Self::Q128Base { .. } => {
+                CrtAccumulationProfile::Base
+            }
+            Self::Q32I16Tail { .. } | Self::Q64I16Tail { .. } | Self::Q128I16Tail { .. } => {
+                CrtAccumulationProfile::I16Tail
+            }
+        }
+    }
+
+    /// Exact transform payload size, excluding small parameter tables.
+    #[must_use]
+    pub fn cache_bytes(&self) -> usize {
+        match self {
+            Self::Q32Base { neg, .. } => {
+                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>()
+            }
+            Self::Q32I16Tail { neg, .. } => {
+                neg.len() * core::mem::size_of::<MixedCrtNtt<Q32_NUM_PRIMES, D>>()
+            }
+            Self::Q64Base { neg, .. } => {
+                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>()
+            }
+            Self::Q64I16Tail { neg, .. } => {
+                neg.len() * core::mem::size_of::<MixedCrtNtt<Q64_NUM_PRIMES, D>>()
+            }
+            Self::Q128Base { neg, .. } => {
+                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>()
+            }
+            Self::Q128I16Tail { neg, .. } => {
+                neg.len() * core::mem::size_of::<MixedCrtNtt<Q128_NUM_PRIMES, D>>()
+            }
+        }
+    }
+}
+
+/// Prepare only the negacyclic representation required by an accumulation.
+pub fn build_negacyclic_ntt_capability_slot<F: FieldCore + CanonicalField, const D: usize>(
+    mat: RingMatrixView<'_, F, D>,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<PreparedNttCapabilitySlot<D>, AkitaError> {
+    macro_rules! base {
+        ($params:expr, $variant:ident) => {{
+            let params = $params;
+            let neg = cfg_iter!(mat.as_slice())
+                .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                .collect();
+            PreparedNttCapabilitySlot::$variant { neg, params }
+        }};
+    }
+    macro_rules! tail {
+        ($params:expr, $variant:ident) => {{
+            let params = $params;
+            let neg = cfg_iter!(mat.as_slice())
+                .map(|ring| MixedCrtNtt::from_ring(ring, &params))
+                .collect();
+            PreparedNttCapabilitySlot::$variant { neg, params }
+        }};
+    }
+    Ok(
+        match select_crt_ntt_capability::<F, D>(width, rhs_abs_bound)? {
+            ProtocolCrtNttCapability::Q32Base(params) => base!(params, Q32Base),
+            ProtocolCrtNttCapability::Q32I16Tail(params) => tail!(params, Q32I16Tail),
+            ProtocolCrtNttCapability::Q64Base(params) => base!(params, Q64Base),
+            ProtocolCrtNttCapability::Q64I16Tail(params) => tail!(params, Q64I16Tail),
+            ProtocolCrtNttCapability::Q128Base(params) => base!(params, Q128Base),
+            ProtocolCrtNttCapability::Q128I16Tail(params) => tail!(params, Q128I16Tail),
+        },
+    )
 }
 
 /// Prepare exactly the supplied coefficient-matrix view in negacyclic NTT form.
@@ -628,6 +848,120 @@ mod tests {
         assert_selects_q128::<Prime128Offset159, 32>();
         assert_selects_q128::<Prime128Offset2355, 32>();
         assert_selects_q128::<Prime128Offset275, 256>();
+    }
+
+    fn assert_capability_boundary<F: CanonicalField, const D: usize>(rhs_abs_bound: u64) {
+        let safe_width = match select_crt_ntt_params::<F, D>().expect("base parameters") {
+            ProtocolCrtNttParams::Q32(params) => {
+                max_safe_crt_accumulation_width::<F, _, Q32_NUM_PRIMES, D>(&params, rhs_abs_bound)
+            }
+            ProtocolCrtNttParams::Q64(params) => {
+                max_safe_crt_accumulation_width::<F, _, Q64_NUM_PRIMES, D>(&params, rhs_abs_bound)
+            }
+            ProtocolCrtNttParams::Q128(params) => {
+                max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(&params, rhs_abs_bound)
+            }
+        }
+        .expect("one base term must fit");
+
+        assert_eq!(
+            select_crt_ntt_capability::<F, D>(safe_width, rhs_abs_bound)
+                .expect("base boundary")
+                .profile(),
+            CrtAccumulationProfile::Base
+        );
+        assert_eq!(
+            select_crt_ntt_capability::<F, D>(safe_width + 1, rhs_abs_bound)
+                .expect("tail boundary")
+                .profile(),
+            CrtAccumulationProfile::I16Tail
+        );
+    }
+
+    #[test]
+    fn exact_capability_selects_tail_only_past_base_boundary() {
+        assert_capability_boundary::<Prime32Offset99, 256>(1 << 10);
+        assert_capability_boundary::<Prime64Offset59, 256>(1 << 10);
+        assert_capability_boundary::<Prime128Offset275, 256>(1 << 10);
+    }
+
+    #[test]
+    fn capability_factory_materializes_i16_residue_only_when_required() {
+        const D: usize = 256;
+        let ring = akita_algebra::CyclotomicRing::<Prime64Offset59, D>::zero();
+        let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
+        let view = flat.ring_view::<D>(1, 1).expect("view");
+        let base_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
+        let rhs_abs_bound = 1 << 10;
+        let base_width = max_safe_crt_accumulation_width::<Prime64Offset59, _, Q64_NUM_PRIMES, D>(
+            &base_params,
+            rhs_abs_bound,
+        )
+        .expect("base capacity");
+
+        let base = build_negacyclic_ntt_capability_slot(view, base_width, rhs_abs_bound)
+            .expect("base slot");
+        let tail = build_negacyclic_ntt_capability_slot(view, base_width + 1, rhs_abs_bound)
+            .expect("tail slot");
+        assert_eq!(base.profile(), CrtAccumulationProfile::Base);
+        assert_eq!(tail.profile(), CrtAccumulationProfile::I16Tail);
+        assert_eq!(
+            base.cache_bytes(),
+            D * Q64_NUM_PRIMES * core::mem::size_of::<i32>()
+        );
+        assert_eq!(
+            tail.cache_bytes(),
+            base.cache_bytes() + D * core::mem::size_of::<i16>()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual construction-time measurement"]
+    fn measure_base_and_i16_tail_slot_construction() {
+        fn measure<F: FieldCore + CanonicalField, const D: usize>(label: &str) {
+            let rings = vec![akita_algebra::CyclotomicRing::<F, D>::zero(); 256];
+            let flat = crate::FlatMatrix::from_ring_slice(&rings);
+            let view = flat.ring_view::<D>(1, rings.len()).expect("view");
+            let rhs_abs_bound = 1 << 10;
+            let base_width = match select_crt_ntt_params::<F, D>().expect("params") {
+                ProtocolCrtNttParams::Q32(params) => {
+                    max_safe_crt_accumulation_width::<F, _, Q32_NUM_PRIMES, D>(
+                        &params,
+                        rhs_abs_bound,
+                    )
+                }
+                ProtocolCrtNttParams::Q64(params) => {
+                    max_safe_crt_accumulation_width::<F, _, Q64_NUM_PRIMES, D>(
+                        &params,
+                        rhs_abs_bound,
+                    )
+                }
+                ProtocolCrtNttParams::Q128(params) => {
+                    max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
+                        &params,
+                        rhs_abs_bound,
+                    )
+                }
+            }
+            .expect("base width");
+            let base_start = std::time::Instant::now();
+            let base = build_negacyclic_ntt_capability_slot(view, base_width, rhs_abs_bound)
+                .expect("base");
+            let base_elapsed = base_start.elapsed();
+
+            let tail_start = std::time::Instant::now();
+            let tail = build_negacyclic_ntt_capability_slot(view, base_width + 1, rhs_abs_bound)
+                .expect("base plus tail");
+            let tail_elapsed = tail_start.elapsed();
+            eprintln!(
+                "{label}: base={base_elapsed:?}/{} bytes tail={tail_elapsed:?}/{} bytes",
+                base.cache_bytes(),
+                tail.cache_bytes()
+            );
+        }
+
+        measure::<Prime64Offset59, 256>("Q64 D256 x256");
+        measure::<Prime128Offset275, 256>("Q128 D256 x256");
     }
 
     #[test]
