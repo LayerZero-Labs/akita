@@ -506,8 +506,10 @@ Final merge evidence still required:
       capability tests but not catalog policy/output.
 - [x] Run every locally available cheap repository preflight check on the final
       documentation head; record unavailable tools explicitly.
-- [ ] Complete feature-matrix Clippy, focused, broader, no-panic, and relevant
-      portability checks on the final refactored head.
+- [x] Complete the three CI feature-matrix Clippy configurations on the final
+      implementation tree.
+- [ ] Complete focused, broader, no-panic, and relevant portability checks on
+      the final refactored head.
 - [ ] Update the spec header to the PR number and `implemented` only when every
       required criterion is complete.
 
@@ -684,15 +686,17 @@ weaken the verifier no-panic boundary.
 - The documentation-completion commit passed `cargo fmt --all --check`, both
   Rust line-cap checks, all 28 script unit tests, dependency-hygiene checks for
   `akita-verifier`, `akita-prover`, `akita-config`, `akita-planner`, and
-  `akita-setup`, `typos`, and the documentation guardrails. The guardrail script
-  skipped its optional mdBook build because `mdbook` is not installed.
-- `taplo fmt --check` and `cargo machete --with-metadata` were attempted but
-  could not run because `taplo` and `cargo-machete` are not installed in the
-  local environment.
-- This documentation pass does not rerun the full test suite or Clippy matrix.
-- Full generated-schedule drift, feature-matrix Clippy, broader tests, and
-  portability remain merge-gate evidence rather than claims of this
-  documentation pass.
+  `akita-setup`, `taplo fmt --check`, `typos`, and the documentation guardrails.
+  The guardrail script skipped its optional mdBook build because `mdbook` is
+  not installed.
+- All three CI Clippy configurations passed with warnings denied: the full
+  workspace with `parallel,disk-persistence`, the full workspace without
+  default features, and `akita-field` with `jolt-compat`.
+- `cargo machete --with-metadata` was attempted but could not run because
+  `cargo-machete` is not installed in the local environment.
+- This documentation pass does not rerun the full test suite.
+- Full generated-schedule drift, broader tests, and portability remain
+  merge-gate evidence rather than claims of this documentation pass.
 
 All live commands used as final evidence must be polled to a real exit code.
 
