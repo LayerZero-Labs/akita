@@ -15,7 +15,7 @@ use akita_types::{
 
 use super::{
     verify_fold, verify_fold_eor, FoldVerifyOutput, PreparedFoldPayload, PreparedFoldReplay,
-    PreparedNextWitness, TracePreparation,
+    PreparedNextWitness, RelationReplayInputs, TracePreparation,
 };
 
 /// Verify the folded root proof payload.
@@ -270,15 +270,17 @@ where
     }
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        relation_matrix_row_layout,
         fold_grind_nonce,
-        v: v_storage,
-        opening_shape: opening_batch.clone(),
-        commitment_rows,
-        row_coefficients,
-        group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
-        group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
         w_len,
+        relation: RelationReplayInputs {
+            relation_matrix_row_layout,
+            opening_shape: opening_batch.clone(),
+            v: v_storage,
+            commitment_rows,
+            row_coefficients,
+            group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
+            group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
+        },
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
@@ -435,15 +437,17 @@ where
     }
     let prepared = PreparedFoldReplay {
         lp: root_lp,
-        relation_matrix_row_layout,
         fold_grind_nonce,
-        v: v_storage,
-        opening_shape: opening_batch.clone(),
-        commitment_rows,
-        row_coefficients,
-        group_ring_opening_points,
-        group_ring_multiplier_points,
         w_len,
+        relation: RelationReplayInputs {
+            relation_matrix_row_layout,
+            opening_shape: opening_batch.clone(),
+            v: v_storage,
+            commitment_rows,
+            row_coefficients,
+            group_ring_opening_points,
+            group_ring_multiplier_points,
+        },
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,

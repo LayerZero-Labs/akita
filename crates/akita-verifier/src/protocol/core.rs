@@ -23,7 +23,7 @@ pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPr
 
 pub(in crate::protocol::core) use fold::{
     verify_fold, verify_fold_eor, FoldEorReplay, PreparedFoldPayload, PreparedFoldReplay,
-    PreparedNextWitness, TracePreparation,
+    PreparedNextWitness, RelationReplayInputs, TracePreparation,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

@@ -16,8 +16,8 @@ use akita_types::{
 
 use super::{
     prepare_terminal_witness_replay, verify_fold, verify_fold_eor, FoldEorReplay,
-    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, SetupPrefixOpening,
-    TracePreparation,
+    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, RelationReplayInputs,
+    SetupPrefixOpening, TracePreparation,
 };
 
 /// Verifier state carried between suffix fold levels.
@@ -532,21 +532,23 @@ where
     }
     Ok(PreparedFoldReplay {
         lp,
-        relation_matrix_row_layout,
         fold_grind_nonce,
-        v: v_storage,
-        opening_shape: opening_batch,
-        commitment_rows,
-        row_coefficients,
-        group_ring_opening_points: prepared_points
-            .iter()
-            .map(|point| point.ring_opening_point.clone())
-            .collect(),
-        group_ring_multiplier_points: prepared_points
-            .iter()
-            .map(|point| point.ring_multiplier_point.clone())
-            .collect(),
         w_len,
+        relation: RelationReplayInputs {
+            relation_matrix_row_layout,
+            opening_shape: opening_batch,
+            v: v_storage,
+            commitment_rows,
+            row_coefficients,
+            group_ring_opening_points: prepared_points
+                .iter()
+                .map(|point| point.ring_opening_point.clone())
+                .collect(),
+            group_ring_multiplier_points: prepared_points
+                .iter()
+                .map(|point| point.ring_multiplier_point.clone())
+                .collect(),
+        },
         payload,
         trace: TracePreparation {
             prepared_points: Some(prepared_points),

@@ -249,14 +249,33 @@ where
     })
 }
 
+/// Fully-assembled inputs for one fold's replay, handed to [`verify_fold`] by
+/// each build site (root scalar, multi-group root, suffix). A composition of
+/// cohesive parts rather than a flat field bag: level context (`lp`,
+/// `fold_grind_nonce`, `w_len`), the [`RelationReplayInputs`] that build the
+/// `RingRelationInstance`, the stage/terminal [`PreparedFoldPayload`], and the
+/// fused [`TracePreparation`].
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a LevelParams,
-    pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
-    pub(in crate::protocol::core) v: RingVec<F>,
+    pub(in crate::protocol::core) w_len: usize,
+    pub(in crate::protocol::core) relation: RelationReplayInputs<F, E>,
+    pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
+    pub(in crate::protocol::core) trace: TracePreparation<F, E>,
+}
+
+/// The M-relation replay inputs for one fold: the row layout, the normalized
+/// opening geometry, the opening vector `v` and concatenated commitment rows
+/// (both in M-row order), the public row-batching coefficients, and the
+/// per-group ring opening/multiplier points. Grouped out of
+/// [`PreparedFoldReplay`] because they are exactly the inputs consumed to
+/// assemble the `RingRelationInstance` (and reused for the relation claim).
+pub(in crate::protocol::core) struct RelationReplayInputs<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
     /// groups for multi-group roots).
     pub(in crate::protocol::core) opening_shape: OpeningClaimsLayout,
+    pub(in crate::protocol::core) v: RingVec<F>,
     /// Sent commitment rows concatenated in M-row (final-first
     /// `root_group_order`) order — the single group's rows for scalar/suffix
     /// folds, `concat_g u_g` for multi-group roots. Matches the prover's
@@ -268,9 +287,6 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) group_ring_opening_points: Vec<RingOpeningPoint<F>>,
     /// Per-group ring multiplier points in `OpeningClaims` order.
     pub(in crate::protocol::core) group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
-    pub(in crate::protocol::core) w_len: usize,
-    pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
-    pub(in crate::protocol::core) trace: TracePreparation<F, E>,
 }
 
 /// Fused evaluation-trace inputs for one fold, grouped out of
@@ -788,30 +804,34 @@ where
 {
     let _span = tracing::info_span!("fold_validate_inputs").entered();
     let role_dims = prepared.lp.role_dims();
-    let num_groups = prepared.opening_shape.num_groups();
+    let num_groups = prepared.relation.opening_shape.num_groups();
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Outer),
         F,
         role_dims.d_b(),
-        |D| prepared.commitment_rows.as_ring_slice::<D>().map(|_| ())
+        |D| prepared
+            .relation
+            .commitment_rows
+            .as_ring_slice::<D>()
+            .map(|_| ())
     )?;
     prepared
         .lp
         .fold_witness_grind_batch_contract(
-            &prepared.opening_shape,
+            &prepared.relation.opening_shape,
             FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
         )?
         .validate_nonce(prepared.fold_grind_nonce)?;
-    if !prepared.v.coeffs().is_empty() {
+    if !prepared.relation.v.coeffs().is_empty() {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             role_dims.d_d(),
-            |D| prepared.v.as_ring_slice::<D>().map(|_| ())
+            |D| prepared.relation.v.as_ring_slice::<D>().map(|_| ())
         )?;
     }
-    if prepared.group_ring_opening_points.len() != num_groups
-        || prepared.group_ring_multiplier_points.len() != num_groups
+    if prepared.relation.group_ring_opening_points.len() != num_groups
+        || prepared.relation.group_ring_multiplier_points.len() != num_groups
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -1023,9 +1043,9 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let opening_shape = prepared.opening_shape.clone();
+    let opening_shape = prepared.relation.opening_shape.clone();
     let num_groups = opening_shape.num_groups();
-    let commitment_rows = &prepared.commitment_rows;
+    let commitment_rows = &prepared.relation.commitment_rows;
     let role_dims = prepared.lp.role_dims();
     let _fold_span = tracing::info_span!(
         "verify_fold",
@@ -1041,12 +1061,12 @@ where
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
         derive_multi_group_stage1_challenges::<F, T>(
             transcript,
-            prepared.v.coeffs(),
+            prepared.relation.v.coeffs(),
             role_dims.d_d(),
             role_dims.d_a(),
             &opening_shape,
             prepared.lp,
-            prepared.relation_matrix_row_layout,
+            prepared.relation.relation_matrix_row_layout,
             prepared.fold_grind_nonce,
         )?
     };
@@ -1058,31 +1078,31 @@ where
             role_dims.d_a(),
             |D| {
                 RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
-                    &prepared.row_coefficients,
+                    &prepared.relation.row_coefficients,
                 )
             }
         )?;
         let relation_rhs_layout = relation_rhs_layout_for(
             prepared.lp,
             &opening_shape,
-            prepared.relation_matrix_row_layout,
+            prepared.relation.relation_matrix_row_layout,
         )?;
         let relation_rhs = assemble_relation_rhs::<F>(
             role_dims,
             &relation_rhs_layout,
-            &prepared.v,
+            &prepared.relation.v,
             commitment_rows,
         )?;
         let relation_instance = RingRelationInstance::new(
-            prepared.relation_matrix_row_layout,
+            prepared.relation.relation_matrix_row_layout,
             group_challenges,
-            prepared.group_ring_opening_points,
-            prepared.group_ring_multiplier_points,
+            prepared.relation.group_ring_opening_points,
+            prepared.relation.group_ring_multiplier_points,
             opening_shape.clone(),
             gamma,
             row_coefficient_rings,
             relation_rhs,
-            prepared.v,
+            prepared.relation.v,
             role_dims,
         )?;
         relation_instance.check_v_shape_for_level(prepared.lp)?;
@@ -1099,9 +1119,9 @@ where
                     transcript,
                     &relation_instance,
                     prepared.lp,
-                    prepared.relation_matrix_row_layout,
+                    prepared.relation.relation_matrix_row_layout,
                     &prepared.trace,
-                    &prepared.row_coefficients,
+                    &prepared.relation.row_coefficients,
                     final_witness,
                     terminal_replay,
                 );
@@ -1125,7 +1145,7 @@ where
     let ring_switch_replay = RingSwitchReplay {
         setup: &setup.expanded,
         relation: &relation_instance,
-        row_coefficients: &prepared.row_coefficients,
+        row_coefficients: &prepared.relation.row_coefficients,
         lp: prepared.lp,
         opening_source_len: next_opening_source_len,
         opening_ring_dim: next_witness_ring_dim,
@@ -1168,8 +1188,8 @@ where
     let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript)?;
     let trace_wire = build_trace_wire::<F, E>(
         prepared.lp,
-        prepared.relation_matrix_row_layout,
-        &prepared.row_coefficients,
+        prepared.relation.relation_matrix_row_layout,
+        &prepared.relation.row_coefficients,
         &prepared.trace,
         &relation_instance,
         &rs,
