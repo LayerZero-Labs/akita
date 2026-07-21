@@ -22,15 +22,15 @@ fn fold_prepared_trace_at_point<E: FieldCore>(
     point: &[E],
 ) -> E {
     let coefficient_bits = coeff_count.trailing_zeros() as usize;
-    let mut live_columns = live_len / coeff_count;
+    let mut live_lanes = live_len / coeff_count;
     for &challenge in &point[..coefficient_bits] {
         trace.fold_coefficients(challenge);
     }
     for &challenge in &point[coefficient_bits..] {
         trace.fold_lanes(challenge);
-        live_columns = live_columns.div_ceil(2);
+        live_lanes = live_lanes.div_ceil(2);
     }
-    assert_eq!(live_columns, 1);
+    assert_eq!(live_lanes, 1);
     trace.get(0, 0, 1)
 }
 

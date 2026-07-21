@@ -324,14 +324,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn compute_round_compact_prefix_x_polys(
-        &self,
-        w_compact: &[i8],
-    ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_prefix_x_terms(w_compact);
-        self.polys_from_terms(virt_q_coeffs, rel_coeffs)
-    }
-
     #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,

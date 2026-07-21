@@ -27,11 +27,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage2_b4_quad_lookup_index_from_column(column: &[i8], base: usize) -> usize {
-        let d0 = stage2_b4_w_digit(column[base]);
-        let d1 = stage2_b4_w_digit(column[base + 1]);
-        let d2 = stage2_b4_w_digit(column[base + 2]);
-        let d3 = stage2_b4_w_digit(column[base + 3]);
+    pub(super) fn stage2_b4_quad_lookup_index_from_column(
+        lane_values: &[i8],
+        base: usize,
+    ) -> usize {
+        let d0 = stage2_b4_w_digit(lane_values[base]);
+        let d1 = stage2_b4_w_digit(lane_values[base + 1]);
+        let d2 = stage2_b4_w_digit(lane_values[base + 2]);
+        let d3 = stage2_b4_w_digit(lane_values[base + 3]);
         d0 | (d1 << 2) | (d2 << 4) | (d3 << 6)
     }
 
@@ -56,11 +59,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline(always)]
-    pub(super) fn stage2_b8_quad_lookup_index_from_column(column: &[i8], base: usize) -> usize {
-        let d0 = stage2_b8_w_digit(column[base]);
-        let d1 = stage2_b8_w_digit(column[base + 1]);
-        let d2 = stage2_b8_w_digit(column[base + 2]);
-        let d3 = stage2_b8_w_digit(column[base + 3]);
+    pub(super) fn stage2_b8_quad_lookup_index_from_column(
+        lane_values: &[i8],
+        base: usize,
+    ) -> usize {
+        let d0 = stage2_b8_w_digit(lane_values[base]);
+        let d1 = stage2_b8_w_digit(lane_values[base + 1]);
+        let d2 = stage2_b8_w_digit(lane_values[base + 2]);
+        let d3 = stage2_b8_w_digit(lane_values[base + 3]);
         d0 | (d1 << 3) | (d2 << 6) | (d3 << 9)
     }
 
@@ -96,20 +102,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         debug_assert!(coeff_count >= 4);
         let next_coeff_count = coeff_count >> 2;
         let mut out = vec![E::zero(); live_lane_count * next_coeff_count];
-        for x in 0..live_lane_count {
-            let src_start = x * coeff_count;
-            let dst_start = x * next_coeff_count;
-            let column = &w_compact[src_start..src_start + coeff_count];
+        for lane in 0..live_lane_count {
+            let src_start = lane * coeff_count;
+            let dst_start = lane * next_coeff_count;
+            let lane_values = &w_compact[src_start..src_start + coeff_count];
             for (quad_y, dst) in out[dst_start..dst_start + next_coeff_count]
                 .iter_mut()
                 .enumerate()
             {
                 let base = 4 * quad_y;
                 *dst = Self::direct_fold_w_quad_to_round2(
-                    column[base],
-                    column[base + 1],
-                    column[base + 2],
-                    column[base + 3],
+                    lane_values[base],
+                    lane_values[base + 1],
+                    lane_values[base + 2],
+                    lane_values[base + 3],
                     r0,
                     r1,
                 );
@@ -141,14 +147,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
     fn add_trace_pair_to_relation_factor(
         evaluation_trace: &PreparedProverEvaluationTrace<E>,
-        x: usize,
+        lane: usize,
         left: usize,
         coeff_count: usize,
         p0: &mut E,
         p1: &mut E,
     ) {
-        *p0 += evaluation_trace.get(x, left, coeff_count);
-        *p1 += evaluation_trace.get(x, left + 1, coeff_count);
+        *p0 += evaluation_trace.get(lane, left, coeff_count);
+        *p1 += evaluation_trace.get(lane, left + 1, coeff_count);
     }
 
     #[tracing::instrument(
@@ -192,18 +198,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = out
                 .par_chunks_mut(next_coeff_count)
                 .enumerate()
-                .map(|(x, column_out)| {
-                    let column_start = x * coeff_count;
-                    let column = &w_compact[column_start..column_start + coeff_count];
-                    let m = relation_lane_weights[x];
-                    let j_base = x * current_coefficient_half;
+                .map(|(lane, lane_out)| {
+                    let lane_start = lane * coeff_count;
+                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_weight = relation_lane_weights[lane];
+                    let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 2];
                     let mut rel = [E::zero(); 3];
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base,
+                            equality_address_base,
                             blk,
                             num_first,
                             first_bits,
@@ -212,25 +218,26 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for coefficient_pair in blk..blk_end {
+                            let j_low =
+                                (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
-                            let base = 8 * pair_y;
-                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
-                            column_out[left] = w0;
-                            column_out[left + 1] = w1;
+                            let left = 2 * coefficient_pair;
+                            let base = 8 * coefficient_pair;
+                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            lane_out[left] = w0;
+                            lane_out[left + 1] = w1;
                             let dw = w1 - w0;
 
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * m;
-                            let mut p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * lane_weight;
+                            let mut p1 = alpha_round2[left + 1] * lane_weight;
                             Self::add_trace_pair_to_relation_factor(
                                 trace_round2,
-                                x,
+                                lane,
                                 left,
                                 next_coeff_count,
                                 &mut p0,
@@ -264,16 +271,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 2];
                 let mut rel = [E::zero(); 3];
-                for (x, column_out) in out.chunks_mut(next_coeff_count).enumerate() {
-                    let column_start = x * coeff_count;
-                    let column = &w_compact[column_start..column_start + coeff_count];
-                    let m = relation_lane_weights[x];
-                    let j_base = x * current_coefficient_half;
+                for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
+                    let lane_start = lane * coeff_count;
+                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_weight = relation_lane_weights[lane];
+                    let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base,
+                            equality_address_base,
                             blk,
                             num_first,
                             first_bits,
@@ -282,25 +289,26 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 2];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for coefficient_pair in blk..blk_end {
+                            let j_low =
+                                (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
-                            let base = 8 * pair_y;
-                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
-                            column_out[left] = w0;
-                            column_out[left + 1] = w1;
+                            let left = 2 * coefficient_pair;
+                            let base = 8 * coefficient_pair;
+                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            lane_out[left] = w0;
+                            lane_out[left + 1] = w1;
                             let dw = w1 - w0;
 
                             inner_virt[0] += e_in * (w0 * (w0 + E::one()));
                             inner_virt[1] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * m;
-                            let mut p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * lane_weight;
+                            let mut p1 = alpha_round2[left + 1] * lane_weight;
                             Self::add_trace_pair_to_relation_factor(
                                 trace_round2,
-                                x,
+                                lane,
                                 left,
                                 next_coeff_count,
                                 &mut p0,
@@ -324,18 +332,18 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = out
                 .par_chunks_mut(next_coeff_count)
                 .enumerate()
-                .map(|(x, column_out)| {
-                    let column_start = x * coeff_count;
-                    let column = &w_compact[column_start..column_start + coeff_count];
-                    let m = relation_lane_weights[x];
-                    let j_base = x * current_coefficient_half;
+                .map(|(lane, lane_out)| {
+                    let lane_start = lane * coeff_count;
+                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_weight = relation_lane_weights[lane];
+                    let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 3];
                     let mut rel = [E::zero(); 3];
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base,
+                            equality_address_base,
                             blk,
                             num_first,
                             first_bits,
@@ -344,15 +352,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for coefficient_pair in blk..blk_end {
+                            let j_low =
+                                (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
-                            let base = 8 * pair_y;
-                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
-                            column_out[left] = w0;
-                            column_out[left + 1] = w1;
+                            let left = 2 * coefficient_pair;
+                            let base = 8 * coefficient_pair;
+                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            lane_out[left] = w0;
+                            lane_out[left + 1] = w1;
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -360,11 +369,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * m;
-                            let mut p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * lane_weight;
+                            let mut p1 = alpha_round2[left + 1] * lane_weight;
                             Self::add_trace_pair_to_relation_factor(
                                 trace_round2,
-                                x,
+                                lane,
                                 left,
                                 next_coeff_count,
                                 &mut p0,
@@ -399,16 +408,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let (virt_coeffs, rel_coeffs) = {
                 let mut virt = [E::zero(); 3];
                 let mut rel = [E::zero(); 3];
-                for (x, column_out) in out.chunks_mut(next_coeff_count).enumerate() {
-                    let column_start = x * coeff_count;
-                    let column = &w_compact[column_start..column_start + coeff_count];
-                    let m = relation_lane_weights[x];
-                    let j_base = x * current_coefficient_half;
+                for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
+                    let lane_start = lane * coeff_count;
+                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_weight = relation_lane_weights[lane];
+                    let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
 
                     while blk < current_coefficient_half {
                         let (j_high, blk_end) = stage2_eq_block(
-                            j_base,
+                            equality_address_base,
                             blk,
                             num_first,
                             first_bits,
@@ -417,15 +426,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         );
                         let mut inner_virt = [E::zero(); 3];
 
-                        for pair_y in blk..blk_end {
-                            let j_low = (j_base + pair_y) & (num_first - 1);
+                        for coefficient_pair in blk..blk_end {
+                            let j_low =
+                                (equality_address_base + coefficient_pair) & (num_first - 1);
                             let e_in = e_first[j_low];
-                            let left = 2 * pair_y;
-                            let base = 8 * pair_y;
-                            let w0 = quad_fold_lut[quad_index_fn(column, base)];
-                            let w1 = quad_fold_lut[quad_index_fn(column, base + 4)];
-                            column_out[left] = w0;
-                            column_out[left + 1] = w1;
+                            let left = 2 * coefficient_pair;
+                            let base = 8 * coefficient_pair;
+                            let w0 = quad_fold_lut[quad_index_fn(lane_values, base)];
+                            let w1 = quad_fold_lut[quad_index_fn(lane_values, base + 4)];
+                            lane_out[left] = w0;
+                            lane_out[left + 1] = w1;
                             let dw = w1 - w0;
                             let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -433,11 +443,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                             inner_virt[1] += e_in * (dw * two_w0_plus_one);
                             inner_virt[2] += e_in * (dw * dw);
 
-                            let mut p0 = alpha_round2[left] * m;
-                            let mut p1 = alpha_round2[left + 1] * m;
+                            let mut p0 = alpha_round2[left] * lane_weight;
+                            let mut p1 = alpha_round2[left + 1] * lane_weight;
                             Self::add_trace_pair_to_relation_factor(
                                 trace_round2,
-                                x,
+                                lane,
                                 left,
                                 next_coeff_count,
                                 &mut p0,

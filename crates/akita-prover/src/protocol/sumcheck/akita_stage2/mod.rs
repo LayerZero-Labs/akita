@@ -5,8 +5,8 @@
 //! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
 //! index the largest coefficient block aligned for both every relation role and
 //! the outgoing witness ring representation; the remaining coordinates index
-//! relation lanes and padded witness capacity. Any remaining x and y kernel
-//! names refer only to that point partition.
+//! relation lanes and padded witness capacity. Kernel names use only coefficient
+//! and lane geometry.
 //!
 //! Let `common_alpha` be the multilinear extension of
 //! `[1, alpha, ..., alpha^(common_relation_witness_coeff_count - 1)]`. Let the
@@ -244,13 +244,13 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
+mod coefficient_prefix;
 mod dense_terms;
 mod evaluation_trace;
+mod lane_prefix;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
-mod x_prefix;
-mod y_prefix;
 
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
 

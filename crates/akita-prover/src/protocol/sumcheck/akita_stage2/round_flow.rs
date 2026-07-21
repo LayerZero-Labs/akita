@@ -30,14 +30,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 WTable::Compact(w_compact) => {
                     if use_partial_lane_coefficient_round {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_compact_prefix_y_terms(w_compact);
+                            self.compute_compact_partial_lane_coefficient_round_terms(w_compact);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else if use_partial_lane_round {
-                        let (virt_poly, rel_poly) =
-                            self.compute_round_compact_prefix_x_polys(w_compact);
-                        let combined = self.combine_polys(&virt_poly, &rel_poly);
-                        self.prev_norm_poly = Some(virt_poly);
-                        combined
+                        let (virt_terms, rel_coeffs) =
+                            self.compute_compact_partial_lane_round_terms(w_compact);
+                        self.combine_terms(virt_terms, rel_coeffs)
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
                             self.compute_round_compact_dense_terms(w_compact);
@@ -47,11 +45,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 WTable::Full(w_full) => {
                     if use_partial_lane_coefficient_round {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_prefix_y_terms(w_full);
+                            self.compute_full_partial_lane_coefficient_round_terms(w_full);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else if use_partial_lane_round {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_prefix_x_terms(w_full);
+                            self.compute_full_partial_lane_round_terms(w_full);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
@@ -210,7 +208,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             WTable::Compact(w_compact) => {
                 let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
                 let w_full = if folding_lane_round && use_partial_lane_round {
-                    Self::fold_compact_prefix_x(&w_compact, live_lane_count, coeff_count, &fold_lut)
+                    Self::fold_compact_partial_lanes(
+                        &w_compact,
+                        live_lane_count,
+                        coeff_count,
+                        &fold_lut,
+                    )
                 } else {
                     Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
@@ -221,23 +224,23 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 if folding_lane_round && use_partial_lane_round {
                     if fuse_next_full_partial_lane {
                         // Fold trace before the fused kernel so relation terms use the same
-                        // post-fold table as `compute_round_full_prefix_x_terms`.
+                        // post-fold table as `compute_full_partial_lane_round_terms`.
                         self.fold_evaluation_trace_for_current_round(r);
                         let (next_w_full, next_relation_lane_weights, virt_terms, rel_coeffs) =
-                            self.fuse_full_prefix_x_and_compute_round(&w_full, r);
+                            self.fuse_full_partial_lane_fold_and_next_round(&w_full, r);
                         self.relation_lane_weights = next_relation_lane_weights;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                         fused_full_partial_lane = true;
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full =
-                            Self::fold_full_prefix_x(&w_full, live_lane_count, coeff_count, r);
+                            Self::fold_full_partial_lanes(&w_full, live_lane_count, coeff_count, r);
                         self.fold_evaluation_trace_for_current_round(r);
                         WTable::Full(next_w_full)
                     }
                 } else if in_coefficient_round && use_partial_lane_coefficient_round {
                     self.fold_evaluation_trace_for_current_round(r);
-                    WTable::Full(Self::fold_full_prefix_y(
+                    WTable::Full(Self::fold_full_coefficients(
                         &w_full,
                         live_lane_count,
                         coeff_count,
@@ -256,7 +259,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             if use_partial_lane_round {
                 if !fused_full_partial_lane {
                     self.relation_lane_weights =
-                        Self::fold_m_prefix(&self.relation_lane_weights, r);
+                        Self::fold_relation_lane_weights(&self.relation_lane_weights, r);
                 }
             } else {
                 fold_evals_in_place(&mut self.relation_lane_weights, r);

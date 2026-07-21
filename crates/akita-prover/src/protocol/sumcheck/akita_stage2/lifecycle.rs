@@ -85,11 +85,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             let relation_boolean_sum = w_evals_compact
                 .chunks_exact(coeff_count)
                 .zip(&relation_lane_weights)
-                .fold(E::zero(), |acc, (column, &weight)| {
-                    acc + column.iter().zip(&common_alpha_factor).fold(
+                .fold(E::zero(), |acc, (lane_values, &lane_weight)| {
+                    acc + lane_values.iter().zip(&common_alpha_factor).fold(
                         E::zero(),
-                        |column_acc, (&w, &alpha)| {
-                            column_acc + weight * alpha * E::from_i64(i64::from(w))
+                        |lane_acc, (&w, &alpha)| {
+                            lane_acc + lane_weight * alpha * E::from_i64(i64::from(w))
                         },
                     )
                 });

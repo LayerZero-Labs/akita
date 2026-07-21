@@ -166,15 +166,15 @@ where
     })
 }
 
-/// One opening block/digit contribution over contiguous common-coordinate columns.
+/// One opening block/digit contribution over contiguous common-coordinate lanes.
 struct PreparedOpeningSupport<E: FieldCore> {
-    first_column: usize,
+    first_lane: usize,
     factor: E,
     inner_trace_index: usize,
 }
 
 #[derive(Clone)]
-struct PreparedColumnTerm<E: FieldCore> {
+struct PreparedLaneTerm<E: FieldCore> {
     factor: E,
     source_index: usize,
     lane: usize,
@@ -188,27 +188,27 @@ struct PreparedTraceSource<E: FieldCore> {
 /// Canonical prover preparation of the evaluation trace's exact live E support.
 ///
 /// Block, claim, and digit scalars are compiled once. The source-coordinate trace stays
-/// factored while coefficient coordinates are folded; column challenges then merge the
+/// factored while coefficient coordinates are folded; lane challenges then merge the
 /// prepared support directly. No full coefficient-domain trace table is materialized.
 pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
-    column_terms: Vec<Vec<PreparedColumnTerm<E>>>,
+    lane_terms: Vec<Vec<PreparedLaneTerm<E>>>,
     sources: Vec<PreparedTraceSource<E>>,
-    live_column_count: usize,
+    live_lane_count: usize,
     coeff_count: usize,
 }
 
 impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     #[cfg(test)]
-    pub(crate) fn from_dense(dense: Vec<E>, live_column_count: usize, coeff_count: usize) -> Self {
-        assert_eq!(dense.len(), live_column_count * coeff_count);
-        let mut column_terms = vec![Vec::new(); live_column_count];
+    pub(crate) fn from_dense(dense: Vec<E>, live_lane_count: usize, coeff_count: usize) -> Self {
+        assert_eq!(dense.len(), live_lane_count * coeff_count);
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
         let sources = dense
             .chunks_exact(coeff_count)
             .enumerate()
-            .map(|(column, values)| {
-                column_terms[column].push(PreparedColumnTerm {
+            .map(|(lane, values)| {
+                lane_terms[lane].push(PreparedLaneTerm {
                     factor: E::one(),
-                    source_index: column,
+                    source_index: lane,
                     lane: 0,
                 });
                 PreparedTraceSource {
@@ -218,9 +218,9 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             })
             .collect();
         Self {
-            column_terms,
+            lane_terms,
             sources,
-            live_column_count,
+            live_lane_count,
             coeff_count,
         }
     }
@@ -248,7 +248,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 "evaluation-trace common-coordinate geometry is malformed".into(),
             ));
         }
-        let live_column_count = weights.physical_field_len / coeff_count;
+        let live_lane_count = weights.physical_field_len / coeff_count;
         let opening_support_count = weights.terms.iter().try_fold(0usize, |term_count, term| {
             term.segments.iter().try_fold(term_count, |count, segment| {
                 segment
@@ -337,19 +337,19 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                                 "evaluation-trace support is not common-coordinate aligned".into(),
                             ));
                         }
-                        let first_column = coefficient_start / coeff_count;
+                        let first_lane = coefficient_start / coeff_count;
                         let column_count = source_ring_dimension / coeff_count;
                         let support_end =
-                            first_column.checked_add(column_count).ok_or_else(|| {
+                            first_lane.checked_add(column_count).ok_or_else(|| {
                                 AkitaError::InvalidSetup(
                                     "evaluation-trace support range overflow".into(),
                                 )
                             })?;
-                        if support_end > live_column_count {
+                        if support_end > live_lane_count {
                             return Err(AkitaError::InvalidProof);
                         }
                         opening_support.push(PreparedOpeningSupport {
-                            first_column,
+                            first_lane,
                             factor: output_scale * term.coefficient * block_weight * digit_weight,
                             inner_trace_index,
                         });
@@ -370,37 +370,37 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 values: values.as_ref().to_vec(),
             })
             .collect::<Vec<_>>();
-        let mut column_terms = vec![Vec::new(); live_column_count];
+        let mut lane_terms = vec![Vec::new(); live_lane_count];
         for support in opening_support {
             let source = sources
                 .get(support.inner_trace_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            for lane in 0..source.lane_count {
-                let column = support.first_column.checked_add(lane).ok_or_else(|| {
-                    AkitaError::InvalidSetup("evaluation-trace column overflow".into())
+            for source_lane in 0..source.lane_count {
+                let target_lane = support.first_lane.checked_add(source_lane).ok_or_else(|| {
+                    AkitaError::InvalidSetup("evaluation-trace lane overflow".into())
                 })?;
-                column_terms
-                    .get_mut(column)
+                lane_terms
+                    .get_mut(target_lane)
                     .ok_or(AkitaError::InvalidProof)?
-                    .push(PreparedColumnTerm {
+                    .push(PreparedLaneTerm {
                         factor: support.factor,
                         source_index: support.inner_trace_index,
-                        lane,
+                        lane: source_lane,
                     });
             }
         }
         Ok(Self {
-            column_terms,
+            lane_terms,
             sources,
-            live_column_count,
+            live_lane_count,
             coeff_count,
         })
     }
 
     #[inline]
-    pub(crate) fn get(&self, column: usize, coefficient: usize, coeff_count: usize) -> E {
+    pub(crate) fn get(&self, lane: usize, coefficient: usize, coeff_count: usize) -> E {
         debug_assert_eq!(self.coeff_count, coeff_count);
-        let Some(terms) = self.column_terms.get(column) else {
+        let Some(terms) = self.lane_terms.get(lane) else {
             return E::zero();
         };
         terms.iter().fold(E::zero(), |evaluation, term| {
@@ -418,16 +418,16 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     }
 
     #[inline]
-    pub(crate) fn pair_at_columns(
+    pub(crate) fn pair_at_lanes(
         &self,
-        column0: usize,
-        column1: usize,
+        lane0: usize,
+        lane1: usize,
         coefficient: usize,
         coeff_count: usize,
     ) -> (E, E) {
         (
-            self.get(column0, coefficient, coeff_count),
-            self.get(column1, coefficient, coeff_count),
+            self.get(lane0, coefficient, coeff_count),
+            self.get(lane1, coefficient, coeff_count),
         )
     }
 
@@ -439,13 +439,13 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         )
     }
 
-    pub(crate) fn quad_at(&self, column: usize, base: usize, coeff_count: usize) -> [E; 4] {
-        std::array::from_fn(|offset| self.get(column, base + offset, coeff_count))
+    pub(crate) fn quad_at(&self, lane: usize, base: usize, coeff_count: usize) -> [E; 4] {
+        std::array::from_fn(|offset| self.get(lane, base + offset, coeff_count))
     }
 
     pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
         let actual = self
-            .live_column_count
+            .live_lane_count
             .checked_mul(self.coeff_count)
             .ok_or_else(|| AkitaError::InvalidSetup("evaluation-trace length overflow".into()))?;
         if actual != witness_len {
@@ -454,7 +454,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 actual,
             });
         }
-        if self.column_terms.len() != self.live_column_count
+        if self.lane_terms.len() != self.live_lane_count
             || self.sources.iter().any(|source| {
                 source.values.len() != source.lane_count.saturating_mul(self.coeff_count)
             })
@@ -487,30 +487,30 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     }
 
     pub(crate) fn fold_lanes(&mut self, challenge: E) {
-        let next_live_column_count = self.live_column_count.div_ceil(2);
-        let mut folded = vec![Vec::new(); next_live_column_count];
-        for (column, terms) in self.column_terms.drain(..).enumerate() {
-            let scale = if column % 2 == 0 {
+        let next_live_lane_count = self.live_lane_count.div_ceil(2);
+        let mut folded = vec![Vec::new(); next_live_lane_count];
+        for (lane, terms) in self.lane_terms.drain(..).enumerate() {
+            let scale = if lane % 2 == 0 {
                 E::one() - challenge
             } else {
                 challenge
             };
-            let target = &mut folded[column / 2];
+            let target = &mut folded[lane / 2];
             target.extend(terms.into_iter().map(|mut term| {
                 term.factor *= scale;
                 term
             }));
         }
-        self.column_terms = folded;
-        self.live_column_count = next_live_column_count;
+        self.lane_terms = folded;
+        self.live_lane_count = next_live_lane_count;
     }
 
     #[cfg(test)]
     pub(crate) fn materialize_dense(&self) -> Vec<E> {
-        (0..self.live_column_count)
-            .flat_map(|column| {
+        (0..self.live_lane_count)
+            .flat_map(|lane| {
                 (0..self.coeff_count)
-                    .map(move |coefficient| self.get(column, coefficient, self.coeff_count))
+                    .map(move |coefficient| self.get(lane, coefficient, self.coeff_count))
             })
             .collect()
     }

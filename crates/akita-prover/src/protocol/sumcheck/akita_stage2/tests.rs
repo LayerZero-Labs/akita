@@ -57,10 +57,10 @@ fn direct_relation_range_image_evaluation(
     for (physical_index, &digit) in padded.iter().enumerate() {
         let digit = F::from_i64(i64::from(digit));
         range_image += equality_weights[physical_index] * digit * (digit + F::one());
-        let column = physical_index / coeff_count;
+        let lane = physical_index / coeff_count;
         let coefficient = physical_index % coeff_count;
-        relation += digit * common_alpha_factor[coefficient] * relation_lane_weights[column];
-        if column < params.live_lane_count {
+        relation += digit * common_alpha_factor[coefficient] * relation_lane_weights[lane];
+        if lane < params.live_lane_count {
             evaluation_trace += digit * evaluation_trace_weights[physical_index];
         }
     }
@@ -158,9 +158,9 @@ pub(super) fn pad_trace_compact(
     let lane_capacity = 1usize << lane_bits;
     assert_eq!(trace_compact.len(), live_lane_count * coeff_count);
     let mut padded = vec![F::zero(); lane_capacity * coeff_count];
-    for x in 0..live_lane_count {
-        let src = x * coeff_count;
-        let dst = x * coeff_count;
+    for lane in 0..live_lane_count {
+        let src = lane * coeff_count;
+        let dst = lane * coeff_count;
         padded[dst..dst + coeff_count].copy_from_slice(&trace_compact[src..src + coeff_count]);
     }
     padded
@@ -348,7 +348,7 @@ fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniP
     split_eq.gruen_mul(&UniPoly::from_evals(&evals))
 }
 
-fn fold_compact_prefix_x_reference(
+fn fold_compact_partial_lanes_reference(
     w_compact: &[i8],
     live_lane_count: usize,
     coeff_count: usize,
@@ -356,14 +356,14 @@ fn fold_compact_prefix_x_reference(
 ) -> Vec<F> {
     let next_live_lane_count = live_lane_count.div_ceil(2);
     let mut out = vec![F::zero(); coeff_count * next_live_lane_count];
-    for (y, row_out) in out.chunks_mut(next_live_lane_count).enumerate() {
-        let row_start = y * live_lane_count;
-        let row = &w_compact[row_start..row_start + live_lane_count];
-        for (pair_x, dst) in row_out.iter_mut().enumerate() {
-            let left = 2 * pair_x;
-            let w_0 = F::from_i64(row[left] as i64);
+    for (coefficient, row_out) in out.chunks_mut(next_live_lane_count).enumerate() {
+        let coefficient_start = coefficient * live_lane_count;
+        let coefficient_values = &w_compact[coefficient_start..coefficient_start + live_lane_count];
+        for (lane_pair, dst) in row_out.iter_mut().enumerate() {
+            let left = 2 * lane_pair;
+            let w_0 = F::from_i64(coefficient_values[left] as i64);
             let w_1 = if left + 1 < live_lane_count {
-                F::from_i64(row[left + 1] as i64)
+                F::from_i64(coefficient_values[left + 1] as i64)
             } else {
                 F::zero()
             };
@@ -390,8 +390,8 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
     let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_compact_prefix_x(&w_prefix, 5, 2, &fold_lut),
-        fold_compact_prefix_x_reference(&w_prefix, 5, 2, r)
+        AkitaStage2Prover::<F>::fold_compact_partial_lanes(&w_prefix, 5, 2, &fold_lut),
+        fold_compact_partial_lanes_reference(&w_prefix, 5, 2, r)
     );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
@@ -821,14 +821,14 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     };
     let current_relation_lane_weights = expected.relation_lane_weights.clone();
     let current_coeff_count = expected.common_alpha_factor.len();
-    let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_prefix_x(
+    let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_partial_lanes(
         &current_w_full,
         expected.live_lane_count,
         current_coeff_count,
         r2,
     );
     let expected_next_relation_lane_weights =
-        AkitaStage2Prover::<F>::fold_m_prefix(&current_relation_lane_weights, r2);
+        AkitaStage2Prover::<F>::fold_relation_lane_weights(&current_relation_lane_weights, r2);
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()
@@ -839,7 +839,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     expected.rounds_completed += 1;
     expected.relation_lane_weights = expected_next_relation_lane_weights.clone();
     let (virt_terms, rel_coeffs) =
-        expected.compute_round_full_prefix_x_terms(&expected_next_w_full);
+        expected.compute_full_partial_lane_round_terms(&expected_next_w_full);
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
 
     prover.ingest_challenge(2, r2);
