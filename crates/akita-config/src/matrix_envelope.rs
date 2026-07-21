@@ -22,18 +22,24 @@ pub(crate) fn accumulate_matrix_envelope_for_level(
         max_setup_len,
         lp.a_key.row_len(),
         lp.inner_width(),
+        lp.a_key.sis_table_key().ring_dimension as usize,
+        lp.d_a(),
         "A setup",
     )?;
     include_matrix_len(
         max_setup_len,
         lp.b_key.row_len(),
         lp.outer_width(),
+        lp.b_key.sis_table_key().ring_dimension as usize,
+        lp.d_a(),
         "B setup",
     )?;
     include_matrix_len(
         max_setup_len,
         lp.d_key.row_len(),
         lp.d_matrix_width(),
+        lp.d_key.sis_table_key().ring_dimension as usize,
+        lp.d_a(),
         "D setup",
     )?;
     for group in &lp.precommitted_groups {
@@ -41,12 +47,16 @@ pub(crate) fn accumulate_matrix_envelope_for_level(
             max_setup_len,
             group.a_key.row_len(),
             group.inner_width(),
+            group.a_key.sis_table_key().ring_dimension as usize,
+            lp.d_a(),
             "precommitted A setup",
         )?;
         include_matrix_len(
             max_setup_len,
             group.b_key.row_len(),
             group.outer_width(),
+            group.b_key.sis_table_key().ring_dimension as usize,
+            lp.d_a(),
             "precommitted B setup",
         )?;
     }
@@ -64,11 +74,20 @@ fn include_matrix_len(
     max_setup_len: &mut usize,
     rows: usize,
     columns: usize,
+    matrix_ring_dim: usize,
+    envelope_ring_dim: usize,
     role: &'static str,
 ) -> Result<(), AkitaError> {
-    let len = rows
+    if envelope_ring_dim == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{role} envelope ring dimension is zero"
+        )));
+    }
+    let coeff_len = rows
         .checked_mul(columns)
+        .and_then(|len| len.checked_mul(matrix_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} envelope overflow")))?;
+    let len = coeff_len.div_ceil(envelope_ring_dim);
     *max_setup_len = (*max_setup_len).max(len);
     Ok(())
 }

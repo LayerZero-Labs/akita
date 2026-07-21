@@ -176,29 +176,21 @@ where
             params.d_key.col_len()
         )));
     }
-    let setup_len = setup
-        .shared_matrix
-        .total_ring_elements_at_dyn(params.ring_dimension)?;
-    let a_required = params
-        .a_key
-        .row_len()
-        .checked_mul(params.a_key.col_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let b_required = params
-        .b_key
-        .row_len()
-        .checked_mul(params.b_key.col_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let d_required = params
-        .d_key
-        .row_len()
-        .checked_mul(params.d_key.col_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    let required = a_required.max(b_required).max(d_required);
-    if required > setup_len {
-        return Err(AkitaError::InvalidSetup(format!(
-            "commit params require {required} setup ring elements but setup has {setup_len}",
-        )));
+    for (role, key, ring_dim) in [
+        ("A", &params.a_key, dims.d_a()),
+        ("B", &params.b_key, dims.d_b()),
+        ("D", &params.d_key, dims.d_d()),
+    ] {
+        let required = key
+            .row_len()
+            .checked_mul(key.col_len())
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} setup footprint overflow")))?;
+        let available = setup.shared_matrix.total_ring_elements_at_dyn(ring_dim)?;
+        if required > available {
+            return Err(AkitaError::InvalidSetup(format!(
+                "{role}-role commit params require {required} setup ring elements at d={ring_dim}, but setup has {available}",
+            )));
+        }
     }
     Ok(())
 }
@@ -384,6 +376,17 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
+    let gen_ring_dim = backend
+        .prepared_expanded_setup(prepared)
+        .seed()
+        .gen_ring_dim;
+    let mut warmed_ring_dim = gen_ring_dim;
+    for ring_dim in [dims.d_a(), dims.d_b()] {
+        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
+            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
+            warmed_ring_dim = ring_dim;
+        }
+    }
     let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,

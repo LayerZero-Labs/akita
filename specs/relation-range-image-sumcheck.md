@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | implementation in progress; atomic Stage 2 trace-consumer cutover |
+| Status | implementation in progress; direct mixed-role E2E established |
 | Branch | `quang/relation-range-image-rewrite` |
 | Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
@@ -16,8 +16,10 @@ This document specifies the intended reimplementation of the direct/non-offloade
 sum-check over the digit witness. The current PR head has landed checked geometry,
 relation-weight factorization, prepared evaluation-trace support, direct mixed-role
 verifier differential coverage, and direct consumption of prepared trace support by the
-Stage 2 prover. The trace consumer no longer materializes a `TraceTable`; genuine
-mixed-role proving end to end remains outstanding.
+Stage 2 prover. The trace consumer no longer materializes a `TraceTable`. A direct-setup
+root with `d_a/d_b/d_d = 128/64/32` now commits, proves, and verifies through the public
+PCS API with audited role-native SIS ranks; mixed-role multigroup/multichunk coverage and
+the remaining compact-kernel cutover are still outstanding.
 
 The sum-check has three semantic terms:
 
@@ -26,10 +28,10 @@ The sum-check has three semantic terms:
 3. range-image consistency with the independent Stage 1 evaluation.
 
 The goals and acceptance criteria below describe the final PR head, not every additive
-implementation slice. At the current verifier-correction slice, direct mixed-role
-evaluation has W=1/W=2 differential parity, but genuine mixed-role statement construction
-and end-to-end proving remain part of the prover cutover below. Recursive mixed-role setup
-offload is deliberately rejected until the later Stage 3 boundary change.
+implementation slice. Direct mixed-role evaluation has W=1/W=2 differential parity, and
+the public direct-setup roundtrip now fixes the statement-construction contract. Recursive
+mixed-role setup offload remains deliberately rejected until the later Stage 3 boundary
+change.
 
 All three share one transcript lifecycle and checked protocol geometry. The prover owns
 one round-result reducer and the storage it needs to produce messages. The verifier owns

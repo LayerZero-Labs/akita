@@ -314,7 +314,7 @@ fn root_runtime_matrix_len_for_opening_batch(
 ) -> Result<usize, AkitaError> {
     let final_group_index = lp.validate_opening_batch(layout)?;
     let final_group = layout.group_layout(final_group_index)?;
-    let (mut max_a_len, mut max_b_len, mut d_width) = group_setup_footprint(
+    let (a_len, b_len, mut d_width) = group_setup_footprint(
         lp.a_key.row_len(),
         lp.a_key.col_len(),
         lp.b_key.row_len(),
@@ -322,6 +322,12 @@ fn root_runtime_matrix_len_for_opening_batch(
         lp.num_live_blocks,
         lp.num_digits_open,
     )?;
+    let mut max_a_coeff_len = a_len
+        .checked_mul(lp.a_key.sis_table_key().ring_dimension as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("root A setup envelope overflow".into()))?;
+    let mut max_b_coeff_len = b_len
+        .checked_mul(lp.b_key.sis_table_key().ring_dimension as usize)
+        .ok_or_else(|| AkitaError::InvalidSetup("root B setup envelope overflow".into()))?;
 
     for group in &lp.precommitted_groups {
         let (a_len, b_len, group_d_width) = group_setup_footprint(
@@ -332,14 +338,27 @@ fn root_runtime_matrix_len_for_opening_batch(
             group.layout.num_live_blocks,
             group.num_digits_open,
         )?;
-        max_a_len = max_a_len.max(a_len);
-        max_b_len = max_b_len.max(b_len);
+        let a_coeff_len = a_len
+            .checked_mul(group.a_key.sis_table_key().ring_dimension as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group A setup overflow".into()))?;
+        let b_coeff_len = b_len
+            .checked_mul(group.b_key.sis_table_key().ring_dimension as usize)
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group B setup overflow".into()))?;
+        max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
+        max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
         d_width = d_width.checked_add(group_d_width).ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
         })?;
     }
 
-    root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
+    root_setup_len(
+        lp.d_key.row_len(),
+        d_width,
+        lp.d_key.sis_table_key().ring_dimension as usize,
+        max_a_coeff_len,
+        max_b_coeff_len,
+        lp.d_a(),
+    )
 }
 
 fn group_setup_footprint(
@@ -377,13 +396,24 @@ fn group_setup_footprint(
 fn root_setup_len(
     d_rows: usize,
     d_width: usize,
-    max_a_len: usize,
-    max_b_len: usize,
+    d_ring_dim: usize,
+    max_a_coeff_len: usize,
+    max_b_coeff_len: usize,
+    envelope_ring_dim: usize,
 ) -> Result<usize, AkitaError> {
-    let d_len = d_rows
+    if envelope_ring_dim == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "root setup envelope ring dimension is zero".into(),
+        ));
+    }
+    let d_coeff_len = d_rows
         .checked_mul(d_width)
+        .and_then(|len| len.checked_mul(d_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup("root D setup envelope overflow".to_string()))?;
-    Ok(d_len.max(max_a_len).max(max_b_len))
+    Ok(d_coeff_len
+        .max(max_a_coeff_len)
+        .max(max_b_coeff_len)
+        .div_ceil(envelope_ring_dim))
 }
 
 // ---------------------------------------------------------------------------

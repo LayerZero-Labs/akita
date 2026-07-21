@@ -239,26 +239,15 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 "relation factorization requires direct setup contributions".into(),
             ));
         }
-        let common_relation_witness_coeff_count = self
+        let coeff_count = self
             .role_dims
             .common_relation_witness_coeff_count(self.opening_ring_dim);
-        if common_relation_witness_coeff_count == 0
-            || !common_relation_witness_coeff_count.is_power_of_two()
-            || !self
-                .role_dims
-                .d_a()
-                .is_multiple_of(common_relation_witness_coeff_count)
-            || !self
-                .role_dims
-                .d_b()
-                .is_multiple_of(common_relation_witness_coeff_count)
-            || !self
-                .role_dims
-                .d_d()
-                .is_multiple_of(common_relation_witness_coeff_count)
-            || !self
-                .opening_ring_dim
-                .is_multiple_of(common_relation_witness_coeff_count)
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || !self.role_dims.d_a().is_multiple_of(coeff_count)
+            || !self.role_dims.d_b().is_multiple_of(coeff_count)
+            || !self.role_dims.d_d().is_multiple_of(coeff_count)
+            || !self.opening_ring_dim.is_multiple_of(coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "relation and outgoing witness do not admit a common alpha factor".into(),
@@ -267,28 +256,24 @@ impl<E: FieldCore> RelationWeightEvents<E> {
         let opening_field_len = crate::opening_domain_len(self.opening_source_len)?
             .checked_mul(self.opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation lane length overflow".into()))?;
-        let lane_count = opening_field_len / common_relation_witness_coeff_count;
+        let lane_count = opening_field_len / coeff_count;
         let mut relation_lane_weights = vec![E::zero(); lane_count];
         for event in &self.events {
             if !event
                 .physical_coefficients
                 .start
-                .is_multiple_of(common_relation_witness_coeff_count)
+                .is_multiple_of(coeff_count)
                 || !event
                     .physical_coefficients
                     .len()
-                    .is_multiple_of(common_relation_witness_coeff_count)
-                || !event
-                    .alpha_exponent_start
-                    .is_multiple_of(common_relation_witness_coeff_count)
+                    .is_multiple_of(coeff_count)
+                || !event.alpha_exponent_start.is_multiple_of(coeff_count)
             {
                 return Err(AkitaError::InvalidSetup(
                     "relation event does not preserve the common alpha factor".into(),
                 ));
             }
-            for coefficient_offset in
-                (0..event.physical_coefficients.len()).step_by(common_relation_witness_coeff_count)
-            {
+            for coefficient_offset in (0..event.physical_coefficients.len()).step_by(coeff_count) {
                 let physical = event.physical_coefficients.start + coefficient_offset;
                 let opening_column = crate::checked_opening_source_index(
                     self.opening_source_len,
@@ -300,12 +285,12 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("relation lane address overflow".into())
                     })?;
-                if !opening_coefficient.is_multiple_of(common_relation_witness_coeff_count) {
+                if !opening_coefficient.is_multiple_of(coeff_count) {
                     return Err(AkitaError::InvalidSetup(
                         "opening layout breaks relation lane alignment".into(),
                     ));
                 }
-                let lane = opening_coefficient / common_relation_witness_coeff_count;
+                let lane = opening_coefficient / coeff_count;
                 let alpha_exponent = event.alpha_exponent_start + coefficient_offset;
                 let alpha_power = *self
                     .inner_alpha_powers
@@ -318,7 +303,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
         }
         let common_alpha_factor = self
             .inner_alpha_powers
-            .get(..common_relation_witness_coeff_count)
+            .get(..coeff_count)
             .ok_or(AkitaError::InvalidProof)?
             .to_vec();
         Ok(RelationWeightFactorization {

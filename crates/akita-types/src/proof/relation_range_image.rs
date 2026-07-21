@@ -48,7 +48,7 @@ pub struct RelationRangeImagePlan {
     digit_range_plan: DigitRangePlan,
     witness_layout: WitnessLayout,
     role_dims: CommitmentRingDims,
-    common_relation_witness_coeff_count: usize,
+    coeff_count: usize,
     relation_lane_count: usize,
     groups: Vec<RelationRangeImageGroupPlan>,
 }
@@ -85,26 +85,22 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let common_relation_witness_coeff_count =
+        let coeff_count =
             role_dims.common_relation_witness_coeff_count(outgoing_witness_ring_dimension);
-        if common_relation_witness_coeff_count == 0
-            || !common_relation_witness_coeff_count.is_power_of_two()
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
             || !outgoing_witness_ring_dimension.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
                 "relation/range-image joint relation-witness geometry is malformed".into(),
             ));
         }
-        if !digit_witness_domain
-            .live_len()
-            .is_multiple_of(common_relation_witness_coeff_count)
-        {
+        if !digit_witness_domain.live_len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
                 "digit witness is not aligned to the joint relation-witness block".into(),
             ));
         }
-        let relation_lane_count =
-            digit_witness_domain.live_len() / common_relation_witness_coeff_count;
+        let relation_lane_count = digit_witness_domain.live_len() / coeff_count;
         if relation_lane_count == 0 {
             return Err(AkitaError::InvalidSetup(
                 "relation/range-image plan requires a non-empty lane domain".into(),
@@ -184,7 +180,7 @@ impl RelationRangeImagePlan {
             digit_range_plan,
             witness_layout,
             role_dims,
-            common_relation_witness_coeff_count,
+            coeff_count,
             relation_lane_count,
             groups,
         })
@@ -217,14 +213,14 @@ impl RelationRangeImagePlan {
     /// Width of the low coefficient block aligned for both relation alpha
     /// sequences and outgoing witness ring elements.
     #[must_use]
-    pub fn common_relation_witness_coeff_count(&self) -> usize {
-        self.common_relation_witness_coeff_count
+    pub fn coeff_count(&self) -> usize {
+        self.coeff_count
     }
 
     /// Number of aligned low address bits bound before relation-lane coordinates.
     #[must_use]
-    pub fn common_relation_witness_variable_count(&self) -> usize {
-        self.common_relation_witness_coeff_count.trailing_zeros() as usize
+    pub fn coeff_variable_count(&self) -> usize {
+        self.coeff_count.trailing_zeros() as usize
     }
 
     /// Number of live relation lanes after extracting the common alpha factor.
@@ -333,9 +329,9 @@ mod tests {
                         );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
                         assert_eq!(plan.role_dims(), role_dims);
-                        assert_eq!(plan.common_relation_witness_coeff_count(), role_dims.d_d());
+                        assert_eq!(plan.coeff_count(), role_dims.d_d());
                         assert_eq!(
-                            plan.relation_lane_count() * plan.common_relation_witness_coeff_count(),
+                            plan.relation_lane_count() * plan.coeff_count(),
                             plan.digit_witness_domain().live_len()
                         );
                         assert_eq!(plan.groups().len(), group_sizes.len());
@@ -363,9 +359,9 @@ mod tests {
     #[test]
     fn plan_common_block_respects_outgoing_ring_dimension() {
         let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(128), 64, 8);
-        assert_eq!(plan.common_relation_witness_coeff_count(), 64);
+        assert_eq!(plan.coeff_count(), 64);
         assert_eq!(
-            plan.relation_lane_count() * plan.common_relation_witness_coeff_count(),
+            plan.relation_lane_count() * plan.coeff_count(),
             plan.digit_witness_domain().live_len()
         );
     }

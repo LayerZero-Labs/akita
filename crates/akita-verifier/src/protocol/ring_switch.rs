@@ -208,21 +208,21 @@ where
             opening_ring_dim.trailing_zeros() as usize,
         )
     } else {
-        let common_relation_witness_coeff_count = relation
+        let coeff_count = relation
             .role_dims()
             .common_relation_witness_coeff_count(opening_ring_dim);
-        if common_relation_witness_coeff_count == 0
-            || !common_relation_witness_coeff_count.is_power_of_two()
-            || !opening_ring_dim.is_multiple_of(common_relation_witness_coeff_count)
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || !opening_ring_dim.is_multiple_of(coeff_count)
         {
             return Err(AkitaError::InvalidProof);
         }
         let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / common_relation_witness_coeff_count)
+            .checked_mul(opening_ring_dim / coeff_count)
             .ok_or(AkitaError::InvalidProof)?;
         (
             lane_capacity.trailing_zeros() as usize,
-            common_relation_witness_coeff_count.trailing_zeros() as usize,
+            coeff_count.trailing_zeros() as usize,
         )
     };
     let digit_range_equality_low_variable_count = if uniform {
