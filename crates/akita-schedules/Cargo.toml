@@ -20,6 +20,7 @@ default = []
 all-schedules = [
   "schedules-default",
   "fp128-d64-onehot-recursive",
+  "fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "fp128-d64-onehot-tensor",
   "fp128-d64-onehot-multi-chunk",
   "fp128-d64-onehot-multi-chunk-w2r2",
@@ -39,6 +40,7 @@ schedules-default = [
 ]
 fp128-d64-onehot = []
 fp128-d64-onehot-recursive = []
+fp128-d64-onehot-recursive-multi-chunk-w8r2 = []
 fp128-d64-full = []
 fp128-d128-onehot = []
 fp128-d128-full = []
