@@ -547,7 +547,9 @@ sweeping the third:
 | Group | Ring degrees | Ranks | Accumulation widths |
 | --- | --- | --- | --- |
 | `rank_ring_dim` | 32, 64, 128, 256 | 1, 2, 4, 8 | 128 |
-| `width` | 64 | 4 | 8, 16, 32, 64, 128, 256 |
+| `width` | 64 | 4 | 128, 256, 512, 1024 |
+| `equal_output/output256` | 64, 128, 256 | 4, 2, 1 | 128, 256, 512, 1024 |
+| `equal_io/input65536_output256` | 64, 128, 256 | 4, 2, 1 | 1024, 512, 256 |
 
 Each shape measures the existing prover i8/L8 path and the unified signed-i16
 path at L8, L10, and L11. The L8 cases use identical digits and must produce
@@ -557,6 +559,16 @@ tail. Matrix generation and prepared-cache construction are outside the timed
 region. Digit validation and transformation, pointwise matrix accumulation,
 inverse transforms, CRT reconstruction, and output allocation are inside it.
 
+The equal-output group compares D64/rank-4, D128/rank-2, and D256/rank-1,
+which all return 256 field coefficients, at widths 128 through 1024. Its scalar
+input therefore grows with D. `input65536_output256` also fixes the scalar
+input at 65,536 coefficients by using widths 1024, 512, and 256 as D grows.
+Both groups compare i8 and i16 at every common L2..L8 basis, then measure the
+i16-only L10/L11 cases. This separates raw digit storage and conversion effects
+from CRT-tail selection and from changes in the scalar problem size. Criterion
+uses 10 samples, a 200 ms warmup, and a 1 second measurement window to keep the
+large matrix practical.
+
 Criterion reports throughput in coefficient-products, `rank * width * D`, so
 results across shapes can be normalized without hiding their absolute
 latency. Run the complete groups or one representative shape with:
@@ -564,6 +576,8 @@ latency. Run the complete groups or one representative shape with:
 ```bash
 cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
 cargo bench -p akita-pcs --bench ntt_matvec -- width
+cargo bench -p akita-pcs --bench ntt_matvec -- equal_output
+cargo bench -p akita-pcs --bench ntt_matvec -- equal_io
 cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
 ```
 

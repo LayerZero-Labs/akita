@@ -99,13 +99,25 @@ transcript work, and planner policy:
 ```bash
 cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
 cargo bench -p akita-pcs --bench ntt_matvec -- width
+cargo bench -p akita-pcs --bench ntt_matvec -- equal_output
+cargo bench -p akita-pcs --bench ntt_matvec -- equal_io
 ```
 
 The first group sweeps ring degrees 32, 64, 128, and 256 and output ranks 1,
-2, 4, and 8 at width 128. The second sweeps widths 8 through 256 at D64 and
+2, 4, and 8 at width 128. The second sweeps widths 128 through 1024 at D64 and
 rank 4. Every shape includes the current i8/L8 prover path and unified i16
 L8/L10/L11 paths. Labels state whether the exact i16 path uses only the base
 CRT residues or also the optional i16 tail.
+
+The equal-output group compares D64/rank-4, D128/rank-2, and D256/rank-1 at
+widths 128, 256, 512, and 1024. All three return 256 field coefficients, but
+their scalar input sizes differ because each input ring contains D
+coefficients. The equal-I/O group compares D64/rank-4/width-1024,
+D128/rank-2/width-512, and D256/rank-1/width-256. Those shapes fix both the
+input at 65,536 coefficients and the output at 256 coefficients. Both groups
+compare i8 and i16 at common bases L2 through L8 and include i16-only L10 and
+L11 cases. Criterion uses 10 samples, a 200 ms warmup, and a 1 second
+measurement window for these large matrices.
 
 Prepared-cache construction is not timed. The measured work includes digit
 validation and transformation, pointwise accumulation, inverse transforms,
