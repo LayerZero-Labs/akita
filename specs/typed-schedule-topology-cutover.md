@@ -938,7 +938,7 @@ The schedule audit exposes both field-coordinate and serialized-byte
 breakdowns. A scalar count without its ring dimension or digit basis is not a
 sufficient report.
 
-## Root-Only Tensor API
+## Final-Root-Group Tensor API
 
 The current config hook:
 
