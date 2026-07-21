@@ -933,6 +933,64 @@ where
     Ok(trace_wire)
 }
 
+/// Terminal (quotient-free) fold: replay the witness-remainder absorb, then
+/// verify the direct ring relations and the fused trace opening against the
+/// final witness. A terminal fold produces no next-level challenges, so it
+/// returns an empty challenge vector and no carried setup-prefix opening.
+#[allow(clippy::too_many_arguments)]
+fn verify_terminal_fold<F, E, T>(
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    relation_instance: &RingRelationInstance<F>,
+    lp: &LevelParams,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    trace: &TracePreparation<F, E>,
+    row_coefficients: &[E],
+    final_witness: &SegmentTypedWitness<F>,
+    terminal_replay: TerminalWitnessTranscriptParts,
+) -> Result<FoldVerifyOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    T: Transcript<F>,
+{
+    let role_dims = lp.role_dims();
+    let _terminal_span = tracing::info_span!(
+        "verify_terminal_direct_fold",
+        d_a = role_dims.d_a(),
+        d_b = role_dims.d_b(),
+        groups = relation_instance.opening_batch().num_groups()
+    )
+    .entered();
+    if relation_matrix_row_layout != RelationMatrixRowLayout::WithoutCommitmentBlocks {
+        return Err(AkitaError::InvalidProof);
+    }
+    {
+        let _span = tracing::info_span!("terminal_transcript_absorb").entered();
+        transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
+    }
+    super::terminal_direct::verify_terminal_ring_relations(
+        setup,
+        relation_instance,
+        lp,
+        final_witness,
+    )?;
+    super::terminal_direct::verify_terminal_trace(
+        relation_instance,
+        lp,
+        final_witness,
+        trace
+            .prepared_points
+            .as_deref()
+            .ok_or(AkitaError::InvalidProof)?,
+        row_coefficients,
+        trace.claim_scales.as_deref(),
+        trace.eval_scale,
+        trace.eval_target,
+    )?;
+    Ok((Vec::new(), None))
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(in crate::protocol::core) fn verify_fold<F, E, T>(
@@ -1016,46 +1074,17 @@ where
                 final_witness,
                 transcript: terminal_replay,
             } => {
-                let _terminal_span = tracing::info_span!(
-                    "verify_terminal_direct_fold",
-                    d_a = role_dims.d_a(),
-                    d_b = role_dims.d_b(),
-                    groups = num_groups
-                )
-                .entered();
-                if prepared.relation_matrix_row_layout
-                    != RelationMatrixRowLayout::WithoutCommitmentBlocks
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                {
-                    let _span = tracing::info_span!("terminal_transcript_absorb").entered();
-                    transcript.absorb_and_record_bytes(
-                        ABSORB_TERMINAL_W_REMAINDER,
-                        &terminal_replay.response,
-                    );
-                }
-                super::terminal_direct::verify_terminal_ring_relations(
+                return verify_terminal_fold(
                     setup,
+                    transcript,
                     &relation_instance,
                     prepared.lp,
-                    final_witness,
-                )?;
-                super::terminal_direct::verify_terminal_trace(
-                    &relation_instance,
-                    prepared.lp,
-                    final_witness,
-                    prepared
-                        .trace
-                        .prepared_points
-                        .as_deref()
-                        .ok_or(AkitaError::InvalidProof)?,
+                    prepared.relation_matrix_row_layout,
+                    &prepared.trace,
                     &prepared.row_coefficients,
-                    prepared.trace.claim_scales.as_deref(),
-                    prepared.trace.eval_scale,
-                    prepared.trace.eval_target,
-                )?;
-                return Ok((Vec::new(), None));
+                    final_witness,
+                    terminal_replay,
+                );
             }
             PreparedFoldPayload::Recursive {
                 stage1,
