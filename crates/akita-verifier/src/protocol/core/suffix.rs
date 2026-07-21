@@ -412,7 +412,6 @@ where
         .then(|| tracing::info_span!("terminal_direct_eor").entered());
     let FoldEorReplay {
         prepared_points,
-        reduction_challenges: _,
         final_relation: eor_trace_final,
         ..
     } = verify_fold_eor::<F, E, T>(
@@ -449,7 +448,7 @@ where
     }
 
     let w_len = scheduled.next_w_len;
-    let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
+    let (trace_eval_target, claim_reduction_factor) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
             *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
@@ -459,6 +458,8 @@ where
             E::one(),
         ),
     };
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     let fold_grind_nonce = proof.fold_grind_nonce;
     let (v_storage, payload, next_opening_ring_dim) = match proof.kind {
@@ -529,11 +530,9 @@ where
             .collect(),
         w_len,
         payload,
-        trace_prepared_points: Some(prepared_points),
-        trace_block_opening: None,
-        trace_eval_target,
-        trace_eval_scale,
-        trace_claim_scales: None,
-        trace_basis: current_state.basis,
+        evaluation_trace_points: prepared_points,
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: current_state.basis,
     })
 }

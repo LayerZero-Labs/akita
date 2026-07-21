@@ -207,12 +207,20 @@ mod tests {
             let n_prefix = slot.n_prefix().expect("n_prefix");
             assert!(n_prefix >= slot.natural_len);
             let mut one_slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-            inflate_envelope_for_setup_prefix_slot(&mut one_slot_envelope, slot)
+            inflate_envelope_for_setup_prefix_slot(&mut one_slot_envelope, slot, slot.d_setup)
                 .expect("inflate one slot");
             assert!(
                 one_slot_envelope.max_setup_len >= n_prefix / slot.d_setup,
                 "slot envelope must cover the padded prefix storage"
             );
+            let a_coeff_len = slot.commitment_params.a_key.row_len()
+                * slot.commitment_params.inner_width()
+                * slot.commitment_params.a_key.sis_table_key().ring_dimension as usize;
+            let b_coeff_len = slot.commitment_params.b_key.row_len()
+                * slot.commitment_params.outer_width()
+                * slot.commitment_params.b_key.sis_table_key().ring_dimension as usize;
+            assert!(one_slot_envelope.max_setup_len >= a_coeff_len.div_ceil(slot.d_setup));
+            assert!(one_slot_envelope.max_setup_len >= b_coeff_len.div_ceil(slot.d_setup));
             slot_envelope.max_setup_len = slot_envelope
                 .max_setup_len
                 .max(one_slot_envelope.max_setup_len);

@@ -81,6 +81,47 @@ impl CommitmentRingDims {
         self.opening
     }
 
+    /// Largest low coefficient block shared by every relation role.
+    ///
+    /// This is the relation-algebra boundary: alpha exponents for every role
+    /// reset on multiples of this count. It does not depend on the outgoing
+    /// witness representation.
+    #[must_use]
+    pub const fn common_relation_coeff_count(self) -> usize {
+        let inner_outer_min = if self.inner < self.outer {
+            self.inner
+        } else {
+            self.outer
+        };
+        if inner_outer_min < self.opening {
+            inner_outer_min
+        } else {
+            self.opening
+        }
+    }
+
+    /// Largest low coefficient block aligned for both the relation and the
+    /// outgoing witness representation.
+    ///
+    /// The current prover stores the flat relation witness in outgoing ring
+    /// elements. Its first rounds therefore need a block width that divides
+    /// both every role-local alpha sequence and one outgoing witness ring
+    /// element. This is the intersection of those two address geometries, not
+    /// an additional relation constraint. Use [`Self::common_relation_coeff_count`]
+    /// when only the relation algebra matters.
+    #[must_use]
+    pub const fn common_relation_witness_coeff_count(
+        self,
+        outgoing_witness_ring_dimension: usize,
+    ) -> usize {
+        let relation_common = self.common_relation_coeff_count();
+        if relation_common < outgoing_witness_ring_dimension {
+            relation_common
+        } else {
+            outgoing_witness_ring_dimension
+        }
+    }
+
     /// The single dimension shared by all roles, or an error once per-role
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {
@@ -357,6 +398,21 @@ mod tests {
         let sched = uniform_schedule(256, 3);
         validate_schedule_ring_dims(&sched, &seed(256)).expect("256|256");
         assert_eq!(sched.num_fold_levels(), 3);
+    }
+
+    #[test]
+    fn relation_and_witness_common_counts_are_distinct_contracts() {
+        let uniform_roles = CommitmentRingDims::uniform(128);
+        assert_eq!(uniform_roles.common_relation_coeff_count(), 128);
+        assert_eq!(uniform_roles.common_relation_witness_coeff_count(64), 64);
+
+        let mixed_roles = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        };
+        assert_eq!(mixed_roles.common_relation_coeff_count(), 32);
+        assert_eq!(mixed_roles.common_relation_witness_coeff_count(16), 16);
     }
 
     #[test]

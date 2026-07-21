@@ -8,8 +8,9 @@ use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
     RingSwitchBuildOutput, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::AkitaStage2Prover;
+use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weights;
 use crate::protocol::sumcheck::AkitaStage3Prover;
+use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
@@ -34,22 +35,21 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,
-    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
-    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::evaluation_trace_row_weight,
-    recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_current_w_len,
+    append_claim_values_to_transcript, basis_weights, check_extension_opening_reduction_output,
+    derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
+    proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
+    relation_claim_from_layout_extension, relation_rhs_layout_for,
+    ring_subfield_packed_extension_opening_point, root_current_w_len,
     root_tensor_projection_enabled, sample_public_row_coefficients,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
-    AkitaStage2Proof, BasisMode, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FoldLevelProof, LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
-    SegmentTypedWitness, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
-    TerminalLevelProof, TraceTable,
+    scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
+    AkitaStage2Proof, BasisMode, Commitment, EvaluationTraceInputs, ExecutionSchedule,
+    ExtensionOpeningReductionProof, FoldLevelProof, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
+    RingVec, RingView, Schedule, SegmentTypedWitness, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalLevelProof,
 };
 use std::sync::Arc;
 
@@ -97,8 +97,8 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
     pub num_levels: usize,
 }
 
-pub(in crate::protocol::core) type Stage2ProveResult<E> =
-    (SumcheckProof<E>, Vec<E>, AkitaStage2Prover<E>);
+pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
+    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,

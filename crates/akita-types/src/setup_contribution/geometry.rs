@@ -158,7 +158,7 @@ impl SetupProjectionGeometry {
     }
 
     /// Number of native B- and D-role subcolumns in one A-role witness column.
-    pub(crate) fn witness_subcolumn_ratios(
+    pub fn witness_subcolumn_ratios(
         role_dims: CommitmentRingDims,
     ) -> Result<(usize, usize), AkitaError> {
         let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;

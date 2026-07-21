@@ -11,6 +11,7 @@ use akita_field::{
     FpExt8MulBackend, FromPrimitiveInt, Invertible,
 };
 use akita_serialization::Valid;
+#[cfg(test)]
 use std::array::from_fn;
 
 /// Extension fields whose `ExtField::to_base_vec` coordinates are the
@@ -669,6 +670,7 @@ where
     }
 }
 
+#[cfg(test)]
 fn lift_ring_to_extension<F, E, const D: usize>(ring: &CyclotomicRing<F, D>) -> CyclotomicRing<E, D>
 where
     F: FieldCore,
@@ -677,6 +679,7 @@ where
     CyclotomicRing::from_coefficients(from_fn(|idx| E::lift_base(ring.coefficients()[idx])))
 }
 
+#[cfg(test)]
 fn weighted_negacyclic_shift_sum<E, const D: usize>(
     ring: &CyclotomicRing<E, D>,
     eq_coords: &[E],
@@ -694,6 +697,7 @@ where
     out
 }
 
+#[cfg(test)]
 fn decode_extension_linear_trace<F, E, const D: usize, const K: usize>(
     params: SubfieldParams<D, K>,
     trace_input: &CyclotomicRing<E, D>,
@@ -735,6 +739,7 @@ where
 /// argument, summing the per-block trace opens equals one trace open of the
 /// folded ring. The caller therefore pays a single `Tr_H` of one ring product
 /// per term instead of one per fold block.
+#[cfg(test)]
 pub(crate) fn trace_open_folded_ring_mle_dot<F, E, const D: usize>(
     folded: &CyclotomicRing<E, D>,
     eq_coords: &[E],

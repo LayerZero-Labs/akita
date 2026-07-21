@@ -536,8 +536,12 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             "matrix envelope must cover the consuming fold's shared D matrix"
         );
         let mut slot_envelope = akita_types::SetupMatrixEnvelope { max_setup_len: 1 };
-        crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot(&mut slot_envelope, slot)
-            .expect("setup-prefix slot envelope");
+        crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot(
+            &mut slot_envelope,
+            slot,
+            fold.params.d_a(),
+        )
+        .expect("setup-prefix slot envelope");
         assert!(
             envelope.max_setup_len >= slot_envelope.max_setup_len,
             "matrix envelope must cover setup-prefix storage and A/B matrices"
