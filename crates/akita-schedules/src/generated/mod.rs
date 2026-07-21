@@ -32,6 +32,8 @@ pub mod fp128_d64_onehot_multi_chunk_w2r2;
 pub mod fp128_d64_onehot_multi_chunk_w4r2;
 #[cfg(feature = "fp128-d64-onehot-recursive")]
 pub mod fp128_d64_onehot_recursive;
+#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
+pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor;
 #[cfg(feature = "fp32-d128-onehot")]
@@ -114,6 +116,14 @@ pub fn fp128_d64_onehot_recursive_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot_recursive::FP128_D64_ONEHOT_RECURSIVE_SCHEDULES,
         identity: fp128_d64_onehot_recursive::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-d64-onehot-recursive-multi-chunk-w8r2")]
+pub fn fp128_d64_onehot_recursive_multi_chunk_w8r2_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_d64_onehot_recursive_multi_chunk_w8r2::FP128_D64_ONEHOT_RECURSIVE_MULTI_CHUNK_W8R2_SCHEDULES,
+        identity: fp128_d64_onehot_recursive_multi_chunk_w8r2::CATALOG_IDENTITY,
     }
 }
 

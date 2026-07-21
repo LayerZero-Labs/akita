@@ -6,7 +6,7 @@ use akita_algebra::ntt::avx::{self, AvxNttMode};
 use akita_algebra::ntt::neon;
 use akita_algebra::ntt::MontCoeff;
 use akita_algebra::ntt::PrimeWidth;
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::{
     CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
 };
@@ -15,7 +15,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use akita_types::PreparedNttSlot;
+use akita_types::PreparedNttCache;
 #[cfg(test)]
 use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 
@@ -54,10 +54,9 @@ use digits::*;
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
 use i8_matvec::*;
-pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8_trusted;
+pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
 pub use ntt_matvec::{
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
-    mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_raw_i8_strided,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
 };
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

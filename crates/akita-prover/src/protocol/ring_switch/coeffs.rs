@@ -380,8 +380,8 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 ) {
     let levels = out.len();
     assert!(
-        log_basis > 0 && log_basis <= 6,
-        "log_basis must be in 1..=6 for i8 output"
+        log_basis > 0 && log_basis <= 8,
+        "log_basis must be in 1..=8 for i8 output"
     );
     assert!(
         (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -440,7 +440,7 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     for (row_index, row) in r.rows().iter().enumerate() {
         let digits = match row.ring_dim() {
             16 => decompose_r_row::<F, 16>(row.coeffs(), levels, &decompose_params)?,
@@ -471,7 +471,7 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
 fn decompose_r_row<F: CanonicalField, const D: usize>(
     coeffs: &[F],
     levels: usize,
-    params: &BalancedDecomposePow2I8Params,
+    params: &BalancedDecomposePow2Params,
 ) -> Result<Vec<i8>, AkitaError> {
     let coeffs: [F; D] = coeffs.try_into().map_err(|_| AkitaError::InvalidSize {
         expected: D,

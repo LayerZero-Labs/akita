@@ -12,6 +12,28 @@ use super::{
 };
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
+    pub(super) fn centered_coefficients_with_params(
+        &self,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> [[W; D]; K] {
+        let mut canonical = [[W::default(); D]; K];
+        for (k, ((coefficients, prime), twiddles)) in canonical
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+            .enumerate()
+        {
+            let mut limb = self.limbs[k];
+            <ScalarBackend as NttTransform<W, D>>::inverse_ntt(&mut limb, *prime, twiddles);
+            for (dst, src) in coefficients.iter_mut().zip(limb.iter()) {
+                *dst = prime.center(<ScalarBackend as NttPrimeOps<W, D>>::to_canonical(
+                    *prime, *src,
+                ));
+            }
+        }
+        canonical
+    }
+
     /// Convert a coefficient-form ring element into CRT+NTT domain
     /// using explicit prime and twiddle tables.
     pub fn from_ring<F: CrtNttConvertibleField>(

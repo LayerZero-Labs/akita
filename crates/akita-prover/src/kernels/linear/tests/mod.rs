@@ -1,11 +1,9 @@
 use super::{
     aligned_i8_tile_width, balanced_digit_abs_bound, decompose_block_i8, fused_split_eq_quotients,
     mat_vec_mul_crt_ntt, mat_vec_mul_crt_ntt_many, mat_vec_mul_digits_i8_block_parallel,
-    mat_vec_mul_digits_i8_strided_block_parallel, mat_vec_mul_digits_i8_strided_with_params,
     mat_vec_mul_digits_i8_with_params, mat_vec_mul_i8_dense_single_row_with_params,
-    mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_strided_with_params,
-    mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_raw_i8_strided, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
+    mat_vec_mul_i8_dense_with_params, mat_vec_mul_i8_with_params, mat_vec_mul_ntt_digits_i8,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_single_i8_cyclic, mat_vec_mul_unchecked,
     precompute_dense_mat_ntt_with_params,
 };
 use akita_algebra::ntt::{
@@ -14,11 +12,28 @@ use akita_algebra::ntt::{
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
-use akita_types::layout::FlatMatrix;
+use akita_types::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
-    build_negacyclic_and_cyclic_ntt_slot, build_negacyclic_ntt_slot, select_crt_ntt_params,
-    ProtocolCrtNttParams,
+    prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
+
+fn prepare_both_transforms<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+    prepare_ntt_cache(matrix, NttCacheMode::BothTransforms)
+}
+
+fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+    prepare_ntt_cache(
+        matrix,
+        NttCacheMode::ExactNegacyclic {
+            width: 1,
+            log_basis: 8,
+        },
+    )
+}
 
 fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
     coeffs: &[i32; D],
@@ -74,31 +89,6 @@ fn mat_vec_mul_i8_dense_with_params_for_log_basis<
     mat_vec_mul_i8_dense_with_params(ntt_mat, blocks, num_digits, log_basis, params)
 }
 
-fn mat_vec_mul_i8_strided_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
-    coeffs: &[CyclotomicRing<F, D>],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    num_digits: usize,
-    log_basis: u32,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_i8_strided_with_params(
-        ntt_mat,
-        coeffs,
-        num_live_blocks,
-        num_positions_per_block,
-        num_digits,
-        log_basis,
-        params,
-    )
-}
-
 fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     F: FieldCore + CanonicalField,
     W: PrimeWidth,
@@ -111,29 +101,6 @@ fn mat_vec_mul_digits_i8_with_params_for_log_basis<
     params: &CrtNttParamSet<W, K, D>,
 ) -> Vec<Vec<CyclotomicRing<F, D>>> {
     mat_vec_mul_digits_i8_with_params(ntt_mat, blocks, log_basis, params)
-}
-
-fn mat_vec_mul_digits_i8_strided_with_params_for_log_basis<
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-    const K: usize,
-    const D: usize,
->(
-    ntt_mat: &[&[CyclotomicCrtNtt<W, K, D>]],
-    coeffs: &[[i8; D]],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    log_basis: u32,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    mat_vec_mul_digits_i8_strided_with_params(
-        ntt_mat,
-        coeffs,
-        num_live_blocks,
-        num_positions_per_block,
-        log_basis,
-        params,
-    )
 }
 
 fn quotient_from_cyclic_and_negacyclic<

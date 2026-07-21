@@ -75,7 +75,7 @@ where
 ///
 /// The setup artifact stores only an envelope, not the schedule levels that
 /// originally produced it. This boundary therefore checks the worst supported
-/// balanced digit (`log_basis = 6`) and raw signed-i8 roles for the selected
+/// balanced digit (`log_basis = 8`) and raw signed-i8 roles for the selected
 /// profile. Generated-table tests separately prove committed schedules stay
 /// within these universal bounds.
 pub(crate) fn selected_crt_i8_capacity_profile<F: CanonicalField, const D: usize>(
@@ -129,11 +129,11 @@ mod tests {
         )
         .expect("one i8 term should fit");
 
-        assert_eq!(width, 2047);
+        assert_eq!(width, 511);
     }
 
     #[test]
-    fn q128_balanced_digit_bound_recovers_chunk_width() {
+    fn q128_l8_balanced_digit_bound_matches_raw_i8_width() {
         const D: usize = 64;
         let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
         let balanced_width =
@@ -149,7 +149,7 @@ mod tests {
             )
             .expect("one full i8 term should fit");
 
-        assert_eq!(balanced_width, 4 * full_i8_width + 3);
+        assert_eq!(balanced_width, full_i8_width);
     }
 
     #[test]
@@ -173,7 +173,7 @@ mod tests {
         )
         .expect("Q32 i8 path should have headroom");
 
-        assert_eq!(width, 131_057);
+        assert_eq!(width, 32_764);
     }
 
     fn assert_profile_widths(
@@ -197,17 +197,17 @@ mod tests {
     fn selected_capacity_profiles_match_golden_safe_widths() {
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime32Offset99, 256>().unwrap(),
-            32_764,
+            8_191,
             8_191,
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime64Offset59, 256>().unwrap(),
-            8_190,
+            2_047,
             2_047,
         );
         assert_profile_widths(
             selected_crt_i8_capacity_profile::<Prime128Offset275, 256>().unwrap(),
-            511,
+            127,
             127,
         );
     }

@@ -8,7 +8,10 @@ use akita_types::{
     FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
     SETUP_OFFLOAD_D_SETUP,
 };
-#[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
+#[cfg(any(
+    feature = "schedules-fp128-d64-onehot-recursive",
+    feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2"
+))]
 use std::any::TypeId;
 use std::marker::PhantomData;
 
@@ -73,6 +76,14 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         {
             if TypeId::of::<Cfg>() == TypeId::of::<crate::proof_optimized::fp128::D64OneHot>() {
                 return Some(akita_schedules::fp128_d64_onehot_recursive_table());
+            }
+        }
+        #[cfg(feature = "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2")]
+        {
+            if TypeId::of::<Cfg>()
+                == TypeId::of::<crate::proof_optimized::fp128::D64OneHotMultiChunk>()
+            {
+                return Some(akita_schedules::fp128_d64_onehot_recursive_multi_chunk_w8r2_table());
             }
         }
         None

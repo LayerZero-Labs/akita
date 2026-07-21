@@ -77,9 +77,8 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
-    build_negacyclic_and_cyclic_ntt_slot, build_negacyclic_ntt_slot,
-    max_safe_crt_accumulation_width, select_crt_ntt_params, NttCacheKey, PreparedNttSlot,
-    PreparedNttSlotAny, ProtocolCrtNttParams,
+    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_ntt_cache,
+    select_crt_ntt_params, NttCacheKey, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     active_setup_field_len, append_batched_commitments_to_transcript,

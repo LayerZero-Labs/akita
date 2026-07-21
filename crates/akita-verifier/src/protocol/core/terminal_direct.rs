@@ -71,18 +71,27 @@ where
 }
 
 #[inline]
-fn centered_ring<F, const D: usize>(coeffs: &[i64; D]) -> CyclotomicRing<F, D>
+fn centered_ring<F, const D: usize>(coeffs: &[i16; D]) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|index| F::from_i64(coeffs[index])))
+    CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        F::from_i64(i64::from(coeffs[index]))
+    }))
+}
+
+fn narrow_terminal_z_i16(values: Vec<i64>) -> Result<Vec<i16>, AkitaError> {
+    values
+        .into_iter()
+        .map(|value| i16::try_from(value).map_err(|_| AkitaError::InvalidProof))
+        .collect()
 }
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D>],
-    z: &[[i64; D]],
+    z: &[[i16; D]],
     challenges: &[CyclotomicRing<F, D>],
     n_a: usize,
     n_a_cols: usize,
@@ -177,7 +186,7 @@ where
                     z_coords = group_layout.z_coords
                 )
                 .entered();
-                decode_terminal_z_golomb_payload(
+                let values = decode_terminal_z_golomb_payload(
                     witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
                     group_layout.z_coords,
                     honest_cap,
@@ -186,7 +195,8 @@ where
                 )
                 .map_err(|error| {
                     AkitaError::InvalidInput(format!("terminal z decode failed: {error:?}"))
-                })?
+                })?;
+                narrow_terminal_z_i16(values)?
             };
             let z_centered = {
                 let _span = tracing::info_span!(
@@ -527,5 +537,22 @@ mod tests {
             assert_direct_matches_legacy::<64>(role, &[group_fixture::<64>(1, 1)]);
             assert_direct_matches_legacy::<128>(role, &[group_fixture::<128>(-1, 2)]);
         }
+    }
+
+    #[test]
+    fn decoded_terminal_witness_rejects_coefficients_outside_i16() {
+        assert_eq!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MIN), 0, i64::from(i16::MAX)])
+                .expect("i16 boundary values"),
+            vec![i16::MIN, 0, i16::MAX]
+        );
+        assert!(matches!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MAX) + 1]),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert!(matches!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MIN) - 1]),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 }

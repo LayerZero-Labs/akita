@@ -21,7 +21,7 @@ use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 #[cfg(test)]
 pub(crate) use decomposition::center_for_decomposition;
 pub use decomposition::{
-    decompose_centering_threshold, peel_first_balanced_digit, BalancedDecomposePow2I8Params,
+    decompose_centering_threshold, peel_first_balanced_digit, BalancedDecomposePow2Params,
 };
 pub use wide::WideCyclotomicRing;
 
