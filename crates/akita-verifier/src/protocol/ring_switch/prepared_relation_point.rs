@@ -1,21 +1,19 @@
-//! Test-first contract for the canonical flat relation point.
+//! Checked geometry for a flat Stage-2 relation evaluation point.
 //!
-//! This module stays test-only until the verifier's current uniform and
-//! lane-factored formulas have differential parity through every contribution.
-//! The production cutover will make this geometry the single point authority;
-//! landing it as unused production state would instead create a third path.
+//! This is the single authority for splitting coefficient coordinates from
+//! lane-and-column coordinates and preparing role-native alpha powers.
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::multilinear_eval, ring::scalar_powers};
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{
-    checked_opening_source_index, opening_domain_len, validate_role_dims, CommitmentRingDims,
-    RingRole,
-};
+#[cfg(test)]
+use akita_types::{checked_opening_source_index, RingRole};
+use akita_types::{opening_domain_len, validate_role_dims, CommitmentRingDims};
 use std::sync::Arc;
 
-struct PreparedRolePoint<E: FieldCore> {
-    ring_dim: usize,
-    lane_powers: Arc<[E]>,
+pub(super) struct PreparedRolePoint<E: FieldCore> {
+    pub(super) ring_dim: usize,
+    pub(super) powers: Arc<[E]>,
+    pub(super) lane_powers: Arc<[E]>,
 }
 
 /// Checked factorization of one flat Stage-2 relation point.
@@ -24,21 +22,26 @@ struct PreparedRolePoint<E: FieldCore> {
 /// outgoing witness representation. The remaining point addresses relation
 /// lanes followed by semantic witness columns. Role-native setup columns split
 /// one A-role witness column into `d_a / d_role` subcolumns.
-pub(super) struct PreparedRelationPoint<E: FieldCore> {
+pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
     coeff_count: usize,
     coeff_eval: E,
+    alpha: E,
+    address_point: &'a [E],
     equality_window: OffsetEqWindow<E>,
+    #[cfg(test)]
     role_dims: CommitmentRingDims,
+    #[cfg(test)]
     outgoing_ring_dim: usize,
+    #[cfg(test)]
     opening_source_len: usize,
     inner: Arc<PreparedRolePoint<E>>,
     outer: Arc<PreparedRolePoint<E>>,
     opening: Arc<PreparedRolePoint<E>>,
 }
 
-impl<E: FieldCore> PreparedRelationPoint<E> {
+impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     pub(super) fn new(
-        point: &[E],
+        point: &'a [E],
         alpha: E,
         role_dims: CommitmentRingDims,
         outgoing_ring_dim: usize,
@@ -94,7 +97,7 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("invalid relation role lane count".into())
                 })?;
-            let powers = scalar_powers(alpha, ring_dim);
+            let powers: Arc<[E]> = scalar_powers(alpha, ring_dim).into();
             let lane_powers = (0..lane_count)
                 .map(|lane| {
                     powers
@@ -105,6 +108,7 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Arc::new(PreparedRolePoint {
                 ring_dim,
+                powers,
                 lane_powers: lane_powers.into(),
             }))
         };
@@ -126,9 +130,14 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
         Ok(Self {
             coeff_count,
             coeff_eval,
+            alpha,
+            address_point: lane_and_column_point,
             equality_window,
+            #[cfg(test)]
             role_dims,
+            #[cfg(test)]
             outgoing_ring_dim,
+            #[cfg(test)]
             opening_source_len,
             inner,
             outer,
@@ -144,7 +153,42 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
         self.coeff_eval
     }
 
+    pub(super) fn alpha(&self) -> E {
+        self.alpha
+    }
+
+    pub(super) fn address_point(&self) -> &[E] {
+        self.address_point
+    }
+
+    pub(super) fn equality_window(&self) -> &OffsetEqWindow<E> {
+        &self.equality_window
+    }
+
+    pub(super) fn inner(&self) -> &PreparedRolePoint<E> {
+        &self.inner
+    }
+
+    pub(super) fn outer(&self) -> &PreparedRolePoint<E> {
+        &self.outer
+    }
+
+    pub(super) fn opening(&self) -> &PreparedRolePoint<E> {
+        &self.opening
+    }
+
+    pub(super) fn for_dimension(
+        &self,
+        ring_dim: usize,
+    ) -> Result<&PreparedRolePoint<E>, AkitaError> {
+        [self.inner(), self.outer(), self.opening()]
+            .into_iter()
+            .find(|role| role.ring_dim == ring_dim)
+            .ok_or(AkitaError::InvalidProof)
+    }
+
     /// Evaluate the high-address factor for one role-native setup column.
+    #[cfg(test)]
     pub(super) fn role_column_weight(
         &self,
         witness_column: usize,
@@ -198,6 +242,7 @@ impl<E: FieldCore> PreparedRelationPoint<E> {
         )
     }
 
+    #[cfg(test)]
     fn role(&self, role: RingRole) -> &PreparedRolePoint<E> {
         match role {
             RingRole::Inner => &self.inner,

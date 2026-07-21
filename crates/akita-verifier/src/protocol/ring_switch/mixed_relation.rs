@@ -1,93 +1,28 @@
-//! Succinct mixed-ring-dimension relation evaluation.
+//! Succinct lane-factored relation evaluation.
 //!
-//! The uniform verifier remains the PR #312 implementation. This module is
-//! entered only when the relation roles do not share one ring dimension. It
-//! factors the common low alpha coordinates once, contracts E/T intervals,
-//! and scans setup matrices in their native role rings. It never constructs
-//! prover relation events or a dense relation table.
+//! This path is used when the flat relation point has more than one coefficient
+//! lane per witness column. It factors the common low alpha coordinates once,
+//! contracts E/T intervals, and scans setup matrices in their native role
+//! rings. It never constructs prover relation events or a dense relation table.
 
-use super::{RelationMatrixEvaluator, RelationMatrixGroupEvaluator};
+use super::{
+    prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator,
+    RelationMatrixGroupEvaluator,
+};
 use crate::protocol::validate_log_basis;
 use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
-use akita_algebra::poly::multilinear_eval;
-use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
-    checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, SetupProjectionGeometry,
-    WitnessUnitLayout,
+    checked_opening_source_index, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
+    FpExtEncoding, SetupProjectionGeometry, WitnessUnitLayout,
 };
-use std::sync::Arc;
 
-#[derive(Clone)]
-struct RoleAlphaFactors<E: FieldCore> {
-    ring_dimension: usize,
-    powers: Arc<[E]>,
-    lane_powers: Arc<[E]>,
-}
-
-struct MixedRoleAlphaFactors<E: FieldCore> {
-    alpha: E,
-    common_relation_witness_coeff_count: usize,
-    inner: RoleAlphaFactors<E>,
-    outer: RoleAlphaFactors<E>,
-    opening: RoleAlphaFactors<E>,
-}
-
-impl<E: FieldCore> MixedRoleAlphaFactors<E> {
-    fn prepare(
-        alpha: E,
-        role_dims: CommitmentRingDims,
-        common_relation_witness_coeff_count: usize,
-    ) -> Result<Self, AkitaError> {
-        let prepare_role = |ring_dimension| {
-            let powers: Arc<[E]> = scalar_powers(alpha, ring_dimension).into();
-            let lane_count = ring_dimension
-                .checked_div(common_relation_witness_coeff_count)
-                .filter(|count| *count != 0)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("invalid mixed relation lane count".into())
-                })?;
-            let lane_powers =
-                alpha_lane_powers(&powers, common_relation_witness_coeff_count, lane_count)?.into();
-            Ok::<_, AkitaError>(RoleAlphaFactors {
-                ring_dimension,
-                powers,
-                lane_powers,
-            })
-        };
-        let inner = prepare_role(role_dims.d_a())?;
-        let outer = if role_dims.d_b() == inner.ring_dimension {
-            inner.clone()
-        } else {
-            prepare_role(role_dims.d_b())?
-        };
-        let opening = if role_dims.d_d() == inner.ring_dimension {
-            inner.clone()
-        } else if role_dims.d_d() == outer.ring_dimension {
-            outer.clone()
-        } else {
-            prepare_role(role_dims.d_d())?
-        };
-        Ok(Self {
-            alpha,
-            common_relation_witness_coeff_count,
-            inner,
-            outer,
-            opening,
-        })
-    }
-
-    fn for_dimension(&self, ring_dimension: usize) -> Result<&RoleAlphaFactors<E>, AkitaError> {
-        [&self.inner, &self.outer, &self.opening]
-            .into_iter()
-            .find(|factors| factors.ring_dimension == ring_dimension)
-            .ok_or(AkitaError::InvalidProof)
-    }
-}
+#[cfg(test)]
+use akita_types::opening_domain_len;
 
 pub(super) fn evaluate_mixed_relation_at_point<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
@@ -107,45 +42,16 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let role_dims = evaluator.role_dims;
-    let inner_ring_dimension = role_dims.d_a();
-    let common_relation_witness_coeff_count =
-        role_dims.common_relation_witness_coeff_count(context.opening_ring_dim);
-    if common_relation_witness_coeff_count == 0
-        || !common_relation_witness_coeff_count.is_power_of_two()
-        || !inner_ring_dimension.is_multiple_of(common_relation_witness_coeff_count)
-    {
-        return Err(AkitaError::InvalidSetup(
-            "relation and outgoing witness dimensions do not admit the checked common alpha factor"
-                .into(),
-        ));
-    }
-    let opening_columns = opening_domain_len(context.opening_source_len)?;
-    let opening_field_len = opening_columns
-        .checked_mul(context.opening_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("relation domain overflow".into()))?;
-    let expected_variables = opening_field_len.trailing_zeros() as usize;
-    if !opening_field_len.is_power_of_two() || point.len() != expected_variables {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_variables,
-            actual: point.len(),
-        });
-    }
-
-    let common_variables = common_relation_witness_coeff_count.trailing_zeros() as usize;
-    let (common_coefficient_point, lane_and_column_point) = point
-        .split_at_checked(common_variables)
-        .ok_or(AkitaError::InvalidProof)?;
-    let alpha_factors =
-        MixedRoleAlphaFactors::prepare(alpha, role_dims, common_relation_witness_coeff_count)?;
-    let common_alpha_powers = alpha_factors
-        .inner
-        .powers
-        .get(..common_relation_witness_coeff_count)
-        .ok_or(AkitaError::InvalidProof)?;
-    let common_alpha_evaluation = multilinear_eval(common_alpha_powers, common_coefficient_point)?;
-    let lanes_per_inner_column = alpha_factors.inner.lane_powers.len();
-    let equality_window = OffsetEqWindow::new(lane_and_column_point)?;
+    let prepared_point = PreparedRelationPoint::new(
+        point,
+        alpha,
+        evaluator.role_dims,
+        context.opening_ring_dim,
+        context.opening_source_len,
+    )?;
+    let inner_ring_dimension = evaluator.role_dims.d_a();
+    let coeff_count = prepared_point.coeff_count();
+    let lanes_per_inner_column = prepared_point.inner().lane_powers.len();
 
     let mut constraint_evaluation = E::zero();
     for group in &evaluator.groups {
@@ -156,11 +62,11 @@ where
             context.opening_source_len,
             context.opening_ring_dim,
             inner_ring_dimension,
-            common_relation_witness_coeff_count,
-            lane_and_column_point,
-            &equality_window,
+            coeff_count,
+            prepared_point.address_point(),
+            prepared_point.equality_window(),
             lanes_per_inner_column,
-            &alpha_factors.inner.lane_powers,
+            &prepared_point.inner().lane_powers,
             evaluator.eq_tau1.as_ref(),
         )
         .map_err(|error| {
@@ -173,17 +79,17 @@ where
 
     let setup_evaluation = {
         let _span = tracing::info_span!("mixed_relation_setup_scan").entered();
-        evaluate_setup_contribution::<F, E>(evaluator, setup, &equality_window, &alpha_factors)
-            .map_err(|error| {
-                AkitaError::InvalidInput(format!("mixed relation setup scan failed: {error:?}"))
-            })?
+        evaluate_setup_contribution::<F, E>(evaluator, setup, &prepared_point).map_err(|error| {
+            AkitaError::InvalidInput(format!("mixed relation setup scan failed: {error:?}"))
+        })?
     };
     let quotient_evaluation =
-        evaluate_quotient_tail::<F, E>(evaluator, &equality_window, &alpha_factors).map_err(
-            |error| AkitaError::InvalidInput(format!("mixed relation quotient failed: {error:?}")),
-        )?;
+        evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
+            AkitaError::InvalidInput(format!("mixed relation quotient failed: {error:?}"))
+        })?;
 
-    Ok(common_alpha_evaluation * (constraint_evaluation + setup_evaluation + quotient_evaluation))
+    Ok(prepared_point.coeff_eval()
+        * (constraint_evaluation + setup_evaluation + quotient_evaluation))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -193,7 +99,7 @@ fn evaluate_group_constraints<F, E>(
     opening_source_len: usize,
     opening_ring_dimension: usize,
     inner_ring_dimension: usize,
-    common_relation_witness_coeff_count: usize,
+    coeff_count: usize,
     lane_and_column_point: &[E],
     equality_window: &OffsetEqWindow<E>,
     lanes_per_inner_column: usize,
@@ -276,7 +182,7 @@ where
                 opening_source_len,
                 opening_ring_dimension,
                 inner_ring_dimension,
-                common_relation_witness_coeff_count,
+                coeff_count,
                 e_column,
                 0,
             )?;
@@ -304,7 +210,7 @@ where
                 opening_source_len,
                 opening_ring_dimension,
                 inner_ring_dimension,
-                common_relation_witness_coeff_count,
+                coeff_count,
                 t_column,
                 0,
             )?;
@@ -338,7 +244,7 @@ where
                         opening_source_len,
                         opening_ring_dimension,
                         inner_ring_dimension,
-                        common_relation_witness_coeff_count,
+                        coeff_count,
                         z_column,
                         0,
                     )?;
@@ -363,8 +269,7 @@ where
 fn evaluate_setup_contribution<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     setup: &AkitaExpandedSetup<F>,
-    equality_window: &OffsetEqWindow<E>,
-    alpha_factors: &MixedRoleAlphaFactors<E>,
+    prepared_point: &PreparedRelationPoint<'_, E>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -378,17 +283,18 @@ where
     let inner_ring_dimension = role_dims.d_a();
     let outer_ring_dimension = role_dims.d_b();
     let opening_ring_dimension = role_dims.d_d();
-    let common_relation_witness_coeff_count = alpha_factors.common_relation_witness_coeff_count;
+    let coeff_count = prepared_point.coeff_count();
+    let equality_window = prepared_point.equality_window();
     let (outer_subcolumns, opening_subcolumns) =
         SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
-    let outer_lanes = alpha_factors.outer.lane_powers.len();
-    let opening_lanes = alpha_factors.opening.lane_powers.len();
-    let inner_alpha_powers = alpha_factors.inner.powers.as_ref();
-    let outer_alpha_powers = alpha_factors.outer.powers.as_ref();
-    let opening_alpha_powers = alpha_factors.opening.powers.as_ref();
-    let inner_lane_alpha_powers = alpha_factors.inner.lane_powers.as_ref();
-    let outer_lane_alpha_powers = alpha_factors.outer.lane_powers.as_ref();
-    let opening_lane_alpha_powers = alpha_factors.opening.lane_powers.as_ref();
+    let outer_lanes = prepared_point.outer().lane_powers.len();
+    let opening_lanes = prepared_point.opening().lane_powers.len();
+    let inner_alpha_powers = prepared_point.inner().powers.as_ref();
+    let outer_alpha_powers = prepared_point.outer().powers.as_ref();
+    let opening_alpha_powers = prepared_point.opening().powers.as_ref();
+    let inner_lane_alpha_powers = prepared_point.inner().lane_powers.as_ref();
+    let outer_lane_alpha_powers = prepared_point.outer().lane_powers.as_ref();
+    let opening_lane_alpha_powers = prepared_point.opening().lane_powers.as_ref();
     let rows = context.level_params.relation_matrix_row_count_for(
         context.opening_batch.num_groups(),
         context.relation_matrix_row_layout,
@@ -442,7 +348,7 @@ where
                                 context.opening_source_len,
                                 context.opening_ring_dim,
                                 inner_ring_dimension,
-                                common_relation_witness_coeff_count,
+                                coeff_count,
                                 witness_column,
                                 opening_subcolumn * opening_lanes,
                             )?;
@@ -553,7 +459,7 @@ where
                                         context.opening_source_len,
                                         context.opening_ring_dim,
                                         inner_ring_dimension,
-                                        common_relation_witness_coeff_count,
+                                        coeff_count,
                                         witness_column,
                                         first_lane,
                                     )?;
@@ -630,7 +536,7 @@ where
                             context.opening_source_len,
                             context.opening_ring_dim,
                             inner_ring_dimension,
-                            common_relation_witness_coeff_count,
+                            coeff_count,
                             witness_column,
                             0,
                         )?;
@@ -661,8 +567,7 @@ where
 
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
-    equality_window: &OffsetEqWindow<E>,
-    alpha_factors: &MixedRoleAlphaFactors<E>,
+    prepared_point: &PreparedRelationPoint<'_, E>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -703,13 +608,13 @@ where
         } else {
             evaluator.role_dims.d_a()
         };
-        let role_factors = alpha_factors.for_dimension(row_dimension)?;
+        let role_factors = prepared_point.for_dimension(row_dimension)?;
         let denominator = role_factors
             .powers
             .last()
             .copied()
             .ok_or(AkitaError::InvalidProof)?
-            * alpha_factors.alpha
+            * prepared_point.alpha()
             + E::one();
         let row_weight = evaluator
             .eq_tau1
@@ -722,12 +627,15 @@ where
                 context.opening_source_len,
                 context.opening_ring_dim,
                 evaluator.role_dims.d_a(),
-                alpha_factors.common_relation_witness_coeff_count,
+                prepared_point.coeff_count(),
                 witness_column,
                 0,
             )?;
-            let lane_evaluation =
-                evaluate_lane_segment(equality_window, lane_start, &role_factors.lane_powers)?;
+            let lane_evaluation = evaluate_lane_segment(
+                prepared_point.equality_window(),
+                lane_start,
+                &role_factors.lane_powers,
+            )?;
             evaluation -= lane_evaluation * row_weight * denominator * E::lift_base(gadget);
         }
     }
@@ -755,12 +663,12 @@ fn canonical_relation_lane_index(
     opening_source_len: usize,
     opening_ring_dimension: usize,
     inner_ring_dimension: usize,
-    common_relation_witness_coeff_count: usize,
+    coeff_count: usize,
     witness_column: usize,
     inner_lane: usize,
 ) -> Result<usize, AkitaError> {
     let lanes_per_inner_column = inner_ring_dimension
-        .checked_div(common_relation_witness_coeff_count)
+        .checked_div(coeff_count)
         .filter(|count| *count != 0)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid common relation lane width".into()))?;
     if inner_lane >= lanes_per_inner_column || opening_ring_dimension == 0 {
@@ -770,7 +678,7 @@ fn canonical_relation_lane_index(
         .checked_mul(inner_ring_dimension)
         .and_then(|base| {
             inner_lane
-                .checked_mul(common_relation_witness_coeff_count)
+                .checked_mul(coeff_count)
                 .and_then(|offset| base.checked_add(offset))
         })
         .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
@@ -778,34 +686,10 @@ fn canonical_relation_lane_index(
         opening_source_len,
         physical_coefficient / opening_ring_dimension,
     )?;
-    if !physical_coefficient.is_multiple_of(common_relation_witness_coeff_count) {
+    if !physical_coefficient.is_multiple_of(coeff_count) {
         return Err(AkitaError::InvalidProof);
     }
-    Ok(physical_coefficient / common_relation_witness_coeff_count)
-}
-
-fn alpha_lane_powers<E: FieldCore>(
-    alpha_powers: &[E],
-    common_relation_witness_coeff_count: usize,
-    lane_count: usize,
-) -> Result<Vec<E>, AkitaError> {
-    let expected = common_relation_witness_coeff_count
-        .checked_mul(lane_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("alpha lane length overflow".into()))?;
-    if alpha_powers.len() != expected {
-        return Err(AkitaError::InvalidSize {
-            expected,
-            actual: alpha_powers.len(),
-        });
-    }
-    (0..lane_count)
-        .map(|lane| {
-            alpha_powers
-                .get(lane * common_relation_witness_coeff_count)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)
-        })
-        .collect()
+    Ok(physical_coefficient / coeff_count)
 }
 
 fn evaluate_weighted_setup_matrix<F, E>(

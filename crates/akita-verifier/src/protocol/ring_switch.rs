@@ -25,7 +25,6 @@ use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod mixed_relation;
-#[cfg(test)]
 mod prepared_relation_point;
 mod tensor_challenges;
 #[cfg(test)]
