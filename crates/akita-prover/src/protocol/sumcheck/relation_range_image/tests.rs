@@ -226,7 +226,9 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
 
 #[test]
 fn common_coordinate_factorization_matches_flattened_rounds() {
-    let common_coeff_count = 4usize;
+    // Four coefficient bits exercise the fused folded-coefficient transition after
+    // the deferred two-round compact prefix.
+    let common_coeff_count = 16usize;
     let live_relation_lanes = 5usize;
     let common_bits = common_coeff_count.trailing_zeros() as usize;
     let lane_bits = live_relation_lanes.next_power_of_two().trailing_zeros() as usize;

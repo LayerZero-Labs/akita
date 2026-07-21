@@ -253,6 +253,7 @@ pub struct RelationRangeImageProver<E: FieldCore> {
 }
 
 mod coefficient_prefix;
+mod coefficient_round_fold;
 mod compact_prefix;
 mod dense_terms;
 mod evaluation_trace;

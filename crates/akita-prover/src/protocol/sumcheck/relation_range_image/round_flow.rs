@@ -208,10 +208,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         let use_partial_lane_round = self.use_partial_lane_round();
         let use_partial_lane_coefficient_round = self.use_partial_lane_coefficient_round();
         let in_coefficient_round = self.in_coefficient_round();
+        let fuse_next_coefficient_round = use_partial_lane_coefficient_round
+            && self.rounds_completed + 1 < self.coefficient_bits();
         let fuse_next_folded_partial_lane =
             use_partial_lane_round && self.next_uses_partial_lane_round();
         let coeff_count = self.common_alpha_factor.len();
         let live_lane_count = self.live_lane_count;
+        let mut fused_coefficient_round = false;
         let mut fused_folded_partial_lane = false;
 
         self.witness_state = match mem::replace(
@@ -262,12 +265,27 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                     }
                 } else if in_coefficient_round && use_partial_lane_coefficient_round {
                     self.fold_evaluation_trace_for_current_round(r);
-                    WitnessState::FoldedSuffix(Self::fold_folded_coefficients(
-                        &folded_witness,
-                        live_lane_count,
-                        coeff_count,
-                        r,
-                    ))
+                    if fuse_next_coefficient_round {
+                        let mut next_alpha_factor = self.common_alpha_factor.clone();
+                        fold_evals_in_place(&mut next_alpha_factor, r);
+                        let (next_folded_witness, virt_terms, rel_coeffs) = self
+                            .fuse_folded_coefficients_and_compute_next_round(
+                                &folded_witness,
+                                &next_alpha_factor,
+                                r,
+                            );
+                        self.common_alpha_factor = next_alpha_factor;
+                        self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
+                        fused_coefficient_round = true;
+                        WitnessState::FoldedSuffix(next_folded_witness)
+                    } else {
+                        WitnessState::FoldedSuffix(Self::fold_folded_coefficients(
+                            &folded_witness,
+                            live_lane_count,
+                            coeff_count,
+                            r,
+                        ))
+                    }
                 } else {
                     let mut folded_witness = folded_witness;
                     fold_evals_in_place(&mut folded_witness, r);
@@ -287,7 +305,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 fold_evals_in_place(&mut self.relation_lane_weights, r);
             }
             self.live_lane_count = self.live_lane_count.div_ceil(2);
-        } else {
+        } else if !fused_coefficient_round {
             fold_evals_in_place(&mut self.common_alpha_factor, r);
         }
 
