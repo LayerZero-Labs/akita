@@ -22,8 +22,9 @@ PCS API with audited role-native SIS ranks. Prover-only relation events, common-
 factorization, evaluation-trace terms, segment addressing, and fold storage now live in
 `akita-prover`; `akita-types` retains only checked role/layout and trace-group geometry
 needed across protocol sides. The legacy dense/sparse trace-table implementation is
-test-only. Mixed-role multigroup/multichunk coverage and the remaining compact-kernel
-cutover are still outstanding.
+test-only. Mixed-role roots and uniform multigroup/multichunk roots are supported as
+separate scheduled shapes; their unscheduled cross-product is not introduced by this PR.
+The remaining compact-kernel cutover is still outstanding.
 
 The sum-check has three semantic terms:
 
@@ -428,17 +429,29 @@ The complication matrix is:
 |---|---|---|---|---|
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
-| mixed role dimensions | none | common factor uses the joint relation/witness count; role subcolumns map into common lanes | each claim retains its own source ring split | remove the existing mixed-D/multichunk guard only after flat-oracle parity |
+| mixed role dimensions | none | common factor uses the joint relation/witness count; role subcolumns map into common lanes | each claim retains its own source ring split | direct-setup singleton roots only in this PR; do not synthesize grouped/chunked schedules |
 | EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
 arithmetic generalize cleanly once geometry is prepared, but that preparation is a
 load-bearing part of the implementation rather than incidental indexing.
 
+The supported acceptance matrix is deliberately not a full cross-product:
+
+- shipped uniform-role schedules cover singleton, multigroup, multichunk, and combined
+  multigroup/multichunk roots;
+- the direct-setup mixed-role fixture covers a singleton, single-chunk root; and
+- uniform-role folds may transition to a smaller outgoing witness dimension through the
+  checked common Stage 2 coefficient count.
+
+Mixed role dimensions combined with multigroup or multichunk roots, and mixed-role
+recursive setup offload, remain out of scope until the planner emits and authenticates
+those schedules. Tests must not retarget SIS keys or recompute proof sizes to manufacture
+such a shape.
+
 ### Canonical physical layout
 
-The implementation must support the full cross-product, not just singleton/single-chunk
-fixtures. The canonical layout is supplied by `WitnessLayout`:
+Within the scheduled shapes above, the canonical layout is supplied by `WitnessLayout`:
 
 ```text
 for group in opening_batch.root_group_order():
@@ -857,7 +870,7 @@ The required layout matrix includes:
 - singleton/multichunk;
 - multigroup/multichunk;
 - uniform `64/64/64` and `128/128/128`;
-- mixed `128/64/64` and `128/64/32` crossed with all four group/chunk shapes;
+- mixed `128/64/64` and `128/64/32` direct singleton/single-chunk roots;
 - one and multiple claims per group;
 - unequal group block counts and uneven chunk partitions;
 - scalar and extension-ring inner traces;
@@ -957,8 +970,9 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
   `N / common_relation_witness_coeff_count`.
 - No `ring_bits == 0` sentinel, dense mixed relation table, exact fringe, full trace table,
   trace remap, hot unit search, or x/y architecture remains.
-- Multigroup, multichunk, and their mixed-D cross-product prove and verify for every
-  scheduled supported shape.
+- Uniform-role multigroup and multichunk scheduled shapes prove and verify; direct
+  mixed-role singleton roots prove and verify. Their unscheduled cross-product is not an
+  acceptance requirement.
 - Global block ownership, per-chunk Z, per-unit E/T, and shared R agree round by round with
   dense oracles.
 - Evaluation trace is mandatory and exact for scalar/extension, root/recursive,
