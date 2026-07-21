@@ -404,6 +404,20 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         let Some(terms) = self.lane_terms.get(lane) else {
             return values;
         };
+        if let [term] = terms.as_slice() {
+            let Some(source) = self.sources.get(term.source_index) else {
+                return values;
+            };
+            let Some(source_lane_start) = term.lane.checked_mul(self.coeff_count) else {
+                return values;
+            };
+            for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
+                    *value = term.factor * *source_value;
+                }
+            }
+            return values;
+        }
         for term in terms {
             let Some(source) = self.sources.get(term.source_index) else {
                 continue;
