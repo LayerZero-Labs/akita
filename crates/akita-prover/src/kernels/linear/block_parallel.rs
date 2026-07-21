@@ -149,7 +149,7 @@ pub(super) fn mat_vec_mul_digits_i8_strided_block_parallel<
 /// Block-parallel raw signed-i8 strided matvec for recursive witnesses.
 ///
 /// Mirrors [`mat_vec_mul_digits_i8_strided_block_parallel`] but treats each
-/// coefficient plane as a direct signed-i8 stream (the `num_digits_commit = 1`
+/// coefficient plane as a direct signed-i8 stream (the `num_digits_inner = 1`
 /// recursive-witness case), so it builds the column NTT with
 /// [`CyclotomicCrtNtt::from_i8_with_params`] rather than a balanced-digit LUT.
 /// Fanning out over blocks keeps throughput high for the small-row, many-block

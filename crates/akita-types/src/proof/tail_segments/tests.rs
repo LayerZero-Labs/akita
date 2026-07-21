@@ -16,7 +16,7 @@ fn test_lp() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(8, 32, 2, 3)
+    .with_decomp(8, 32, 2, 3, 3)
     .expect("tail segment test params")
 }
 
@@ -153,7 +153,7 @@ fn segment_typed_wire_round_trip_with_scheduled_z_budget() {
     let z_payload = test_support::encode_z_segment_from_centered(
         &centered,
         1,
-        lp.num_digits_commit,
+        lp.num_digits_inner,
         rice_low_bits,
         zigzag_w_z,
     )
@@ -254,7 +254,7 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
 fn terminal_layout_validation_rejects_overflow_without_panicking() {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
-        log_basis: 6,
+        log_basis_open: 6,
         groups: vec![
             TailSegmentGroupLayout {
                 z_coords: 1,

@@ -146,6 +146,7 @@ impl SetupContributionFixture {
             shape.num_live_blocks * shape.num_positions_per_block,
             shape.depth_commit,
             shape.depth_open,
+            shape.depth_open,
         )
         .expect("setup contribution fixture params");
         let expected_b_width = shape
@@ -219,10 +220,13 @@ impl SetupContributionFixture {
             group_id: 0,
             num_claims: shape.num_claims,
             num_live_blocks: shape.num_live_blocks,
+            depth_witness: shape.depth_commit,
             depth_open: shape.depth_open,
-            depth_commit: shape.depth_commit,
+            depth_commit: shape.depth_open,
             depth_fold: shape.depth_fold,
-            log_basis: shape.log_basis,
+            log_basis_inner: shape.log_basis,
+            log_basis_outer: shape.log_basis,
+            log_basis_open: shape.log_basis,
             n_a: shape.n_a,
             a_row_start: 1,
             b_row_start: 1 + shape.n_a,

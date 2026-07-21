@@ -49,7 +49,9 @@ where
         total_bytes = schedule.total_bytes,
         root_m = layout.position_index_bits(),
         root_r = layout.block_index_bits(),
-        root_lb = layout.log_basis,
+        root_lb_inner = layout.log_basis_inner,
+        root_lb_outer = layout.log_basis_outer,
+        root_lb_open = layout.log_basis_open,
         "batched root split: read from runtime schedule"
     );
     Ok(layout)

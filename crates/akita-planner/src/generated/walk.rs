@@ -19,7 +19,7 @@ use akita_types::{
 use crate::generated::{
     validate_entry_key, GeneratedFold, GeneratedFoldStep, GeneratedScheduleTableEntry,
 };
-use crate::group_batch::multi_group_root_precommitted_groups;
+use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::schedule_params::planned_next_witness_len;
 use crate::PlannerPolicy;
 
@@ -81,9 +81,14 @@ pub(crate) fn walk_generated_schedule_entry(
                 fold_level,
                 current_w_len,
             )?;
-            validate_log_basis(fold.fold_step().log_basis, policy)?;
+            validate_step_bases(fold.fold_step(), policy)?;
             let (precommitted_groups, precommitted_d_width) =
-                multi_group_root_precommitted_groups(key, policy, ring_challenge_config)?;
+                multi_group_root_precommitted_groups_for_open_basis(
+                    key,
+                    policy,
+                    ring_challenge_config,
+                    fold.fold_step().log_basis_open,
+                )?;
             validate_expanded_precommitted_groups(key, &precommitted_groups)?;
             let lp = expand_multi_group_root_fold_step(
                 fold,
@@ -277,7 +282,7 @@ fn expand_validated_fold_level(
 ) -> Result<LevelParams, AkitaError> {
     let fold = step.fold_step();
     validate_block_geometry(fold, key, policy, fold_level, current_w_len)?;
-    validate_log_basis(fold.log_basis, policy)?;
+    validate_step_bases(fold, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: fold_level,
@@ -354,14 +359,14 @@ fn expand_multi_group_root_fold_step(
     }
 }
 
-fn validate_log_basis(log_basis: u32, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let (min, max) = policy.basis_range;
-    if log_basis < min || log_basis > max {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated fold step log_basis={log_basis} outside policy range [{min}, {max}]"
-        )));
-    }
-    Ok(())
+fn validate_step_bases(step: &GeneratedFoldStep, policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    super::validate_certified_bases(
+        step.log_basis_inner,
+        step.log_basis_outer,
+        step.log_basis_open,
+        policy,
+        "generated fold step",
+    )
 }
 
 fn validate_block_geometry(
@@ -477,9 +482,12 @@ fn validate_expanded_level_params(
             "expanded generated level has mismatched block geometry".to_string(),
         ));
     }
-    if lp.log_basis != step.log_basis {
+    if lp.log_basis_inner != step.log_basis_inner
+        || lp.log_basis_outer != step.log_basis_outer
+        || lp.log_basis_open != step.log_basis_open
+    {
         return Err(AkitaError::InvalidSetup(
-            "expanded generated level has mismatched log_basis".to_string(),
+            "expanded generated level has mismatched semantic basis".to_string(),
         ));
     }
     if fold_level > 0 && lp.onehot_chunk_size != 0 {

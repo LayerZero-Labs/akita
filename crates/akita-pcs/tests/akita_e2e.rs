@@ -761,7 +761,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         assert_eq!(
-            proof.final_witness().layout.log_basis,
+            proof.final_witness().layout.log_basis_open,
             schedule_terminal_log_basis(&plan)
         );
 
@@ -891,7 +891,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                  realized variable-length terminal z payload is substituted",
         );
         assert_eq!(
-            decoded.final_witness().layout.log_basis,
+            decoded.final_witness().layout.log_basis_open,
             schedule_terminal_log_basis(&plan)
         );
 

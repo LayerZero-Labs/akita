@@ -41,8 +41,8 @@ struct ChangedKey {
     new_bytes: usize,
     old_steps: usize,
     new_steps: usize,
-    old_lb_set: Vec<u32>,
-    new_lb_set: Vec<u32>,
+    old_lb_set: Vec<(u32, u32, u32)>,
+    new_lb_set: Vec<(u32, u32, u32)>,
 }
 
 impl ChangedKey {
@@ -58,8 +58,18 @@ fn step_count(s: &Schedule) -> usize {
     s.folds.len() + 1
 }
 
-fn log_basis_set(s: &Schedule) -> Vec<u32> {
-    let mut v: Vec<u32> = s.folds.iter().map(|fold| fold.params.log_basis).collect();
+fn basis_set(s: &Schedule) -> Vec<(u32, u32, u32)> {
+    let mut v: Vec<(u32, u32, u32)> = s
+        .folds
+        .iter()
+        .map(|fold| {
+            (
+                fold.params.log_basis_inner,
+                fold.params.log_basis_outer,
+                fold.params.log_basis_open,
+            )
+        })
+        .collect();
     v.sort_unstable();
     v.dedup();
     v
@@ -94,8 +104,8 @@ fn regen_diff_vs_shipped_tables() {
 
             let old_steps = step_count(&old);
             let new_steps = step_count(&new);
-            let old_lb = log_basis_set(&old);
-            let new_lb = log_basis_set(&new);
+            let old_lb = basis_set(&old);
+            let new_lb = basis_set(&new);
             let structure_changed = old_steps != new_steps || old_lb != new_lb;
 
             if new.total_bytes < old.total_bytes {

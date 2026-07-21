@@ -67,7 +67,7 @@ fn make_fold_step(
     params.num_live_ring_elements_per_claim = num_live_blocks * num_positions_per_block;
     params.num_live_blocks = num_live_blocks;
     params.num_positions_per_block = num_positions_per_block;
-    params.num_digits_commit = 2;
+    params.num_digits_inner = 2;
     params.num_digits_open = 2;
     params.stamp_role_dims_from_keys();
     FoldStep {
@@ -84,7 +84,7 @@ fn make_direct_step() -> TerminalWitnessPlan {
         witness_shape: SegmentTypedWitnessShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
-                log_basis: 3,
+                log_basis_open: 3,
                 groups: vec![TailSegmentGroupLayout {
                     z_coords: 1,
                     e_field_elems: 0,

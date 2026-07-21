@@ -86,7 +86,7 @@ where
         &opening_batch,
         2,
         relation_rhs_row_count(&rhs_layout),
-        r_decomp_levels::<F>(level_params.log_basis),
+        r_decomp_levels::<F>(level_params.log_basis_open),
     )
     .unwrap();
     let live_len = witness_layout.total_len() * D;
@@ -97,7 +97,7 @@ where
     .unwrap();
     let plan = RelationRangeImagePlan::new(
         digit_witness_domain,
-        DigitRangePlan::new(1usize << level_params.log_basis).unwrap(),
+        DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
         witness_layout,
         &opening_batch,
         level_params.role_dims(),

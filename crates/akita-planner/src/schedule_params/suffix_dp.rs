@@ -389,7 +389,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     },
                     depth + 1,
                 )?;
-                let child_lb = suffix_fold.first_fold_params.log_basis;
+                let child_lb = suffix_fold.first_fold_params.log_basis_open;
                 let Some(prefixed_suffix_fold) =
                     prefixed_child_suffix.best_fold_per_lb.get(&child_lb)
                 else {

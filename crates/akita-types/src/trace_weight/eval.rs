@@ -125,7 +125,7 @@ where
         ));
     }
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
     let ring_eq = lagrange_weights(ring_point)?;
     let mut out = E::zero();
@@ -171,7 +171,7 @@ where
         ));
     }
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
 
     let ring_eq = lagrange_weights(ring_point)?;
@@ -406,7 +406,7 @@ where
     validate_eval_point(layout, ring_point.len(), col_point.len())?;
 
     let k = E::EXT_DEGREE;
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let gadget_row = lift_gadget_row::<F, E>(&gadget_scalars);
     let ring_eq = lagrange_weights(ring_point)?;
     // Structure constants of the ring-subfield basis (`[[[1]]]` when `k == 1`).

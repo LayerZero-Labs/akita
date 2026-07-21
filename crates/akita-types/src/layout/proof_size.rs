@@ -134,7 +134,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
     let t_hat_count = lp
         .num_live_blocks
         .checked_mul(lp.a_key.row_len())
-        .and_then(|n| n.checked_mul(lp.num_digits_open))
+        .and_then(|n| n.checked_mul(lp.num_digits_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
     let z_pre_count = lp
         .inner_width()
@@ -142,7 +142,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
         .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)?
-        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis))
+        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis_open))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
 
     e_hat_count

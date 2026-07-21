@@ -194,7 +194,7 @@ where
             digit_range_equality_low_variable_count,
             tau0,
             tau1,
-            b: 1usize << lp.log_basis,
+            b: 1usize << lp.log_basis_open,
             alpha,
         })
     })

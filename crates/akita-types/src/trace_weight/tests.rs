@@ -38,7 +38,13 @@ fn trace_layout(
         1,
         akita_challenges::SparseChallengeConfig::pm1_only(1),
     )
-    .with_decomp(1, num_live_blocks_per_claim, 1, num_digits_open)
+    .with_decomp(
+        1,
+        num_live_blocks_per_claim,
+        1,
+        num_digits_open,
+        num_digits_open,
+    )
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();
@@ -55,7 +61,7 @@ fn trace_layout(
         block_index_bits: (num_claims * num_live_blocks_per_claim)
             .next_power_of_two()
             .trailing_zeros() as usize,
-        log_basis,
+        log_basis_open: log_basis,
         witness_layout,
         opening_source_len,
         group_id,

@@ -435,8 +435,82 @@ fn entries_key_digest(entries: &[GeneratedScheduleTableEntry]) -> u64 {
         for group in entry.precommitteds {
             write_generated_precommitted_group_key(&mut h, group);
         }
+        h.write_u64(entry.folds.len() as u64);
+        for fold in entry.folds {
+            write_generated_fold(&mut h, fold);
+        }
     }
     h.finish()
+}
+
+fn write_generated_fold_step(h: &mut Fnv64, step: &crate::generated::GeneratedFoldStep) {
+    for value in [
+        step.ring_d,
+        step.log_basis_inner,
+        step.log_basis_outer,
+        step.log_basis_open,
+        step.position_index_bits,
+        step.block_index_bits,
+        step.num_live_blocks,
+        step.n_a,
+        step.n_b,
+        step.n_d,
+    ] {
+        h.write_u64(u64::from(value));
+    }
+}
+
+fn write_generated_setup_prefix(
+    h: &mut Fnv64,
+    group: &crate::generated::GeneratedSetupPrefixGroup,
+) {
+    for value in [
+        group.natural_len,
+        group.num_live_ring_elements_per_claim,
+        group.num_positions_per_block,
+        group.num_live_blocks,
+    ] {
+        h.write_u64(u64::from(value));
+    }
+    match group.fold_challenge_shape {
+        TensorChallengeShape::Flat => h.write_u64(0),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            h.write_u64(1);
+            h.write_u64(fold_low_len as u64);
+        }
+    }
+    for value in [
+        group.log_basis_inner,
+        group.log_basis_outer,
+        group.log_basis_open,
+        group.n_a,
+        group.n_b,
+    ] {
+        h.write_u64(u64::from(value));
+    }
+}
+
+fn write_generated_fold(h: &mut Fnv64, fold: &GeneratedFold) {
+    match fold {
+        GeneratedFold::Fold(fold) => {
+            h.write_u64(0);
+            write_generated_fold_step(h, fold);
+        }
+        GeneratedFold::FoldWithSetupMetadata(metadata) => {
+            h.write_u64(1);
+            write_generated_fold_step(h, &metadata.fold);
+            if let Some(group) = &metadata.setup_prefix_group {
+                h.write_u64(1);
+                write_generated_setup_prefix(h, group);
+            } else {
+                h.write_u64(0);
+            }
+            h.write_u64(match metadata.setup_contribution_mode {
+                akita_types::SetupContributionMode::Direct => 0,
+                akita_types::SetupContributionMode::Recursive => 1,
+            });
+        }
+    }
 }
 
 fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
@@ -456,9 +530,12 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
             h.write_u64(fold_low_len as u64);
         }
     }
-    h.write_u64(u64::from(key.log_basis));
+    h.write_u64(u64::from(key.log_basis_inner));
+    h.write_u64(u64::from(key.log_basis_outer));
     h.write_u64(key.n_a as u64);
-    h.write_u64(key.conservative_n_b as u64);
+    h.write_bytes(&key.a_coeff_linf_bound.to_le_bytes());
+    h.write_u64(key.n_b as u64);
+    h.write_bytes(&key.b_coeff_linf_bound.to_le_bytes());
 }
 
 pub fn ring_challenge_config_digest(
@@ -571,9 +648,12 @@ mod tests {
             num_positions_per_block: 2,
             num_live_blocks: 1,
             fold_challenge_shape: TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 1,
-            conservative_n_b: 1,
+            a_coeff_linf_bound: 1,
+            n_b: 1,
+            b_coeff_linf_bound: 1,
         }];
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),

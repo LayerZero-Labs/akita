@@ -435,12 +435,14 @@ where
             if inner_trace.len() != D {
                 return Err(AkitaError::InvalidProof);
             }
-            let opening_digit_weights: Arc<[E]> =
-                gadget_row_scalars::<F>(group_params.num_digits_open(), group_params.log_basis())
-                    .into_iter()
-                    .map(E::lift_base)
-                    .collect::<Vec<_>>()
-                    .into();
+            let opening_digit_weights: Arc<[E]> = gadget_row_scalars::<F>(
+                group_params.num_digits_open(),
+                group_params.log_basis_open(),
+            )
+            .into_iter()
+            .map(E::lift_base)
+            .collect::<Vec<_>>()
+            .into();
             Ok(EvaluationTraceGroupParameters {
                 group_index,
                 claim_range: inputs.opening_batch.root_group_claim_range(group_index)?,

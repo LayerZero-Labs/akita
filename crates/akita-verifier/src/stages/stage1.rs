@@ -273,7 +273,7 @@ mod fold_grind_nonce_tests {
             3,
             fold_challenge_config,
         )
-        .with_decomp(16, 64, 2, 2)
+        .with_decomp(16, 64, 2, 2, 2)
         .expect("level params")
         .with_fold_challenge_shape(fold_shape)
         .expect("fold challenge shape")

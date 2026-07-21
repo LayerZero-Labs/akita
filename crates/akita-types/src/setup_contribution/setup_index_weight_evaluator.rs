@@ -242,7 +242,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         rho_setup_idx: &[E],
     ) -> Result<E, AkitaError> {
         let num_live_blocks = group.num_live_blocks(&self.level_params, &self.opening_batch)?;
-        let depth_open = group.depth_open(&self.level_params, &self.opening_batch)?;
+        let depth_commit = group.depth_commit(&self.level_params, &self.opening_batch)?;
         let n_a = group.n_a(&self.level_params, &self.opening_batch)?;
         let n_b = group.n_b(
             &self.level_params,
@@ -264,12 +264,12 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     .checked_mul(claim)
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(n_a))
-                    .and_then(|base| base.checked_mul(depth_open))
+                    .and_then(|base| base.checked_mul(depth_commit))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
                 let witness_index = unit.t_index(
                     group.num_claims,
                     n_a,
-                    depth_open,
+                    depth_commit,
                     claim,
                     unit.global_block_start(),
                     0,
@@ -278,7 +278,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                 let len = checked_mul3(
                     unit.num_live_blocks(),
                     n_a,
-                    depth_open,
+                    depth_commit,
                     "setup B span overflow",
                 )?;
                 validate_opening_span(
@@ -322,13 +322,13 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     ) -> Result<E, AkitaError> {
         let num_positions_per_block =
             group.num_positions_per_block(&self.level_params, &self.opening_batch)?;
-        let depth_commit = group.depth_commit(&self.level_params, &self.opening_batch)?;
+        let depth_witness = group.depth_witness(&self.level_params, &self.opening_batch)?;
         let n_a = group.n_a(&self.level_params, &self.opening_batch)?;
         if n_a == 0 {
             return Ok(E::zero());
         }
         let z_cols = num_positions_per_block
-            .checked_mul(depth_commit)
+            .checked_mul(depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
         let setup_col = 0;
         let mut acc = E::zero();
@@ -337,7 +337,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             for (fold_digit, &fold) in self.fold_gadget.iter().enumerate().take(group.depth_fold) {
                 let witness_index = unit.z_index(
                     num_positions_per_block,
-                    depth_commit,
+                    depth_witness,
                     group.depth_fold,
                     0,
                     0,

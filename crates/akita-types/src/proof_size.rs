@@ -103,7 +103,7 @@ pub fn level_proof_bytes(
                 }
             };
             let next_eval_bytes = challenge_elem_bytes;
-            let b = 1usize << lp.log_basis;
+            let b = 1usize << lp.log_basis_open;
             let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
             Ok(v_bytes
                 + FOLD_GRIND_NONCE_BYTES
@@ -292,7 +292,7 @@ mod tests {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-        let b = 1usize << lp.log_basis;
+        let b = 1usize << lp.log_basis_open;
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
@@ -346,7 +346,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(1, 1, 1, 1)
+            .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
             assert_eq!(
                 level_proof_bytes(
@@ -385,7 +385,7 @@ mod tests {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let next_lp = LevelParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
@@ -446,7 +446,7 @@ mod tests {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
 
         let missing_successor = level_proof_bytes(
@@ -533,7 +533,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(1, 1, 1, 1)
+            .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
 
             let terminal_bytes = exact_level_proof_bytes::<F>(
@@ -592,7 +592,7 @@ mod tests {
                 2,
                 fold_challenge_config,
             )
-            .with_decomp(1, 1, 1, 1)
+            .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
 
             let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);

@@ -833,15 +833,15 @@ where
             OneHotCommitRowsPlan {
                 n_a: plan.n_a,
                 num_positions_per_block: plan.num_positions_per_block,
-                num_digits_commit: plan.num_digits_commit,
+                num_digits_inner: plan.num_digits_inner,
                 blocks: blocks.commit_plan_blocks(),
             },
         )?;
 
         let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
             &t,
-            plan.num_digits_open,
-            plan.log_basis,
+            plan.num_digits_outer,
+            plan.log_basis_outer,
         )?;
 
         CommitInnerWitness::from_parts(t, decomposed_inner_rows)

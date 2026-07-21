@@ -113,12 +113,18 @@ pub struct PrecommittedGroupParams {
     pub num_live_blocks: usize,
     /// Group-local flat or tensor fold challenge shape.
     pub fold_challenge_shape: akita_challenges::TensorChallengeShape,
-    /// Gadget basis selected for the standalone group commit.
-    pub log_basis: u32,
-    /// A-role row count selected for the committed inner rows.
+    /// Gadget basis selected for the standalone A/source digits.
+    pub log_basis_inner: u32,
+    /// Gadget basis selected for the standalone B/`t_hat` digits.
+    pub log_basis_outer: u32,
+    /// Conservative A-role row count frozen at precommit time.
     pub n_a: usize,
-    /// Conservative B-role row count used by the standalone precommit.
-    pub conservative_n_b: usize,
+    /// Conservative A-role collision bucket frozen at precommit time.
+    pub a_coeff_linf_bound: u128,
+    /// Conservative B-role row count frozen at precommit time.
+    pub n_b: usize,
+    /// Conservative B-role collision bucket frozen at precommit time.
+    pub b_coeff_linf_bound: u128,
 }
 
 impl PrecommittedGroupParams {
@@ -130,9 +136,12 @@ impl PrecommittedGroupParams {
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
             fold_challenge_shape: params.fold_challenge_shape,
-            log_basis: params.log_basis,
+            log_basis_inner: params.log_basis_inner,
+            log_basis_outer: params.log_basis_outer,
             n_a: params.a_key.row_len(),
-            conservative_n_b: params.b_key.row_len(),
+            a_coeff_linf_bound: params.a_key.coeff_linf_bound(),
+            n_b: params.b_key.row_len(),
+            b_coeff_linf_bound: params.b_key.coeff_linf_bound(),
         }
     }
 
@@ -151,9 +160,12 @@ impl PrecommittedGroupParams {
         {
             push_usize(bytes, fold_low_len);
         }
-        push_u32(bytes, self.log_basis);
+        push_u32(bytes, self.log_basis_inner);
+        push_u32(bytes, self.log_basis_outer);
         push_usize(bytes, self.n_a);
-        push_usize(bytes, self.conservative_n_b);
+        crate::descriptor_bytes::push_u128(bytes, self.a_coeff_linf_bound);
+        push_usize(bytes, self.n_b);
+        crate::descriptor_bytes::push_u128(bytes, self.b_coeff_linf_bound);
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
@@ -165,15 +177,24 @@ impl PrecommittedGroupParams {
                 self.group.num_polynomials()
             )));
         }
-        if self.n_a == 0 || self.conservative_n_b == 0 {
+        if self.n_a == 0
+            || self.n_b == 0
+            || self.a_coeff_linf_bound == 0
+            || self.b_coeff_linf_bound == 0
+        {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero A rows and conservative B rows"
+                "commitment group layout requires nonzero conservative A/B rows and bounds"
                     .to_string(),
             ));
         }
-        if self.log_basis == 0 {
+        if self.log_basis_inner == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis".to_string(),
+                "commitment group layout requires nonzero log_basis_inner".to_string(),
+            ));
+        }
+        if self.log_basis_outer == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "commitment group layout requires nonzero log_basis_outer".to_string(),
             ));
         }
         Ok(())
@@ -397,7 +418,7 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
     let r_count = r_rows
         .checked_mul(crate::sis::compute_num_digits_full_field(
             field_bits,
-            lp.log_basis,
+            lp.log_basis_open,
         ))
         .ok_or_else(|| AkitaError::InvalidSetup("witness r-tail width overflow".to_string()))?;
 
@@ -507,7 +528,7 @@ pub struct TerminalWitnessPlan {
 impl TerminalWitnessPlan {
     /// Active terminal log-basis.
     pub fn log_basis(&self) -> u32 {
-        self.witness_shape.layout.log_basis
+        self.witness_shape.layout.log_basis_open
     }
 }
 
@@ -680,7 +701,7 @@ impl Schedule {
         let next_params = self.folds.get(level + 1).map(|fold| fold.params.clone());
         let next_log_basis = next_params
             .as_ref()
-            .map_or_else(|| self.terminal.log_basis(), |params| params.log_basis);
+            .map_or_else(|| self.terminal.log_basis(), |params| params.log_basis_open);
         Ok(ExecutionSchedule {
             level,
             current_w_len: step.current_w_len,
@@ -726,7 +747,6 @@ pub fn root_current_w_len(lp: &LevelParams) -> usize {
         .and_then(|len| len.checked_mul(lp.ring_dimension))
         .unwrap_or(0)
 }
-
 #[cfg(test)]
 #[path = "schedule_tests.rs"]
 mod tests;

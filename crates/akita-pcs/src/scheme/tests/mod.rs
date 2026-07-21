@@ -87,7 +87,7 @@ fn expected_same_point_batched_shape(
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
         v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
-        stage1_stages: DigitRangePlan::new(1usize << root_step.params.log_basis)
+        stage1_stages: DigitRangePlan::new(1usize << root_step.params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
         stage2_sumcheck_proof: vec![3; root_rounds],
@@ -133,7 +133,7 @@ fn expected_same_point_batched_shape(
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
             v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
-            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis)
+            stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),
             stage2_sumcheck_proof: vec![3; rounds],

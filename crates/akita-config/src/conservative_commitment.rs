@@ -1,17 +1,18 @@
 //! Conservative one-hot commitment config adapter.
 //!
 //! This adapter is for staggered workflows that need ordinary commit calls to
-//! use a B rank conservative for a later multi-group root whose final basis is not
-//! known at precommit time.
+//! freeze the A/source and B/outer commitment layout before the final multi-group
+//! root is known.
 
 use crate::{policy_of, CommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    min_secure_rank, rounded_up_collision_inf_norm, SisSecurityPolicyId, SisTableKey,
+    decomposed_t_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    AjtaiKeyParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
     SetupMatrixEnvelope, SisModulusProfileId,
 };
@@ -146,59 +147,102 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    let params = &mut schedule.root_fold_mut()?.params;
-    widen_conservative_commit_params::<Cfg>(params, policy.sis_security_policy)?;
+    let widened = widen_conservative_commit_params::<Cfg>(schedule.root_fold()?.params.clone())?;
+    schedule.root_fold_mut()?.params = widened;
     Ok(schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
-    params: &mut LevelParams,
-    sis_security_policy: SisSecurityPolicyId,
-) -> Result<(), AkitaError> {
-    let (min_basis, max_basis) = Cfg::basis_range();
-    if params.log_basis != min_basis {
+    mut params: LevelParams,
+) -> Result<LevelParams, AkitaError> {
+    let policy = policy_of::<Cfg>();
+    let (min_basis, _) = Cfg::basis_range();
+    if params.log_basis_open != min_basis {
         return Err(AkitaError::InvalidSetup(
-            "conservative commit planner did not use the minimum configured log_basis".to_string(),
+            "conservative commit planner did not use the minimum configured log_basis_open"
+                .to_string(),
         ));
     }
 
-    let conservative_norm = rounded_up_collision_inf_norm(
-        sis_security_policy,
-        Cfg::sis_modulus_profile(),
-        akita_types::SisMatrixRole::B,
-        Cfg::D,
-        max_basis,
-    )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "no conservative B-role norm for conservative commitment".to_string(),
+    let witness_decomposition = DecompositionParams {
+        log_basis: params.log_basis_inner,
+        ..policy.decomposition
+    };
+    let inner_width = params.a_key.col_len();
+    let mut conservative_a_rows = 0usize;
+    let mut conservative_a_bound = 0u128;
+    let mut conservative_b_bound = 0u128;
+
+    for log_basis_open in policy.basis_range.0..=policy.basis_range.1 {
+        let a_bound = rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            policy.ring_dimension,
+            witness_decomposition,
+            log_basis_open,
+            &params.fold_challenge_config,
+            params.fold_challenge_shape,
+            true,
+            policy.onehot_chunk_size,
+            policy.ring_subfield_norm_bound,
+            params.num_live_blocks,
+            1,
+            inner_width as u64,
         )
-    })?;
-    let conservative_n_b = min_secure_rank(
-        SisTableKey {
-            policy: sis_security_policy,
-            table_digest: akita_types::sis::SisTableDigest::CURRENT,
-            modulus_profile: Cfg::sis_modulus_profile(),
-            role: akita_types::SisMatrixRole::B,
-            ring_dimension: Cfg::D as u32,
-            coeff_linf_bound: conservative_norm,
-        },
-        params.b_key.col_len() as u64,
-    )
-    .ok_or_else(|| {
-        AkitaError::InvalidSetup(
-            "no conservative B-role rank for conservative commitment".to_string(),
+        .ok_or_else(|| AkitaError::InvalidSetup("no conservative A-role norm".to_string()))?;
+        let a_key = AjtaiKeyParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: policy.sis_security_policy,
+                table_digest: policy.sis_table_digest,
+                modulus_profile: policy.sis_modulus_profile,
+                role: SisMatrixRole::A,
+                ring_dimension: policy.ring_dimension as u32,
+                coeff_linf_bound: a_bound,
+            },
+            inner_width,
+        )?;
+        conservative_a_rows = conservative_a_rows.max(a_key.row_len());
+        conservative_a_bound = conservative_a_bound.max(a_bound);
+
+        let b_bound = rounded_up_collision_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            SisMatrixRole::B,
+            policy.ring_dimension,
+            log_basis_open,
         )
-    })?;
-    params.b_key = AjtaiKeyParams::try_new(
-        sis_security_policy,
-        akita_types::sis::SisTableDigest::CURRENT,
-        Cfg::sis_modulus_profile(),
-        akita_types::SisMatrixRole::B,
-        conservative_n_b,
-        params.b_key.col_len(),
-        conservative_norm,
-        Cfg::D,
+        .ok_or_else(|| AkitaError::InvalidSetup("no conservative B-role norm".to_string()))?;
+        conservative_b_bound = conservative_b_bound.max(b_bound);
+    }
+
+    params.a_key = AjtaiKeyParams::try_new(
+        policy.sis_security_policy,
+        policy.sis_table_digest,
+        policy.sis_modulus_profile,
+        SisMatrixRole::A,
+        conservative_a_rows,
+        inner_width,
+        conservative_a_bound,
+        policy.ring_dimension,
     )?;
-    Ok(())
+    let outer_width = decomposed_t_ring_count(
+        conservative_a_rows,
+        params.num_digits_outer,
+        params.num_live_blocks,
+        1,
+    )
+    .ok_or_else(|| AkitaError::InvalidSetup("conservative B width overflow".to_string()))?;
+    params.b_key = AjtaiKeyParams::try_new_with_min_rank(
+        SisTableKey {
+            policy: policy.sis_security_policy,
+            table_digest: policy.sis_table_digest,
+            modulus_profile: policy.sis_modulus_profile,
+            role: SisMatrixRole::B,
+            ring_dimension: policy.ring_dimension as u32,
+            coeff_linf_bound: conservative_b_bound,
+        },
+        outer_width,
+    )?;
+    params.stamp_role_dims_from_keys();
+    Ok(params)
 }

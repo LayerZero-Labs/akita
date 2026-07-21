@@ -30,7 +30,7 @@ fn test_level_params(ring_dimension: usize) -> LevelParams {
         akita_challenges::SparseChallengeConfig::production_for_ring_dim(ring_dimension)
             .expect("supported test ring dimension"),
     )
-    .with_decomp(8, 32, 2, 2)
+    .with_decomp(8, 32, 2, 2, 2)
     .expect("valid test level params")
 }
 
@@ -63,7 +63,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
             witness_shape: SegmentTypedWitnessShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,
-                    log_basis: 3,
+                    log_basis_open: 3,
                     groups: vec![TailSegmentGroupLayout {
                         z_coords: 1,
                         e_field_elems: 64,

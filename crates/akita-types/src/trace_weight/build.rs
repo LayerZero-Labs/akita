@@ -130,7 +130,7 @@ where
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
     let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
@@ -171,7 +171,7 @@ where
     layout.validate_opening_digit_segment()?;
     let _ = compact_table_len(layout, live_x_cols)?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
     let mut columns = Vec::new();
 
@@ -237,7 +237,7 @@ where
     layout.validate_ring_dimension::<D>()?;
     layout.validate_opening_digit_segment()?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let ring_len = layout.ring_len();
     let mut block_rows = vec![E::zero(); layout.num_live_blocks * ring_len];
 
@@ -284,7 +284,7 @@ where
     layout.validate_opening_digit_segment()?;
     let out_len = compact_table_len(layout, live_x_cols)?;
 
-    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis);
+    let gadget_scalars = gadget_row_scalars::<F>(layout.num_digits_open, layout.log_basis_open);
     let mut compact = vec![E::zero(); out_len];
 
     for term in terms {

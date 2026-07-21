@@ -245,12 +245,12 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
     }
     for (unit, z_centered) in units.into_iter().zip(&group.z_folded_centered_per_chunk) {
         let z_planes =
-            decompose_z_folded_planes(z_centered, num_digits_fold, group.params.log_basis())?;
+            decompose_z_folded_planes(z_centered, num_digits_fold, group.params.log_basis_open())?;
         emit_witness_z_planes::<D>(
             out,
             unit,
             group.params.num_positions_per_block(),
-            group.params.num_digits_commit(),
+            group.params.num_digits_inner(),
             num_digits_fold,
             &z_planes,
         )?;
@@ -270,7 +270,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         group_id,
         num_claims,
         group.params.a_rows_len(),
-        group.params.num_digits_open(),
+        group.params.num_digits_outer(),
         group.t_hat.typed_planes::<D>()?,
         group.params.num_live_blocks(),
     )?;
@@ -392,7 +392,7 @@ where
         F,
         dims.d_a(),
         |D| {
-            validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+            validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
             witness.ensure_role_dim::<D>(RingRole::Inner)?;
             let RingRelationWitness {
                 groups,
@@ -438,15 +438,15 @@ where
                     } else {
                         crate::compute::recompose_inner_rows::<F, D>(
                             &t_hat,
-                            group_lp.num_digits_open(),
-                            group_lp.log_basis(),
+                            group_lp.num_digits_outer(),
+                            group_lp.log_basis_outer(),
                         )?
                     }
                 } else {
                     crate::compute::recompose_inner_rows::<F, D>(
                         &t_hat,
-                        group_lp.num_digits_open(),
-                        group_lp.log_basis(),
+                        group_lp.num_digits_outer(),
+                        group_lp.log_basis_outer(),
                     )?
                 };
                 let z_folded_centered_per_chunk =
@@ -535,8 +535,8 @@ where
                     group_layout.num_polynomials(),
                 )?;
             }
-            let levels = r_decomp_levels::<F>(lp.log_basis);
-            emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis)?;
+            let levels = r_decomp_levels::<F>(lp.log_basis_open);
+            emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
             let expected =
                 lp.next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
@@ -552,8 +552,14 @@ where
             // root basis could incorrectly trust a later narrower commit.
             let known_balanced_log_basis = owned
                 .iter()
-                .map(|group| group.params.log_basis())
-                .fold(lp.log_basis, u32::max);
+                .flat_map(|group| {
+                    [
+                        group.params.log_basis_inner(),
+                        group.params.log_basis_outer(),
+                        group.params.log_basis_open(),
+                    ]
+                })
+                .fold(lp.log_basis_open, u32::max);
             Ok(RingSwitchBuildOutput::Intermediate(
                 RecursiveWitnessFlat::from_witness_layout::<D>(
                     out,

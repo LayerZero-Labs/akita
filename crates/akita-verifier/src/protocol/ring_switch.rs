@@ -110,10 +110,13 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
+    pub(crate) depth_witness: usize,
     pub(crate) depth_open: usize,
     pub(crate) depth_commit: usize,
     pub(crate) depth_fold: usize,
-    pub(crate) log_basis: u32,
+    pub(crate) log_basis_inner: u32,
+    pub(crate) log_basis_outer: u32,
+    pub(crate) log_basis_open: u32,
     pub(crate) n_a: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
@@ -263,7 +266,7 @@ where
         tau0,
         tau1,
         b: 1usize
-            .checked_shl(lp.log_basis)
+            .checked_shl(lp.log_basis_open)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
     }
@@ -367,16 +370,21 @@ where
         let k_g = group_layout.num_polynomials();
         let num_live_blocks = group_lp.num_live_blocks();
         let num_positions_per_block = group_lp.num_positions_per_block();
+        let depth_witness = group_lp.num_digits_inner();
+        let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
-        let depth_commit = group_lp.num_digits_commit();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let log_basis = group_lp.log_basis();
-        validate_log_basis(log_basis)?;
+        let log_basis_inner = group_lp.log_basis_inner();
+        let log_basis_outer = group_lp.log_basis_outer();
+        let log_basis_open = group_lp.log_basis_open();
+        validate_log_basis(log_basis_inner)?;
+        validate_log_basis(log_basis_outer)?;
+        validate_log_basis(log_basis_open)?;
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
         let inner_width = group_lp.a_col_len();
         let expected_inner_width = num_positions_per_block
-            .checked_mul(depth_commit)
+            .checked_mul(depth_witness)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group inner width overflow".to_string())
             })?;
@@ -440,10 +448,13 @@ where
             group_id: group_index,
             num_claims: k_g,
             num_live_blocks,
+            depth_witness,
             depth_open,
             depth_commit,
             depth_fold,
-            log_basis,
+            log_basis_inner,
+            log_basis_outer,
+            log_basis_open,
             n_a,
             a_row_start: a_range.start,
             b_row_start: b_range.start,
@@ -455,7 +466,7 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
         groups,
-        log_basis: lp.log_basis,
+        log_basis: lp.log_basis_open,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -543,9 +554,14 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let log_basis = lp.log_basis;
-    validate_log_basis(log_basis)?;
-    let depth_commit = lp.num_digits_commit;
+    let log_basis_inner = lp.log_basis_inner;
+    let log_basis_outer = lp.log_basis_outer;
+    let log_basis_open = lp.log_basis_open;
+    validate_log_basis(log_basis_inner)?;
+    validate_log_basis(log_basis_outer)?;
+    validate_log_basis(log_basis_open)?;
+    let depth_witness = lp.num_digits_inner;
+    let depth_commit = lp.num_digits_outer;
     let depth_open = lp.num_digits_open;
     let num_live_blocks = lp.num_live_blocks;
     let total_blocks = num_live_blocks
@@ -575,10 +591,13 @@ where
         group_id: 0,
         num_claims,
         num_live_blocks,
+        depth_witness,
         depth_open,
         depth_commit,
         depth_fold,
-        log_basis,
+        log_basis_inner,
+        log_basis_outer,
+        log_basis_open,
         n_a,
         a_row_start: 1,
         b_row_start: 1 + n_a,
@@ -591,7 +610,7 @@ where
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims,
         groups,
-        log_basis,
+        log_basis: log_basis_open,
         eq_tau1,
         flat_context: Some(FlatRelationContext {
             level_params: lp.clone(),
@@ -829,11 +848,19 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 .transpose()?;
             for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(context, group)?;
-                validate_log_basis(group.log_basis)?;
+                validate_log_basis(group.log_basis_inner)?;
+                validate_log_basis(group.log_basis_outer)?;
+                validate_log_basis(group.log_basis_open)?;
 
-                let g_open = gadget_row_scalars::<F>(group.depth_open, group.log_basis);
+                let g_open = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
                 let g_open_ext = g_open.iter().copied().map(E::lift_base).collect::<Vec<_>>();
-                let g_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis);
+                let g_t_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
+                let g_t_commit_ext = g_t_commit
+                    .iter()
+                    .copied()
+                    .map(E::lift_base)
+                    .collect::<Vec<_>>();
+                let g_witness = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
 
                 let consistency_weight = self.eq_tau1[0];
                 let a_row_end = group
@@ -853,6 +880,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         consistency_weight,
                         a_row_weights,
                         &g_open_ext,
+                        &g_t_commit_ext,
                         e_eq_slice,
                         t_eq_slice,
                     )?
@@ -865,6 +893,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         consistency_weight,
                         a_row_weights,
                         &g_open_ext,
+                        &g_t_commit_ext,
                     )?
                 };
                 e_structured_contribution += e_contribution;
@@ -880,9 +909,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         .group_column_eq_slices(group_index)
                         .ok_or(AkitaError::InvalidProof)?;
                     for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
-                        for (commit_digit, &commit) in g_commit.iter().enumerate() {
+                        for (commit_digit, &commit) in g_witness.iter().enumerate() {
                             let col = position
-                                .checked_mul(group.depth_commit)
+                                .checked_mul(group.depth_witness)
                                 .and_then(|base| base.checked_add(commit_digit))
                                 .ok_or(AkitaError::InvalidProof)?;
                             let z_eq = *z_slice.get(col).ok_or(AkitaError::InvalidProof)?;
@@ -896,7 +925,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         Some(fold_gadget) if fold_gadget.len() >= group.depth_fold => fold_gadget,
                         _ => {
                             fold_gadget_storage =
-                                gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+                                gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
                             &fold_gadget_storage
                         }
                     };
@@ -905,12 +934,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         .ok_or(AkitaError::InvalidProof)?;
                     for unit in units {
                         for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
-                            for (commit_digit, &commit) in g_commit.iter().enumerate() {
+                            for (commit_digit, &commit) in g_witness.iter().enumerate() {
                                 let mut z_weight = E::zero();
                                 for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                                     let z_index = unit.z_index(
                                         group.opening_a_evals.len(),
-                                        group.depth_commit,
+                                        group.depth_witness,
                                         group.depth_fold,
                                         position,
                                         commit_digit,
@@ -982,6 +1011,7 @@ fn evaluate_group_et_from_eq_slices<F, E>(
     consistency_weight: E,
     a_row_weights: &[E],
     g_open_ext: &[E],
+    g_t_commit_ext: &[E],
     e_eq_slice: &[E],
     t_eq_slice: &[E],
 ) -> Result<(E, E), AkitaError>
@@ -992,7 +1022,7 @@ where
     let e_stride = group.depth_open;
     let t_stride = group
         .n_a
-        .checked_mul(group.depth_open)
+        .checked_mul(group.depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
     let block_claims = group
         .num_claims
@@ -1007,6 +1037,7 @@ where
     if e_eq_slice.len() != expected_e
         || t_eq_slice.len() != expected_t
         || g_open_ext.len() != group.depth_open
+        || g_t_commit_ext.len() != group.depth_commit
         || a_row_weights.len() != group.n_a
     {
         return Err(AkitaError::InvalidProof);
@@ -1020,7 +1051,11 @@ where
         .collect::<Result<Vec<_>, _>>()?;
     let t_weights = a_row_weights
         .iter()
-        .flat_map(|&row_weight| g_open_ext.iter().map(move |&gadget| row_weight * gadget))
+        .flat_map(|&row_weight| {
+            g_t_commit_ext
+                .iter()
+                .map(move |&gadget| row_weight * gadget)
+        })
         .collect::<Vec<_>>();
     let _span = tracing::info_span!(
         "structured_et_from_setup_slices",
@@ -1089,6 +1124,7 @@ fn evaluate_group_et_contributions<F, E>(
     consistency_weight: E,
     a_row_weights: &[E],
     g_open_ext: &[E],
+    g_t_commit_ext: &[E],
 ) -> Result<(E, E), AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
@@ -1096,7 +1132,7 @@ where
 {
     let t_fold_stride = group
         .n_a
-        .checked_mul(group.depth_open)
+        .checked_mul(group.depth_commit)
         .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
     let claim_factors = (0..group.num_claims)
         .map(|claim| {
@@ -1114,7 +1150,11 @@ where
     // rebuilding the same low equality table once per A row.
     let t_block_weights = a_row_weights
         .iter()
-        .flat_map(|&row_weight| g_open_ext.iter().map(move |&gadget| row_weight * gadget))
+        .flat_map(|&row_weight| {
+            g_t_commit_ext
+                .iter()
+                .map(move |&gadget| row_weight * gadget)
+        })
         .collect::<Vec<_>>();
     let mut e_contribution = E::zero();
     let mut t_contribution = E::zero();
@@ -1143,7 +1183,7 @@ where
             let t_index = unit.t_index(
                 group.num_claims,
                 group.n_a,
-                group.depth_open,
+                group.depth_commit,
                 claim,
                 unit.global_block_start(),
                 0,

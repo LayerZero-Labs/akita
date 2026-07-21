@@ -967,7 +967,7 @@ mod tests {
             .expect("single group layout")
             .num_polynomials();
         let num_positions_per_block = group_params.num_positions_per_block();
-        let depth_commit = group_params.num_digits_commit();
+        let depth_witness = group_params.num_digits_inner();
         let depth_open = group_params.num_digits_open();
         let depth_fold = level_params
             .num_digits_fold_for_params(
@@ -977,7 +977,7 @@ mod tests {
             )
             .expect("single group fold depth");
         let n_a = group_params.a_rows_len();
-        let quotient_depth = r_decomp_levels::<F>(level_params.log_basis);
+        let quotient_depth = r_decomp_levels::<F>(level_params.log_basis_open);
 
         let chunk_counts: Vec<usize> = (0..)
             .map(|k| 1usize << k)
@@ -1003,25 +1003,25 @@ mod tests {
                 .expect("chunked group")
             {
                 for position in 0..num_positions_per_block {
-                    for commit_digit in 0..depth_commit {
+                    for witness_digit in 0..depth_witness {
                         for fold_digit in 0..depth_fold {
                             let source = single_unit
                                 .z_index(
                                     num_positions_per_block,
-                                    depth_commit,
+                                    depth_witness,
                                     depth_fold,
                                     position,
-                                    commit_digit,
+                                    witness_digit,
                                     fold_digit,
                                 )
                                 .expect("single z index");
                             let target = unit
                                 .z_index(
                                     num_positions_per_block,
-                                    depth_commit,
+                                    depth_witness,
                                     depth_fold,
                                     position,
-                                    commit_digit,
+                                    witness_digit,
                                     fold_digit,
                                 )
                                 .expect("chunked z index");

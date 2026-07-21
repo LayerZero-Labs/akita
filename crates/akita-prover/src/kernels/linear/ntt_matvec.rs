@@ -127,7 +127,7 @@ pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>
 
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
 ///
-/// This is the `num_digits_commit = 1` specialization of
+/// This is the `num_digits_inner = 1` specialization of
 /// [`mat_vec_mul_ntt_i8`]. It skips the `CyclotomicRing -> i8 digit plane`
 /// decomposition entirely because the caller already holds each coefficient as a
 /// balanced digit plane for a validated `log_basis <= 6`.
@@ -247,7 +247,7 @@ pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D:
 ///
 /// Unlike [`mat_vec_mul_ntt_digits_i8_strided`], this path does not assume the
 /// input rows are balanced gadget digits for `log_basis`. It is used for
-/// `num_digits_commit = 1`, where the recursive witness is already the
+/// `num_digits_inner = 1`, where the recursive witness is already the
 /// committed signed-i8 coefficient stream.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_i8_strided")]
 pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
@@ -273,7 +273,7 @@ pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: us
 ///
 /// The block/column layout and output shape match
 /// [`mat_vec_mul_ntt_digits_i8`], but this path does not assume the rows are
-/// balanced gadget digits: it is the `num_digits_commit = 1` commit path for a
+/// balanced gadget digits: it is the `num_digits_inner = 1` commit path for a
 /// recursive witness whose extension-field tensor base-lift packing can push
 /// coefficients past the balanced range. Coefficients too large for the CRT
 /// lift are rejected as `AkitaError` rather than panicking.

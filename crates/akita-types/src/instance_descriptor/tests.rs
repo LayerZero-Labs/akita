@@ -16,7 +16,7 @@ fn sample_level_params() -> LevelParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .expect("sample level params")
 }
 
@@ -26,7 +26,7 @@ fn sample_direct_step(logical_num_elems: usize) -> TerminalWitnessPlan {
         witness_shape: SegmentTypedWitnessShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
-                log_basis: 3,
+                log_basis_open: 3,
                 groups: vec![TailSegmentGroupLayout {
                     z_coords: 1,
                     e_field_elems: logical_num_elems,
@@ -112,9 +112,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0xe8, 0x1a, 0x74, 0x57, 0x32, 0xb5, 0x9c, 0x77, 0xb8, 0x63, 0x0b, 0xde, 0x3e, 0xac,
-                0xc0, 0x77, 0xb8, 0x3d, 0x12, 0xa2, 0x51, 0x4c, 0x7c, 0x70, 0x27, 0x79, 0x3e, 0xe0,
-                0x1e, 0x88, 0xab, 0x21,
+                0x9b, 0x2e, 0xae, 0x6b, 0xee, 0x18, 0x9d, 0xbf, 0x1f, 0xa4, 0xc9, 0x96, 0x21, 0x60,
+                0x95, 0xf6, 0xcb, 0xc4, 0xea, 0xf6, 0x06, 0x24, 0x8e, 0x73, 0x47, 0x54, 0x6c, 0xbf,
+                0xb1, 0x4a, 0x11, 0xf7,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -134,6 +134,37 @@ fn fold_linf_binding_is_part_of_setup_section() {
 }
 
 #[test]
+fn effective_schedule_digest_binds_all_semantic_bases() {
+    let mut baseline = sample_level_params();
+    baseline.log_basis_inner = 2;
+    baseline.log_basis_outer = 3;
+    baseline.log_basis_open = 4;
+    let schedule = |params| Schedule {
+        folds: vec![FoldStep {
+            params,
+            current_w_len: 256,
+            next_w_len: 256,
+            level_bytes: 123,
+        }],
+        terminal: sample_direct_step(256),
+        total_bytes: 379,
+    };
+    let baseline_digest = digest_effective_schedule(&schedule(baseline.clone()));
+    for mutate in [
+        (|params: &mut LevelParams| params.log_basis_inner += 1) as fn(&mut LevelParams),
+        (|params: &mut LevelParams| params.log_basis_outer += 1) as fn(&mut LevelParams),
+        (|params: &mut LevelParams| params.log_basis_open += 1) as fn(&mut LevelParams),
+    ] {
+        let mut altered = baseline.clone();
+        mutate(&mut altered);
+        assert_ne!(
+            baseline_digest,
+            digest_effective_schedule(&schedule(altered))
+        );
+    }
+}
+
+#[test]
 fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let certified = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
@@ -147,7 +178,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
             count_pm2: 12,
         },
     )
-    .with_decomp(16, 64, 2, 2)
+    .with_decomp(16, 64, 2, 2, 2)
     .expect("certified params");
     let worst_case_only = LevelParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
@@ -158,7 +189,7 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
         3,
         SparseChallengeConfig::pm1_only(31),
     )
-    .with_decomp(16, 64, 2, 2)
+    .with_decomp(16, 64, 2, 2, 2)
     .expect("worst-case-only params");
     assert_eq!(
         certified.fold_witness_linf_cap_policy(),

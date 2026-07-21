@@ -202,15 +202,18 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: FieldCore + LiftBase<F> + MulBase<F>,
 {
-    validate_log_basis(group.log_basis)?;
+    validate_log_basis(group.log_basis_inner)?;
+    validate_log_basis(group.log_basis_outer)?;
+    validate_log_basis(group.log_basis_open)?;
     if inner_lane_alpha_powers.len() != lanes_per_inner_column {
         return Err(AkitaError::InvalidProof);
     }
-    let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis)
+    let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open)
         .into_iter()
         .map(<E as LiftBase<F>>::lift_base)
         .collect::<Vec<_>>();
-    let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis);
+    let t_commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
+    let witness_gadget = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
     let consistency_weight = relation_row_weights
         .first()
         .copied()
@@ -240,10 +243,10 @@ where
     let t_digit_lane_weights = a_row_weights
         .iter()
         .flat_map(|&row_weight| {
-            opening_gadget.iter().flat_map(move |&digit_weight| {
-                inner_lane_alpha_powers
-                    .iter()
-                    .map(move |&lane_weight| row_weight * digit_weight * lane_weight)
+            t_commitment_gadget.iter().flat_map(move |&digit_weight| {
+                inner_lane_alpha_powers.iter().map(move |&lane_weight| {
+                    row_weight * <E as LiftBase<F>>::lift_base(digit_weight) * lane_weight
+                })
             })
         })
         .collect::<Vec<_>>();
@@ -253,7 +256,8 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("E lane stride overflow".into()))?;
     let t_block_stride = group
         .n_a
-        .checked_mul(e_block_stride)
+        .checked_mul(group.depth_commit)
+        .and_then(|stride| stride.checked_mul(lanes_per_inner_column))
         .ok_or_else(|| AkitaError::InvalidSetup("T lane stride overflow".into()))?;
 
     let mut evaluation = E::zero();
@@ -288,7 +292,7 @@ where
             let t_column = unit.t_index(
                 group.num_claims,
                 group.n_a,
-                group.depth_open,
+                group.depth_commit,
                 claim,
                 unit.global_block_start(),
                 0,
@@ -315,14 +319,14 @@ where
         }
     }
 
-    let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+    let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
     for unit in units {
         for (position, &opening_evaluation) in group.opening_a_evals.iter().enumerate() {
-            for (commit_digit, &commit_weight) in commitment_gadget.iter().enumerate() {
+            for (commit_digit, &commit_weight) in witness_gadget.iter().enumerate() {
                 for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
                     let z_column = unit.z_index(
                         group.opening_a_evals.len(),
-                        group.depth_commit,
+                        group.depth_witness,
                         group.depth_fold,
                         position,
                         commit_digit,
@@ -499,7 +503,7 @@ where
                 .num_claims
                 .checked_mul(group.num_live_blocks)
                 .and_then(|count| count.checked_mul(group.n_a))
-                .and_then(|count| count.checked_mul(group.depth_open))
+                .and_then(|count| count.checked_mul(group.depth_commit))
                 .ok_or_else(|| AkitaError::InvalidSetup("B column count overflow".into()))?;
             let mut b_column_weights = vec![
                 E::zero();
@@ -523,11 +527,11 @@ where
                                 AkitaError::InvalidSetup("B block index overflow".into())
                             })?;
                         for a_row in 0..group.n_a {
-                            for digit in 0..group.depth_open {
+                            for digit in 0..group.depth_commit {
                                 let witness_column = unit.t_index(
                                     group.num_claims,
                                     group.n_a,
-                                    group.depth_open,
+                                    group.depth_commit,
                                     claim,
                                     global_block,
                                     a_row,
@@ -536,7 +540,7 @@ where
                                 let semantic_column = block_claim
                                     .checked_mul(group.n_a)
                                     .and_then(|base| base.checked_add(a_row))
-                                    .and_then(|base| base.checked_mul(group.depth_open))
+                                    .and_then(|base| base.checked_mul(group.depth_commit))
                                     .and_then(|base| base.checked_add(digit))
                                     .ok_or_else(|| {
                                         AkitaError::InvalidSetup("B column index overflow".into())
@@ -596,25 +600,25 @@ where
         let active_a_columns = group
             .opening_a_evals
             .len()
-            .checked_mul(group.depth_commit)
+            .checked_mul(group.depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("A column count overflow".into()))?;
         let a_columns = group_params.a_col_len();
         if active_a_columns > a_columns {
             return Err(AkitaError::InvalidProof);
         }
         let mut a_column_weights = vec![E::zero(); a_columns];
-        let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis);
+        let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
         for unit in units {
             for position in 0..group.opening_a_evals.len() {
-                for commit_digit in 0..group.depth_commit {
+                for commit_digit in 0..group.depth_witness {
                     let a_column = position
-                        .checked_mul(group.depth_commit)
+                        .checked_mul(group.depth_witness)
                         .and_then(|base| base.checked_add(commit_digit))
                         .ok_or_else(|| AkitaError::InvalidSetup("A column overflow".into()))?;
                     for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
                         let witness_column = unit.z_index(
                             group.opening_a_evals.len(),
-                            group.depth_commit,
+                            group.depth_witness,
                             group.depth_fold,
                             position,
                             commit_digit,

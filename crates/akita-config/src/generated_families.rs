@@ -164,30 +164,29 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-            let mut precommitteds = Vec::with_capacity(num_precommitted);
-            let mut supported = true;
-            for _ in 0..num_precommitted {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-                let params = match conservative_commit_params::<Cfg>(&pre_key) {
-                    Ok(params) => params,
-                    Err(_) => {
-                        supported = false;
-                        break;
-                    }
-                };
-                precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
-            }
-            if !supported {
-                continue;
-            }
-            let candidate = AkitaScheduleLookupKey {
-                final_group: main,
-                precommitteds,
+        let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
+        let mut precommitteds = Vec::with_capacity(num_precommitted);
+        let mut supported = true;
+        for _ in 0..num_precommitted {
+            let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
+            let params = match conservative_commit_params::<Cfg>(&pre_key) {
+                Ok(params) => params,
+                Err(_) => {
+                    supported = false;
+                    break;
+                }
             };
-            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-                keys.push(candidate);
-            }
+            precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
+        }
+        if !supported {
+            continue;
+        }
+        let candidate = AkitaScheduleLookupKey {
+            final_group: main,
+            precommitteds,
+        };
+        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+            keys.push(candidate);
         }
     }
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
@@ -217,14 +216,14 @@ fn key_within_setup_capacity(
     key: &AkitaScheduleLookupKey,
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<bool, AkitaError> {
+) -> bool {
     if key.precommitteds.is_empty() {
-        return Ok(false);
+        return false;
     }
     if key.final_group.num_vars() > max_num_vars {
-        return Ok(false);
+        return false;
     }
-    Ok(key.num_polynomials()? <= max_num_batched_polys)
+    key.final_group.num_polynomials() <= max_num_batched_polys
 }
 
 /// Selected multi-group recursive keys for setup-prefix capacity work.
@@ -259,7 +258,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
                 final_group: entry.final_group,
                 precommitteds: entry.precommitteds.to_vec(),
             };
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }
@@ -271,7 +270,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
     {
         for candidate in recursive_d64_onehot_profile_keys()? {
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys)? {
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }
@@ -286,7 +285,7 @@ fn push_unique_schedule_key(
     candidate: AkitaScheduleLookupKey,
 ) {
     // Full-key equality: same group shapes with different frozen precommit
-    // metadata (log_basis / n_a / conservative_n_b) stay distinct.
+    // metadata (semantic bases / n_a / n_b) stay distinct.
     if !keys.contains(&candidate) {
         keys.push(candidate);
     }

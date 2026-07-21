@@ -796,7 +796,7 @@ where
             logical_w,
             binding: next_binding,
             hint: committed_hint,
-            log_basis: next_params.log_basis,
+            log_basis: next_params.log_basis_open,
             sumcheck_challenges: next_opening_point,
             opening: next_opening,
             setup_prefix_opening,

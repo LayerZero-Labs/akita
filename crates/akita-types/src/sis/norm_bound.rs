@@ -80,7 +80,8 @@ pub fn rounded_up_role_a_inf_norm(
     policy: SisSecurityPolicyId,
     sis_modulus_profile: SisModulusProfileId,
     d: usize,
-    decomposition: DecompositionParams,
+    witness_decomposition: DecompositionParams,
+    log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
     is_root: bool,
@@ -91,8 +92,13 @@ pub fn rounded_up_role_a_inf_norm(
     inner_width: u64,
 ) -> Option<u128> {
     let challenge = FoldChallengeNorms::new(fold_challenge_config, fold_shape);
-    let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-    let witness = FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+    let is_onehot = is_root && witness_decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
+    let witness = FoldWitnessNorms::new(
+        witness_decomposition.log_basis,
+        d,
+        onehot_chunk_size,
+        is_onehot,
+    );
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         fold_challenge_config,
         fold_shape,
@@ -103,15 +109,15 @@ pub fn rounded_up_role_a_inf_norm(
     let (fold_decomposed_digits, _) = fold_witness_digit_plan(
         num_live_blocks,
         num_claims,
-        decomposition.field_bits(),
-        decomposition.log_basis,
+        witness_decomposition.field_bits(),
+        log_basis_response,
         challenge,
         witness,
         &cap_config,
     )
     .ok()?;
     let recomposed_inf_norm_bound =
-        balanced_digit_abs_max(decomposition.log_basis, fold_decomposed_digits);
+        balanced_digit_abs_max(log_basis_response, fold_decomposed_digits);
     let collision_linf = weak_binding_inf_norm(
         2u128.checked_mul(challenge.l1_norm)?,
         ring_subfield_norm_bound,
@@ -445,6 +451,7 @@ mod tests {
                 SisModulusProfileId::Q32Offset99,
                 d,
                 decomposition,
+                decomposition.log_basis,
                 &fold_challenge_config,
                 fold_shape,
                 is_root,
@@ -514,6 +521,7 @@ mod tests {
             SisModulusProfileId::Q64Offset59,
             d,
             decomposition,
+            decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
             is_root,
@@ -654,6 +662,7 @@ mod tests {
             SisModulusProfileId::Q32Offset99,
             d,
             decomposition,
+            decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
             is_root,

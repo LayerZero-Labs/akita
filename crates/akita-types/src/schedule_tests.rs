@@ -31,7 +31,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         2,
         fold_challenge_config,
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .unwrap();
     let field_bits = 128u32;
     let num_poly = 3usize;
@@ -72,7 +72,7 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
         2,
         fold_challenge_config,
     )
-    .with_decomp(4, 32, 2, 2)
+    .with_decomp(4, 32, 2, 2, 2)
     .unwrap();
     // Non-power-of-two chunk count.
     assert!(matches!(
@@ -174,7 +174,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         .checked_mul(next_lp.ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
     let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-    let b = 1usize << lp.log_basis;
+    let b = 1usize << lp.log_basis_open;
 
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
@@ -219,7 +219,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         assert_eq!(
                 level_proof_bytes(
@@ -255,7 +255,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
 
         let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
@@ -323,7 +323,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
             2,
             fold_challenge_config,
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
         let rounds = sumcheck_rounds(D, next_w_len);
         let b = 1usize << log_basis;
@@ -437,9 +437,12 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
             num_positions_per_block: 16,
             num_live_blocks: 1usize << 14,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -459,9 +462,12 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
             num_positions_per_block: 16,
             num_live_blocks: 4,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -480,9 +486,12 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
             num_positions_per_block: 4,
             num_live_blocks: 4,
             fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-            log_basis: 2,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
             n_a: 3,
-            conservative_n_b: 4,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
         }],
     };
 
@@ -500,9 +509,12 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         num_positions_per_block: 16,
         num_live_blocks: 1,
         fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
-        log_basis: 2,
+        log_basis_inner: 1,
+        log_basis_outer: 2,
         n_a: 3,
-        conservative_n_b: 4,
+        a_coeff_linf_bound: 1,
+        n_b: 4,
+        b_coeff_linf_bound: 1,
     };
     let err = layout
         .validate_frozen_precommit(64)
