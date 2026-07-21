@@ -1128,7 +1128,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_role_relation_evaluator_matches_materialized() {
+    fn lane_factored_relation_evaluator_matches_materialized() {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
@@ -1213,15 +1213,12 @@ mod tests {
             )
             .expect("uniform relation fixture");
 
-        // Isolate the verifier's mixed-role relation geometry from prover
-        // orchestration, which does not yet construct mixed-role statements.
-        // The materialized relation-weight oracle and succinct evaluator both
-        // consume this same validated statement and setup projection.
-        let role_dims = CommitmentRingDims {
-            inner: D,
-            outer: 64,
-            opening: 32,
-        };
+        // Isolate the verifier's lane-factored relation geometry from prover
+        // orchestration, which does not yet construct every role/outgoing
+        // combination. The materialized relation-weight oracle and succinct
+        // evaluator both consume the same validated statement and setup
+        // projection. The uniform-role outgoing transition is load-bearing:
+        // it selects the so-called mixed evaluator for homogeneous relation roles.
         let retarget_key = |key: &AjtaiKeyParams, ring_dimension: usize, column_scale: usize| {
             AjtaiKeyParams::new_unchecked(
                 key.security_policy(),
@@ -1231,113 +1228,147 @@ mod tests {
                 key.row_len(),
                 key.col_len()
                     .checked_mul(column_scale)
-                    .expect("mixed role column width"),
+                    .expect("lane-factored role column width"),
                 key.coeff_linf_bound(),
                 ring_dimension,
             )
         };
-        let mut mixed_level_params = level_params.clone();
-        mixed_level_params.b_key = retarget_key(&mixed_level_params.b_key, role_dims.d_b(), 2);
-        mixed_level_params.d_key = retarget_key(&mixed_level_params.d_key, role_dims.d_d(), 4);
-        mixed_level_params.stamp_role_dims_from_keys();
-        assert_eq!(mixed_level_params.role_dims(), role_dims);
-
-        let group_opening_points = (0..opening_batch.num_groups())
-            .map(|group| uniform_instance.group_opening_point(group).cloned())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("group opening points");
-        let group_ring_multiplier_points = (0..opening_batch.num_groups())
-            .map(|group| uniform_instance.group_ring_multiplier_point(group).cloned())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("group multiplier points");
-        let relation_rhs_layout = akita_types::relation_rhs_layout_for(
-            &mixed_level_params,
-            &opening_batch,
-            uniform_instance.relation_matrix_row_layout(),
-        )
-        .expect("mixed relation RHS layout");
-        let relation_rhs_len = akita_types::relation_rhs_coeff_len(role_dims, &relation_rhs_layout)
-            .expect("mixed relation RHS length");
-        let mixed_rhs = RingVec::from_coeffs(vec![F::zero(); relation_rhs_len]);
-        let mixed_v = RingVec::from_coeffs(vec![
-            F::zero();
-            mixed_level_params.d_key.row_len()
-                * role_dims.d_d()
-        ]);
-        let instance = RingRelationInstance::new(
-            uniform_instance.relation_matrix_row_layout(),
-            uniform_instance.group_challenges().to_vec(),
-            group_opening_points,
-            group_ring_multiplier_points,
-            opening_batch.clone(),
-            uniform_instance.gamma().to_vec(),
-            uniform_instance.row_coefficient_rings().clone(),
-            mixed_rhs,
-            mixed_v,
-            role_dims,
-        )
-        .expect("mixed role relation fixture");
-
         let alpha = F::from_u64(42);
-        let row_variables = mixed_level_params
-            .relation_row_index_num_vars_for_layout(
-                RelationMatrixRowLayout::WithDBlock,
+        let cases = [
+            (
+                "uniform-outgoing-transition",
+                CommitmentRingDims::uniform(D),
+                64,
+            ),
+            (
+                "mixed-128-64-64",
+                CommitmentRingDims {
+                    inner: D,
+                    outer: 64,
+                    opening: 64,
+                },
+                64,
+            ),
+            (
+                "mixed-128-64-32",
+                CommitmentRingDims {
+                    inner: D,
+                    outer: 64,
+                    opening: 32,
+                },
+                32,
+            ),
+        ];
+        for (case, role_dims, outgoing_ring_dim) in cases {
+            let mut case_level_params = level_params.clone();
+            case_level_params.b_key = retarget_key(
+                &case_level_params.b_key,
+                role_dims.d_b(),
+                D / role_dims.d_b(),
+            );
+            case_level_params.d_key = retarget_key(
+                &case_level_params.d_key,
+                role_dims.d_d(),
+                D / role_dims.d_d(),
+            );
+            case_level_params.stamp_role_dims_from_keys();
+            assert_eq!(case_level_params.role_dims(), role_dims);
+
+            let group_opening_points = (0..opening_batch.num_groups())
+                .map(|group| uniform_instance.group_opening_point(group).cloned())
+                .collect::<Result<Vec<_>, _>>()
+                .expect("group opening points");
+            let group_ring_multiplier_points = (0..opening_batch.num_groups())
+                .map(|group| uniform_instance.group_ring_multiplier_point(group).cloned())
+                .collect::<Result<Vec<_>, _>>()
+                .expect("group multiplier points");
+            let relation_rhs_layout = akita_types::relation_rhs_layout_for(
+                &case_level_params,
                 &opening_batch,
+                uniform_instance.relation_matrix_row_layout(),
             )
-            .expect("relation row variables");
-        let tau1: Vec<F> = (0..row_variables)
-            .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
-            .collect();
-        let opening_ring_dim = role_dims.d_d();
-        for num_chunks in [1, 2] {
-            let mut chunked_level_params = mixed_level_params.clone();
-            chunked_level_params.witness_chunk = ChunkedWitnessCfg {
-                num_chunks,
-                num_activated_levels: usize::from(num_chunks > 1),
-            };
-            let witness_layout = instance
-                .segment_layout(&chunked_level_params, None)
-                .expect("mixed witness layout");
-            let opening_source_len = witness_layout
-                .total_len()
-                .checked_mul(D)
-                .and_then(|coefficients| coefficients.checked_div(opening_ring_dim))
-                .expect("mixed opening source length");
-            let dense_weights = test_relation_weight_events(
-                &setup.expanded,
-                &instance,
-                alpha,
-                &chunked_level_params,
-                &tau1,
-                opening_source_len,
-                opening_ring_dim,
+            .expect("lane-factored relation RHS layout");
+            let relation_rhs_len =
+                akita_types::relation_rhs_coeff_len(role_dims, &relation_rhs_layout)
+                    .expect("lane-factored relation RHS length");
+            let relation_rhs = RingVec::from_coeffs(vec![F::zero(); relation_rhs_len]);
+            let v = RingVec::from_coeffs(vec![
+                F::zero();
+                case_level_params.d_key.row_len() * role_dims.d_d()
+            ]);
+            let instance = RingRelationInstance::new(
+                uniform_instance.relation_matrix_row_layout(),
+                uniform_instance.group_challenges().to_vec(),
+                group_opening_points,
+                group_ring_multiplier_points,
+                opening_batch.clone(),
+                uniform_instance.gamma().to_vec(),
+                uniform_instance.row_coefficient_rings().clone(),
+                relation_rhs,
+                v,
+                role_dims,
             )
-            .materialize_dense()
-            .expect("mixed materialized relation weights");
-            let flat_point: Vec<F> = (0..dense_weights.len().trailing_zeros() as usize)
+            .expect("lane-factored relation fixture");
+
+            let row_variables = case_level_params
+                .relation_row_index_num_vars_for_layout(
+                    RelationMatrixRowLayout::WithDBlock,
+                    &opening_batch,
+                )
+                .expect("relation row variables");
+            let tau1: Vec<F> = (0..row_variables)
                 .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
                 .collect();
-            let expected =
-                multilinear_eval(&dense_weights, &flat_point).expect("dense relation MLE");
-            let claim_coefficients = [F::one()];
-            let replay = RingSwitchReplay {
-                setup: &setup.expanded,
-                relation: &instance,
-                row_coefficients: &claim_coefficients,
-                lp: &chunked_level_params,
-                opening_source_len,
-                opening_ring_dim,
-            };
-            let evaluator =
-                prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
-                    .expect("mixed relation evaluator");
-            let got = evaluator
-                .eval_flat_at_point::<F, D>(&flat_point, &setup.expanded, alpha, None)
-                .expect("mixed relation evaluation");
-            assert_eq!(
-                got, expected,
-                "mixed relation parity failed for W={num_chunks}"
-            );
+            for num_chunks in [1, 2] {
+                let mut chunked_level_params = case_level_params.clone();
+                chunked_level_params.witness_chunk = ChunkedWitnessCfg {
+                    num_chunks,
+                    num_activated_levels: usize::from(num_chunks > 1),
+                };
+                let witness_layout = instance
+                    .segment_layout(&chunked_level_params, None)
+                    .expect("lane-factored witness layout");
+                let opening_source_len = witness_layout
+                    .total_len()
+                    .checked_mul(D)
+                    .and_then(|coefficients| coefficients.checked_div(outgoing_ring_dim))
+                    .expect("lane-factored opening source length");
+                let dense_weights = test_relation_weight_events(
+                    &setup.expanded,
+                    &instance,
+                    alpha,
+                    &chunked_level_params,
+                    &tau1,
+                    opening_source_len,
+                    outgoing_ring_dim,
+                )
+                .materialize_dense()
+                .expect("lane-factored materialized relation weights");
+                let flat_point: Vec<F> = (0..dense_weights.len().trailing_zeros() as usize)
+                    .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
+                    .collect();
+                let expected =
+                    multilinear_eval(&dense_weights, &flat_point).expect("dense relation MLE");
+                let claim_coefficients = [F::one()];
+                let replay = RingSwitchReplay {
+                    setup: &setup.expanded,
+                    relation: &instance,
+                    row_coefficients: &claim_coefficients,
+                    lp: &chunked_level_params,
+                    opening_source_len,
+                    opening_ring_dim: outgoing_ring_dim,
+                };
+                let evaluator =
+                    prepare_relation_matrix_evaluator::<F, F, D>(&replay, alpha, &tau1, None)
+                        .expect("lane-factored relation evaluator");
+                let got = evaluator
+                    .eval_flat_at_point::<F, D>(&flat_point, &setup.expanded, alpha, None)
+                    .expect("lane-factored relation evaluation");
+                assert_eq!(
+                    got, expected,
+                    "lane-factored relation parity failed for case={case} W={num_chunks}"
+                );
+            }
         }
     }
 

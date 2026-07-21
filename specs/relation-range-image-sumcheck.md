@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | implementation in progress; foundation/correction slice |
+| Status | implementation in progress; verifier characterization slice |
 | Branch | `quang/relation-range-image-rewrite` |
 | Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
@@ -74,7 +74,8 @@ basis.
 - Separate minimal prover and verifier representations derived from those parameters:
   prover events/factors for round production, and compact structured verifier evaluators
   for final-point replay.
-- Preserve or improve PR #312 verifier performance in every primary benchmark cell.
+- Preserve or improve PR #312 verifier performance in every primary benchmark cell;
+  a candidate may regress by at most 5% under the pinned comparison protocol below.
 - Atomic deletion of old x/y, dense, sparse, and forwarding paths.
 - No proof-byte, transcript, degree, challenge, or final-claim change.
 
@@ -708,6 +709,21 @@ they do not select a second top-level evaluator. Dispatch may depend on semantic
 dimensions, never merely on whether the outgoing witness happens to use the same ring
 dimension.
 
+The canonical point preparation is `PreparedRelationPoint`. It owns the checked
+`coeff_count`, the common coefficient evaluation, one bounded equality window over the
+remaining lane/column point, role-specific lane-alpha factors, and checked role-subcolumn
+addresses. Its characterization matrix covers:
+
+- uniform roles with the same outgoing dimension;
+- uniform roles followed by a smaller outgoing dimension;
+- mixed `128/64/64` roles; and
+- mixed `128/64/32` roles.
+
+Until the contribution-level differential tests and performance baseline are complete,
+this point representation is test-only scaffolding. Making an unused production state or
+routing the existing uniform evaluator through it would create a third implementation or
+prematurely perturb the PR #312 hot path.
+
 The current head does not yet meet that contract: `RelationMatrixEvaluator::eval_flat_at_point`
 owns the uniform formula while `mixed_relation::evaluate_mixed_relation_at_point` owns a
 second E/T/Z/setup/R formula and is also selected for uniform current roles followed by a
@@ -792,6 +808,14 @@ justification—mixed dimensions, compact trace ownership, no-panic hardening, r
 dead state, or a strictly local simplification. Equivalent rewrites and naming-only churn
 are rejected even when their measured runtime is similar.
 
+The final setup kernel is generic at `coeff_count`-ring granularity, not through dynamic
+per-coefficient dispatch. Point preparation bulk-combines equality and lane-alpha weights;
+the hot scan remains const-generic and contiguous. For the uniform case, all lane and role
+ratios are one, preparation borrows the existing E/T/Z slices, and the current
+`SetupContributionPlan` identity scan remains the executable specialization. A strategy
+or geometry match occurs once outside hot loops; no trait object, enum match, closure call,
+checked lane reconstruction, or role lookup occurs per coefficient or setup entry.
+
 | Surface | Responsibility |
 |---|---|
 | `akita-types` | checked flat/group/chunk/mixed geometry and common protocol parameters |
@@ -856,11 +880,35 @@ production thread counts. Report relation construction, trace preparation, compa
 prefix, materialization, later rounds/folds, complete Stage 2, complete prover, allocations,
 peak field elements, verifier time, proof bytes, and transcript events.
 
+Before the production verifier cutover, add a dedicated relation-evaluator Criterion
+benchmark. Run the identical benchmark-only harness on pinned baseline
+`147720907cef7a2db50a864a3032a0ffcbdc8203` and the candidate with the same Rust toolchain,
+target CPU, feature set, setup data, inputs, and fixed Rayon thread count. Measure one
+thread and a representative parallel configuration separately. For each primary uniform,
+lane-factored, and mixed cell, accept only when Criterion's 95% change-interval upper bound
+is at most +5%; a lower bound above +5% rejects the candidate, and an interval crossing the
+threshold is inconclusive and must be rerun with a longer measurement.
+
+The minimum comparison triplet holds A dimension, rows, claims, groups, flat witness
+length, setup coefficient footprint, and transcript inputs fixed:
+
+| Cell | Role dimensions | Outgoing dimension | Purpose |
+|---|---:|---:|---|
+| U | `128/128/128` | 128 | current uniform PR #312 floor |
+| L | `128/128/128` | 32 | isolates unavoidable lane/address work |
+| M | `128/64/32` | 32 | isolates role heterogeneity at the same lane geometry |
+
+Candidate/baseline time is capped at 1.05 in every cell. In addition, M/L is capped at
+1.05 so mixed roles do not demonstrably cost more than the equivalent homogeneous
+lane-factored case. L/U is reported separately and is not mislabeled as role-mixing cost.
+Complete verification remains a secondary <=5% gate because whole-verifier timing can
+hide a relation-kernel regression.
+
 Kernel winners are selected by complete Stage 2 and end-to-end prover results. PR #312 is
-the verifier performance floor: no primary verifier cell may regress beyond measurement
-noise, and verifier work may not scale with prover relation-event count or physical trace
-support. CI benchmarks enforce the contract but do not replace local feature-pruned
-release/profile comparison before a slice lands. Production carries no
+the verifier performance floor: no primary verifier cell may regress by more than 5%, and
+verifier work may not scale with prover relation-event count or physical trace support.
+CI benchmarks enforce the contract but do not replace local feature-pruned release/profile
+comparison before a slice lands. Production carries no
 measured/unmeasured duplicate, ad hoc timer, or strategy knob.
 
 ## Risks and stop conditions
@@ -913,9 +961,10 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
   multigroup/multichunk, and EOR-scaled claims.
 - Every LB2-LB6 candidate is measured; one complete-stage winner remains per basis.
 - No primary Stage 2/prover benchmark cell regresses beyond measurement noise; targeted
-  prover cells show material wins. No primary verifier cell regresses beyond measurement
-  noise relative to PR #312, and verifier relation/trace work never scales with prover
-  event count or physical trace-table size.
+  prover cells show material wins. No primary verifier cell exceeds 1.05x its pinned PR
+  #312 baseline under the Criterion confidence-interval gate, mixed `128/64/32` does not
+  exceed 1.05x lane-equivalent homogeneous `128/128/128`, and verifier relation/trace work
+  never scales with prover event count or physical trace-table size.
 - Numeric setup code touched by the PR contains only reusable final geometry.
 - Documentation guardrails and all repository-required format, lint, and test commands
   pass at the final head.
