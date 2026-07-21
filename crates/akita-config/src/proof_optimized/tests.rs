@@ -115,3 +115,10 @@ fn generated_q32_terminals_require_the_i16_tail() {
         (64, 128),
     );
 }
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
+    assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
+    assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
+}
