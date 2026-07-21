@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao                                   |
 | Created       | 2026-07-21                                  |
 | Status        | active                                      |
-| PR            |                                             |
+| PR            | [#317](https://github.com/LayerZero-Labs/akita/pull/317) |
 | Supersedes    |                                             |
 | Superseded-by |                                             |
 | Book-chapter  | book/src/how/configuration.md               |
@@ -47,11 +47,11 @@ descriptive names. Mathematical notation remains in docstrings:
 Every matrix plan owns its ring dimension. There is no schedule-global
 `ring_d` in the final representation. The generated schema records every
 independent planner decision, including role-specific ring dimensions, exact
-final-root-group tensor factorization, decomposition bases, block geometry,
-per-fold witness partitioning, setup-prefix inputs, and balanced outer/open
-matrix slicing. Commitment compression is added only with its exact protocol
-types. Derived widths, digit depths, collision bounds, witness lengths, and
-protocol byte limits remain validated calculations rather than competing
+final-root-group tensor factorization, decomposition digit widths, block
+geometry, per-fold witness partitioning, setup-prefix inputs, and balanced
+outer/open matrix slicing. Commitment compression is added only with its exact
+protocol types. Derived widths, digit depths, collision bounds, witness lengths,
+and protocol byte limits remain validated calculations rather than competing
 sources of truth. Non-binding planner byte estimates live outside the schedule.
 
 This work starts from `origin/main` commit
@@ -143,12 +143,12 @@ commitment compression.
 
 #### Decomposition and security
 
-- Inner, outer, and opening decomposition bases are independent planner
+- Inner, outer, and opening decomposition digit widths are independent planner
   choices. In particular, the inner source decomposition is not constrained by
   a range check unless a concrete protocol relation requires it. These outer
   and opening choices exist only at non-terminal folds that actually construct
   the corresponding decompositions and commitment relations.
-- Generated entries store selected log bases, ring dimensions, and balanced
+- Generated entries store selected digit widths, ring dimensions, and balanced
   slice counts. They do not author digit depths, input widths, output ranks,
   coefficient bounds, slice boundaries, or SIS table buckets.
 - Expansion derives digit depths, input widths, certified coefficient bounds,
@@ -158,10 +158,10 @@ commitment compression.
   expanded `(role, ring dimension, output rank, input width, coefficient
   bound)` tuple.
 - A recursive folded response uses the protocol's digit-certification relation
-  and its tight difference interval. Its bound retains the digit-basis snap
-  required by that relation.
-- A terminal folded response has no digit-basis snap. Planning uses the exact
-  unsnapped honest-response quantile to choose an inner-matrix SIS bucket and
+  and its tight difference interval. Its bound retains the clean
+  digit-boundary snap required by that relation.
+- A terminal folded response has no clean digit-boundary snap. Planning uses
+  the exact unsnapped honest-response quantile to choose an inner-matrix SIS bucket and
   minimum output rank. Schedule validation derives the largest A-role
   collision bucket supported by the expanded inner matrix. Verification checks
   the actual decoded response infinity norm against that matrix-derived
@@ -193,7 +193,7 @@ commitment compression.
 
 - The instance descriptor binds topology tags, ordered groups, exact final-root
   challenge shape, the flat precommitted-group invariant, all matrix dimensions
-  and ranks, decomposition bases, block geometry, witness partitions,
+  and ranks, decomposition digit widths, block geometry, witness partitions,
   setup-prefix identities, balanced slicing plans, witness lengths, and terminal
   response shape.
 - Serialization uses explicit root, recursive, and terminal sections. It does
@@ -275,7 +275,7 @@ setup-prefix group is stored on the consumer.
 Current `LevelParams` combines all of the following:
 
 - one legacy `ring_dimension`;
-- three log bases;
+- three `log_basis` digit-width fields;
 - `a_key`, `b_key`, and `d_key`;
 - block geometry;
 - sparse challenge configuration and flat/tensor shape;
@@ -306,7 +306,7 @@ The current generated `fp128_d64_onehot_recursive` row for a 32-variable,
 two-polynomial final group and two 16-variable standalone precommitted groups is
 the primary topology migration fixture. It contains nine folds:
 
-| Protocol level | Current variant | `log2` bases inner/outer/open | Position bits | Block bits | Live blocks | `d_inner/d_outer/d_open` | Inner/outer/open output ranks | Incoming prefix natural length | Outgoing setup mode |
+| Protocol level | Current variant | `log2` digit widths inner/outer/open | Position bits | Block bits | Live blocks | `d_inner/d_outer/d_open` | Inner/outer/open output ranks | Incoming prefix natural length | Outgoing setup mode |
 |----------------|-----------------|--------------------------------|---------------|------------|-------------|--------------------------|-----------------------|--------------------------------|---------------------|
 | L0 root | metadata | 3/3/3 | 15 | 11 | 2048 | 64/64/64 | 5/2/1 | none | recursive |
 | L1 recursive | metadata | 3/3/3 | 13 | 8 | 148 | 64/64/64 | 5/1/1 | 112,721,920 | recursive |
@@ -318,10 +318,11 @@ the primary topology migration fixture. It contains nine folds:
 | L7 recursive | plain | 6/6/6 | 8 | 4 | 9 | 64/64/64 | 4/1/1 | none | direct |
 | L8 terminal | plain | 6/6/6 | 8 | 3 | 7 | 64/64/64 | 4/1/1 | none | direct |
 
-The L8 outer/open basis, dimensions, and output ranks in this table document
-current-main's homogeneous representation; they are not target protocol
-parameters. The cutover retains only L8's inner basis, inner ring dimension,
-inner output rank, geometry, and derived direct-response bound/shape.
+The L8 outer/open digit widths, dimensions, and output ranks in this table
+document current-main's homogeneous representation; they are not target
+protocol parameters. The cutover retains only L8's inner digit width, inner
+ring dimension, inner output rank, geometry, and derived direct-response
+bound/shape.
 
 The root final group has exact source geometry:
 
@@ -333,9 +334,9 @@ live ring elements per claim   = 67,108,864
 positions per block            = 32,768
 live blocks                    = 2,048
 root challenge                 = Flat
-inner basis / output rank      = 3 / 5
-outer basis / output rank      = 3 / 2
-shared open basis / output rank = 3 / 1
+inner digit width / output rank      = 3 / 5
+outer digit width / output rank      = 3 / 2
+shared open digit width / output rank = 3 / 1
 ```
 
 Each of the two standalone root groups has:
@@ -347,14 +348,14 @@ live ring elements per claim   = 1,024
 positions per block            = 32
 live blocks                    = 32
 root challenge                 = Flat
-inner basis / output rank      = 2 / 4
-outer basis / output rank      = 2 / 2
+inner digit width / output rank      = 2 / 4
+outer digit width / output rank      = 2 / 2
 ```
 
 The L1 incoming setup prefix has `N=2,097,152`, `M=2,048`, `B=1,024`,
-inner/outer/open bases `3/3/3`, inner/outer output ranks `7/1`, and uniform
+inner/outer/open digit widths `3/3/3`, inner/outer output ranks `7/1`, and uniform
 dimension 64. The L2 incoming setup prefix has `N=1,048,576`, `M=2,048`,
-`B=512`, bases `5/5/5`, output ranks `7/2`, and uniform dimension 64.
+`B=512`, digit widths `5/5/5`, output ranks `7/2`, and uniform dimension 64.
 
 The first cutover regeneration must reproduce all non-terminal effective
 parameters and costs. Terminal proof bytes and security inputs intentionally
@@ -393,9 +394,11 @@ n_d                      -> open_commit_output_rank
 d_a                      -> inner_commit_ring_dimension
 d_b                      -> outer_commit_ring_dimension
 d_d                      -> open_commit_ring_dimension
-log_basis_inner          -> inner_log_basis
-log_basis_outer          -> outer_log_basis (non-terminal committed groups)
-log_basis_open           -> open_log_basis (folds with an opening matrix)
+log_basis_inner          -> inner_digit_bits
+log_basis_outer          -> outer_digit_bits (non-terminal committed groups)
+log_basis_open           -> open_digit_bits (folds with an opening matrix)
+log_commit_bound         -> commit_bound_bits
+log_open_bound           -> open_bound_bits
 inner_width              -> inner_commit_input_width
 outer_width              -> outer_commit_input_width
 d_matrix_width           -> open_commit_input_width
@@ -405,6 +408,21 @@ The emitter uses descriptive `const` constructors to keep generated source
 compact without abbreviating public field or parameter names. It does not
 introduce aliases that keep both vocabularies alive. Mathematical helpers use
 local variables `a`, `b`, or `d` only when directly transcribing a formula.
+
+The final decomposition vocabulary is equally explicit:
+
+- `digit_bits = k` means radix `b = 2^k` and the balanced digit alphabet
+  `[-2^(k-1), 2^(k-1) - 1]`;
+- `num_digits` is the decomposition depth, never the digit width;
+- `commit_bound_bits` and `open_bound_bits` are coefficient-range bit widths;
+  and
+- mathematical prose uses “decomposition radix” or `b`, not “basis,” unless it
+  genuinely refers to a vector or polynomial basis.
+
+The API does not use `num_digit_bits`, which is confusable with `num_digits`,
+or `bits_per_digit`, which can be mistaken for the physical `i8`/`i16` storage
+width. `digit_bits` states the power-of-two balanced alphabet while remaining
+compact in role-specific matrix types.
 
 The three matrix dimensions have deliberately different nouns:
 
@@ -511,13 +529,15 @@ pub const MAX_COMMIT_MATRIX_SLICES: u32 = 16;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedInnerCommitMatrix {
     pub ring_dimension: u32,
-    pub log_basis: u32,
+    /// k for radix 2^k and balanced digits [-2^(k-1), 2^(k-1) - 1].
+    pub digit_bits: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedOuterCommitMatrix {
     pub ring_dimension: u32,
-    pub log_basis: u32,
+    /// k for radix 2^k and balanced digits [-2^(k-1), 2^(k-1) - 1].
+    pub digit_bits: u32,
     /// One is monolithic; valid values are at most MAX_COMMIT_MATRIX_SLICES.
     pub slice_count: u32,
 }
@@ -525,7 +545,8 @@ pub struct GeneratedOuterCommitMatrix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedOpenCommitMatrix {
     pub ring_dimension: u32,
-    pub log_basis: u32,
+    /// k for radix 2^k and balanced digits [-2^(k-1), 2^(k-1) - 1].
+    pub digit_bits: u32,
     /// One is monolithic; valid values are at most MAX_COMMIT_MATRIX_SLICES.
     pub slice_count: u32,
 }
@@ -685,10 +706,10 @@ There is deliberately no challenge field: recursive folding is flat. There is
 also no outgoing setup mode. If this fold's successor has an incoming setup
 prefix, this fold offloads; otherwise its setup contribution is direct.
 
-The setup-prefix input does not repeat an opening basis or open matrix. It uses
-the consuming fold's shared `open_commit_matrix`. Its inner and outer matrices
-may use different ring dimensions from the ordinary witness group, subject to
-the nesting and setup-generator constraints.
+The setup-prefix input does not repeat an opening digit width or open matrix. It
+uses the consuming fold's shared `open_commit_matrix`. Its inner and outer
+matrices may use different ring dimensions from the ordinary witness group,
+subject to the nesting and setup-generator constraints.
 
 ### Terminal fold
 
@@ -701,8 +722,8 @@ pub struct GeneratedTerminalFold {
 ```
 
 The terminal relation has no outer or open commitment matrix and no terminal
-outer/open decomposition basis. Its response contains raw field-valued `t` and
-`e`, plus centered folded-response coefficients `z` encoded losslessly. The
+outer/open decomposition digit width. Its response contains raw field-valued
+`t` and `e`, plus centered folded-response coefficients `z` encoded losslessly. The
 verifier decodes `z`, computes its actual infinity norm, applies the complete
 A-role weak-binding formula to the corresponding response-difference interval,
 checks the resulting collision bound against the inner matrix's derived SIS
@@ -723,12 +744,12 @@ dimension, input width, and output rank. The maximum accepted terminal response
 norm is the largest centered norm whose complete A-role collision price fits
 that bucket. The verifier therefore checks the actual decoded response norm
 against capacity already certified by the matrix; there is no terminal
-log-basis snap and no online lattice-estimator call.
+clean digit-boundary snap and no online lattice-estimator call.
 
 The predecessor terminal-binding path computes the inner commitment and binds
 raw `t`. It must not decompose `t` merely to satisfy a shared non-terminal code
 path. Likewise, raw terminal `e` is checked by its trace and consistency
-relations and does not acquire an opening basis for accounting purposes.
+relations and does not acquire an opening digit width for accounting purposes.
 
 ### Complete table entry
 
@@ -802,7 +823,7 @@ challenge.
 
 `TerminalCommittedGroupParams` contains the geometry, inner matrix, and inner
 source-decomposition depth required by the terminal relation. It contains no
-outer/open matrix, no terminal outer/open basis, and no fabricated digit depth
+outer/open matrix, no terminal outer/open digit width, and no fabricated digit depth
 for raw response values.
 
 `TerminalResponseShape` counts encoded `z` coefficients, raw `e` field
@@ -1006,7 +1027,7 @@ commitment vector per slice. A sliced matrix at ring dimension `d` contributes
 `d * sum_i(slice[i].output_rank)` base-field elements, to the next witness.
 
 The schedule audit exposes both field-coordinate and serialized-byte
-breakdowns. A scalar count without its ring dimension or digit basis is not a
+breakdowns. A scalar count without its ring dimension or digit width is not a
 sufficient report.
 
 ## Schedule Construction and Validation
@@ -1018,7 +1039,7 @@ performs the following checks with checked arithmetic, in this order:
    protocol epoch, catalog policy identity, and SIS table digest.
 2. Recompute every group's exact live geometry from the statement or incoming
    witness. Emitted live counts are equality-checked audit checksums.
-3. Validate selected bases, ring dimensions, root-final challenge shape,
+3. Validate selected digit widths, ring dimensions, root-final challenge shape,
    partition counts, setup-prefix identities, and balanced slice counts against
    both `MAX_COMMIT_MATRIX_SLICES` and the catalog's implemented capability
    domains.
@@ -1056,6 +1077,7 @@ The implementation has one authority for each derived concept:
 | Terminal response shape and codec limit | `TerminalResponseShape::derive` |
 | Planner-only byte estimates | `FoldScheduleEstimate::derive` |
 | Protocol descriptor bytes | `FoldSchedule::append_descriptor_bytes` |
+| Deterministic selection tie-break bytes | `GeneratedFoldScheduleEntry::append_decision_bytes` |
 
 These names replace their current equivalents during the vocabulary cutover;
 there are no `_for_level` forwarding helpers or duplicate estimator-side
@@ -1155,7 +1177,7 @@ For an untrusted terminal response, the verifier performs these steps:
    SIS bucket, and require that bucket not to exceed
    `supported_A_collision_linf`. This is checked integer arithmetic plus a
    checked-in table lookup, not a lattice-estimator run. The check contains no
-   opening basis, digit decomposition, or log-basis snap.
+   opening digit width, digit decomposition, or clean digit-boundary snap.
 5. Convert the accepted centered integers to field elements and check the raw
    `e` consistency/trace relations and the raw `t = A * z` relation.
 
@@ -1262,7 +1284,9 @@ protocol_epoch
 field / modulus profile
 SIS security policy and table digest
 source family and root norm policy
-allowed inner/outer/open log-basis domains
+planner cost-model identity
+frontier selection-policy identity
+allowed inner/outer/open digit-bit domains
 allowed inner/outer/open ring-dimension domains
 final-root-group challenge family
 setup-offload planning policy identity
@@ -1290,7 +1314,7 @@ The durable planner searches, subject to implemented capabilities:
 
 - fold count and root/recursive/terminal topology;
 - per-group block split and exact live-block count;
-- inner, outer, and open decomposition bases;
+- inner, outer, and open decomposition digit widths;
 - per-group inner and outer ring dimensions;
 - per-fold shared open ring dimension;
 - exact final-root-group tensor low factor, only for tensor final-group families;
@@ -1320,43 +1344,65 @@ without reverse-engineering Rust constants.
 
 ### Objectives and Pareto output
 
-The core search does not hard-code one scalar objective. The initial
-`ExactBytesAndStorageV1` frontier uses exactly this dominance vector:
+The core search does not hard-code one scalar objective. The cutover implements
+and requires this initial cost-model identity:
+
+```rust
+pub enum PlannerCostModelId {
+    PayloadEstimateAndStorageV1,
+}
+```
+
+`PayloadEstimateAndStorageV1` uses exactly this dominance vector:
 
 ```text
 next recursive witness bytes
 estimated direct proof payload bytes
 maximum individual setup matrix bytes
 total setup matrix bytes
-offloaded setup-prefix contribution to successor witnesses
+total offloaded setup-prefix contribution to successor witnesses
 ```
 
 It reports root prover, later-fold prover, and verifier matrix-evaluation
 structural counts for audit, but those counts do not affect dominance or preset
-selection. A later named `PlannerCostModelId` can add exactly these three work
-coordinates only after it defines their operation-count formulas and units.
-Changing the dominance vector therefore requires a new cost-model identity;
-it is not an implementation-local adjustment.
+selection. There is no unspecified work weight in the cutover. Adding work to
+dominance later requires a new `PlannerCostModelId` with reviewed formulas and
+units; changing the vector under the existing ID is invalid.
 
-Additional audit metrics do not affect dominance. Preset selection applies an
-explicit `SelectionPolicyId` supplied by the catalog family and bound into the
-catalog identity; there is no library-default tie breaker. The selected entry
-and every frontier point rejected by that policy are written to the audit
-report.
+All current-main catalog families explicitly bind the initial selection policy:
+
+```rust
+pub enum SelectionPolicyId {
+    MinEstimatedDirectPayloadV1,
+}
+```
+
+`MinEstimatedDirectPayloadV1` selects from the retained frontier using this
+total lexicographic order:
+
+1. estimated direct proof payload bytes;
+2. next recursive witness bytes;
+3. maximum individual setup matrix bytes;
+4. total setup matrix bytes;
+5. total offloaded setup-prefix contribution to successor witnesses; and
+6. canonical encoded generated-schedule decisions, bytewise, as the final
+   deterministic tie breaker.
+
+There is no library-default policy and no dependence on candidate enumeration
+order. A catalog family must supply and identity-bind its policy, but the
+cutover assignment is no longer an open decision: every family shipped on
+current main supplies `MinEstimatedDirectPayloadV1`. The selected entry and
+every frontier point rejected by the policy are written to the audit report.
+Future catalog families can introduce another reviewed policy ID without
+changing this one's ordering.
 
 ### Explicitly deferred surfaces
 
 The following are the only design selections intentionally not made by this
-spec:
+spec, and neither blocks the current-main cutover:
 
 - Commitment compression has no placeholder type in this spec. It enters the
   generated schema only through its protocol spec and capability cut.
-- Empirical prover/verifier work weighting has no default formula. It enters
-  selection only through a named `PlannerCostModelId` whose formulas and units
-  are reviewed separately.
-- The concrete `SelectionPolicyId` assigned to each catalog family remains
-  catalog configuration. Every family must name and descriptor-bind one; an
-  implementation cannot fall back to an implicit global tie breaker.
 - Enabling each post-main capability domain remains release sequencing. A
   capability is absent until its cut satisfies the gates listed below, then its
   exact supported values are part of the catalog identity and validation
@@ -1380,10 +1426,17 @@ half-old/half-new schedule behind adapters. The surrounding semantic and
 mechanical changes are separated so that this atomic commit is still
 reviewable.
 
+The target type definitions in this spec use the final `digit_bits` vocabulary.
+To avoid unnecessary churn while the protocol topology is moving, Cuts 0–4
+retain the current `log_basis`, `log_commit_bound`, and `log_open_bound`
+spellings internally. Cut 5 performs their repository-wide atomic rename after
+all semantic changes have stabilized. No intermediate compatibility alias is
+introduced.
+
 ### Cut 0: freeze a neutral current-main ledger
 
 - From the exact base commit, emit test fixtures containing effective geometry,
-  bases, dimensions, output ranks, input widths, witness lengths, planner byte
+  digit widths, dimensions, output ranks, input widths, witness lengths, planner byte
   estimates, measured proof bytes,
   matrix storage, and descriptor inputs for every shipped catalog entry.
 - Store the fixture in a schema-neutral audit format, not serialized old Rust
@@ -1428,6 +1481,8 @@ reviewable.
   exists. A terminal response size is never called a witness length.
 - Move ring dimension ownership into each matrix parameter object and delete
   duplicate `LevelParams.ring_dimension` versus `role_dims` authority.
+- Deliberately leave the decomposition `log_basis` and bound spellings alone in
+  this cut; their independent mechanical rename is reserved for final Cut 5.
 - Update setup, prover, verifier, persistence, profiler, tests, and docs in this
   commit. Use compiler errors plus an `rg` zero-match gate as the burn-down
   list; do not retain compatibility names.
@@ -1462,7 +1517,7 @@ reviewable.
   inference in the same commit. Exhaustive typed dispatch is the only runtime
   bridge and must not reconstitute a shared `LevelParams`.
 
-### Cut 4: regenerate, audit, and seal the epoch
+### Cut 4: regenerate and audit the protocol cutover
 
 - Regenerate every catalog shipped on current main.
 - Compare all non-terminal selected decisions and derived values against the
@@ -1474,14 +1529,38 @@ reviewable.
   typed schedules.
 - Bump the instance/proof descriptor epoch once for the combined cutover and
   reject old schedule, setup, persistence, and proof encodings.
-- Run zero-match checks for every retired type and identifier, then the full
-  repository validation matrix.
+- Run zero-match checks for the protocol types and identifiers retired in Cuts
+  1–3, then validate the regenerated catalogs.
 
-### Cut 5: capability additions
+### Cut 5: atomically rename decomposition widths and seal the cutover
+
+- Rename `log_basis` to `digit_bits` throughout live Rust, generated source,
+  planner/config APIs, serialization code, profiles, diagnostics, tests, and
+  implementation-owned documentation.
+- Rename `log_commit_bound` to `commit_bound_bits` and `log_open_bound` to
+  `open_bound_bits` in the same commit. Rename local `log_bound` variables to
+  `bound_bits` where they denote bit widths.
+- Use role-qualified names such as `inner_digit_bits`, `outer_digit_bits`, and
+  `open_digit_bits` wherever more than one decomposition is in scope. Generic
+  decomposition primitives take `digit_bits`; the derived depth remains
+  `num_digits`.
+- Do not rename mathematical paper notation mechanically. Prose uses
+  decomposition radix `b = 2^k`; “basis” remains only where it means an actual
+  vector or polynomial basis.
+- Add no deprecated fields, forwarding accessors, serde aliases, or dual-name
+  constructors. Compiler errors drive the atomic cutover.
+- Re-emit generated catalogs and require semantic parameters, descriptor bytes,
+  security buckets, witness sizes, and planner estimates to remain unchanged
+  from Cut 4. This slice changes vocabulary only.
+- Require zero matches for `log_basis`, `log_commit_bound`, and
+  `log_open_bound` in live Rust, then run the full repository validation matrix
+  on the final branch head.
+
+### Cut 6: capability additions
 
 As implementations land, enable one capability at a time:
 
-1. large inner decomposition bases;
+1. large inner decomposition digit widths;
 2. independently selected inner/outer/open ring dimensions;
 3. outer/open matrix slicing;
 4. commitment compression;
@@ -1498,6 +1577,9 @@ and SIS contract exist. The schedule topology does not change again.
 
 - [ ] Public and generated matrix APIs use `InnerCommitMatrix`,
       `OuterCommitMatrix`, and `OpenCommitMatrix`; A/B/D remain only notation.
+- [ ] Final live Rust uses `digit_bits`, `commit_bound_bits`, and
+      `open_bound_bits`; `log_basis`, `log_commit_bound`, and `log_open_bound`
+      have zero matches, with no compatibility aliases.
 - [ ] `GeneratedFoldScheduleEntry` contains typed `root`,
       `recursive_folds`, and `terminal` fields and no homogeneous fold enum.
 - [ ] Runtime `FoldSchedule` mirrors the proof topology and contains no
@@ -1523,20 +1605,24 @@ and SIS contract exist. The schedule topology does not change again.
       bound, ring dimension, role, SIS policy, and table digest.
 - [ ] Mixed dimensions validate `d_open | d_outer | d_inner` per group and
       generator divisibility across the entire schedule.
-- [ ] Terminal params contain no outer/open matrix, outer/open basis, or
+- [ ] Terminal params contain no outer/open matrix, outer/open digit width, or
       digit-plane accounting for raw `e`, `t`, or `z`.
 - [ ] Schedule validation derives the maximum A-role collision bucket supported
       by the terminal inner matrix. Verification computes the actual decoded
       `z` infinity norm and requires its complete A-role weak-binding collision
       price to fit the bucket.
-- [ ] Terminal security and encoding contain no digit-basis snap; the honest
-      unsnapped quantile affects planner completeness and cost only.
+- [ ] Terminal security and encoding contain no clean digit-boundary snap; the
+      honest unsnapped quantile affects planner completeness and cost only.
 - [ ] The predecessor terminal path binds raw `t` without constructing
       `t_hat`; terminal `e` and `t` remain raw field elements on the wire.
 - [ ] Generated rows store independent choices while canonical expansion owns
       digit depths, collision bounds, SIS buckets, widths, and bytes.
 - [ ] `FoldSchedule` contains no planner byte estimate. Estimates live in
       `FoldScheduleEstimate` and are absent from the instance descriptor.
+- [ ] Every current-main catalog family identity-binds
+      `PayloadEstimateAndStorageV1` and `MinEstimatedDirectPayloadV1`; frontier
+      selection follows the specified total order and is invariant under
+      candidate enumeration order.
 - [ ] Candidate comparison reads an incrementally maintained planner-private
       aggregate in O(1); final estimate derivation equality-checks that cache
       against the per-fold component sum.
@@ -1546,8 +1632,8 @@ and SIS contract exist. The schedule topology does not change again.
 - [ ] Table replay and dynamic planning produce equal schedule descriptors for
       every emitted lookup key.
 - [ ] Descriptor mutation tests cover topology, every role dimension and rank,
-      every basis, final-root-group tensor factor, block geometry, partitions,
-      prefix IDs, and balanced slice counts.
+      every digit width, final-root-group tensor factor, block geometry,
+      partitions, prefix IDs, and balanced slice counts.
 - [ ] Verifier-facing malformed schedule and serialization tests return errors
       without panics or unchecked allocations.
 - [ ] Generated audit output reports exact inner/outer/open matrix dimensions,
@@ -1608,7 +1694,7 @@ fixtures are neutral snapshots containing semantic fields.
   offloading.
 - A direct consumer may have an incoming prefix but its successor does not.
 - Root and terminal cannot carry incoming prefixes.
-- Prefix matrix dimensions, bases, geometry, natural length, and slot identity
+- Prefix matrix dimensions, digit widths, geometry, natural length, and slot identity
   are descriptor-bound and independently validated.
 
 #### Mixed-ring tests
@@ -1645,7 +1731,8 @@ fixtures are neutral snapshots containing semantic fields.
 - Changing the SIS policy, table digest, inner width, dimension, or output rank
   changes or invalidates the derived terminal response limit.
 - Planner honest-quantile changes affect matrix selection and estimated bytes,
-  but no independent quantile or digit-basis bound is read by the verifier.
+  but the verifier reads no independent quantile-derived or
+  digit-boundary-snapped bound.
 
 #### Serialization and no-panic tests
 
