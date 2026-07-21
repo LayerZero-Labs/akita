@@ -313,7 +313,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             self.fold_grind_nonce,
             compress,
         )?;
-        self.final_witness
+        self.terminal_response
             .serialize_with_mode(&mut writer, compress)
     }
 
@@ -321,7 +321,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + self.final_witness.serialized_size(compress)
+        ) + self.terminal_response.serialized_size(compress)
     }
 }
 
@@ -331,7 +331,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
             reduction.partials.check()?;
             reduction.sumcheck.check()?;
         }
-        self.final_witness.check()
+        self.terminal_response.check()
     }
 }
 
@@ -355,16 +355,16 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        let final_witness = SegmentTypedWitness::deserialize_with_mode(
+        let terminal_response = TerminalResponse::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
-            &ctx.final_witness,
+            &ctx.terminal_response,
         )?;
         let out = Self {
             extension_opening_reduction,
             fold_grind_nonce,
-            final_witness,
+            terminal_response,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;
@@ -398,7 +398,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             }
         }
         self.stage1
-            .s_claim
+            .range_image_evaluation
             .serialize_with_mode(&mut writer, compress)?;
         stage2
             .sumcheck_proof
@@ -429,7 +429,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
                         .sum::<usize>()
             })
             .sum::<usize>()
-            + self.stage1.s_claim.serialized_size(compress)
+            + self.stage1.range_image_evaluation.serialized_size(compress)
             + ({ stage2.sumcheck_proof.serialized_size(compress) })
             + stage3_sumcheck_serialized_size(self.stage3_sumcheck_proof.as_ref(), compress)
             + next_witness_binding_serialized_size(&stage2.next_witness_binding, compress)
@@ -448,7 +448,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
             stage.sumcheck_proof.check()?;
             stage.child_claims.check()?;
         }
-        self.stage1.s_claim.check()?;
+        self.stage1.range_image_evaluation.check()?;
         let stage2 = &self.stage2;
         stage2.sumcheck_proof.check()?;
         if let Some(stage3_sumcheck) = &self.stage3_sumcheck_proof {
@@ -508,7 +508,7 @@ impl<
         }
         let stage1 = AkitaStage1Proof {
             stages: stage1_stages,
-            s_claim: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
+            range_image_evaluation: E::deserialize_with_mode(&mut reader, compress, validate, &())?,
         };
         let stage2_sumcheck_proof = SumcheckProof::deserialize_with_mode(
             &mut reader,

@@ -2,8 +2,8 @@ use super::plan::SetupContributionGroupPlan;
 use super::weights::setup_z_col_weights;
 use super::*;
 use crate::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupIndexWeightEvaluator,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SetupIndexWeightEvaluator,
     WitnessLayout, WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -26,14 +26,13 @@ type StructuredWeightFixture = (
     Vec<F>,
 );
 struct TestSetupInputs {
-    level_params: LevelParams,
+    level_params: CommittedGroupParams,
     opening_batch: OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     eq_tau1: std::sync::Arc<[F]>,
 }
 impl TestSetupInputs {
     fn n_a(&self) -> usize {
-        self.level_params.a_key.row_len()
+        self.level_params.inner_commit_matrix.output_rank()
     }
     fn num_claims(&self) -> usize {
         self.opening_batch.num_total_polynomials()
@@ -62,7 +61,6 @@ fn test_scalar(value: u128) -> F {
 }
 #[allow(clippy::too_many_arguments)]
 fn test_inputs(
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     n_a: usize,
     n_b: usize,
     n_d: usize,
@@ -76,7 +74,6 @@ fn test_inputs(
     eq_tau1: Vec<F>,
 ) -> TestSetupInputs {
     test_inputs_for_group_sizes(
-        relation_matrix_row_layout,
         n_a,
         n_b,
         n_d,
@@ -92,7 +89,6 @@ fn test_inputs(
 }
 #[allow(clippy::too_many_arguments)]
 fn test_inputs_for_group_sizes(
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     n_a: usize,
     n_b: usize,
     n_d: usize,
@@ -106,7 +102,7 @@ fn test_inputs_for_group_sizes(
     eq_tau1: Vec<F>,
 ) -> TestSetupInputs {
     let num_claims: usize = group_sizes.iter().copied().sum();
-    let mut lp = LevelParams::params_only(
+    let mut lp = CommittedGroupParams::params_only(
         crate::sis::SisModulusProfileId::Q128OffsetA7F7,
         TEST_D,
         log_basis,
@@ -128,26 +124,24 @@ fn test_inputs_for_group_sizes(
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_live_blocks))
         .expect("test B width");
-    if lp.b_key.col_len() < expected_b_width {
-        lp.b_key = crate::AjtaiKeyParams::new_unchecked(
+    if lp.outer_commit_matrix.input_width() < expected_b_width {
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::B,
             n_b,
             expected_b_width,
             1,
             TEST_D,
         );
     }
-    if lp.a_key.coeff_linf_bound() == 0 {
-        lp.a_key = crate::AjtaiKeyParams::new_unchecked(
+    if lp.inner_commit_matrix.coeff_linf_bound() == 0 {
+        lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::A,
             n_a,
-            lp.a_key.col_len(),
+            lp.inner_commit_matrix.input_width(),
             1,
             TEST_D,
         );
@@ -159,31 +153,30 @@ fn test_inputs_for_group_sizes(
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let layout = crate::PrecommittedGroupParams::from_params(
+                let layout = crate::PrecommittedGroupDescriptor::from_params(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );
                 let expected_group_b_width = lp
-                    .a_key
-                    .row_len()
+                    .inner_commit_matrix
+                    .output_rank()
                     .checked_mul(lp.num_digits_outer)
                     .and_then(|width| width.checked_mul(layout.num_live_blocks))
                     .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
                     .expect("test precommitted B width");
-                let b_key = crate::AjtaiKeyParams::new_unchecked(
-                    lp.b_key.security_policy(),
-                    lp.b_key.sis_table_key().table_digest,
-                    lp.b_key.sis_modulus_profile(),
-                    lp.b_key.sis_table_key().role,
-                    lp.b_key.row_len(),
+                let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+                    lp.outer_commit_matrix.security_policy(),
+                    lp.outer_commit_matrix.sis_table_key().table_digest,
+                    lp.outer_commit_matrix.sis_modulus_profile(),
+                    lp.outer_commit_matrix.output_rank(),
                     expected_group_b_width,
-                    lp.b_key.coeff_linf_bound(),
-                    lp.ring_dimension,
+                    lp.outer_commit_matrix.coeff_linf_bound(),
+                    lp.d_a(),
                 );
                 crate::PrecommittedLevelParams {
                     layout,
-                    a_key: lp.a_key.clone(),
-                    b_key,
+                    inner_commit_matrix: lp.inner_commit_matrix.clone(),
+                    outer_commit_matrix,
                     log_basis_open: lp.log_basis_open,
                     num_digits_inner: lp.num_digits_inner,
                     num_digits_outer: lp.num_digits_outer,
@@ -198,7 +191,6 @@ fn test_inputs_for_group_sizes(
     TestSetupInputs {
         level_params: lp,
         opening_batch,
-        relation_matrix_row_layout,
         eq_tau1: eq_tau1.into(),
     }
 }
@@ -253,7 +245,6 @@ fn prepare_test_plan(
     SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         inputs.eq_tau1.clone(),
         witness_layout,
         opening_source_len,
@@ -372,16 +363,12 @@ fn test_single_group_descriptor(
         .group_params(&inputs.opening_batch, *group_index)?;
     let group_layout = inputs.opening_batch.group_layout(*group_index)?;
     let num_claims = group_layout.num_polynomials();
-    let a_range = inputs.level_params.a_row_range(
-        &inputs.opening_batch,
-        *group_index,
-        inputs.relation_matrix_row_layout,
-    )?;
-    let b_range = inputs.level_params.commitment_row_range(
-        &inputs.opening_batch,
-        *group_index,
-        inputs.relation_matrix_row_layout,
-    )?;
+    let a_range = inputs
+        .level_params
+        .a_row_range(&inputs.opening_batch, *group_index)?;
+    let b_range = inputs
+        .level_params
+        .commitment_row_range(&inputs.opening_batch, *group_index)?;
     Ok(SetupContributionGroupInputs {
         group_id: *group_index,
         num_claims,
@@ -441,7 +428,6 @@ fn structured_weight_fixture(
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithDBlock,
         n_a,
         n_b,
         n_d,
@@ -539,7 +525,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     ];
     let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
     let inputs = test_inputs_for_group_sizes(
-        RelationMatrixRowLayout::WithDBlock,
         1,
         1,
         1,
@@ -582,19 +567,11 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
             |&(group_id, num_claims, _num_live_blocks, _depth_open, _depth_commit)| {
                 let a_range = inputs
                     .level_params
-                    .a_row_range(
-                        &inputs.opening_batch,
-                        group_id,
-                        inputs.relation_matrix_row_layout,
-                    )
+                    .a_row_range(&inputs.opening_batch, group_id)
                     .unwrap();
                 let b_range = inputs
                     .level_params
-                    .commitment_row_range(
-                        &inputs.opening_batch,
-                        group_id,
-                        inputs.relation_matrix_row_layout,
-                    )
+                    .commitment_row_range(&inputs.opening_batch, group_id)
                     .unwrap();
                 SetupContributionGroupInputs {
                     group_id,
@@ -609,7 +586,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     validate_setup_inputs(
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         &witness_layout,
         &groups,
     )
@@ -667,7 +643,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         &plan,
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         &witness_layout,
         opening_source_len,
         &groups,
@@ -738,7 +713,6 @@ fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
         &plan,
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         &witness_layout,
         witness_layout.total_len(),
         &groups,
@@ -763,7 +737,6 @@ fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
         &plan,
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         &witness_layout,
         witness_layout.total_len(),
         &groups,
@@ -788,7 +761,6 @@ fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
         &plan,
         &inputs.level_params,
         &inputs.opening_batch,
-        inputs.relation_matrix_row_layout,
         &witness_layout,
         witness_layout.total_len(),
         &groups,
@@ -820,7 +792,6 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
             &plan,
             &inputs.level_params,
             &inputs.opening_batch,
-            inputs.relation_matrix_row_layout,
             &witness_layout,
             witness_layout.total_len(),
             &groups,
@@ -856,7 +827,6 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,
@@ -906,7 +876,6 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,
@@ -1042,7 +1011,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         b_row_start: 1 + n_a,
     };
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithDBlock,
         n_a,
         n_b,
         n_d,

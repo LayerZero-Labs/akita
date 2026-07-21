@@ -854,7 +854,7 @@ Steps:
 Files centered on this slice:
 
 ```text
-crates/akita-types/src/proof/relation_matrix_cols.rs
+crates/akita-types/src/proof/relation_weights.rs
 crates/akita-types/src/setup_contribution/geometry.rs
 crates/akita-types/src/setup_contribution/plan
 crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs

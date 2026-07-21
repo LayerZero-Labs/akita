@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, BatchedStage3Geometry, LevelParams, SetupContributionPlan,
+    AkitaVerifierSetup, BatchedStage3Geometry, CommittedGroupParams, SetupContributionPlan,
     SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -53,7 +53,14 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     {
         let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
         let plan = relation_matrix_evaluator
-            .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())?;
+            .take_cached_setup_contribution_plan(x_challenges)?
+            .map_or_else(
+                || {
+                    relation_matrix_evaluator
+                        .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())
+                },
+                Ok,
+            )?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator = fold_gadget
@@ -87,7 +94,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn verify_batched_stage3<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
+        next_fold_level_params: &CommittedGroupParams,
         proof: &SetupSumcheckProof<E>,
         stage2_next_w_eval: E,
         stage2_challenges: &[E],
@@ -145,7 +152,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     fn setup_eval_len<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
+        next_fold_level_params: &CommittedGroupParams,
         ring_d: usize,
         setup_len: usize,
         transcript: &mut T,

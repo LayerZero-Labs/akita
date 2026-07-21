@@ -1,10 +1,10 @@
 use super::common::*;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{reduce_signed_accum, UniPoly};
-use akita_types::TraceTable;
 
 /// Boolean corner in the `{0, 1}^2` sub-grid of the stage-2 full domain.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -218,7 +218,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     w_compact: &[i8],
     alpha_evals_y: &[E],
     relation_matrix_col_evals: &[E],
-    trace_table: Option<&TraceTable<E>>,
+    evaluation_trace: &PreparedProverEvaluationTrace<E>,
     stage1_point: &[E],
     b: usize,
     live_x_cols: usize,
@@ -232,9 +232,7 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
     let y_len = 1usize << ring_bits;
     assert_eq!(alpha_evals_y.len(), y_len);
     assert_eq!(w_compact.len(), live_x_cols * y_len);
-    if let Some(TraceTable::RingDense(trace)) = trace_table {
-        assert_eq!(trace.len(), live_x_cols * y_len);
-    }
+    debug_assert!(evaluation_trace.validate_len(live_x_cols * y_len).is_ok());
     assert_eq!(relation_matrix_col_evals.len(), 1usize << col_bits);
     assert_eq!(stage1_point.len(), col_bits + ring_bits);
 
@@ -317,16 +315,14 @@ pub(crate) fn build_stage2_bivariate_skip_proof_from_m_compact<
                     &alpha_point_values_by_quad[y_quad],
                     &rel_table[lookup_idx],
                 );
-                if let Some(trace_table) = trace_table {
-                    let trace_quad = trace_table.quad_at(x_idx, base, y_len);
-                    let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
-                    accum_pointwise_signed(
-                        &mut trace_pos,
-                        &mut trace_neg,
-                        &trace_point_values,
-                        &rel_table[lookup_idx],
-                    );
-                }
+                let trace_quad = evaluation_trace.quad_at(x_idx, base, y_len);
+                let trace_point_values = stage2_relation_m_point_values_compressed(trace_quad);
+                accum_pointwise_signed(
+                    &mut trace_pos,
+                    &mut trace_neg,
+                    &trace_point_values,
+                    &rel_table[lookup_idx],
+                );
             }
             for idx in 0..STAGE2_COMPRESSED_POINT_COUNT {
                 let x_rel = reduce_signed_accum::<E>(x_rel_pos[idx], x_rel_neg[idx]);
@@ -394,7 +390,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
     pub(crate) fn new(
         proof: &Stage2BivariateSkipProof<E>,
         stage1_point: &[E],
-        s_claim: E,
+        range_image_evaluation: E,
         relation_claim: E,
         batching_coeff: E,
     ) -> Option<Self> {
@@ -406,7 +402,7 @@ impl<E: FieldCore> Stage2BivariateSkipState<E> {
         let norm_full_grid = recover_stage2_grid_from_corner_claim(
             &proof.norm,
             stage2_norm_corner_weights_from_taus(tau0, tau1),
-            s_claim,
+            range_image_evaluation,
         )?;
         let relation_full_grid =
             recover_stage2_relation_grid_from_claim(&proof.relation, relation_claim);

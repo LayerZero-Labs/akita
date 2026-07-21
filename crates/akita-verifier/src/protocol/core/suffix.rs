@@ -1,6 +1,21 @@
 use super::*;
 use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
 
+fn absorb_prepared_opening_points<F, E, T>(
+    prepared_points: &[PreparedOpeningPoint<F, E>],
+    transcript: &mut T,
+) where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + AkitaSerialize,
+    T: Transcript<F>,
+{
+    for prepared in prepared_points {
+        for coordinate in &prepared.padded_point {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+        }
+    }
+}
+
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Current opening point for the committed suffix witness.
@@ -11,7 +26,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Basis used to interpret the current opening point.
     pub basis: BasisMode,
     /// Current suffix witness length in field elements.
-    pub w_len: usize,
+    pub witness_len: usize,
     /// Optional setup-prefix opening carried from the previous stage-3 proof.
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
 }
@@ -24,7 +39,7 @@ pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
 fn prepare_suffix_group_points<F, E>(
     protocol_point: &[E],
     block_claims: &OpeningClaims<'_, E>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     role_d_a: usize,
     alpha_bits: usize,
@@ -82,7 +97,7 @@ where
 
 fn suffix_commitment_rows<F: FieldCore>(
     setup: &AkitaVerifierSetup<F>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     witness_commitment: &RingVec<F>,
 ) -> Result<RingVec<F>, AkitaError> {
@@ -107,11 +122,7 @@ fn suffix_commitment_rows<F: FieldCore>(
     let commitment_ring_dim = lp.role_dims().d_b();
     let mut group_order = (0..opening_batch.num_groups())
         .map(|group_index| {
-            let range = lp.commitment_row_range(
-                opening_batch,
-                group_index,
-                RelationMatrixRowLayout::WithDBlock,
-            )?;
+            let range = lp.commitment_row_range(opening_batch, group_index)?;
             Ok((range.start, range.len(), group_index))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -147,10 +158,7 @@ enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
         stage2: &'a AkitaStage2Proof<F, E>,
         next_witness: PreparedNextWitness<'a, F>,
         next_witness_ring_dim: usize,
-        stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
-    },
-    Terminal {
-        final_witness: &'a SegmentTypedWitness<F>,
+        stage3: Option<(&'a SetupSumcheckProof<E>, &'a CommittedGroupParams)>,
     },
 }
 
@@ -169,7 +177,7 @@ pub(super) fn verify_suffix<'a, F, E, T>(
     terminal: &'a TerminalLevelProof<F, E>,
     setup: &AkitaVerifierSetup<F>,
     transcript: &mut T,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     mut current_state: SuffixVerifierState<'a, F, E>,
 ) -> Result<(), AkitaError>
 where
@@ -184,16 +192,20 @@ where
 {
     for (offset, fold) in recursive_folds.iter().enumerate() {
         let level_index = offset + 1;
-        let scheduled = schedule.get_execution_schedule(level_index)?;
-        if scheduled.is_terminal {
+        let step = schedule
+            .recursive_folds
+            .get(offset)
+            .ok_or(AkitaError::InvalidProof)?;
+        if current_state.witness_len != step.input_witness_len {
             return Err(AkitaError::InvalidProof);
         }
-        scheduled.validate_current_w_len(current_state.w_len)?;
-        let current_lp = &scheduled.params;
-        let next_params = scheduled
-            .next_params
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?;
+        let current_lp = &step.params.witness;
+        let next_step = schedule.recursive_folds.get(offset + 1);
+        let next_params = next_step.map(|next| &next.params.witness);
+        let next_witness_ring_dim = next_params.map_or(
+            schedule.terminal.params.witness.d_a(),
+            CommittedGroupParams::d_a,
+        );
         let role_dims = current_lp.role_dims();
         let current_commitment = match &current_state.witness {
             SuffixWitnessState::Commitment(commitment) => *commitment,
@@ -205,15 +217,12 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let commitment_view = RingView::new(current_commitment.coeffs(), role_dims.d_b())?;
-        if commitment_view.num_rings() != current_lp.b_key.row_len() {
+        if commitment_view.num_rings() != current_lp.outer_commit_matrix.output_rank() {
             return Err(AkitaError::InvalidProof);
         }
 
-        let next_t_state = if matches!(
-            scheduled.next_witness_binding,
-            Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
-        ) {
-            let witness = terminal.final_witness();
+        let next_t_state = if next_step.is_none() {
+            let witness = terminal.terminal_response();
             let t_state = raw_field_segment_bytes(&witness.t_fields)?;
             if t_state.is_empty() {
                 return Err(AkitaError::InvalidProof);
@@ -225,12 +234,18 @@ where
         let next_witness = match (fold.next_w_commitment(), next_t_state.as_deref()) {
             (Some(commitment), None) => PreparedNextWitness::Commitment {
                 commitment,
-                ring_dim: next_params.role_dims().d_b(),
+                ring_dim: next_params
+                    .ok_or(AkitaError::InvalidProof)?
+                    .role_dims()
+                    .d_b(),
             },
             (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
             _ => return Err(AkitaError::InvalidProof),
         };
-        let stage3 = fold.stage3_for_mode(current_lp.setup_contribution_mode, Some(next_params))?;
+        let setup_contribution_mode = next_step.map_or(SetupContributionMode::Direct, |step| {
+            step.params.predecessor_setup_contribution_mode()
+        });
+        let stage3 = fold.stage3_for_mode(setup_contribution_mode, next_params)?;
         let prepared = prepare_fold_replay::<F, E, T>(
             FoldReplayPayload {
                 extension_opening_reduction: fold.extension_opening_reduction(),
@@ -240,14 +255,15 @@ where
                     stage1: &fold.stage1,
                     stage2: &fold.stage2,
                     next_witness,
-                    next_witness_ring_dim: next_params.role_dims().d_a(),
+                    next_witness_ring_dim,
                     stage3,
                 },
             },
             setup,
             transcript,
             &current_state,
-            &scheduled,
+            current_lp,
+            step.output_witness_len,
         )?;
         let (challenges, setup_prefix_opening) =
             verify_fold::<F, E, T>(setup, transcript, prepared).map_err(|err| {
@@ -269,43 +285,169 @@ where
                 .map_or_else(|| fold.next_w_eval(), |proof| proof.next_w_eval),
             witness: next_witness,
             basis: BasisMode::Lagrange,
-            w_len: scheduled.next_w_len,
+            witness_len: step.output_witness_len,
             setup_prefix_opening,
         };
     }
 
     let terminal_level = recursive_folds.len() + 1;
-    let scheduled = schedule.get_execution_schedule(terminal_level)?;
-    if !scheduled.is_terminal {
+    if current_state.witness_len != schedule.terminal.input_witness_len {
         return Err(AkitaError::InvalidProof);
     }
-    scheduled.validate_current_w_len(current_state.w_len)?;
     if !matches!(&current_state.witness, SuffixWitnessState::TerminalT(_)) {
         return Err(AkitaError::InvalidProof);
     }
-    if terminal.final_witness().num_elems() != scheduled.next_w_len {
+    if terminal.terminal_response().num_elems()
+        != schedule.terminal.params.response_shape.logical_num_elems()
+    {
         return Err(AkitaError::InvalidProof);
     }
-    let prepared = prepare_fold_replay::<F, E, T>(
-        FoldReplayPayload {
-            extension_opening_reduction: terminal.extension_opening_reduction.as_ref(),
-            fold_grind_nonce: terminal.fold_grind_nonce,
-            kind: FoldReplayKind::Terminal {
-                final_witness: terminal.final_witness(),
-            },
-        },
+    verify_terminal_suffix::<F, E, T>(
+        terminal,
         setup,
         transcript,
         &current_state,
-        &scheduled,
+        &schedule.terminal.params,
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!(
+            "suffix verify level {terminal_level} failed: {err:?}"
+        ))
+    })
+}
+
+fn verify_terminal_suffix<F, E, T>(
+    proof: &TerminalLevelProof<F, E>,
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    current_state: &SuffixVerifierState<'_, F, E>,
+    scheduled: &TerminalFoldParams,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
+    E: FpExtEncoding<F>
+        + ExtField<F>
+        + FrobeniusExtField<F>
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + MulBaseUnreduced<F>,
+    T: Transcript<F>,
+{
+    let params = &scheduled.witness;
+    let t_state = match &current_state.witness {
+        SuffixWitnessState::TerminalT(bytes) if !bytes.is_empty() => bytes,
+        _ => return Err(AkitaError::InvalidProof),
+    };
+    transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, t_state);
+    if raw_field_segment_bytes(&proof.terminal_response.t_fields)? != *t_state {
+        return Err(AkitaError::InvalidProof);
+    }
+    let (honest_cap, _) = params.response_linf_bounds(&scheduled.sparse_challenge_config)?;
+    let expected_shape = TerminalResponseShape::derive(params, honest_cap)?;
+    if scheduled.response_shape != expected_shape
+        || proof.terminal_response.layout != expected_shape.layout
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
+
+    let alpha_bits = params.d_a().trailing_zeros() as usize;
+    let recursive_num_vars = params.recursive_opening_num_vars()?;
+    if current_state.opening_point.len() > recursive_num_vars
+        || current_state.setup_prefix_opening.is_some()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut protocol_point = current_state.opening_point.clone();
+    protocol_point.resize(recursive_num_vars, E::zero());
+    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    let FoldEorReplay {
+        prepared_points,
+        final_relation,
+        ..
+    } = verify_fold_eor_geometry::<F, E, T>(
+        proof.extension_opening_reduction.as_ref(),
+        &protocol_point,
+        &[current_state.opening],
+        &[E::one()],
+        &opening_batch,
+        current_state.basis,
+        params.d_a(),
+        params.num_positions_per_block,
+        params.num_live_blocks,
+        <E as ExtField<F>>::EXT_DEGREE != 1,
+        transcript,
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!(
+            "terminal extension-opening replay failed: {error:?}"
+        ))
+    })?;
+    let prepared_points = if proof.extension_opening_reduction.is_some() {
+        prepared_points
+    } else {
+        vec![dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            params.d_a(),
+            |D| prepare_opening_point::<F, E, D>(
+                &protocol_point,
+                current_state.basis,
+                params.num_positions_per_block,
+                params.num_live_blocks,
+                alpha_bits,
+            )
+        )?]
+    };
+    absorb_prepared_opening_points(&prepared_points, transcript);
+    if final_relation.is_none() {
+        append_claim_values_to_transcript::<F, E, T>(
+            std::slice::from_ref(&current_state.opening),
+            transcript,
+        );
+    }
+    let terminal_replay = prepare_terminal_witness_replay::<F, T>(
+        transcript,
+        proof.terminal_response(),
+        scheduled.response_shape.logical_num_elems(),
     )?;
-    verify_fold::<F, E, T>(setup, transcript, prepared)
-        .map(|_| ())
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "suffix verify level {terminal_level} failed: {err:?}"
-            ))
-        })
+    let challenges = LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
+        params.d_a(),
+        0,
+        params.num_live_blocks,
+        1,
+        &scheduled.sparse_challenge_config,
+        &TensorChallengeShape::Flat,
+        witness_fold_challenge_labels(),
+        proof.fold_grind_nonce,
+    )?;
+    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_replay.response);
+    super::terminal_direct::verify_terminal_ring_relations(
+        setup,
+        &challenges,
+        &prepared_points[0].ring_multiplier_point,
+        params,
+        &scheduled.sparse_challenge_config,
+        proof.terminal_response(),
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!("terminal ring relation failed: {error:?}"))
+    })?;
+    let (target, scale) = match final_relation {
+        Some((claim, factors)) => (claim, *factors.first().ok_or(AkitaError::InvalidProof)?),
+        None => (current_state.opening, E::one()),
+    };
+    super::terminal_direct::verify_terminal_trace(
+        &prepared_points[0].ring_multiplier_point,
+        params,
+        proof.terminal_response(),
+        &prepared_points[0],
+        &[E::one()],
+        None,
+        scale,
+        target,
+    )
+    .map_err(|error| AkitaError::InvalidInput(format!("terminal trace failed: {error:?}")))
 }
 #[inline(never)]
 #[tracing::instrument(skip_all, name = "prepare_fold_replay")]
@@ -314,7 +456,8 @@ fn prepare_fold_replay<'a, F, E, T>(
     setup: &'a AkitaVerifierSetup<F>,
     transcript: &mut T,
     current_state: &'a SuffixVerifierState<'a, F, E>,
-    scheduled: &'a ExecutionSchedule,
+    lp: &'a CommittedGroupParams,
+    output_witness_len: usize,
 ) -> Result<PreparedFoldReplay<'a, F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -326,10 +469,8 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let lp = &scheduled.params;
     let role_dims = lp.role_dims();
     let commit_d = role_dims.d_b();
-    let relation_matrix_row_layout = scheduled.relation_matrix_row_layout();
     let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -339,15 +480,9 @@ where
     // Absorb the current suffix commitment as flat coefficients under the
     // schedule's ring dimension — byte-identical to the prover's absorb and to
     // the former typed `append_as_ring_commitment` path (S2 byte-identity test).
-    match (
-        LevelParams::has_commitment_block(relation_matrix_row_layout),
-        &current_state.witness,
-    ) {
-        (true, SuffixWitnessState::Commitment(commitment)) => {
+    match &current_state.witness {
+        SuffixWitnessState::Commitment(commitment) => {
             commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
-        }
-        (false, SuffixWitnessState::TerminalT(t_state)) if !t_state.is_empty() => {
-            transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, t_state);
         }
         _ => return Err(AkitaError::InvalidProof),
     }
@@ -407,12 +542,8 @@ where
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
     let requires_extension_reduction =
         <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
-    let terminal_eor_span = scheduled
-        .is_terminal
-        .then(|| tracing::info_span!("terminal_direct_eor").entered());
     let FoldEorReplay {
         prepared_points,
-        reduction_challenges: _,
         final_relation: eor_trace_final,
         ..
     } = verify_fold_eor::<F, E, T>(
@@ -426,7 +557,6 @@ where
         requires_extension_reduction,
         transcript,
     )?;
-    drop(terminal_eor_span);
     if proof.extension_opening_reduction.is_some() && opening_batch.num_groups() != 1 {
         return Err(AkitaError::InvalidProof);
     }
@@ -442,14 +572,10 @@ where
             alpha_bits,
         )?
     };
-    for prepared_point in &prepared_points {
-        for pt in &prepared_point.padded_point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-        }
-    }
+    absorb_prepared_opening_points(&prepared_points, transcript);
 
-    let w_len = scheduled.next_w_len;
-    let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
+    let witness_len = output_witness_len;
+    let (trace_eval_target, claim_reduction_factor) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
             *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
@@ -459,6 +585,8 @@ where
             E::one(),
         ),
     };
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     let fold_grind_nonce = proof.fold_grind_nonce;
     let (v_storage, payload, next_opening_ring_dim) = match proof.kind {
@@ -470,7 +598,7 @@ where
             next_witness_ring_dim,
             stage3,
         } => {
-            if next_witness_ring_dim == 0 || !w_len.is_multiple_of(next_witness_ring_dim) {
+            if next_witness_ring_dim == 0 || !witness_len.is_multiple_of(next_witness_ring_dim) {
                 return Err(AkitaError::InvalidProof);
             }
             (
@@ -480,40 +608,23 @@ where
                     stage2,
                     next_witness,
                     next_witness_ring_dim,
-                    next_opening_source_len: w_len / next_witness_ring_dim,
+                    next_opening_source_len: witness_len / next_witness_ring_dim,
                     stage3,
                 },
                 next_witness_ring_dim,
             )
         }
-        FoldReplayKind::Terminal { final_witness } => (
-            RingVec::from_coeffs(Vec::new()),
-            PreparedFoldPayload::Terminal {
-                final_witness,
-                transcript: prepare_terminal_witness_replay::<F, T>(
-                    transcript,
-                    final_witness,
-                    w_len,
-                )?,
-            },
-            lp.role_dims().d_a(),
-        ),
     };
-    let commitment_rows = if LevelParams::has_commitment_block(relation_matrix_row_layout) {
-        let current_commitment = match &current_state.witness {
-            SuffixWitnessState::Commitment(commitment) => *commitment,
-            SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
-        };
-        suffix_commitment_rows(setup, lp, &opening_batch, current_commitment)?
-    } else {
-        RingVec::from_coeffs(Vec::new())
+    let current_commitment = match &current_state.witness {
+        SuffixWitnessState::Commitment(commitment) => *commitment,
+        SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
     };
-    if !w_len.is_multiple_of(next_opening_ring_dim) {
+    let commitment_rows = suffix_commitment_rows(setup, lp, &opening_batch, current_commitment)?;
+    if !witness_len.is_multiple_of(next_opening_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     Ok(PreparedFoldReplay {
         lp,
-        relation_matrix_row_layout,
         fold_grind_nonce,
         v: v_storage,
         opening_shape: opening_batch,
@@ -527,13 +638,11 @@ where
             .iter()
             .map(|point| point.ring_multiplier_point.clone())
             .collect(),
-        w_len,
+        w_len: witness_len,
         payload,
-        trace_prepared_points: Some(prepared_points),
-        trace_block_opening: None,
-        trace_eval_target,
-        trace_eval_scale,
-        trace_claim_scales: None,
-        trace_basis: current_state.basis,
+        evaluation_trace_points: prepared_points,
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: current_state.basis,
     })
 }

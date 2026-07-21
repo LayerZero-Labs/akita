@@ -6,10 +6,11 @@ use crate::protocol::extension_opening_reduction::{
 };
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
-    RingSwitchBuildOutput, RingSwitchOutput,
+    RingSwitchOutput,
 };
+use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weights;
 use crate::protocol::sumcheck::AkitaStage3Prover;
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
+use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
@@ -28,28 +29,28 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,
-    check_extension_opening_reduction_output, derive_tensor_extension_opening_claim_from_partials,
-    embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
-    prepare_opening_point, proof::relation::evaluation_trace_row_weight,
-    recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
-    root_current_w_len, root_tensor_projection_enabled, sample_public_row_coefficients,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
-    trace_public_weights_recursive, trace_public_weights_root_terms,
-    trace_weight_layout_from_segment, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
-    AkitaStage2Proof, BasisMode, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FoldLevelProof, LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
-    SegmentTypedWitness, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
-    TerminalLevelProof, TraceTable,
+    append_claim_values_to_transcript, basis_weights, check_extension_opening_reduction_output,
+    derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
+    proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
+    relation_claim_from_layout_extension, relation_rhs_layout_for,
+    ring_subfield_packed_extension_opening_point, root_input_witness_len,
+    root_tensor_projection_enabled, sample_public_row_coefficients,
+    scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
+    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
+    RingVec, RingView, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 
@@ -75,7 +76,7 @@ pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
-pub use root_fold::prove_root;
+use root_fold::prove_root;
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
@@ -97,8 +98,8 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
     pub num_levels: usize,
 }
 
-pub(in crate::protocol::core) type Stage2ProveResult<E> =
-    (SumcheckProof<E>, Vec<E>, AkitaStage2Prover<E>);
+pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
+    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,

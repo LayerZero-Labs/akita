@@ -1,17 +1,36 @@
 use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
-use crate::protocol::sumcheck::akita_stage1::advance_stage1_claim;
-use crate::protocol::sumcheck::akita_stage1::AkitaStage1Prover;
+use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_sumcheck::{EqFactoredSumcheckInstanceProver, EqFactoredUniPoly, UniPoly};
-use akita_types::{range_check_eval_from_s, reorder_stage1_coords};
-use akita_types::{TraceSparseColumn, TraceTable};
+use akita_types::{DigitRangeEqualityPoint, DigitRangePlan};
 use std::collections::HashMap;
 
 type F = Prime128Offset275;
+
+fn ordered_equality_point(
+    challenges: &[F],
+    column_variables: usize,
+    ring_variables: usize,
+) -> Vec<F> {
+    DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        challenges,
+        column_variables,
+        ring_variables,
+    )
+    .expect("valid test point")
+    .into_coordinates()
+}
+
+fn range_polynomial_eval(range_image: F, basis: usize) -> F {
+    DigitRangePlan::new(basis)
+        .expect("supported test basis")
+        .evaluate_range_polynomial(range_image)
+}
 
 fn gaussian_rank(mut rows: Vec<Vec<F>>) -> usize {
     rows.retain(|row| row.iter().any(|x| !x.is_zero()));
@@ -162,7 +181,7 @@ fn tensor_values<E: FieldCore, const NX: usize, const NY: usize>(
 fn stage1_norm_round_values(s_quad: [F; 4], tau0: F, tau1: F, r0: F, b: usize) -> Vec<F> {
     let l0 = |x: F| tau0 * x + (F::one() - tau0) * (F::one() - x);
     let l1 = |y: F| tau1 * y + (F::one() - tau1) * (F::one() - y);
-    let q = |x: F, y: F| range_check_eval_from_s(bilinear_eval(s_quad, x, y), b);
+    let q = |x: F, y: F| range_polynomial_eval(bilinear_eval(s_quad, x, y), b);
 
     let mut out = Vec::new();
     for x in 0..=5u64 {
@@ -410,7 +429,7 @@ fn stage1_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(11),
         F::from_u64(13),
     ];
-    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
+    let tau0 = ordered_equality_point(&tau0_raw, col_bits, ring_bits);
     assert_eq!(
         build_stage1_bivariate_skip_proof_from_m_compact(
             &w_compact, &tau0, 8, 5, col_bits, ring_bits
@@ -441,12 +460,13 @@ fn stage2_bivariate_skip_proof_builder_matches_reference() {
         F::from_u64(7),
         F::from_u64(11),
     ];
+    let evaluation_trace = PreparedProverEvaluationTrace::from_dense(vec![F::zero(); 10], 5, 2);
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            None,
+            &evaluation_trace,
             &stage1_point,
             8,
             5,
@@ -491,12 +511,16 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
 
     assert_eq!(
         {
-            let trace_table = TraceTable::ring_dense(trace_compact.clone());
+            let evaluation_trace = PreparedProverEvaluationTrace::from_dense(
+                trace_compact.clone(),
+                live_x_cols,
+                y_len,
+            );
             build_stage2_bivariate_skip_proof_from_m_compact(
                 &w_compact,
                 &alpha_evals_y,
                 &relation_matrix_col_evals,
-                Some(&trace_table),
+                &evaluation_trace,
                 &stage1_point,
                 8,
                 live_x_cols,
@@ -519,7 +543,7 @@ fn stage2_bivariate_skip_proof_builder_with_trace_matches_reference() {
 }
 
 #[test]
-fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
+fn stage2_bivariate_skip_proof_builder_with_prepared_trace_matches_dense() {
     let live_x_cols = 5usize;
     let col_bits = 3usize;
     let ring_bits = 2usize;
@@ -530,16 +554,8 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
     let trace_compact: Vec<F> = (0..(live_x_cols * y_len))
         .map(|i| F::from_u64((11 * i as u64) + 13))
         .collect();
-    let sparse_trace = TraceTable::field_sparse(
-        (0..live_x_cols)
-            .map(|col| TraceSparseColumn {
-                col,
-                values: trace_compact[col * y_len..(col + 1) * y_len].to_vec(),
-            })
-            .collect(),
-        live_x_cols,
-        y_len,
-    );
+    let evaluation_trace =
+        PreparedProverEvaluationTrace::from_dense(trace_compact.clone(), live_x_cols, y_len);
     let alpha_evals_y: Vec<F> = (0..y_len)
         .map(|i| F::from_u64((17 * i as u64) + 19))
         .collect();
@@ -554,7 +570,7 @@ fn stage2_bivariate_skip_proof_builder_with_sparse_trace_matches_dense() {
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            Some(&sparse_trace),
+            &evaluation_trace,
             &stage1_point,
             8,
             live_x_cols,
@@ -611,12 +627,17 @@ fn stage2_bivariate_skip_proof_builder_matches_reference_large_odd_randomized() 
             )
         })
         .collect();
+    let evaluation_trace = PreparedProverEvaluationTrace::from_dense(
+        vec![F::zero(); live_x_cols * y_len],
+        live_x_cols,
+        y_len,
+    );
     assert_eq!(
         build_stage2_bivariate_skip_proof_from_m_compact(
             &w_compact,
             &alpha_evals_y,
             &relation_matrix_col_evals,
-            None,
+            &evaluation_trace,
             &stage1_point,
             8,
             live_x_cols,
@@ -826,7 +847,7 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
         F::from_u64(11),
         F::from_u64(13),
     ];
-    let tau0 = reorder_stage1_coords(&tau0_raw, col_bits, ring_bits);
+    let tau0 = ordered_equality_point(&tau0_raw, col_bits, ring_bits);
 
     let proof = build_stage1_bivariate_skip_proof_from_m_compact(
         &w_compact,
@@ -840,14 +861,28 @@ fn stage1_bivariate_skip_proof_reconstructs_first_two_rounds() {
     let skip_state = Stage1BivariateSkipState::new(&proof, &tau0, b)
         .expect("stage1 bivariate-skip state should build");
 
-    let mut prover =
-        AkitaStage1Prover::<F>::new(&w_compact, &tau0, b, live_x_cols, col_bits, ring_bits)
-            .unwrap();
+    let mut prover = LowBasisRangeCheckProver::<F>::new(
+        std::sync::Arc::from(w_compact.as_slice()),
+        &tau0,
+        akita_types::DigitRangePlan::new(b).unwrap(),
+        live_x_cols,
+        col_bits,
+        ring_bits,
+    )
+    .unwrap();
     let round0 = prover.compute_round_eq_factored(0);
     assert_eq!(skip_state.reconstruct_round0_eq_poly(), round0);
 
     let r0 = F::from_u64(9);
-    let _ = advance_stage1_claim(&prover, F::zero(), F::one(), &round0, r0);
+    let (linear_at_zero, linear_at_one) = prover.current_linear_factor_evals();
+    let _ = akita_sumcheck::advance_eq_factored_claim(
+        F::zero(),
+        F::one(),
+        linear_at_zero,
+        linear_at_one,
+        &round0,
+        r0,
+    );
     prover.ingest_challenge(0, r0);
 
     let round1 = prover.compute_round_eq_factored(1);

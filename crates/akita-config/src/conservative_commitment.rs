@@ -9,11 +9,11 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_t_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    AjtaiKeyParams, SisMatrixRole, SisTableKey,
+    InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
     SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
@@ -86,7 +86,9 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         false
     }
 
-    fn get_params_for_prove(_opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        _opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         Err(AkitaError::InvalidSetup(
             "ConservativeCommitmentConfig is only for precommit layouts; proving must use the regular config"
                 .to_string(),
@@ -95,7 +97,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
 
     fn get_params_for_batched_commitment(
         opening_batch: &OpeningClaimsLayout,
-    ) -> Result<LevelParams, AkitaError> {
+    ) -> Result<CommittedGroupParams, AkitaError> {
         opening_batch.check()?;
         if opening_batch.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
@@ -110,26 +112,26 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
 
 pub(crate) fn conservative_precommitted_group_params<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
-) -> Result<PrecommittedGroupParams, AkitaError> {
+) -> Result<PrecommittedGroupDescriptor, AkitaError> {
     group.validate()?;
     let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
     let params =
         <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
             &singleton,
         )?;
-    Ok(PrecommittedGroupParams::from_params(group, &params))
+    Ok(PrecommittedGroupDescriptor::from_params(group, &params))
 }
 
 pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-) -> Result<LevelParams, AkitaError> {
+) -> Result<CommittedGroupParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
-    Ok(schedule.root_fold()?.params.clone())
+    Ok(schedule.root.params.final_group.commitment.clone())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     if Cfg::decomposition().log_commit_bound != 1 {
         return Err(AkitaError::InvalidSetup(
             "conservative commitments require a one-hot config".to_string(),
@@ -141,20 +143,31 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_group_batch_schedule(
+    // A precommitted group is a pre-existing, independently formed commitment;
+    // the distributed multi-chunk layout only refines the *fold* witness, not how
+    // an earlier commitment was formed. Freeze precommits single-chunk so a
+    // multi-chunk base config (e.g. the W8R2 preset used for recursive
+    // setup-offloading) produces the same frozen params as its single-chunk
+    // sibling. Otherwise the frozen precommit diverges from the shipped
+    // (single-chunk-frozen) recursive catalog key and the multi-group planner
+    // can fall back to an invalid grouped root-direct.
+    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
+    let mut planned = akita_planner::find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    let widened = widen_conservative_commit_params::<Cfg>(schedule.root_fold()?.params.clone())?;
-    schedule.root_fold_mut()?.params = widened;
-    Ok(schedule)
+    let widened = widen_conservative_commit_params::<Cfg>(
+        planned.schedule.root.params.final_group.commitment.clone(),
+    )?;
+    planned.schedule.root.params.final_group.commitment = widened;
+    Ok(planned.schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
-    mut params: LevelParams,
-) -> Result<LevelParams, AkitaError> {
+    mut params: CommittedGroupParams,
+) -> Result<CommittedGroupParams, AkitaError> {
     let policy = policy_of::<Cfg>();
     let (min_basis, _) = Cfg::basis_range();
     if params.log_basis_open != min_basis {
@@ -168,7 +181,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         log_basis: params.log_basis_inner,
         ..policy.decomposition
     };
-    let inner_width = params.a_key.col_len();
+    let inner_width = params.inner_commit_matrix.input_width();
     let mut conservative_a_rows = 0usize;
     let mut conservative_a_bound = 0u128;
     let mut conservative_b_bound = 0u128;
@@ -190,24 +203,24 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
             inner_width as u64,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no conservative A-role norm".to_string()))?;
-        let a_key = AjtaiKeyParams::try_new_with_min_rank(
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: policy.sis_security_policy,
                 table_digest: policy.sis_table_digest,
                 modulus_profile: policy.sis_modulus_profile,
-                role: SisMatrixRole::A,
+                role: SisMatrixRole::Inner,
                 ring_dimension: policy.ring_dimension as u32,
                 coeff_linf_bound: a_bound,
             },
             inner_width,
         )?;
-        conservative_a_rows = conservative_a_rows.max(a_key.row_len());
+        conservative_a_rows = conservative_a_rows.max(inner_commit_matrix.output_rank());
         conservative_a_bound = conservative_a_bound.max(a_bound);
 
         let b_bound = rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
-            SisMatrixRole::B,
+            SisMatrixRole::Outer,
             policy.ring_dimension,
             log_basis_open,
         )
@@ -215,11 +228,10 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         conservative_b_bound = conservative_b_bound.max(b_bound);
     }
 
-    params.a_key = AjtaiKeyParams::try_new(
+    params.inner_commit_matrix = InnerCommitMatrixParams::try_new(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
-        SisMatrixRole::A,
         conservative_a_rows,
         inner_width,
         conservative_a_bound,
@@ -232,17 +244,16 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         1,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("conservative B width overflow".to_string()))?;
-    params.b_key = AjtaiKeyParams::try_new_with_min_rank(
+    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: policy.sis_security_policy,
             table_digest: policy.sis_table_digest,
             modulus_profile: policy.sis_modulus_profile,
-            role: SisMatrixRole::B,
+            role: SisMatrixRole::Outer,
             ring_dimension: policy.ring_dimension as u32,
             coeff_linf_bound: conservative_b_bound,
         },
         outer_width,
     )?;
-    params.stamp_role_dims_from_keys();
     Ok(params)
 }

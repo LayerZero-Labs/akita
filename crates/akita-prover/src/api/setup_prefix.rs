@@ -86,7 +86,7 @@ where
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.a_key.row_len(),
+            n_a: level_params.inner_commit_matrix.output_rank(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
                 num_digits_inner: level_params.num_digits_inner,
@@ -99,7 +99,7 @@ where
         .iter()
         .map(|_| {
             commit_inner_block_digit_count(
-                level_params.a_key.row_len(),
+                level_params.inner_commit_matrix.output_rank(),
                 level_params.num_digits_outer,
             )
         })
@@ -134,7 +134,7 @@ where
 
     let b_input_len = commit_inner_flat_digit_count(
         level_params.layout.num_live_blocks,
-        level_params.a_key.row_len(),
+        level_params.inner_commit_matrix.output_rank(),
         level_params.num_digits_outer,
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
@@ -143,15 +143,15 @@ where
     b_input_digits.copy_from_slice(planes);
     let u = backend.digit_rows::<D>(
         prepared,
-        level_params.b_key.row_len(),
+        level_params.outer_commit_matrix.output_rank(),
         &b_input_digits,
         level_params.layout.log_basis_outer,
     )?;
-    if u.len() != level_params.b_key.row_len() {
+    if u.len() != level_params.outer_commit_matrix.output_rank() {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix commit returned {} B rows, expected {}",
             u.len(),
-            level_params.b_key.row_len()
+            level_params.outer_commit_matrix.output_rank()
         )));
     }
 
@@ -232,12 +232,12 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_prefix_precommitted_params, LevelParams, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusProfileId,
+        active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
+        OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
     };
 
-    fn prefix_level_params(ring_dimension: usize) -> LevelParams {
-        LevelParams::params_only(
+    fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
@@ -250,15 +250,15 @@ mod tests {
         .expect("level params")
     }
 
-    fn setup_capacity_for(level_params: &LevelParams, n_prefix: usize) -> usize {
+    fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         n_prefix.max(
             level_params
-                .b_key
-                .row_len()
+                .outer_commit_matrix
+                .output_rank()
                 .checked_mul(
                     level_params
                         .num_live_blocks
-                        .checked_mul(level_params.a_key.row_len())
+                        .checked_mul(level_params.inner_commit_matrix.output_rank())
                         .and_then(|n| n.checked_mul(level_params.num_digits_open))
                         .expect("b input shape"),
                 )
@@ -267,7 +267,7 @@ mod tests {
     }
 
     fn test_setup<const D: usize>(
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         n_prefix: usize,
     ) -> AkitaProverSetup<F> {
         AkitaProverSetup::<F>::generate_with_capacity(
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn commit_setup_prefix_does_not_back_zero_padding_with_shared_setup() {
-        let level_params = LevelParams::params_only(
+        let level_params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,

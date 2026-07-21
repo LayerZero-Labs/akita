@@ -91,7 +91,7 @@ impl PlannerPolicy {
     /// Chunk count of fold level `fold_level`'s own fold: the number of
     /// per-chunk folded responses `zᵢ` this level produces, hence the chunk
     /// count of the witness it emits. `build_w_coeffs` lays that witness out as
-    /// `zᵢ ‖ eᵢ ‖ t̂ᵢ` per chunk, and `next_w_len(L)` is priced with
+    /// `zᵢ ‖ eᵢ ‖ t̂ᵢ` per chunk, and `output_witness_len(L)` is priced with
     /// `chunks_at_level(L)` to match it (the verifier sizes the same witness
     /// from `lp.witness_chunk.num_chunks`).
     ///

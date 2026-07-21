@@ -143,6 +143,29 @@ class ProfileBenchReportTests(unittest.TestCase):
             },
         )
 
+    def test_planned_fold_level_parses_typed_schedule_field_names(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        # The typed-schedule cutover renamed `current_w_len`/`next_w_len` to
+        # `input_witness_len`/`output_witness_len` and dropped `level_bytes`
+        # from the runtime log.
+        log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
+            'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
+            'num_positions_per_block=128 num_digits_inner=4 num_digits_outer=5 num_digits_open=5 '
+            'delta_fold=6 input_witness_len=1024 output_witness_len=2048\n'
+        )
+
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        level = summary["planned_levels"][0]
+
+        self.assertEqual(level["current_w_len"], 1024)
+        self.assertEqual(level["next_w_len"], 2048)
+        self.assertEqual(level["num_live_ring_elements_per_claim"], 768)
+        self.assertNotIn("level_bytes", level)
+
     def test_planned_fold_level_normalizes_merge_base_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
@@ -211,14 +234,20 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertNotIn("r_pos", report)
 
     def test_proof_breakdown_marks_absent_components(self) -> None:
-        from scripts.profile_bench_report import extract_summary, render_proof_levels
+        from scripts.profile_bench_report import (
+            extract_summary,
+            proof_level_component_bytes,
+            render_proof_levels,
+        )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=4 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=20 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
+            'stage1_range_image_evaluation_bytes=16 '
             'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
+        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -226,6 +255,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertIn("Fold-level bytes", report)
+        self.assertIn("Range-image evaluation", report)
         self.assertIn("—", report)
         self.assertIn("+0.00% vs main", report)
         self.assertIn("final witness", report)
@@ -318,7 +348,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             "v_bytes": 0,
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
-            "stage1_s_claim_bytes": 0,
+            "stage1_range_image_evaluation_bytes": 0,
             "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_commitment_bytes": 0,

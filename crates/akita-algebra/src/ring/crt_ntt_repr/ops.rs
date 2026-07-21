@@ -8,8 +8,9 @@ use crate::ntt::butterfly::forward_ntt;
 #[cfg(target_arch = "aarch64")]
 use crate::ntt::neon;
 use crate::ntt::prime::{MontCoeff, NttPrime, PrimeWidth};
+use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
-use super::{CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
+use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut};
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
     /// The additive identity (all zeros in every CRT limb).
@@ -17,6 +18,63 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self {
             limbs: [[MontCoeff::from_raw(W::default()); D]; K],
         }
+    }
+
+    /// Multiply a row-major prepared matrix by one signed-i16 ring vector.
+    ///
+    /// The caller must select this CRT profile from an exact bound covering
+    /// `num_cols` and the accepted signed-input class. Shape relationships are
+    /// checked before indexing so verifier callers reject malformed prepared
+    /// state rather than panicking.
+    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+        matrix: &[Self],
+        num_rows: usize,
+        num_cols: usize,
+        rhs: &[[i16; D]],
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        if rhs.len() != num_cols {
+            return Err(AkitaError::InvalidProof);
+        }
+        let required = num_rows
+            .checked_mul(num_cols)
+            .ok_or(AkitaError::InvalidProof)?;
+        let matrix = matrix.get(..required).ok_or_else(|| {
+            AkitaError::InvalidSetup("prepared NTT matrix prefix is undersized".into())
+        })?;
+        if num_rows == 0 || num_cols == 0 {
+            return Ok(vec![CyclotomicRing::zero(); num_rows]);
+        }
+
+        let rhs_abs_bound = rhs
+            .iter()
+            .flatten()
+            .map(|&digit| i32::from(digit).unsigned_abs())
+            .max()
+            .unwrap_or(0) as i32;
+        let lut = CenteredMontLut::new(params, rhs_abs_bound);
+        let mut accumulators = vec![Self::zero(); num_rows];
+        for (column, digits) in rhs.iter().enumerate() {
+            if digits.iter().all(|&digit| digit == 0) {
+                continue;
+            }
+            let centered = digits.map(i32::from);
+            let transformed = Self::from_centered_i32_with_lut(&centered, params, &lut);
+            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
+                let matrix_entry = row.get(column).ok_or_else(|| {
+                    AkitaError::InvalidSetup("prepared NTT matrix row is undersized".into())
+                })?;
+                accumulator.add_assign_pointwise_mul_with_params(
+                    matrix_entry,
+                    &transformed,
+                    params,
+                );
+            }
+        }
+        Ok(accumulators
+            .iter()
+            .map(|accumulator| accumulator.to_ring_with_params(params))
+            .collect())
     }
 
     #[inline(always)]

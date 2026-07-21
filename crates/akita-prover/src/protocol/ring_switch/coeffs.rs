@@ -11,159 +11,6 @@ use akita_types::{
     WitnessLayout,
 };
 
-/// Per-group prover-side ring artifacts retained for segment-typed terminal encoding.
-pub struct RingSwitchTerminalGroupArtifacts<F: FieldCore> {
-    pub group_index: usize,
-    pub e_folded: RingVec<F>,
-    pub recomposed_inner_rows: Vec<RingVec<F>>,
-    z_folded_centered_flat: Vec<i32>,
-    ring_dim: usize,
-}
-
-impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
-    /// Construct from typed ring-switch output at a kernel boundary.
-    pub(crate) fn from_parts<const D: usize>(
-        group_index: usize,
-        e_folded: Vec<CyclotomicRing<F, D>>,
-        recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
-        z_folded_centered: Vec<[i32; D]>,
-    ) -> Self {
-        Self {
-            group_index,
-            e_folded: RingVec::from_ring_elems(&e_folded),
-            recomposed_inner_rows: recomposed_inner_rows
-                .into_iter()
-                .map(|block| RingVec::from_ring_elems(&block))
-                .collect(),
-            z_folded_centered_flat: z_folded_centered
-                .iter()
-                .flat_map(|row| row.iter().copied())
-                .collect(),
-            ring_dim: D,
-        }
-    }
-
-    /// Stored ring dimension (coefficients per ring element).
-    pub fn ring_dim(&self) -> usize {
-        self.ring_dim
-    }
-
-    /// Flat centered fold-response coefficients (`ring_dim` field elements per row).
-    pub fn z_folded_centered_flat(&self) -> &[i32] {
-        &self.z_folded_centered_flat
-    }
-
-    /// # Errors
-    ///
-    /// Returns an error if the requested ring dimension does not match storage.
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        if self.ring_dim != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring switch terminal artifacts ring_d={} does not match requested D={D}",
-                self.ring_dim
-            )));
-        }
-        if !self.z_folded_centered_flat.len().is_multiple_of(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.z_folded_centered_flat.len(),
-            });
-        }
-        if !self.e_folded.can_decode_vec(D) {
-            return Err(AkitaError::InvalidSize {
-                expected: D,
-                actual: self.e_folded.coeff_len(),
-            });
-        }
-        for block in &self.recomposed_inner_rows {
-            if !block.can_decode_vec(D) {
-                return Err(AkitaError::InvalidSize {
-                    expected: D,
-                    actual: block.coeff_len(),
-                });
-            }
-        }
-        Ok(())
-    }
-
-    /// Borrow folded `e` rows after [`Self::ensure_ring_dim`].
-    pub fn e_folded_trusted<const D: usize>(&self) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        Ok(self.e_folded.as_ring_slice_trusted::<D>())
-    }
-
-    /// Borrow recomposed rows for one block after [`Self::ensure_ring_dim`].
-    pub fn recomposed_block_trusted<const D: usize>(
-        &self,
-        block: usize,
-    ) -> Result<&[CyclotomicRing<F, D>], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        self.recomposed_inner_rows
-            .get(block)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(format!(
-                    "ring switch terminal artifacts block index {block} out of range"
-                ))
-            })
-            .map(|rows| rows.as_ring_slice_trusted::<D>())
-    }
-
-    /// Borrow centered coefficient rows after [`Self::ensure_ring_dim`].
-    pub fn z_folded_centered_trusted<const D: usize>(&self) -> Result<&[[i32; D]], AkitaError> {
-        self.ensure_ring_dim::<D>()?;
-        let (chunks, rem) = self.z_folded_centered_flat.as_chunks::<D>();
-        debug_assert!(rem.is_empty());
-        Ok(chunks)
-    }
-}
-
-/// Prover-side ring artifacts retained for segment-typed terminal encoding.
-///
-/// Ring dimension is stored at runtime. Scalar tails use one group; grouped
-/// roots retain every group in root witness order plus one shared quotient tail.
-pub struct RingSwitchTerminalArtifacts<F: FieldCore> {
-    pub groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
-    ring_dim: usize,
-}
-
-impl<F: FieldCore> RingSwitchTerminalArtifacts<F> {
-    pub(crate) fn from_parts<const D: usize>(
-        groups: Vec<RingSwitchTerminalGroupArtifacts<F>>,
-    ) -> Self {
-        Self {
-            groups,
-            ring_dim: D,
-        }
-    }
-
-    /// Stored ring dimension (coefficients per ring element).
-    pub fn ring_dim(&self) -> usize {
-        self.ring_dim
-    }
-
-    /// # Errors
-    ///
-    /// Returns an error if the requested ring dimension does not match storage.
-    pub fn ensure_ring_dim<const D: usize>(&self) -> Result<(), AkitaError> {
-        if self.ring_dim != D {
-            return Err(AkitaError::InvalidInput(format!(
-                "ring switch terminal artifacts ring_d={} does not match requested D={D}",
-                self.ring_dim
-            )));
-        }
-        for group in &self.groups {
-            group.ensure_ring_dim::<D>()?;
-        }
-        Ok(())
-    }
-}
-
-/// Output of [`ring_switch_build_w`].
-pub enum RingSwitchBuildOutput<F: FieldCore> {
-    Intermediate(RecursiveWitnessFlat),
-    Terminal(RingSwitchTerminalArtifacts<F>),
-}
-
 pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore, const D: usize> {
     pub(crate) params: &'a dyn LevelParamsLike,
     pub(crate) e_hat: DigitBlocks,
@@ -228,7 +75,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
     layout: &WitnessLayout,
     group_id: usize,
     group: &PreparedRingSwitchGroup<'_, F, D>,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> Result<(), AkitaError> {
     let num_digits_fold = root_lp.num_digits_fold_for_params(
@@ -373,10 +220,8 @@ pub fn ring_switch_build_w<F, B>(
     instance: &RingRelationInstance<F>,
     witness: RingRelationWitness<F>,
     ring_switch_ctx: &OperationCtx<'_, F, B>,
-    lp: &LevelParams,
-    retain_terminal_artifacts: bool,
-    terminal_recomposed_inner_rows: Option<&[RingVec<F>]>,
-) -> Result<RingSwitchBuildOutput<F>, AkitaError>
+    lp: &CommittedGroupParams,
+) -> Result<RecursiveWitnessFlat, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -407,11 +252,6 @@ where
             lp.validate_opening_batch(opening_batch)?;
             let order = opening_batch.root_group_order()?;
             let mut owned = Vec::with_capacity(groups.len());
-            let cached_terminal_rows = if retain_terminal_artifacts && groups.len() == 1 {
-                terminal_recomposed_inner_rows
-            } else {
-                None
-            };
             for (group_index, group) in groups.into_iter().enumerate() {
                 group.ensure_role_dim::<D>(RingRole::Inner)?;
                 let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -426,29 +266,11 @@ where
                 let e_folded = e_folded.as_ring_slice_trusted::<D>().to_vec();
                 let t_hat = hint.into_flat_parts()?;
                 t_hat.ensure_stride::<D>()?;
-                let recomposed_inner_rows = if group_index == 0 {
-                    if let Some(rows) = cached_terminal_rows {
-                        rows.iter()
-                            .map(|block| {
-                                block
-                                    .as_ring_slice::<D>()
-                                    .map(<[CyclotomicRing<F, D>]>::to_vec)
-                            })
-                            .collect::<Result<Vec<_>, _>>()?
-                    } else {
-                        crate::compute::recompose_inner_rows::<F, D>(
-                            &t_hat,
-                            group_lp.num_digits_outer(),
-                            group_lp.log_basis_outer(),
-                        )?
-                    }
-                } else {
-                    crate::compute::recompose_inner_rows::<F, D>(
-                        &t_hat,
-                        group_lp.num_digits_outer(),
-                        group_lp.log_basis_outer(),
-                    )?
-                };
+                let recomposed_inner_rows = crate::compute::recompose_inner_rows::<F, D>(
+                    &t_hat,
+                    group_lp.num_digits_outer(),
+                    group_lp.log_basis_outer(),
+                )?;
                 let z_folded_centered_per_chunk =
                     typed_z_folded_centered_per_chunk::<D>(&z_folded_centered_per_chunk)?;
                 owned.push(PreparedRingSwitchGroup {
@@ -468,22 +290,6 @@ where
                     .group_ring_multiplier_point(group_index)?
                     .ensure_ring_dim::<D>()?;
             }
-            if retain_terminal_artifacts {
-                let mut terminal_groups = Vec::with_capacity(order.len());
-                for &group_index in &order {
-                    let group = owned.get(group_index).ok_or(AkitaError::InvalidProof)?;
-                    terminal_groups.push(RingSwitchTerminalGroupArtifacts::from_parts::<D>(
-                        group_index,
-                        group.e_folded.clone(),
-                        group.recomposed_inner_rows.clone(),
-                        group.z_centered.clone(),
-                    ));
-                }
-                return Ok(RingSwitchBuildOutput::Terminal(
-                    RingSwitchTerminalArtifacts::from_parts::<D>(terminal_groups),
-                ));
-            }
-
             let witness_layout = instance.segment_layout(lp, None)?;
 
             // Shared relation quotient `r`: its consistency row (summed over all
@@ -513,7 +319,6 @@ where
                 e_hat_concat,
                 instance.rhs(),
                 dims,
-                instance.relation_matrix_row_layout(),
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
@@ -537,8 +342,7 @@ where
             }
             let levels = r_decomp_levels::<F>(lp.log_basis_open);
             emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
-            let expected =
-                lp.next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
+            let expected = lp.output_witness_len::<F>(opening_batch)?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,
@@ -560,13 +364,11 @@ where
                     ]
                 })
                 .fold(lp.log_basis_open, u32::max);
-            Ok(RingSwitchBuildOutput::Intermediate(
-                RecursiveWitnessFlat::from_witness_layout::<D>(
-                    out,
-                    &witness_layout,
-                    known_balanced_log_basis,
-                )?,
-            ))
+            RecursiveWitnessFlat::from_witness_layout::<D>(
+                out,
+                &witness_layout,
+                known_balanced_log_basis,
+            )
         }
     )
 }
@@ -578,8 +380,8 @@ pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
 ) {
     let levels = out.len();
     assert!(
-        log_basis > 0 && log_basis <= 6,
-        "log_basis must be in 1..=6 for i8 output"
+        log_basis > 0 && log_basis <= 8,
+        "log_basis must be in 1..=8 for i8 output"
     );
     assert!(
         (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -638,7 +440,7 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(levels, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     for (row_index, row) in r.rows().iter().enumerate() {
         let digits = match row.ring_dim() {
             16 => decompose_r_row::<F, 16>(row.coeffs(), levels, &decompose_params)?,
@@ -669,7 +471,7 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
 fn decompose_r_row<F: CanonicalField, const D: usize>(
     coeffs: &[F],
     levels: usize,
-    params: &BalancedDecomposePow2I8Params,
+    params: &BalancedDecomposePow2Params,
 ) -> Result<Vec<i8>, AkitaError> {
     let coeffs: [F; D] = coeffs.try_into().map_err(|_| AkitaError::InvalidSize {
         expected: D,

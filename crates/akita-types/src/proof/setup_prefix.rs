@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    AjtaiKeyParams, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams,
+    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -195,9 +195,9 @@ fn deserialize_sis_matrix_role<R: Read>(
     let mut tag = [0u8; 1];
     reader.read_exact(&mut tag)?;
     match tag[0] {
-        1 => Ok(SisMatrixRole::A),
-        2 => Ok(SisMatrixRole::B),
-        3 => Ok(SisMatrixRole::D),
+        1 => Ok(SisMatrixRole::Inner),
+        2 => Ok(SisMatrixRole::Outer),
+        3 => Ok(SisMatrixRole::Open),
         _ => Err(SerializationError::InvalidData(
             "invalid SIS matrix role tag".to_string(),
         )),
@@ -220,10 +220,81 @@ fn deserialize_sis_table_digest<R: Read>(
     Ok(SisTableDigest(bytes))
 }
 
-/// Wire layout mirrors [`AjtaiKeyParams::append_descriptor_bytes`]:
+trait SetupPrefixCommitMatrixParams: Sized {
+    const ROLE: SisMatrixRole;
+
+    fn sis_modulus_profile(&self) -> SisModulusProfileId;
+    fn security_policy(&self) -> SisSecurityPolicyId;
+    fn sis_table_key(&self) -> crate::SisTableKey;
+    fn output_rank(&self) -> usize;
+    fn input_width(&self) -> usize;
+    fn coeff_linf_bound(&self) -> u128;
+
+    #[allow(clippy::too_many_arguments)]
+    fn new_unchecked(
+        policy: SisSecurityPolicyId,
+        table_digest: SisTableDigest,
+        sis_modulus_profile: SisModulusProfileId,
+        output_rank: usize,
+        input_width: usize,
+        coeff_linf_bound: u128,
+        ring_dimension: usize,
+    ) -> Self;
+}
+
+macro_rules! impl_setup_prefix_commit_matrix_params {
+    ($ty:ty, $role:expr) => {
+        impl SetupPrefixCommitMatrixParams for $ty {
+            const ROLE: SisMatrixRole = $role;
+
+            fn sis_modulus_profile(&self) -> SisModulusProfileId {
+                self.sis_modulus_profile()
+            }
+            fn security_policy(&self) -> SisSecurityPolicyId {
+                self.security_policy()
+            }
+            fn sis_table_key(&self) -> crate::SisTableKey {
+                self.sis_table_key()
+            }
+            fn output_rank(&self) -> usize {
+                self.output_rank()
+            }
+            fn input_width(&self) -> usize {
+                self.input_width()
+            }
+            fn coeff_linf_bound(&self) -> u128 {
+                self.coeff_linf_bound()
+            }
+            fn new_unchecked(
+                policy: SisSecurityPolicyId,
+                table_digest: SisTableDigest,
+                sis_modulus_profile: SisModulusProfileId,
+                output_rank: usize,
+                input_width: usize,
+                coeff_linf_bound: u128,
+                ring_dimension: usize,
+            ) -> Self {
+                Self::new_unchecked(
+                    policy,
+                    table_digest,
+                    sis_modulus_profile,
+                    output_rank,
+                    input_width,
+                    coeff_linf_bound,
+                    ring_dimension,
+                )
+            }
+        }
+    };
+}
+
+impl_setup_prefix_commit_matrix_params!(InnerCommitMatrixParams, SisMatrixRole::Inner);
+impl_setup_prefix_commit_matrix_params!(OuterCommitMatrixParams, SisMatrixRole::Outer);
+
+/// Wire layout mirrors the commit-matrix descriptor bytes:
 /// profile tag, policy tag, role tag, table digest, ring dim, row, col, linf.
-fn serialize_ajtai_key<W: Write>(
-    key: &AjtaiKeyParams,
+fn serialize_commit_matrix<K: SetupPrefixCommitMatrixParams, W: Write>(
+    key: &K,
     mut writer: W,
     compress: Compress,
 ) -> Result<(), SerializationError> {
@@ -233,31 +304,37 @@ fn serialize_ajtai_key<W: Write>(
     serialize_sis_matrix_role(table_key.role, &mut writer)?;
     serialize_sis_table_digest(table_key.table_digest, &mut writer)?;
     (table_key.ring_dimension as usize).serialize_with_mode(&mut writer, compress)?;
-    key.row_len().serialize_with_mode(&mut writer, compress)?;
-    key.col_len().serialize_with_mode(&mut writer, compress)?;
+    key.output_rank()
+        .serialize_with_mode(&mut writer, compress)?;
+    key.input_width()
+        .serialize_with_mode(&mut writer, compress)?;
     key.coeff_linf_bound()
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
 
-fn deserialize_ajtai_key<R: Read>(
+fn deserialize_commit_matrix<K: SetupPrefixCommitMatrixParams, R: Read>(
     mut reader: R,
     compress: Compress,
     validate: Validate,
-) -> Result<AjtaiKeyParams, SerializationError> {
+) -> Result<K, SerializationError> {
     let sis_modulus_profile = deserialize_sis_modulus_profile(&mut reader)?;
     let policy = deserialize_sis_security_policy(&mut reader)?;
     let role = deserialize_sis_matrix_role(&mut reader)?;
+    if role != K::ROLE {
+        return Err(SerializationError::InvalidData(
+            "setup-prefix commitment matrix has the wrong role".to_string(),
+        ));
+    }
     let table_digest = deserialize_sis_table_digest(&mut reader)?;
     let ring_dimension = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let row_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let col_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let coeff_linf_bound = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    Ok(AjtaiKeyParams::new_unchecked(
+    Ok(K::new_unchecked(
         policy,
         table_digest,
         sis_modulus_profile,
-        role,
         row_len,
         col_len,
         coeff_linf_bound,
@@ -265,14 +342,17 @@ fn deserialize_ajtai_key<R: Read>(
     ))
 }
 
-fn ajtai_key_serialized_size(key: &AjtaiKeyParams, compress: Compress) -> usize {
+fn commit_matrix_serialized_size<K: SetupPrefixCommitMatrixParams>(
+    key: &K,
+    compress: Compress,
+) -> usize {
     1 // profile tag
         + 1 // policy tag
         + 1 // role tag
         + 32 // table digest
         + (key.sis_table_key().ring_dimension as usize).serialized_size(compress)
-        + key.row_len().serialized_size(compress)
-        + key.col_len().serialized_size(compress)
+        + key.output_rank().serialized_size(compress)
+        + key.input_width().serialized_size(compress)
         + key.coeff_linf_bound().serialized_size(compress)
 }
 
@@ -303,13 +383,6 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
-    match params.layout.fold_challenge_shape {
-        akita_challenges::TensorChallengeShape::Flat => writer.write_all(&[0])?,
-        akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
-            writer.write_all(&[1])?;
-            fold_low_len.serialize_with_mode(&mut writer, compress)?;
-        }
-    }
     params
         .layout
         .log_basis_inner
@@ -329,8 +402,8 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .n_b
         .serialize_with_mode(&mut writer, compress)?;
-    serialize_ajtai_key(&params.a_key, &mut writer, compress)?;
-    serialize_ajtai_key(&params.b_key, &mut writer, compress)?;
+    serialize_commit_matrix(&params.inner_commit_matrix, &mut writer, compress)?;
+    serialize_commit_matrix(&params.outer_commit_matrix, &mut writer, compress)?;
     params
         .num_digits_inner
         .serialize_with_mode(&mut writer, compress)?;
@@ -358,46 +431,34 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_positions_per_block =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let mut shape_tag = [0u8; 1];
-    reader.read_exact(&mut shape_tag)?;
-    let fold_challenge_shape = match shape_tag[0] {
-        0 => akita_challenges::TensorChallengeShape::Flat,
-        1 => akita_challenges::TensorChallengeShape::Tensor {
-            fold_low_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        },
-        _ => {
-            return Err(SerializationError::InvalidData(
-                "invalid setup-prefix fold challenge shape tag".to_string(),
-            ))
-        }
-    };
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let n_a = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let n_b = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let a_key = deserialize_ajtai_key(&mut reader, compress, validate)?;
-    let b_key = deserialize_ajtai_key(&mut reader, compress, validate)?;
+    let inner_commit_matrix: InnerCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
+    let outer_commit_matrix: OuterCommitMatrixParams =
+        deserialize_commit_matrix(&mut reader, compress, validate)?;
     let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: PrecommittedGroupParams {
+        layout: PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
-            fold_challenge_shape,
             log_basis_inner,
             log_basis_outer,
             n_a,
-            a_coeff_linf_bound: a_key.coeff_linf_bound(),
+            a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
             n_b,
-            b_coeff_linf_bound: b_key.coeff_linf_bound(),
+            b_coeff_linf_bound: outer_commit_matrix.coeff_linf_bound(),
         },
-        a_key,
-        b_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
         log_basis_open,
         num_digits_inner,
         num_digits_outer,
@@ -425,20 +486,13 @@ fn precommitted_level_params_serialized_size(
             .num_positions_per_block
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
-        + 1
-        + match params.layout.fold_challenge_shape {
-            akita_challenges::TensorChallengeShape::Flat => 0,
-            akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
-                fold_low_len.serialized_size(compress)
-            }
-        }
         + params.layout.log_basis_inner.serialized_size(compress)
         + params.layout.log_basis_outer.serialized_size(compress)
         + params.log_basis_open.serialized_size(compress)
         + params.layout.n_a.serialized_size(compress)
         + params.layout.n_b.serialized_size(compress)
-        + ajtai_key_serialized_size(&params.a_key, compress)
-        + ajtai_key_serialized_size(&params.b_key, compress)
+        + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
+        + commit_matrix_serialized_size(&params.outer_commit_matrix, compress)
         + params.num_digits_inner.serialized_size(compress)
         + params.num_digits_outer.serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
@@ -1094,7 +1148,7 @@ where
 }
 
 fn active_setup_projection_geometry(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<crate::SetupProjectionGeometry, AkitaError> {
     opening_batch.check()?;
@@ -1139,8 +1193,8 @@ fn active_setup_projection_geometry(
         max_b_slots = max_b_slots.max(b_slots);
     }
     let d_slots = level_params
-        .d_key
-        .row_len()
+        .open_commit_matrix
+        .output_rank()
         .checked_mul(shared_d_width)
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
     crate::SetupProjectionGeometry::from_role_footprints(
@@ -1153,7 +1207,7 @@ fn active_setup_projection_geometry(
 
 /// Active flat coefficient count under the canonical Stage 3 base projection.
 pub fn active_setup_field_len(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     Ok(active_setup_projection_geometry(level_params, opening_batch)?.natural_field_len())
@@ -1168,7 +1222,7 @@ pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
 /// Repack `level_params` into the precommitted-group metadata stored on the
 /// consuming fold.
 pub fn setup_prefix_precommitted_params(
-    prefix_params: &LevelParams,
+    prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
     let d_setup = SETUP_OFFLOAD_D_SETUP;
@@ -1185,28 +1239,27 @@ pub fn setup_prefix_precommitted_params(
             .checked_mul(prefix_params.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("prefix inner width overflow".to_string()))?;
         let outer_width = num_live_blocks
-            .checked_mul(prefix_params.a_key.row_len())
+            .checked_mul(prefix_params.inner_commit_matrix.output_rank())
             .and_then(|n| n.checked_mul(prefix_params.num_digits_outer))
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
-        if inner_width <= prefix_params.a_key.col_len()
-            && outer_width <= prefix_params.b_key.col_len()
+        if inner_width <= prefix_params.inner_commit_matrix.input_width()
+            && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
             return Ok(PrecommittedLevelParams {
-                layout: PrecommittedGroupParams {
+                layout: PrecommittedGroupDescriptor {
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
-                    fold_challenge_shape: prefix_params.fold_challenge_shape,
                     log_basis_inner: prefix_params.log_basis_inner,
                     log_basis_outer: prefix_params.log_basis_outer,
-                    n_a: prefix_params.a_key.row_len(),
-                    a_coeff_linf_bound: prefix_params.a_key.coeff_linf_bound(),
-                    n_b: prefix_params.b_key.row_len(),
-                    b_coeff_linf_bound: prefix_params.b_key.coeff_linf_bound(),
+                    n_a: prefix_params.inner_commit_matrix.output_rank(),
+                    a_coeff_linf_bound: prefix_params.inner_commit_matrix.coeff_linf_bound(),
+                    n_b: prefix_params.outer_commit_matrix.output_rank(),
+                    b_coeff_linf_bound: prefix_params.outer_commit_matrix.coeff_linf_bound(),
                 },
-                a_key: prefix_params.a_key.clone(),
-                b_key: prefix_params.b_key.clone(),
+                inner_commit_matrix: prefix_params.inner_commit_matrix.clone(),
+                outer_commit_matrix: prefix_params.outer_commit_matrix.clone(),
                 log_basis_open: prefix_params.log_basis_open,
                 num_digits_inner: prefix_params.num_digits_inner,
                 num_digits_outer: prefix_params.num_digits_outer,
@@ -1244,7 +1297,7 @@ pub fn setup_prefix_slot_id(
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
     setup_ring_slots_at_d: usize,
     lookup_slot: Lookup,
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     natural_field_len: usize,
     d_setup: usize,
     coverage_error: &'static str,

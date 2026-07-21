@@ -5,8 +5,7 @@ use akita_types::dispatch_for_field;
 /// Complete the ring switch after the caller has bound the next witness.
 ///
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
-/// The caller must first absorb either the next-witness commitment or the
-/// terminal cleartext witness bytes into `transcript`.
+/// The caller must first absorb the next-witness binding into `transcript`.
 ///
 /// Only the current level's inner ring dimension is needed to expand the
 /// full relation-weight table.
@@ -23,11 +22,10 @@ pub fn ring_switch_finalize<F, E, T>(
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_source_len: usize,
     opening_ring_dim: usize,
     gamma: Option<&[E]>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -78,117 +76,117 @@ where
                 actual: semantic_ring_elems,
             });
         }
-        // Uniform ring geometry restores the separable (x, y) opening domain:
-        // `col_bits` addresses the source columns and `ring_bits` addresses the
-        // inner ring coefficients. This keeps the relation weights as a compact
-        // per-column table `M(x)` (see `compute_relation_matrix_col_evals`)
-        // instead of the flattened field domain. Non-uniform role dimensions
-        // fall back to the flattened single-domain layout (`ring_bits = 0`).
+        // Bind the low coefficient block shared by every role first, then the
+        // remaining relation lanes. The flat challenge order is unchanged: the
+        // common coefficients are the low Boolean coordinates.
         let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
-        let uniform = dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim);
-        let (live_x_cols, col_bits, ring_bits) = if uniform {
-            (
-                w.len() / opening_ring_dim,
-                x_capacity.trailing_zeros() as usize,
-                opening_ring_dim.trailing_zeros() as usize,
-            )
-        } else {
-            let flat = x_capacity
-                .checked_mul(opening_ring_dim)
-                .ok_or_else(|| AkitaError::InvalidSetup("stage-2 domain overflow".into()))?;
-            (w.len(), flat.trailing_zeros() as usize, 0usize)
-        };
+        let coeff_count = dims.common_relation_witness_coeff_count(opening_ring_dim);
+        if coeff_count == 0
+            || !coeff_count.is_power_of_two()
+            || !w.len().is_multiple_of(coeff_count)
+            || !opening_ring_dim.is_multiple_of(coeff_count)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "relation and outgoing witness do not admit a common coefficient block".into(),
+            ));
+        }
+        // MERGE-FLAG(#314↔typed-schedule): the upstream guard rejected mixed
+        // ring dimensions under recursive setup offload via
+        // `lp.setup_contribution_mode`, but the typed-schedule cutover moved
+        // setup-contribution mode off `CommittedGroupParams` (it is now derived
+        // from the schedule, not the level params) and `ring_switch_finalize`
+        // does not receive it. The equivalent guard must be reinstated at the
+        // schedule/fold-orchestration layer that knows the recursive mode.
+        let common_opening_source_len = opening_source_len
+            .checked_mul(opening_ring_dim / coeff_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
+        let lane_capacity = x_capacity
+            .checked_mul(opening_ring_dim / coeff_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 lane domain overflow".into()))?;
+        let live_x_cols = w.len() / coeff_count;
+        let col_bits = lane_capacity.trailing_zeros() as usize;
+        let ring_bits = coeff_count.trailing_zeros() as usize;
+        // This is the Stage-1 transcript permutation boundary, not the Stage-2
+        // coefficient split. On mixed paths tau0 is already sampled in flat
+        // physical-address order, so zero means "no permutation," not "no low bits."
+        let digit_range_equality_low_variable_count =
+            if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
+                opening_ring_dim.trailing_zeros() as usize
+            } else {
+                0
+            };
         let num_sc_vars = col_bits + ring_bits;
-        let num_i =
-            lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
+        let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
-        let tau0: Vec<E> = match relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-            RelationMatrixRowLayout::WithoutCommitmentBlocks => Vec::new(),
-        };
+        let tau0: Vec<E> = (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect();
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
-        let ring_alpha_evals_y = scalar_powers(alpha, D);
         if gamma.len() != instance.opening_batch().num_total_polynomials() {
             return Err(AkitaError::InvalidInput(
                 "ring-switch gamma length does not match claim count".to_string(),
             ));
         }
 
-        let build_relation_weights = || {
-            if uniform {
-                // Uniform geometry: build the per-column weights `M(x)` directly
-                // (length `1 << col_bits`), dropping the per-coefficient alpha
-                // spread that the flattened builder bakes into the full field
-                // domain. The `alpha(y)` factor is supplied to stage-2 as
-                // `ring_alpha_evals_y`.
-                compute_relation_matrix_col_evals::<F, E>(
-                    setup,
-                    instance,
-                    alpha,
-                    &ring_alpha_evals_y,
-                    dims,
-                    lp,
-                    &tau1,
-                    gamma,
-                    relation_matrix_row_layout,
-                    opening_source_len,
-                    opening_ring_dim,
-                )
-            } else {
-                compute_relation_weight_evals::<F, E>(
-                    setup,
-                    instance,
-                    alpha,
-                    &ring_alpha_evals_y,
-                    dims,
-                    lp,
-                    &tau1,
-                    gamma,
-                    relation_matrix_row_layout,
-                    opening_source_len,
-                    opening_ring_dim,
-                )
-            }
+        let prepare_relation_weight_factorization = || {
+            let _span = tracing::info_span!("relation_weight_compilation").entered();
+            let events = build_relation_weight_events(RelationWeightEventInputs {
+                setup: RelationSetupSource::Matrix(setup),
+                instance,
+                alpha,
+                level_params: lp,
+                relation_row_point: &tau1,
+                claim_coefficients: gamma,
+                opening_source_len,
+                opening_ring_dim,
+            })?;
+            events.factor_common_alpha()
         };
 
         #[cfg(feature = "parallel")]
-        let (relation_weight_evals_result, w_result) = rayon::join(build_relation_weights, || {
-            build_w_evals_compact(
-                w.shared_i8_digits(),
-                opening_ring_dim,
-                1,
-                opening_source_len,
-            )
-        });
+        let (relation_weight_factorization_result, w_result) =
+            rayon::join(prepare_relation_weight_factorization, || {
+                build_w_evals_compact(
+                    w.shared_i8_digits(),
+                    coeff_count,
+                    1,
+                    common_opening_source_len,
+                )
+            });
         #[cfg(not(feature = "parallel"))]
-        let (relation_weight_evals_result, w_result) = {
-            let relation_weight_evals = build_relation_weights();
+        let (relation_weight_factorization_result, w_result) = {
+            let relation_weight_factorization = prepare_relation_weight_factorization();
             let w_compact = build_w_evals_compact(
                 w.shared_i8_digits(),
-                opening_ring_dim,
+                coeff_count,
                 1,
-                opening_source_len,
+                common_opening_source_len,
             );
-            (relation_weight_evals, w_compact)
+            (relation_weight_factorization, w_compact)
         };
 
-        let relation_weight_evals = relation_weight_evals_result.map_err(|err| {
-            AkitaError::InvalidInput(format!("relation-weight materialization failed: {err:?}"))
-        })?;
-        let (w_evals_compact, _, _) = w_result.map_err(|err| {
+        let relation_weight_factorization =
+            relation_weight_factorization_result.map_err(|err| {
+                AkitaError::InvalidInput(format!("relation-weight compilation failed: {err:?}"))
+            })?;
+        let (w_evals_compact, witness_col_bits, witness_ring_bits) = w_result.map_err(|err| {
             AkitaError::InvalidInput(format!("witness opening materialization failed: {err:?}"))
         })?;
+        if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
+            return Err(AkitaError::InvalidSetup(
+                "prepared witness geometry disagrees with the joint relation-witness split".into(),
+            ));
+        }
 
         Ok(RingSwitchOutput {
             w_evals_compact,
             live_x_cols,
-            relation_weight_evals,
+            relation_weight_factorization,
             col_bits,
             ring_bits,
+            digit_range_equality_low_variable_count,
             tau0,
             tau1,
             b: 1usize << lp.log_basis_open,

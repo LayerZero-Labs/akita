@@ -30,6 +30,5 @@ fn schedule_catalog_none_without_feature_uses_dp() {
 
     let runtime = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
         .expect("runtime schedule");
-    assert_eq!(runtime.total_bytes, dp.total_bytes);
-    assert_eq!(runtime.folds.len(), dp.folds.len());
+    assert_eq!(format!("{:?}", runtime), format!("{:?}", dp.schedule));
 }

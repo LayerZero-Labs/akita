@@ -10,7 +10,7 @@ use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::embed_ring_subfield_vector;
+use akita_types::{embed_ring_subfield_vector, RingMatrixView};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -774,7 +774,7 @@ fn shift_signed_unit_into<W, const D: usize>(
 }
 
 pub(crate) fn column_sweep_sparse<F, const D: usize>(
-    a_rows: &[&[CyclotomicRing<F, D>]],
+    a_view: &RingMatrixView<'_, F, D>,
     blocks: &[&[SparseRingBlockEntry]],
     n_a: usize,
     num_positions_per_block: usize,
@@ -850,7 +850,7 @@ where
                         }
                     }
 
-                    for (a_idx, a_row) in a_rows.iter().take(n_a).enumerate() {
+                    for (a_idx, a_row) in a_view.rows().take(n_a).enumerate() {
                         for pos in 0..num_positions_per_block {
                             let start = pos_offsets[pos];
                             let end = pos_offsets[pos + 1];
@@ -883,7 +883,7 @@ where
                     }
                     col_entries.sort_unstable_by_key(|&(col, _, _, _)| col);
 
-                    for (a_idx, a_row) in a_rows.iter().take(n_a).enumerate() {
+                    for (a_idx, a_row) in a_view.rows().take(n_a).enumerate() {
                         let mut idx = 0usize;
                         while idx < col_entries.len() {
                             let col = col_entries[idx].0;

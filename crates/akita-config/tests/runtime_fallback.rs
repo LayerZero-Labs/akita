@@ -25,27 +25,28 @@ fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
     PolynomialGroupLayout::new(num_vars, 2)
 }
 
-fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_types::Schedule) {
+fn assert_schedule_eq(
+    label: &str,
+    lhs: &akita_types::FoldSchedule,
+    rhs: &akita_types::FoldSchedule,
+) {
     assert_eq!(
-        lhs.total_bytes, rhs.total_bytes,
-        "{label}: total_bytes diverge"
+        format!("{:?}", lhs.root),
+        format!("{:?}", rhs.root),
+        "{label}: root diverges"
     );
     assert_eq!(
-        format!("{:?}", lhs.folds),
-        format!("{:?}", rhs.folds),
-        "{label}: fold sequences diverge"
+        format!("{:?}", lhs.recursive_folds),
+        format!("{:?}", rhs.recursive_folds),
+        "{label}: recursive folds diverge"
     );
     assert_eq!(
-        lhs.terminal.current_w_len, rhs.terminal.current_w_len,
+        lhs.terminal.input_witness_len, rhs.terminal.input_witness_len,
         "{label}: terminal witness lengths diverge"
     );
     assert_eq!(
-        lhs.terminal.witness_shape, rhs.terminal.witness_shape,
+        lhs.terminal.params.response_shape, rhs.terminal.params.response_shape,
         "{label}: terminal witness shapes diverge"
-    );
-    assert_eq!(
-        lhs.terminal.terminal_bytes, rhs.terminal.terminal_bytes,
-        "{label}: terminal byte counts diverge"
     );
 }
 
@@ -77,7 +78,7 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
     )
     .expect("pure DP must succeed for a valid key");
 
-    assert_schedule_eq("table-miss fallback", &from_runtime, &from_dp);
+    assert_schedule_eq("table-miss fallback", &from_runtime, &from_dp.schedule);
 }
 
 #[test]

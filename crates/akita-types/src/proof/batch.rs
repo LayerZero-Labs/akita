@@ -3,8 +3,8 @@
 use crate::{
     basis_weights, basis_weights_prefix, dispatch_for_field, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, AkitaExpandedSetup, BasisMode, Commitment, FpExtEncoding,
-    LevelParams, RingOpeningPoint, RingVec,
+    ring_opening_point_from_field, AkitaExpandedSetup, BasisMode, Commitment, CommittedGroupParams,
+    FpExtEncoding, RingOpeningPoint, RingVec,
 };
 use akita_algebra::{
     ring::{eval_flat_ring_at_pows_fast, eval_ring_at_pows_fast},
@@ -855,7 +855,7 @@ where
 /// extension batching coefficients embedded into the ring relation.
 pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     alpha_bits: usize,
 ) -> bool
 where
@@ -923,8 +923,8 @@ mod tests {
     type F = Fp32<251>;
     type E = FpExt4<F>;
 
-    fn packed_inner_lp() -> LevelParams {
-        LevelParams::params_only(
+    fn packed_inner_lp() -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             32,
             2,

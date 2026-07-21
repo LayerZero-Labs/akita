@@ -3,14 +3,14 @@
 //! Opening-side notation (paper §§3--5): pre-digit ring openings are `e_folded`;
 //! per-block opening digits are `e_hat` (`e_i = ⟨a, f_i⟩`, `ê_i = G^{-1}(e_i)`).
 //! The full next-level recursive witness stays `w` (`next_w_commitment`,
-//! `final_witness`, `num_w_vectors`, `build_w_coeffs`).
+//! `terminal_response`, `num_w_vectors`, `build_w_coeffs`).
 
 //! Proof, commitment, setup, and claim data shapes.
 
 pub mod batch;
 pub mod commitment;
 pub mod relation;
-pub mod relation_matrix_cols;
+pub mod relation_range_image;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -56,9 +56,7 @@ pub use relation::{
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
-pub use relation_matrix_cols::{
-    compute_relation_matrix_col_evals, compute_relation_weight_evals, eval_relation_weight_at_point,
-};
+pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,
@@ -81,21 +79,17 @@ pub use shapes::{
     SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    stage1_tree_stage_shapes, validate_stage1_tree_basis,
+    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
-    build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
-    decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,
-    emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
-    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
-    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
-    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
-    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessGroupParts,
-    SegmentTypedWitnessShape, TailSegmentGroupLayout, TailSegmentLayout,
+    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    raw_field_segment_bytes, tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
+    terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
+    z_fold_decoded_from_terminal_response, z_fold_encoding_stats_from_terminal_response,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 

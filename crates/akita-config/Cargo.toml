@@ -32,6 +32,7 @@ schedules-default = [
 all-schedules = [
   "schedules-default",
   "schedules-fp128-d64-onehot-recursive",
+  "schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "schedules-fp128-d64-onehot-tensor",
   "schedules-fp128-d64-onehot-multi-chunk",
   "schedules-fp128-d64-onehot-multi-chunk-w2r2",
@@ -45,6 +46,10 @@ schedules-fp128-d64-onehot = [
 schedules-fp128-d64-onehot-recursive = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-recursive",
+]
+schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
+  "dep:akita-schedules",
+  "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
 ]
 schedules-fp128-d64-full = [
   "dep:akita-schedules",

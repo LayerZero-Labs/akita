@@ -50,6 +50,7 @@ profile-ci = [
   "akita-config/schedules-fp64-d128-onehot",
   "akita-config/schedules-fp128-d64-onehot",
   "akita-config/schedules-fp128-d64-onehot-recursive",
+  "akita-config/schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "akita-config/schedules-fp128-d64-onehot-tensor",
   "akita-config/schedules-fp128-d64-full",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk",
@@ -118,6 +119,10 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
+name = "ntt_matvec"
+harness = false
+
+[[bench]]
 name = "field_arith"
 harness = false
 
@@ -127,6 +132,10 @@ harness = false
 
 [[bench]]
 name = "root_kernels"
+harness = false
+
+[[bench]]
+name = "digit_range"
 harness = false
 
 [[bench]]
@@ -143,6 +152,10 @@ harness = false
 
 [[bench]]
 name = "setup_index_weight"
+harness = false
+
+[[bench]]
+name = "relation_matrix_eval"
 harness = false
 
 [lints]

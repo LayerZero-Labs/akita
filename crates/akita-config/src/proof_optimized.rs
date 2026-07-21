@@ -4,12 +4,14 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
+use crate::matrix_envelope::{
+    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
+};
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -213,44 +215,30 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     Ok(layouts)
 }
 
-#[cfg(test)]
-fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
-    // serves the shipped table on a hit and regenerates via the planner DP on
-    // a miss; a shape the planner cannot schedule (infeasible — e.g. a witness
-    // too large for this preset's SIS floor) can never be committed, so it
-    // needs no setup capacity. Skip it (returning `Ok(None)`) and let the
-    // caller's `saw_supported_shape` guard error only if *no* shape is
-    // feasible. Go through `get_params_for_prove` so recursive configs build
-    // their recursive schedule keys instead of the direct proof-optimized key.
-    // Genuine bugs in opening_batch-key or envelope construction still
-    // propagate via `?`.
-    let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
-        return Ok(None);
-    };
-
-    Ok(Some(setup_matrix_envelope_for_schedule(&schedule)?))
-}
-
 fn setup_matrix_envelope_for_schedule(
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
     for params in setup_level_params_from_schedule(schedule) {
         accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
     }
+    accumulate_terminal_matrix_envelope(
+        &schedule.terminal.params.witness,
+        &mut envelope.max_setup_len,
+    )?;
     Ok(envelope)
 }
 
-/// Extract setup-level params from a `Schedule`.
+/// Extract setup-level params from a `FoldSchedule`.
 ///
-pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams> {
-    schedule
-        .folds
-        .iter()
-        .map(|fold| fold.params.clone())
+pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<CommittedGroupParams> {
+    std::iter::once(schedule.root.params.final_group.commitment.clone())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|fold| fold.params.witness.clone()),
+        )
         .collect()
 }
 
@@ -262,7 +250,7 @@ pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams>
 /// materialized shared matrix is too short for `schedule` and `layout`.
 pub fn ensure_schedule_fits_setup<Cfg>(
     setup: &AkitaExpandedSetup<Cfg::Field>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError>
 where
@@ -273,24 +261,23 @@ where
         accumulate_matrix_envelope_for_level(&params, &mut required_setup_len)?;
         let available_setup_len = setup
             .shared_matrix
-            .total_ring_elements_at_dyn(params.ring_dimension)?;
-        ensure_required_setup_len(
-            required_setup_len,
-            available_setup_len,
-            params.ring_dimension,
-        )?;
+            .total_ring_elements_at_dyn(params.d_a())?;
+        ensure_required_setup_len(required_setup_len, available_setup_len, params.d_a())?;
     }
+    let terminal = &schedule.terminal.params.witness;
+    let mut required_setup_len = 1;
+    accumulate_terminal_matrix_envelope(terminal, &mut required_setup_len)?;
+    let available_setup_len = setup
+        .shared_matrix
+        .total_ring_elements_at_dyn(terminal.d_a())?;
+    ensure_required_setup_len(required_setup_len, available_setup_len, terminal.d_a())?;
 
-    let root_params = &schedule.root_fold()?.params;
+    let root_params = &schedule.root.params.final_group.commitment;
     let required_setup_len = root_runtime_matrix_len_for_opening_batch(root_params, layout)?;
     let available_setup_len = setup
         .shared_matrix
-        .total_ring_elements_at_dyn(root_params.ring_dimension)?;
-    ensure_required_setup_len(
-        required_setup_len,
-        available_setup_len,
-        root_params.ring_dimension,
-    )?;
+        .total_ring_elements_at_dyn(root_params.d_a())?;
+    ensure_required_setup_len(required_setup_len, available_setup_len, root_params.d_a())?;
     Ok(())
 }
 
@@ -309,37 +296,56 @@ fn ensure_required_setup_len(
 }
 
 fn root_runtime_matrix_len_for_opening_batch(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     let final_group_index = lp.validate_opening_batch(layout)?;
     let final_group = layout.group_layout(final_group_index)?;
-    let (mut max_a_len, mut max_b_len, mut d_width) = group_setup_footprint(
-        lp.a_key.row_len(),
-        lp.a_key.col_len(),
-        lp.b_key.row_len(),
+    let (a_len, b_len, mut d_width) = group_setup_footprint(
+        lp.inner_commit_matrix.output_rank(),
+        lp.inner_commit_matrix.input_width(),
+        lp.outer_commit_matrix.output_rank(),
         final_group.num_polynomials(),
         lp.num_live_blocks,
         lp.num_digits_open,
     )?;
+    let mut max_a_coeff_len = a_len
+        .checked_mul(lp.inner_commit_matrix.ring_dimension())
+        .ok_or_else(|| AkitaError::InvalidSetup("root A setup envelope overflow".into()))?;
+    let mut max_b_coeff_len = b_len
+        .checked_mul(lp.outer_commit_matrix.ring_dimension())
+        .ok_or_else(|| AkitaError::InvalidSetup("root B setup envelope overflow".into()))?;
 
     for group in &lp.precommitted_groups {
         let (a_len, b_len, group_d_width) = group_setup_footprint(
-            group.a_key.row_len(),
-            group.a_key.col_len(),
-            group.b_key.row_len(),
+            group.inner_commit_matrix.output_rank(),
+            group.inner_commit_matrix.input_width(),
+            group.outer_commit_matrix.output_rank(),
             group.layout.group.num_polynomials(),
             group.layout.num_live_blocks,
             group.num_digits_open,
         )?;
-        max_a_len = max_a_len.max(a_len);
-        max_b_len = max_b_len.max(b_len);
+        let a_coeff_len = a_len
+            .checked_mul(group.inner_commit_matrix.ring_dimension())
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group A setup overflow".into()))?;
+        let b_coeff_len = b_len
+            .checked_mul(group.outer_commit_matrix.ring_dimension())
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group B setup overflow".into()))?;
+        max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
+        max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
         d_width = d_width.checked_add(group_d_width).ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
         })?;
     }
 
-    root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
+    root_setup_len(
+        lp.open_commit_matrix.output_rank(),
+        d_width,
+        lp.open_commit_matrix.ring_dimension(),
+        max_a_coeff_len,
+        max_b_coeff_len,
+        lp.d_a(),
+    )
 }
 
 fn group_setup_footprint(
@@ -377,13 +383,24 @@ fn group_setup_footprint(
 fn root_setup_len(
     d_rows: usize,
     d_width: usize,
-    max_a_len: usize,
-    max_b_len: usize,
+    d_ring_dim: usize,
+    max_a_coeff_len: usize,
+    max_b_coeff_len: usize,
+    envelope_ring_dim: usize,
 ) -> Result<usize, AkitaError> {
-    let d_len = d_rows
+    if envelope_ring_dim == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "root setup envelope ring dimension is zero".into(),
+        ));
+    }
+    let d_coeff_len = d_rows
         .checked_mul(d_width)
+        .and_then(|len| len.checked_mul(d_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup("root D setup envelope overflow".to_string()))?;
-    Ok(d_len.max(max_a_len).max(max_b_len))
+    Ok(d_coeff_len
+        .max(max_a_coeff_len)
+        .max(max_b_coeff_len)
+        .div_ceil(envelope_ring_dim))
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +499,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)
@@ -542,7 +559,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)

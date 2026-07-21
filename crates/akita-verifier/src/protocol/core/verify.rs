@@ -17,7 +17,7 @@ use akita_transcript::Transcript;
 /// transcript replay or proof-owned buffer is cloned.
 fn validate_proof_against_schedule<F, E>(
     proof: &AkitaBatchedProof<F, E>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + Valid,
@@ -35,38 +35,29 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    for (level, fold) in proof.nonterminal_folds().enumerate() {
-        let scheduled = schedule
-            .get_execution_schedule(level)
-            .map_err(|_| AkitaError::InvalidProof)?;
-        if scheduled.is_terminal {
-            return Err(AkitaError::InvalidProof);
-        }
-        let expected_v_coeffs = scheduled
-            .params
-            .d_key
-            .row_len()
-            .checked_mul(scheduled.params.role_dims().d_d())
+    let validate_nonterminal = |fold: &FoldLevelProof<F, E>,
+                                params: &CommittedGroupParams,
+                                next_params: Option<&CommittedGroupParams>,
+                                binding: akita_types::NextWitnessBindingPolicy|
+     -> Result<(), AkitaError> {
+        let expected_v_coeffs = params
+            .open_commit_matrix
+            .output_rank()
+            .checked_mul(params.role_dims().d_d())
             .ok_or(AkitaError::InvalidProof)?;
         if fold.v.coeff_len() != expected_v_coeffs {
             return Err(AkitaError::InvalidProof);
         }
 
-        match (
-            scheduled.next_witness_binding,
-            &fold.stage2.next_witness_binding,
-        ) {
+        match (binding, &fold.stage2.next_witness_binding) {
             (
-                Some(akita_types::NextWitnessBindingPolicy::OuterCommitment),
+                akita_types::NextWitnessBindingPolicy::OuterCommitment,
                 akita_types::NextWitnessBinding::OuterCommitment(commitment),
             ) => {
-                let next_params = scheduled
-                    .next_params
-                    .as_ref()
-                    .ok_or(AkitaError::InvalidProof)?;
+                let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
                 let expected_coeffs = next_params
-                    .b_key
-                    .row_len()
+                    .outer_commit_matrix
+                    .output_rank()
                     .checked_mul(next_params.role_dims().d_b())
                     .ok_or(AkitaError::InvalidProof)?;
                 if commitment.coeff_len() != expected_coeffs {
@@ -74,17 +65,57 @@ where
                 }
             }
             (
-                Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState),
+                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
                 akita_types::NextWitnessBinding::TerminalInnerState,
             ) => {}
             _ => return Err(AkitaError::InvalidProof),
         }
+        Ok(())
+    };
+
+    let (root_next, root_binding) = schedule.recursive_folds.first().map_or(
+        (
+            None,
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+        ),
+        |step| {
+            (
+                Some(&step.params.witness),
+                akita_types::NextWitnessBindingPolicy::OuterCommitment,
+            )
+        },
+    );
+    validate_nonterminal(
+        &proof.root,
+        &schedule.root.params.final_group.commitment,
+        root_next,
+        root_binding,
+    )?;
+    for (index, (fold, step)) in proof
+        .recursive_folds
+        .iter()
+        .zip(&schedule.recursive_folds)
+        .enumerate()
+    {
+        let (next, binding) = schedule.recursive_folds.get(index + 1).map_or(
+            (
+                None,
+                akita_types::NextWitnessBindingPolicy::TerminalInnerState,
+            ),
+            |next| {
+                (
+                    Some(&next.params.witness),
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                )
+            },
+        );
+        validate_nonterminal(fold, &step.params.witness, next, binding)?;
     }
 
-    let terminal_shape = &schedule.terminal.witness_shape;
+    let terminal_shape = &schedule.terminal.params.response_shape;
     if !terminal_shape
         .layout
-        .admits_realized(&proof.terminal.final_witness().layout)
+        .admits_realized(&proof.terminal.terminal_response().layout)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -107,7 +138,7 @@ pub(crate) fn verify<F, E, T>(
     transcript: &mut T,
     claims: OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + PseudoMersenneField + HalvingField,
@@ -119,14 +150,10 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let root_step = schedule.root_fold().map_err(|_| AkitaError::InvalidProof)?;
-    let root_execution = schedule.get_execution_schedule(0)?;
-    let first_recursive_params = schedule.folds.get(1).ok_or(AkitaError::InvalidProof)?;
-    let root_t_state = if matches!(
-        root_execution.next_witness_binding,
-        Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
-    ) {
-        let witness = proof.terminal.final_witness();
+    let root_step = schedule.root_fold();
+    let first_recursive_params = schedule.recursive_folds.first();
+    let root_t_state = if first_recursive_params.is_none() {
+        let witness = proof.terminal.terminal_response();
         let t_state = raw_field_segment_bytes(&witness.t_fields)?;
         if t_state.is_empty() {
             return Err(AkitaError::InvalidProof);
@@ -141,8 +168,11 @@ where
         transcript,
         &claims,
         basis,
-        &root_step.params,
-        &first_recursive_params.params,
+        &root_step.params.final_group.commitment,
+        first_recursive_params.map(|step| &step.params),
+        first_recursive_params.map_or(schedule.terminal.params.witness.d_a(), |step| {
+            step.params.witness.d_a()
+        }),
         root_t_state.as_deref(),
     )?;
 
@@ -167,7 +197,7 @@ where
             opening: root_next_opening,
             witness: root_witness,
             basis: BasisMode::Lagrange,
-            w_len: root_step.next_w_len,
+            witness_len: root_step.output_witness_len,
             setup_prefix_opening,
         },
     )
@@ -175,18 +205,18 @@ where
 
 use akita_types::{
     dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup,
-    BasisMode, Commitment, FpExtEncoding, OpeningClaims, Schedule,
+    BasisMode, Commitment, FoldSchedule, FpExtEncoding, OpeningClaims,
 };
 
 fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
     let expected = Cfg::onehot_chunk_size();
     if Cfg::decomposition().log_commit_bound != 1 || expected <= 1 {
         return Ok(());
     }
-    let root = schedule.root_fold().map_err(|_| AkitaError::InvalidProof)?;
-    let root_params = &root.params;
+    let root = schedule.root_fold();
+    let root_params = &root.params.final_group.commitment;
     if root_params.onehot_chunk_size != expected {
         return Err(AkitaError::InvalidProof);
     }
@@ -235,6 +265,12 @@ where
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
     validate_proof_against_schedule(proof, &schedule)?;
+
+    // Schedule resolution is the earliest point at which the terminal ring
+    // dimension, A widths, and exact base-versus-i16-tail capabilities are all
+    // known. Warm those derived, non-serialized prefixes before transcript
+    // replay so terminal verification performs cache lookup only.
+    super::terminal_ntt::warm_for_schedule(setup, &schedule)?;
 
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`

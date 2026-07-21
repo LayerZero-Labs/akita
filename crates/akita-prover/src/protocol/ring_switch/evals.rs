@@ -1,11 +1,5 @@
 use akita_field::AkitaError;
 
-/// Unified singleton/multi-group relation matrix column evaluation.
-///
-/// Canonical dense-table implementation lives in `akita-types`; the prover
-/// ring-switch finalize path uses it to feed stage-2 proving.
-pub use akita_types::{compute_relation_matrix_col_evals, compute_relation_weight_evals};
-
 /// Produce the compact `Vec<i8>` eval table of `w` for the fused prover.
 ///
 /// The compact witness stays in the raw `build_w_coeffs` order:

@@ -121,7 +121,9 @@ direct-only.
 - A new setup-prefix metadata or planner-requirement type.
 - A generic carried-opening enum or wrapper around folded-witness claims.
 - Per-group D matrices or D commitments.
-- Distributed or multi-chunk setup offloading.
+- Distributed or multi-chunk setup offloading. (No longer a non-goal: the
+  `W8R2` composition of recursive setup offloading with the multi-chunk witness
+  layout shipped in [`specs/distributed-setup-offloading.md`](distributed-setup-offloading.md).)
 - Composition of recursive and conservative config adapters in the first
   rollout.
 - Setup offloading for singular/scalar schedule keys.

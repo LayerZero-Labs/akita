@@ -6,8 +6,9 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{
     CanonicalField, FieldCore, HalvingField, Prime128Offset275, Prime32Offset99, Prime64Offset59,
 };
-use akita_types::build_negacyclic_and_cyclic_ntt_slot;
 use akita_types::layout::FlatMatrix;
+
+use super::prepare_both_transforms;
 
 fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(cols: usize) {
     let log_basis = 6;
@@ -17,7 +18,7 @@ fn assert_single_i8_chunk_paths<F: FieldCore + CanonicalField, const D: usize>(c
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_negacyclic_and_cyclic_ntt_slot(
+    let slot = prepare_both_transforms(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )
@@ -55,7 +56,7 @@ fn assert_fused_split_eq_zpre_chunks<
     let row = CyclotomicRing::from_coefficients([half; D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_negacyclic_and_cyclic_ntt_slot(
+    let slot = prepare_both_transforms(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )
@@ -94,7 +95,7 @@ fn mat_vec_mul_ntt_single_i8_chunks_q128() {
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_negacyclic_and_cyclic_ntt_slot(
+    let slot = prepare_both_transforms(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )
@@ -125,7 +126,7 @@ fn mat_vec_mul_ntt_single_i8_cyclic_chunks_q128() {
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_negacyclic_and_cyclic_ntt_slot(
+    let slot = prepare_both_transforms(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )

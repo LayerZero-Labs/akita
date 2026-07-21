@@ -782,7 +782,7 @@ where
 /// [`ProveFlowBackendFor`] for `P` at every runtime-supported ring dimension.
 ///
 /// Root fold levels take their ring dimension from the schedule
-/// (`LevelParams::role_dims`), so the prove flow must be available at every dimension the
+/// (`CommittedGroupParams::role_dims`), so the prove flow must be available at every dimension the
 /// dispatcher can select.
 pub trait RootProveFlowBackend<F, P, E>:
     ProveFlowBackendFor<F, P, E, 32>
@@ -846,7 +846,7 @@ where
 
 /// Backend bundle for a full recursive prove run.
 ///
-/// Fold levels take their ring dimension from the schedule (`LevelParams::role_dims`), so
+/// Fold levels take their ring dimension from the schedule (`CommittedGroupParams::role_dims`), so
 /// prove entry points need [`RootProveFlowBackend`] for the root polynomial
 /// `P`, [`RuntimeRecursiveWitnessProveBackend`] for suffix witness
 /// opening/tensor and commitment rows, and [`RuntimeRingSwitchProveBackend`]
