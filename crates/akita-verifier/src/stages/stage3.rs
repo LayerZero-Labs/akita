@@ -53,7 +53,14 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     {
         let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
         let plan = relation_matrix_evaluator
-            .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())?;
+            .take_cached_setup_contribution_plan(x_challenges)?
+            .map_or_else(
+                || {
+                    relation_matrix_evaluator
+                        .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())
+                },
+                Ok,
+            )?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator = fold_gadget

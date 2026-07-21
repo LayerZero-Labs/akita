@@ -166,6 +166,7 @@ where
         .ok_or_else(|| AkitaError::InvalidSetup("T lane stride overflow".into()))?;
 
     let mut evaluation = E::zero();
+    let challenge_high = [E::one()];
     for unit in units {
         for (claim, factors) in claim_factors.iter().enumerate() {
             let e_column = unit.e_index(
@@ -190,7 +191,7 @@ where
                 unit.num_live_blocks(),
                 e_block_stride,
                 &e_digit_lane_weights,
-                &factors.high,
+                &challenge_high,
                 &factors.low,
             )?;
 
@@ -218,7 +219,7 @@ where
                 unit.num_live_blocks(),
                 t_block_stride,
                 &t_digit_lane_weights,
-                &factors.high,
+                &challenge_high,
                 &factors.low,
             )?;
         }
