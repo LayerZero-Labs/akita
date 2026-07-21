@@ -16,7 +16,7 @@ use akita_schedules::{
     fp64_d256_onehot_table,
 };
 #[cfg(feature = "schedules-default")]
-use akita_types::SisModulusProfileId;
+use akita_types::{select_crt_ntt_capability, CrtAccumulationProfile, SisModulusProfileId};
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 8;
@@ -722,6 +722,51 @@ fn assert_every_table_entry_has_crt_i8_capacity<Cfg: CommitmentConfig>(
 }
 
 #[cfg(feature = "schedules-default")]
+fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usize>(
+    table: GeneratedScheduleTable,
+) -> (usize, usize) {
+    let policy = crate::policy_of::<Cfg>();
+    let mut min_width = usize::MAX;
+    let mut max_width = 0usize;
+    for entry in table.entries {
+        if !entry.precommitteds.is_empty() {
+            continue;
+        }
+        let key = PolynomialGroupLayout::new(
+            entry.final_group.num_vars(),
+            entry.final_group.num_polynomials(),
+        );
+        let schedule = schedule_from_entry(
+            entry,
+            &AkitaScheduleLookupKey::single(key),
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )
+        .expect("shipped entry should materialize");
+        let terminal = &schedule
+            .folds
+            .last()
+            .expect("generated recursive schedule should contain a fold")
+            .params;
+        assert_eq!(terminal.role_dims().d_a(), D);
+        let width = terminal.a_key.col_len();
+        min_width = min_width.min(width);
+        max_width = max_width.max(width);
+        assert_eq!(
+            select_crt_ntt_capability::<Cfg::Field, D>(width, 1 << 15)
+                .expect("generated terminal i16 accumulation should fit")
+                .profile(),
+            CrtAccumulationProfile::I16Tail,
+            "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={D}, width={width}",
+            std::any::type_name::<Cfg>(),
+        );
+    }
+    assert_ne!(min_width, usize::MAX, "generated table should not be empty");
+    (min_width, max_width)
+}
+
+#[cfg(feature = "schedules-default")]
 fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: GeneratedScheduleTable) {
     let policy = crate::policy_of::<Cfg>();
     let mut checked_folded_entry = false;
@@ -816,6 +861,26 @@ fn generated_small_field_schedule_tables_have_crt_i8_capacity() {
     assert_every_table_entry_has_crt_i8_capacity::<fp64::D128Full>(fp64_d128_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp64::D128OneHot>(fp64_d128_onehot_table());
     assert_every_table_entry_has_crt_i8_capacity::<fp64::D256OneHot>(fp64_d256_onehot_table());
+}
+
+#[test]
+#[cfg(feature = "schedules-default")]
+fn generated_q32_terminals_require_the_i16_tail() {
+    // The two-prime Q32 base supports full-i16 widths only through 63 at D128
+    // and 31 at D256. Current terminal A widths are much larger, so q32 is not
+    // an exception to lazy tail construction.
+    assert_eq!(
+        assert_every_table_terminal_uses_i16_tail::<fp32::D128OneHot, 128>(
+            fp32_d128_onehot_table(),
+        ),
+        (128, 128),
+    );
+    assert_eq!(
+        assert_every_table_terminal_uses_i16_tail::<fp32::D256OneHot, 256>(
+            fp32_d256_onehot_table(),
+        ),
+        (64, 128),
+    );
 }
 
 #[test]

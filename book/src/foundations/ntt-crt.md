@@ -40,7 +40,7 @@ DIT-inverse pairing that avoids bit-reversal.
 **Sources to fold in**
 
 - Paper App B.2.1-B.2.2 (`sec:akita-crt-profiles`, `tab:akita-crt-profiles`).
-- `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ring/partial_split_ntt.rs`, `ntt/`.
+- `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ntt/`.
 - `specs/crt-ntt-prime-profiles.md`.
 
 ## Accumulation capacity and chunking
@@ -61,7 +61,10 @@ Balanced base `2^L` digits have `B = 2^(L-1)`. Bases through 8 use i8. The
 large-basis arithmetic path uses i16 for bases 9 through 16 and appends a 12289
 residue only when the existing field profile fails the bound. The extra prime
 supports every protocol ring degree and is a derived, non-serialized cache
-artifact; ordinary i8 schedules neither build it nor pay its memory cost.
+artifact. Prover i8 kernels continue to use only their existing cache. The
+terminal verifier uses one signed-i16 relation kernel for every schedule and
+therefore selects the tail independently from its terminal width; current q32
+terminal schedules do require it.
 
 **Sources to fold in**
 

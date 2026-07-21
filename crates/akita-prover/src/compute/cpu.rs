@@ -11,7 +11,7 @@ use crate::compute::plans::{
 };
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
     mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
     CrtI8CapacityProfile,
@@ -343,7 +343,7 @@ where
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
                 prepared.with_shared_ntt::<D, _>(|ntt| {
-                    mat_vec_mul_ntt_dense_digits_i8_trusted(
+                    mat_vec_mul_ntt_dense_digits_i8(
                         ntt,
                         plan.n_a,
                         row_width,
@@ -447,11 +447,8 @@ where
             .expanded
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
-        let a_rows = (0..plan.n_a)
-            .map(|idx| a_view.row(idx))
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(column_sweep_sparse(
-            &a_rows,
+            &a_view,
             &plan.blocks.block_slices()?,
             plan.n_a,
             plan.num_positions_per_block,

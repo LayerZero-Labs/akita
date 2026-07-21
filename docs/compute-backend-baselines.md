@@ -58,37 +58,11 @@ state directly and do not measure the new backend operation boundary.
 | `ntt_single_prime_forward_inverse_d64` | `[274.45 ns 275.65 ns 276.54 ns]` |
 | `ring_ntt_crt_round_trip_d64_k6` | `[5.6906 us 5.7043 us 5.7348 us]` |
 | `ring_schoolbook_mul_d32_q128m159` | `[2.7027 us 2.7084 us 2.7128 us]` |
-| `ring_partial_split_mul_d32_q128m159` | `[1.0120 us 1.0172 us 1.0205 us]` |
 | `ring_crt_ntt_mul_d32_q128m159_k5` | `[3.4254 us 3.4333 us 3.4390 us]` |
-| `ring_partial_split_mul_i8_rhs_d32_q128m159` | `[1.0224 us 1.0260 us 1.0293 us]` |
 | `ring_crt_ntt_mul_i8_rhs_d32_q128m159_k5` | `[3.1237 us 3.1387 us 3.1558 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_scalar/2` | `[972.94 ns 979.70 ns 987.38 ns]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_packed/2` | `[832.50 ns 834.48 ns 837.30 ns]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/crt_simd/2` | `[4.0765 us 4.0897 us 4.1047 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_scalar/8` | `[3.7759 us 3.7904 us 3.8039 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_packed/8` | `[3.2513 us 3.2615 us 3.2693 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/crt_simd/8` | `[16.179 us 16.786 us 18.011 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_scalar/32` | `[14.905 us 15.013 us 15.091 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/split_packed/32` | `[12.976 us 13.026 us 13.097 us]` |
-| `ring_cached_mul_batch_scaling_d32_q128m159/crt_simd/32` | `[64.565 us 64.742 us 64.886 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_scalar/2` | `[964.13 ns 970.83 ns 975.14 ns]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_packed/2` | `[829.36 ns 831.36 ns 835.20 ns]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/crt_simd/2` | `[4.0602 us 4.0717 us 4.0876 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_scalar/8` | `[3.7886 us 3.8012 us 3.8101 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_packed/8` | `[3.2490 us 3.2611 us 3.2687 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/crt_simd/8` | `[15.890 us 15.996 us 16.108 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_scalar/32` | `[14.892 us 14.956 us 15.008 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/split_packed/32` | `[12.965 us 13.016 us 13.046 us]` |
-| `ring_cached_mul_batch_scaling_i8_rhs_d32_q128m159/crt_simd/32` | `[63.518 us 63.706 us 63.916 us]` |
-| `ring_partial_split_cyclic_mul_d32_q128m159` | `[893.64 ns 895.55 ns 898.79 ns]` |
 | `ring_crt_ntt_cyclic_mul_d32_q128m159_k5` | `[3.2949 us 3.3044 us 3.3137 us]` |
-| `ring_partial_split_quotient_d32_q128m159` | `[1.8936 us 1.9456 us 2.0608 us]` |
 | `ring_crt_ntt_quotient_d32_q128m159_k5` | `[6.6767 us 6.9220 us 7.1920 us]` |
-| `ring_partial_split_cached_matvec_d32_q128m159` | `[28.843 us 29.462 us 30.516 us]` |
-| `ring_partial_split_packed_cached_matvec_d32_q128m159` | `[22.729 us 23.011 us 23.394 us]` |
 | `ring_crt_ntt_simd_cached_matvec_d32_q128m159_k5` | `[21.057 us 21.166 us 21.286 us]` |
-| `ring_partial_split_cached_matvec_i8_rhs_d32_q128m159` | `[28.971 us 29.157 us 29.365 us]` |
-| `ring_partial_split_packed_cached_matvec_i8_rhs_d32_q128m159` | `[23.050 us 23.114 us 23.187 us]` |
 | `ring_crt_ntt_simd_cached_matvec_i8_rhs_d32_q128m159_k5` | `[20.942 us 21.089 us 21.386 us]` |
 
 ## One-Hot Batched Commit

@@ -300,7 +300,7 @@ This section records whether each finding is still valid on current `main`
 | `single_cyclic` "wrong" `safe_width` / `tile_width` args | Medium | **No** (false positive; see below) | **Regression tests only** |
 | `fused_split_eq_quotients_prover_bounds` lacks `w_hat` check | Medium | **No** (`with_params` returns `InvalidInput`) | None (optional `debug_assert!`) |
 | CRT capacity uses `q` not `floor(q/2)` | Medium | **No** (fixed before merge) | None |
-| `.expect` in raw-i8 strided `Result` path | Medium | **No** (`ok_or_else`) | None |
+| `.expect` in the removed raw-i8 strided path | Medium | **No** (path deleted) | None |
 | Hardcoded digit bound 32 | Low | **No** | None |
 | Redundant `i32::MIN` branch | Low | **No** | None |
 | Duplicate comment in `digits.rs` | Low | **No** | None |
@@ -592,19 +592,18 @@ The durable API is the compute operation surface in `crates/akita-prover/src/com
 `ring_switch_quotient_rows`.
 The CPU reference keeps `NttSlotCache` for this PR.
 
-Mixed-width CRT profiles such as `2 × i16 + 1 × i32` are intentionally not part
-of this PR's production target.
-They can reduce byte footprint for a desired `P_crt`, but they cut against the
-current homogeneous `PrimeWidth` model and make SIMD lanes, twiddle tables,
-Garner reconstruction, and backend-prepared buffers heterogeneous.
-The first implementation compared homogeneous candidates (`4 × i16` reference
-vs `2 × i32` production for Q32) before considering mixed-width profiles.
+The only production mixed-width profile is the exactness extension described
+above: an existing homogeneous i32 prefix plus one 12289/i16 tail. It is
+selected from the exact accumulation bound and keeps the two NTT widths in
+separate kernels. Other mixed-width prime substitutions remain out of scope;
+they would add reconstruction and backend complexity without serving a current
+schedule contract.
 
 ### Block-parallel i8 digit matvec kernel
 
 The block-parallel i8 digit matvec previously special-cased `n_a in {1, 2, 3}`
 output rows with separate single/pair/triple kernels plus a generic fallback,
-duplicated across the plain, chunked, strided, and on-the-fly-decompose families.
+duplicated across the plain, chunked, and on-the-fly-decompose families.
 Those specializations only hoisted the per-digit CRT+NTT conversion out of the
 row loop; the per-row multiply-accumulate was identical to the generic path.
 The implementation now uses one kernel,

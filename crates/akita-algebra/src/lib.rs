@@ -39,8 +39,7 @@ pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
     CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    DigitMontLut, MixedCrtNtt, MixedCrtNttParamSet, PackedPartialSplitEval16,
-    PackedPartialSplitNtt16, PartialSplitEval16, PartialSplitNtt16,
+    DigitMontLut, MixedCrtNtt, MixedCrtNttParamSet,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};

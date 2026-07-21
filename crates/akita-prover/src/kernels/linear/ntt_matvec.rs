@@ -98,33 +98,6 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
     ))
 }
 
-/// Strided variant of [`mat_vec_mul_ntt_i8`] for recursive witnesses.
-#[allow(clippy::too_many_arguments)]
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_strided")]
-pub fn mat_vec_mul_ntt_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
-    num_rows: usize,
-    num_cols: usize,
-    coeffs: &[CyclotomicRing<F, D>],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    num_digits: usize,
-    log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    validate_i8_log_basis(log_basis)?;
-    Ok(dispatch_slot!(
-        slot,
-        num_rows,
-        num_cols,
-        mat_vec_mul_i8_strided_with_params,
-        coeffs,
-        num_live_blocks,
-        num_positions_per_block,
-        num_digits,
-        log_basis
-    ))
-}
-
 /// Column-tiled A*x across multiple blocks of pre-decomposed i8 digit planes.
 ///
 /// This is the `num_digits_inner = 1` specialization of
@@ -158,41 +131,15 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     ))
 }
 
-/// Dense-optimized variant of [`mat_vec_mul_ntt_digits_i8`].
+/// Dense pre-decomposed digit mat-vec for the backend-owned digit cache.
 ///
 /// The generic pre-decomposed digit kernel skips all-zero planes, which is
 /// profitable for sparse witnesses. Dense witnesses pay that scan on almost
-/// every plane, so this variant uses the same math without the zero checks.
+/// every plane, so this kernel uses the same math without the zero checks. The
+/// cache is produced by Akita's validated decomposer and does not need a second
+/// full scan at each commit.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
-pub fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
-    num_rows: usize,
-    num_cols: usize,
-    blocks: &[&[[i8; D]]],
-    log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    validate_i8_log_basis(log_basis)?;
-    for block in blocks {
-        validate_digit_rows_for_log_basis(
-            block,
-            num_cols.min(block.len()),
-            log_basis,
-            "for dense predecomposed digit mat-vec",
-        )?;
-    }
-    mat_vec_mul_ntt_dense_digits_i8_trusted(slot, num_rows, num_cols, blocks, log_basis)
-}
-
-/// Dense pre-decomposed digit mat-vec for caller-owned trusted digit caches.
-///
-/// Keeps the public [`mat_vec_mul_ntt_dense_digits_i8`] validation boundary
-/// intact while letting `DensePoly` reuse its decomposer-produced cache without
-/// rescanning every digit plane on each commit.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8_trusted")]
-pub(crate) fn mat_vec_mul_ntt_dense_digits_i8_trusted<
-    F: FieldCore + CanonicalField,
-    const D: usize,
->(
+pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
     slot: &PreparedNttSlot<D>,
     num_rows: usize,
     num_cols: usize,
@@ -208,65 +155,6 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8_trusted<
         blocks,
         log_basis
     ))
-}
-
-/// Strided variant of [`mat_vec_mul_ntt_digits_i8`] for recursive witnesses.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8_strided")]
-pub fn mat_vec_mul_ntt_digits_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
-    num_rows: usize,
-    num_cols: usize,
-    coeffs: &[[i8; D]],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    log_basis: u32,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    validate_i8_log_basis(log_basis)?;
-    let used = num_cols
-        .min(num_positions_per_block)
-        .saturating_mul(num_live_blocks);
-    validate_digit_rows_for_log_basis(
-        coeffs,
-        used.min(coeffs.len()),
-        log_basis,
-        "for strided predecomposed digit mat-vec",
-    )?;
-    Ok(dispatch_slot!(
-        slot,
-        num_rows,
-        num_cols,
-        mat_vec_mul_digits_i8_strided_with_params,
-        coeffs,
-        num_live_blocks,
-        num_positions_per_block,
-        log_basis
-    ))
-}
-
-/// Strided direct-signed-i8 variant for recursive witnesses.
-///
-/// Unlike [`mat_vec_mul_ntt_digits_i8_strided`], this path does not assume the
-/// input rows are balanced gadget digits for `log_basis`. It is used for
-/// `num_digits_inner = 1`, where the recursive witness is already the
-/// committed signed-i8 coefficient stream.
-#[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_i8_strided")]
-pub fn mat_vec_mul_ntt_raw_i8_strided<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
-    num_rows: usize,
-    num_cols: usize,
-    coeffs: &[[i8; D]],
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-    dispatch_slot!(
-        slot,
-        num_rows,
-        num_cols,
-        mat_vec_mul_raw_i8_strided_with_params,
-        coeffs,
-        num_live_blocks,
-        num_positions_per_block
-    )
 }
 
 /// Fold-major (block) direct-signed-i8 variant for recursive witnesses.

@@ -134,13 +134,30 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
         num_ring_elements: usize,
-    ) -> Result<Arc<crate::PreparedNttSlotAny>, AkitaError> {
+        width: usize,
+        rhs_abs_bound: u64,
+    ) -> Result<Arc<crate::PreparedVerifierNttSlotAny>, AkitaError> {
+        let profile = crate::select_crt_ntt_capability::<F, D>(width, rhs_abs_bound)?.profile();
         let key = crate::NttCacheKey {
             ring_d: D,
             num_ring_elements,
         };
-        self.verifier_ntt.prepare(key, || {
-            crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)
+        self.verifier_ntt.prepare(key, profile, || {
+            Ok(match profile {
+                crate::CrtAccumulationProfile::Base => crate::PreparedVerifierNttSlotAny::Base(
+                    crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)?,
+                ),
+                crate::CrtAccumulationProfile::I16Tail => {
+                    crate::PreparedVerifierNttSlotAny::I16Tail(
+                        crate::ntt_cache::build_verifier_ntt_capability_slot_for_key(
+                            &self.expanded,
+                            key,
+                            width,
+                            rhs_abs_bound,
+                        )?,
+                    )
+                }
+            })
         })
     }
 }

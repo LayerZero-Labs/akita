@@ -28,7 +28,6 @@ mod decompose;
 mod digits;
 mod fused_quotients;
 mod i8_matvec;
-mod mixed_i16;
 mod ntt_matvec;
 mod single_cyclic;
 #[cfg(test)]
@@ -55,11 +54,9 @@ use digits::*;
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
 use i8_matvec::*;
-pub use mixed_i16::mat_vec_mul_mixed_ntt_digits_i16;
-pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8_trusted;
+pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
 pub use ntt_matvec::{
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_digits_i8_strided,
-    mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row,
-    mat_vec_mul_ntt_i8_strided, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_raw_i8_strided,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
 };
 pub use single_cyclic::{mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic};

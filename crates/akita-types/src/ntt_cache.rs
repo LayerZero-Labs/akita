@@ -613,6 +613,32 @@ pub(crate) fn build_verifier_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     )
 }
 
+pub(crate) fn build_verifier_ntt_capability_slot_for_key<F: FieldCore + CanonicalField>(
+    expanded: &AkitaExpandedSetup<F>,
+    key: NttCacheKey,
+    width: usize,
+    rhs_abs_bound: u64,
+) -> Result<PreparedNttCapabilitySlotAny, AkitaError> {
+    crate::dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        key.ring_d,
+        |D| {
+            let matrix = expanded
+                .shared_matrix()
+                .ring_view::<D>(1, key.num_ring_elements)?;
+            let slot = build_negacyclic_ntt_capability_slot(matrix, width, rhs_abs_bound)?;
+            if slot.profile() != CrtAccumulationProfile::I16Tail {
+                return Err(AkitaError::InvalidSetup(
+                    "verifier mixed NTT cache requested without an i16-tail requirement".into(),
+                ));
+            }
+            let any: PreparedNttCapabilitySlotAny = slot.into();
+            Ok(any)
+        }
+    )
+}
+
 macro_rules! define_prepared_ntt_slot_any {
     ($( $d:literal => $variant:ident ),+ $(,)?) => {
         /// Type-erased prepared NTT slot over supported ring degrees.
@@ -671,10 +697,92 @@ define_prepared_ntt_slot_any!(
     2048 => D2048,
 );
 
+macro_rules! define_prepared_ntt_capability_slot_any {
+    ($( $d:literal => $variant:ident ),+ $(,)?) => {
+        /// Type-erased exact-capability NTT slot over supported ring degrees.
+        #[derive(Debug)]
+        #[allow(clippy::large_enum_variant)]
+        pub enum PreparedNttCapabilitySlotAny {
+            $( $variant(PreparedNttCapabilitySlot<$d>), )+
+        }
+
+        impl PreparedNttCapabilitySlotAny {
+            /// Runtime ring degree.
+            #[must_use]
+            pub const fn ring_d(&self) -> usize {
+                match self { $( Self::$variant(_) => $d, )+ }
+            }
+
+            /// In-memory byte footprint.
+            #[must_use]
+            pub fn cache_bytes(&self) -> usize {
+                match self { $( Self::$variant(slot) => slot.cache_bytes(), )+ }
+            }
+
+            /// Checked typed access.
+            pub fn as_d<const D: usize>(&self) -> Result<&PreparedNttCapabilitySlot<D>, AkitaError> {
+                if self.ring_d() != D {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "prepared capability NTT slot ring_d mismatch: stored {}, requested {D}",
+                        self.ring_d()
+                    )));
+                }
+                // SAFETY: the runtime degree uniquely selects the identical const-generic variant.
+                Ok(unsafe { self.as_d_assuming_match::<D>() })
+            }
+
+            unsafe fn as_d_assuming_match<const D: usize>(&self) -> &PreparedNttCapabilitySlot<D> {
+                match self {
+                    $( Self::$variant(slot) => &*(slot as *const PreparedNttCapabilitySlot<$d> as *const PreparedNttCapabilitySlot<D>), )+
+                }
+            }
+        }
+
+        $( impl From<PreparedNttCapabilitySlot<$d>> for PreparedNttCapabilitySlotAny {
+            fn from(slot: PreparedNttCapabilitySlot<$d>) -> Self { Self::$variant(slot) }
+        } )+
+    };
+}
+
+define_prepared_ntt_capability_slot_any!(
+    16 => D16,
+    32 => D32,
+    64 => D64,
+    128 => D128,
+    256 => D256,
+    512 => D512,
+    1024 => D1024,
+    2048 => D2048,
+);
+
+/// Prepared verifier matrix representation selected by exact accumulation capability.
+#[derive(Debug)]
+pub enum PreparedVerifierNttSlotAny {
+    /// Base i32 CRT profile.
+    Base(PreparedNttSlotAny),
+    /// Base profile plus the i16 tail prime.
+    I16Tail(PreparedNttCapabilitySlotAny),
+}
+
+impl PreparedVerifierNttSlotAny {
+    fn cache_bytes(&self) -> usize {
+        match self {
+            Self::Base(slot) => slot.cache_bytes(),
+            Self::I16Tail(slot) => slot.cache_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct VerifierNttCacheKey {
+    matrix: NttCacheKey,
+    profile: CrtAccumulationProfile,
+}
+
 /// Derived verifier cache. It is deliberately excluded from setup serialization and equality.
 #[derive(Default)]
 pub(crate) struct VerifierNttCache {
-    slots: Mutex<HashMap<NttCacheKey, Arc<PreparedNttSlotAny>>>,
+    slots: Mutex<HashMap<VerifierNttCacheKey, Arc<PreparedVerifierNttSlotAny>>>,
 }
 
 impl core::fmt::Debug for VerifierNttCache {
@@ -708,17 +816,20 @@ impl VerifierNttCache {
     /// Build and atomically install an entry when needed.
     pub(crate) fn prepare(
         &self,
-        key: NttCacheKey,
-        build: impl FnOnce() -> Result<PreparedNttSlotAny, AkitaError>,
-    ) -> Result<Arc<PreparedNttSlotAny>, AkitaError> {
-        let covering = |slots: &HashMap<NttCacheKey, Arc<PreparedNttSlotAny>>| {
+        matrix: NttCacheKey,
+        profile: CrtAccumulationProfile,
+        build: impl FnOnce() -> Result<PreparedVerifierNttSlotAny, AkitaError>,
+    ) -> Result<Arc<PreparedVerifierNttSlotAny>, AkitaError> {
+        let key = VerifierNttCacheKey { matrix, profile };
+        let covering = |slots: &HashMap<VerifierNttCacheKey, Arc<PreparedVerifierNttSlotAny>>| {
             slots
                 .iter()
                 .filter(|(candidate, _)| {
-                    candidate.ring_d == key.ring_d
-                        && candidate.num_ring_elements >= key.num_ring_elements
+                    candidate.profile == key.profile
+                        && candidate.matrix.ring_d == key.matrix.ring_d
+                        && candidate.matrix.num_ring_elements >= key.matrix.num_ring_elements
                 })
-                .min_by_key(|(candidate, _)| candidate.num_ring_elements)
+                .min_by_key(|(candidate, _)| candidate.matrix.num_ring_elements)
                 .map(|(_, slot)| Arc::clone(slot))
         };
         let slots = self
@@ -738,7 +849,9 @@ impl VerifierNttCache {
             return Ok(slot);
         }
         slots.retain(|candidate, _| {
-            candidate.ring_d != key.ring_d || candidate.num_ring_elements > key.num_ring_elements
+            candidate.profile != key.profile
+                || candidate.matrix.ring_d != key.matrix.ring_d
+                || candidate.matrix.num_ring_elements > key.matrix.num_ring_elements
         });
         slots.insert(key, Arc::clone(&built));
         Ok(built)

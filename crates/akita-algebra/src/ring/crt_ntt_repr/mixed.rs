@@ -1,8 +1,8 @@
 use std::array::from_fn;
 
-use crate::{CanonicalField, CyclotomicRing, FieldCore};
+use crate::{AkitaError, CanonicalField, CyclotomicRing, FieldCore};
 
-use super::{CrtNttParamSet, CyclotomicCrtNtt};
+use super::{CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt};
 
 /// CRT parameters with an i32 prefix and one i16 exactness tail prime.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +98,71 @@ impl<const K: usize, const D: usize> MixedCrtNtt<K, D> {
             .add_assign_pointwise_mul_with_params(&lhs.tail, &rhs.tail, &params.tail);
     }
 
+    /// Multiply a row-major prepared matrix by one signed-i16 ring vector.
+    ///
+    /// The caller selects `params` from an exact accumulation bound for
+    /// `num_cols` and the maximum absolute RHS coefficient. All shape
+    /// relationships are checked before indexing so verifier callers reject
+    /// malformed prepared state instead of panicking.
+    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+        matrix: &[Self],
+        num_rows: usize,
+        num_cols: usize,
+        rhs: &[[i16; D]],
+        params: &MixedCrtNttParamSet<K, D>,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
+        if rhs.len() != num_cols {
+            return Err(AkitaError::InvalidProof);
+        }
+        let required = num_rows
+            .checked_mul(num_cols)
+            .ok_or(AkitaError::InvalidProof)?;
+        let matrix = matrix.get(..required).ok_or_else(|| {
+            AkitaError::InvalidSetup("prepared mixed NTT matrix prefix is undersized".into())
+        })?;
+        if num_rows == 0 || num_cols == 0 {
+            return Ok(vec![CyclotomicRing::zero(); num_rows]);
+        }
+
+        let rhs_abs_bound = rhs
+            .iter()
+            .flatten()
+            .map(|&digit| i32::from(digit).unsigned_abs())
+            .max()
+            .unwrap_or(0) as i32;
+        let wide_lut = CenteredMontLut::new(&params.wide, rhs_abs_bound);
+        let tail_lut = CenteredMontLut::new(&params.tail, rhs_abs_bound);
+        let mut accumulators = vec![Self::zero(); num_rows];
+        for (column, digits) in rhs.iter().enumerate() {
+            if digits.iter().all(|&digit| digit == 0) {
+                continue;
+            }
+            let wide_digits = digits.map(i32::from);
+            let transformed = Self {
+                wide: CyclotomicCrtNtt::from_centered_i32_with_lut(
+                    &wide_digits,
+                    &params.wide,
+                    &wide_lut,
+                ),
+                tail: CyclotomicCrtNtt::from_centered_i32_with_lut(
+                    &wide_digits,
+                    &params.tail,
+                    &tail_lut,
+                ),
+            };
+            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
+                let matrix_entry = row.get(column).ok_or_else(|| {
+                    AkitaError::InvalidSetup("prepared mixed NTT matrix row is undersized".into())
+                })?;
+                accumulator.add_assign_pointwise_mul(matrix_entry, &transformed, params);
+            }
+        }
+        Ok(accumulators
+            .iter()
+            .map(|accumulator| accumulator.to_ring(params))
+            .collect())
+    }
+
     /// Invert both NTT families and reconstruct directly in the target field.
     #[must_use]
     pub fn to_ring<F: FieldCore + CanonicalField>(
@@ -107,6 +172,13 @@ impl<const K: usize, const D: usize> MixedCrtNtt<K, D> {
         let wide = self.wide.centered_coefficients_with_params(&params.wide);
         let tail = self.tail.centered_coefficients_with_params(&params.tail);
         let tail_modulus = i64::from(params.tail.primes[0].p);
+        let mut field_product = F::one();
+        let field_weights: [F; K] = from_fn(|i| {
+            let weight = field_product;
+            field_product *= F::from_i64(i64::from(params.wide.primes[i].p));
+            weight
+        });
+        let tail_field_weight = field_product;
 
         let coefficients = from_fn(|d| {
             let mut digits = [0i64; K];
@@ -138,12 +210,10 @@ impl<const K: usize, const D: usize> MixedCrtNtt<K, D> {
             }
 
             let mut result = F::zero();
-            let mut product = F::one();
-            for (digit, prime) in digits.iter().zip(params.wide.primes.iter()) {
-                result += F::from_i64(*digit) * product;
-                product *= F::from_i64(i64::from(prime.p));
+            for (digit, weight) in digits.iter().zip(field_weights) {
+                result += F::from_i64(*digit) * weight;
             }
-            result + F::from_i64(tail_digit) * product
+            result + F::from_i64(tail_digit) * tail_field_weight
         });
         CyclotomicRing::from_coefficients(coefficients)
     }
@@ -164,8 +234,11 @@ fn mod_inverse_i64(a: i64, modulus: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ntt::tables::{I16_TAIL_PRIME, Q64_NUM_PRIMES, Q64_PRIMES};
-    use akita_field::{Fp64, Prime64Offset59};
+    use crate::ntt::tables::{
+        q128_primes, I16_TAIL_PRIME, Q128_NUM_PRIMES, Q32_NUM_PRIMES, Q32_PRIMES, Q64_NUM_PRIMES,
+        Q64_PRIMES,
+    };
+    use akita_field::{Fp64, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
     fn mixed_i16_matvec_handles_signed_boundaries() {
@@ -192,5 +265,143 @@ mod tests {
         product.add_assign_pointwise_mul(&lhs_ntt, &rhs_ntt, &params);
 
         assert_eq!(product.to_ring::<Prime64Offset59>(&params), lhs * rhs);
+    }
+
+    #[test]
+    fn mixed_i16_matrix_vector_matches_schoolbook() {
+        const D: usize = 64;
+        type F = Prime64Offset59;
+        let params = MixedCrtNttParamSet::new(
+            CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES),
+            CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]),
+        );
+        let matrix = (0..6)
+            .map(|entry| {
+                CyclotomicRing::<F, D>::from_coefficients(from_fn(|coefficient| {
+                    F::from_i64(((entry * 17 + coefficient * 5) % 31) as i64 - 15)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let prepared = matrix
+            .iter()
+            .map(|ring| MixedCrtNtt::from_ring(ring, &params))
+            .collect::<Vec<_>>();
+        let rhs = (0..3)
+            .map(|column| {
+                from_fn(|coefficient| match (column + coefficient) % 6 {
+                    0 => i16::MIN,
+                    1 => -1024,
+                    2 => -1,
+                    3 => 0,
+                    4 => 1023,
+                    _ => i16::MAX,
+                })
+            })
+            .collect::<Vec<_>>();
+        let actual = MixedCrtNtt::mat_vec_i16::<F>(&prepared, 2, 3, &rhs, &params).unwrap();
+        let expected = matrix
+            .chunks_exact(3)
+            .map(|row| {
+                row.iter()
+                    .zip(&rhs)
+                    .fold(CyclotomicRing::<F, D>::zero(), |sum, (lhs, digits)| {
+                        let rhs = CyclotomicRing::from_coefficients(
+                            digits.map(|digit| F::from_i64(i64::from(digit))),
+                        );
+                        sum + *lhs * rhs
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    fn assert_mixed_i16_matvec<F, const K: usize, const D: usize>(wide: CrtNttParamSet<i32, K, D>)
+    where
+        F: FieldCore + CanonicalField,
+    {
+        let params =
+            MixedCrtNttParamSet::new(wide, CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]));
+        let matrix = (0..6)
+            .map(|entry| {
+                CyclotomicRing::<F, D>::from_coefficients(from_fn(|coefficient| {
+                    F::from_i64(((entry * 17 + coefficient * 5) % 31) as i64 - 15)
+                }))
+            })
+            .collect::<Vec<_>>();
+        let prepared = matrix
+            .iter()
+            .map(|ring| MixedCrtNtt::from_ring(ring, &params))
+            .collect::<Vec<_>>();
+        let rhs = (0..3)
+            .map(|column| {
+                from_fn(|coefficient| match (column + coefficient) % 6 {
+                    0 => i16::MIN,
+                    1 => -1024,
+                    2 => -1,
+                    3 => 0,
+                    4 => 1023,
+                    _ => i16::MAX,
+                })
+            })
+            .collect::<Vec<_>>();
+        let expected = matrix
+            .chunks_exact(3)
+            .map(|row| {
+                row.iter()
+                    .zip(&rhs)
+                    .fold(CyclotomicRing::<F, D>::zero(), |sum, (lhs, digits)| {
+                        let rhs = CyclotomicRing::from_coefficients(
+                            digits.map(|digit| F::from_i64(i64::from(digit))),
+                        );
+                        sum + *lhs * rhs
+                    })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            MixedCrtNtt::mat_vec_i16::<F>(&prepared, 2, 3, &rhs, &params)
+                .expect("mixed i16 matvec"),
+            expected
+        );
+    }
+
+    #[test]
+    fn mixed_i16_matvec_matches_all_fields_and_multiple_ring_dimensions() {
+        assert_mixed_i16_matvec::<Prime32Offset99, Q32_NUM_PRIMES, 64>(CrtNttParamSet::new(
+            Q32_PRIMES,
+        ));
+        assert_mixed_i16_matvec::<Prime32Offset99, Q32_NUM_PRIMES, 128>(CrtNttParamSet::new(
+            Q32_PRIMES,
+        ));
+        assert_mixed_i16_matvec::<Prime64Offset59, Q64_NUM_PRIMES, 64>(CrtNttParamSet::new(
+            Q64_PRIMES,
+        ));
+        assert_mixed_i16_matvec::<Prime64Offset59, Q64_NUM_PRIMES, 128>(CrtNttParamSet::new(
+            Q64_PRIMES,
+        ));
+        assert_mixed_i16_matvec::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 64>(CrtNttParamSet::new(
+            q128_primes(),
+        ));
+        assert_mixed_i16_matvec::<Prime128OffsetA7F7, Q128_NUM_PRIMES, 128>(CrtNttParamSet::new(
+            q128_primes(),
+        ));
+    }
+
+    #[test]
+    fn mixed_i16_matvec_rejects_malformed_shapes() {
+        const D: usize = 64;
+        let params = MixedCrtNttParamSet::new(
+            CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES),
+            CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]),
+        );
+        let short_matrix = vec![MixedCrtNtt::<Q64_NUM_PRIMES, D>::zero()];
+        let rhs = vec![[1i16; D]; 2];
+        assert!(matches!(
+            MixedCrtNtt::mat_vec_i16::<Prime64Offset59>(&short_matrix, 2, 2, &rhs, &params),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            MixedCrtNtt::mat_vec_i16::<Prime64Offset59>(&short_matrix, 1, 1, &rhs, &params),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 }

@@ -29,6 +29,15 @@ modulo 12289. The tail prime has `v2(p - 1) = 12`, hence supports every Akita
 negacyclic degree through `D = 2048`. A schedule that fits the base product does
 not construct tail twiddles, transforms, or matrix cache entries.
 
+The terminal verifier deliberately uses the signed-i16 kernel for every
+schedule, including schedules whose decomposition digits were produced by an
+i8 prover kernel. It rejects decoded terminal coefficients outside i16 and
+selects cache capability for the full bound `B = 32768`, so terminal cache
+selection is independent of the schedule's decomposition storage type. For
+the shipped q32 catalogs, the base profile's full-i16 safe widths are 63 at
+D128 and 31 at D256; terminal widths are exactly 128 at D128 and 64--128 at
+D256. Those schedules therefore require the 12289 tail as well.
+
 At each field tier's maximum ring degree, the resulting safe matrix widths are:
 
 | field profile | D | base 10 | base 10 + tail | base 11 | base 11 + tail |
@@ -43,6 +52,17 @@ common machine width: the existing `CyclotomicCrtNtt<i32, K, D>` prefix and one
 prefix digits with the existing table, one cross-prime tail digit, and Horner
 accumulation directly in the target field. This adds exactly two bytes per
 cached coefficient only when selected (25% Q32, 16.7% Q64, 10% Q128).
+The cache is derived and contributes zero bytes to setup serialization.
+
+A debug-profile construction diagnostic over 256 prepared D256 rings measured:
+
+| profile | base construction / bytes | base + i16 tail / bytes |
+| --- | ---: | ---: |
+| Q64 | 31.38 ms / 786,432 | 45.98 ms / 917,504 |
+| Q128 | 50.72 ms / 1,310,720 | 65.37 ms / 1,441,792 |
+
+The byte deltas are exact (131,072 bytes = `256 rings * D256 * 2`); timings are
+local construction diagnostics rather than cross-machine release claims.
 
 Release Criterion measurements on Apple Silicon/NEON provide the current
 backend baseline (the committed `ring_ntt` benchmark is reproducible on x86 to
@@ -55,6 +75,7 @@ therefore exercise a schedule for which the tail is actually relevant.
 | --- | ---: | ---: | ---: |
 | one D64 forward+inverse residue | i32: 196.1 ns | i16/12289: 264.9 ns | 1.35x per residue |
 | production Q128 D64 cached 8x128 matvec | 5xi32+i8: 281-360 us | 5xi32+1xi16+i16: 321-395 us | +9.8% to +14.0% |
+| terminal Q128 D64 8x128, full kernel | two balanced-radix64 i8 passes: 281.4 us | one mixed i16 pass: 191.0 us | -32.1% |
 
 The NEON implementation uses eight direct i16 lanes for independent pointwise
 Montgomery products, but retains widening four-lane chains inside the
@@ -67,6 +88,13 @@ The remaining production overhead is paid only after the exactness selector
 chooses the tail. These measurements do not establish x86 performance: the
 AVX2 low/high-half transform and pointwise tests/benchmarks are present, but
 must run on an x86 host before making an x86 throughput claim.
+
+The cached-matvec row compares one already-transformed i8 RHS against one
+already-transformed mixed RHS; it measures the marginal sixth residue, not the
+terminal choice. The terminal row is the decision-relevant comparison and
+includes signed-digit splitting, RHS NTTs, pointwise accumulation, inverse
+NTTs, reconstruction, and radix scaling. The mixed path builds centered
+Montgomery tables once per matvec and reuses them across all 128 RHS rings.
 
 The D64 absolute timings were bimodal across macOS scheduler/core placement,
 so the table reports two adjacent base/mixed trial pairs rather than treating
@@ -164,9 +192,8 @@ performance overhead.
   predecomposed inputs at public boundaries, but hot accumulation loops must
   not allocate or use checked table indexing on every coefficient.
   Recursive-witness rows with `num_digits_inner = 1` are direct signed-i8
-  coefficients, not balanced gadget digits; they use a separate no-allocation
-  raw-i8 strided path whose capacity bound is the actual signed coefficient
-  norm.
+  coefficients, not balanced gadget digits; the canonical block-major raw-i8
+  path therefore plans capacity from the actual signed coefficient norm.
 
 - The proof format, transcript order, Fiat-Shamir bytes, setup seed semantics,
   generated schedule tables, and verifier replay behavior must not change.
@@ -253,8 +280,8 @@ performance overhead.
       `log_basis` range, and Q128 many-block small-row digit coverage exercises
       the path that would otherwise use block-parallel accumulation with an
       unsafe full width.
-- [x] Recursive witness commits with `num_digits_inner = 1` use a direct raw
-      signed-i8 strided path, so ZK blinding/sign-unit streams are not
+- [x] Recursive witness commits with `num_digits_inner = 1` use the canonical
+      block-major raw signed-i8 path, so ZK blinding/sign-unit streams are not
       incorrectly treated as balanced binary digit planes.
 - [x] `cargo fmt -q`, `cargo clippy --all --message-format=short -q -- -D warnings`,
       and `cargo test` pass.
@@ -281,7 +308,7 @@ New or updated tests live near the affected code:
   i8/digit matvec, single-row, block-parallel clamp parity, and chunking
   behavior.
 - `crates/akita-pcs/tests/algebra/ntt_crt.rs` for lower-level CRT
-  reconstruction capacity and partial-split non-regression tests.
+  reconstruction capacity tests.
 - `crates/akita-prover/src/api/commitment.rs` tests for `log_basis > 8`
   rejection before decomposition.
 - `crates/akita-prover/src/backend/sparse_ring.rs` tests for the sparse
@@ -306,7 +333,7 @@ The test suite includes:
   capacity formula is not overly pessimistic by orders of magnitude.
 - Contract tests for invalid `log_basis`, centered-bound underreporting,
   balanced digit LUT lookup, public predecomposed digit range rejection, raw
-  signed-i8 strided recursive-witness coefficients, sparse non-signed-unit
+  signed-i8 recursive-witness coefficients, sparse non-signed-unit
   coefficients, and digit block-parallel width mismatch.
 
 ### Performance
@@ -355,7 +382,7 @@ chunk-result matrix when a row/block accumulator can be reused.
 | Fused split-eq | `crates/akita-prover/src/kernels/linear/fused_quotients.rs` | D/B cyclic rows and A quotient rows reconstructed wide CRT accumulators once. | Keep the fused one-shot path only when every role is safe; otherwise chunk D and B cyclic rows by their digit bounds, chunk A quotient cyclic/negacyclic intermediates independently, reconstruct each chunk, and add native field rings. If one centered term is too large for CRT, use a field-native exact quotient path. |
 | Generic quotient | `crates/akita-prover/src/kernels/linear/crt_matvec.rs` | A production full-field CRT quotient path would be unsafe for fp128/Q128 because even one full-field RHS term may not fit. | Remove this as a production path. The file now contains `cfg(test)` dense CRT helpers used only as fixtures. |
 | i8/digit matvec | `i8_matvec.rs`, `digits.rs`, `single_cyclic.rs`, `block_parallel.rs` | Balanced i8 RHS is small but wide fp128 rows can exceed Q128 lift range. | Compute the safe width from `D`, field modulus, RHS bound, and CRT product; use `log_basis <= 8` to plan Akita-owned predecomposed digits with the balanced bound rather than the full `i8` bound; preserve one-shot accumulation when safe; otherwise chunk and add reconstructed native field results. |
-| Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_inner = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route this internal specialization through a no-allocation raw-i8 strided path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
+| Recursive witness raw-i8 | `compute/cpu.rs`, `ntt_matvec.rs`, `digits.rs` | The `num_digits_inner = 1` recursive witness specialization is a direct signed-i8 coefficient stream; ZK blinding can include `+1`, which is outside the balanced binary digit range. | Route the block-major stream through the canonical raw-i8 path. It computes the actual signed coefficient bound once, converts rows directly with `from_i8_with_params`, and chunks by that bound instead of using the balanced digit LUT. |
 | Block-parallel clamp | `digits.rs`, `block_parallel.rs` | Fast path could bypass the generic `inner_width = min(mat_width, data_width)` clamp. | Dispatch to block-parallel paths only when the full effective width is both present and safe; otherwise use the shared chunked generic path. |
 | Centered LUT bound | `crt_ntt_repr.rs`, `fused_quotients.rs` | `z_pre_max_abs` sized a LUT that was later indexed unchecked by actual coefficients. | Fused quotient code computes the actual centered bound once, uses it for capacity/LUT selection, avoids giant LUTs when the bound is too large, and calls unchecked LUT conversion only after the bound proves every coefficient is covered. |
 | Digit LUT contract | `crt_ntt_repr.rs` and predecomposed digit kernels | Full-`i8` LUT coverage solved a broader contract than Akita-owned digit kernels need, while using full `i8` as the capacity bound over-chunks fp128 paths. | `DigitMontLut` is a fixed-array, const-generic balanced-digit table sized to exactly `2^log_basis` entries. Public predecomposed digit APIs validate caller-owned rows once; lower kernels thread `log_basis` into LUT selection and capacity planning, then use allocation-free unchecked lookup in hot loops. |
@@ -467,8 +494,8 @@ Implemented order:
    underreporting, allocation-free per-basis digit LUT safety,
    log-basis-bounded predecomposed digit capacity, public predecomposed digit
    range validation, and sparse signed-ring coefficient semantics.
-7. Added the raw signed-i8 strided recursive-witness specialization for direct
-   `num_digits_inner = 1` streams.
+7. Routed direct `num_digits_inner = 1` recursive-witness streams through the
+   canonical block-major raw signed-i8 kernel.
 8. Ran targeted tests, full format/clippy/test, line-cap checking, and release
    profile/CI benchmark commands.
 9. Audited and documented performance in the PR body.
@@ -497,7 +524,6 @@ Deviation policy:
 - `crates/akita-prover/src/kernels/linear/block_parallel.rs`
 - `crates/akita-prover/src/kernels/linear/ntt_matvec.rs`
 - `crates/akita-algebra/src/ring/crt_ntt_repr.rs`
-- `crates/akita-algebra/src/ring/partial_split_ntt.rs`
 - `crates/akita-prover/src/api/commitment.rs`
 - `crates/akita-prover/src/backend/sparse_ring.rs`
 - `crates/akita-prover/src/validation.rs`

@@ -19,6 +19,21 @@ At a high level:
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck.
 
+The terminal `A * z` check accepts exactly the signed-i16 coefficient class.
+Decoded coefficients outside `[-32768, 32767]` are rejected before arithmetic;
+there is no alternate i8 or balanced-radix verifier path. The exact
+CRT-capability selector keeps the base profile when
+`2 * width * D * floor(q/2) * 32768 < product(base primes)` and otherwise adds
+the 12289 i16 tail. A schedule whose accumulation exceeds both profiles is
+rejected as an invalid setup.
+
+The verifier warms every representation selected by the validated terminal
+schedule before transcript replay. Prepared forms are derived from the
+coefficient setup, keyed independently by ring dimension and exact capability,
+and never serialized. Thus a base-only schedule never constructs the tail,
+while a tail schedule pays that cost before the terminal check. Shape and
+setup-prefix checks happen before either kernel indexes prepared state.
+
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.
 
