@@ -212,6 +212,12 @@ commitment compression.
   regeneration preserves current-main planner choices except for the explicit
   terminal direct-response correction and the removal of tensor-shaped
   standalone precommitments.
+- Changing planner search behavior, objective weighting, tie-breaking outcomes,
+  or emitted schedule numbers merely because the new representation can express
+  more choices. Cuts 2, 3, and 5 are behavior-preserving cutovers. Any generated
+  value change must be required by Cut 1's protocol correction, the typed
+  root-only tensor invariant, or another individually identified correctness
+  requirement, and must appear in the Cut 0 parity report.
 - Treating open PR behavior as landed. Later commits on this branch may add
   features only after their implementation and canonical formulas are present.
 - Reimplementing the SIS estimator or maintaining a second security model in
@@ -1349,11 +1355,11 @@ and requires this initial cost-model identity:
 
 ```rust
 pub enum PlannerCostModelId {
-    PayloadEstimateAndStorageV1,
+    PayloadEstimateAndStorage,
 }
 ```
 
-`PayloadEstimateAndStorageV1` uses exactly this dominance vector:
+`PayloadEstimateAndStorage` uses exactly this dominance vector:
 
 ```text
 next recursive witness bytes
@@ -1373,11 +1379,11 @@ All current-main catalog families explicitly bind the initial selection policy:
 
 ```rust
 pub enum SelectionPolicyId {
-    MinEstimatedDirectPayloadV1,
+    MinEstimatedDirectPayload,
 }
 ```
 
-`MinEstimatedDirectPayloadV1` selects from the retained frontier using this
+`MinEstimatedDirectPayload` selects from the retained frontier using this
 total lexicographic order:
 
 1. estimated direct proof payload bytes;
@@ -1620,7 +1626,7 @@ and SIS contract exist. The schedule topology does not change again.
 - [ ] `FoldSchedule` contains no planner byte estimate. Estimates live in
       `FoldScheduleEstimate` and are absent from the instance descriptor.
 - [ ] Every current-main catalog family identity-binds
-      `PayloadEstimateAndStorageV1` and `MinEstimatedDirectPayloadV1`; frontier
+      `PayloadEstimateAndStorage` and `MinEstimatedDirectPayload`; frontier
       selection follows the specified total order and is invariant under
       candidate enumeration order.
 - [ ] Candidate comparison reads an incrementally maintained planner-private
