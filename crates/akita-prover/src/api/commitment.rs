@@ -965,7 +965,7 @@ mod tests {
     fn commit_inner_shape_rejects_log_basis_above_i8_range() {
         let inner = inner_witness(1, 1, vec![2]);
         assert!(matches!(
-            validate_commit_inner_shape::<F, D>(&inner, 1, 1, 2, 7),
+            validate_commit_inner_shape::<F, D>(&inner, 1, 1, 2, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -983,7 +983,7 @@ mod tests {
         let params = LevelParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
-            7,
+            9,
             1,
             1,
             1,

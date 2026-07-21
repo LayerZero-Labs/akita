@@ -19,7 +19,7 @@ threshold.
 **Sources to fold in**
 
 - Paper §2.1 `sec:prelim-ring` ("Partial splitting", `eq:partial-split`; LS18 Cor 1.2).
-- `crates/akita-algebra/src/ring/cyclotomic.rs`, `ring/partial_split_ntt.rs`.
+- `crates/akita-algebra/src/ring/cyclotomic.rs`.
 
 ## Extension-field embedding (cyclotomic ring-subfield coordinates)
 

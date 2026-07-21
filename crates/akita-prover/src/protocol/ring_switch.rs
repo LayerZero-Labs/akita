@@ -7,7 +7,7 @@ use crate::{
     tensor_pack_recursive_witness, CommitmentComputeBackend, RecursiveCommitmentHintCache,
     RecursiveWitnessFlat,
 };
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::{

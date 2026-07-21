@@ -7,15 +7,14 @@ use super::CrtNttParamSet;
 
 /// Number of balanced-digit slots covered by [`DigitMontLut`].
 ///
-/// Balanced base-`2^log_basis` decomposition uses `log_basis` in `1..=6`, so
-/// every digit lands in `[-32, 31]`. One fixed 64-entry table therefore covers
-/// all bases, which is what lets the lookup drop the const-generic `L` (and the
-/// per-`log_basis` monomorphization it forced) without widening to the full
-/// signed-byte range.
-const DIGIT_LUT_LEN: usize = 64;
+/// Balanced i8 decomposition uses `log_basis` in `1..=8`, so every digit lands
+/// in `[-128, 127]`. One fixed 256-entry table therefore covers all bases,
+/// which lets the lookup drop the const-generic `L` and the per-`log_basis`
+/// monomorphization it forced.
+const DIGIT_LUT_LEN: usize = 256;
 const DIGIT_LUT_OFFSET: i16 = (DIGIT_LUT_LEN / 2) as i16;
 
-/// Precomputed Montgomery forms for balanced digit values in `[-32, 31]`.
+/// Precomputed Montgomery forms for balanced i8 digit values in `[-128, 127]`.
 ///
 /// Storing the Montgomery representation eliminates one `from_canonical`
 /// Montgomery multiply per coefficient in the hot digit path. The table is

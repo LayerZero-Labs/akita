@@ -71,18 +71,27 @@ where
 }
 
 #[inline]
-fn centered_ring<F, const D: usize>(coeffs: &[i64; D]) -> CyclotomicRing<F, D>
+fn centered_ring<F, const D: usize>(coeffs: &[i16; D]) -> CyclotomicRing<F, D>
 where
     F: FieldCore + FromPrimitiveInt,
 {
-    CyclotomicRing::from_coefficients(std::array::from_fn(|index| F::from_i64(coeffs[index])))
+    CyclotomicRing::from_coefficients(std::array::from_fn(|index| {
+        F::from_i64(i64::from(coeffs[index]))
+    }))
+}
+
+fn narrow_terminal_z_i16(values: Vec<i64>) -> Result<Vec<i16>, AkitaError> {
+    values
+        .into_iter()
+        .map(|value| i16::try_from(value).map_err(|_| AkitaError::InvalidProof))
+        .collect()
 }
 
 #[tracing::instrument(skip_all, name = "terminal_direct_a_rows")]
 fn check_a_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     t: &[CyclotomicRing<F, D>],
-    z: &[[i64; D]],
+    z: &[[i16; D]],
     challenges: &[CyclotomicRing<F, D>],
     n_a: usize,
     n_a_cols: usize,
@@ -152,16 +161,6 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let order = relation.opening_batch().root_group_order()?;
-    let mut max_a_prefix_len = 0usize;
-    for &group_index in &order {
-        let params = lp.group_params(relation.opening_batch(), group_index)?;
-        max_a_prefix_len = max_a_prefix_len.max(
-            params
-                .a_rows_len()
-                .checked_mul(params.a_col_len())
-                .ok_or(AkitaError::InvalidProof)?,
-        );
-    }
     let mut e_offset = 0usize;
     let mut t_offset = 0usize;
     dispatch_for_field!(
@@ -239,6 +238,7 @@ where
                         cap,
                         Some(group_layout.z_payload_bytes),
                     )?;
+                    let z_values = narrow_terminal_z_i16(z_values)?;
                     (e, t, z_values)
                 };
                 let z_centered = {
@@ -276,6 +276,7 @@ where
                 }
                 let n_a = params.a_rows_len();
                 let n_a_cols = params.a_col_len();
+                let a_prefix_len = n_a.checked_mul(n_a_cols).ok_or(AkitaError::InvalidProof)?;
                 let num_positions = params.num_positions_per_block();
                 let num_digits_inner = params.num_digits_inner();
                 let log_basis_inner = params.log_basis_inner();
@@ -345,7 +346,7 @@ where
                             &challenges,
                             n_a,
                             n_a_cols,
-                            max_a_prefix_len,
+                            a_prefix_len,
                         )
                     }
                 );
@@ -816,5 +817,22 @@ mod tests {
     fn production_terminal_checker_matches_legacy_grouped_quotient_semantics() {
         assert_production_matches_legacy::<64>();
         assert_production_matches_legacy::<128>();
+    }
+
+    #[test]
+    fn decoded_terminal_witness_rejects_coefficients_outside_i16() {
+        assert_eq!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MIN), 0, i64::from(i16::MAX)])
+                .expect("i16 boundary values"),
+            vec![i16::MIN, 0, i16::MAX]
+        );
+        assert!(matches!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MAX) + 1]),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert!(matches!(
+            narrow_terminal_z_i16(vec![i64::from(i16::MIN) - 1]),
+            Err(AkitaError::InvalidProof)
+        ));
     }
 }
