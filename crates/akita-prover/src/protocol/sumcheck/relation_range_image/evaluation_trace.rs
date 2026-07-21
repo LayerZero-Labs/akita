@@ -398,23 +398,30 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     }
 
     #[inline]
+    fn values_in_lane<const N: usize>(&self, lane: usize, coefficients: [usize; N]) -> [E; N] {
+        let mut values = [E::zero(); N];
+        let Some(terms) = self.lane_terms.get(lane) else {
+            return values;
+        };
+        for term in terms {
+            let Some(source) = self.sources.get(term.source_index) else {
+                continue;
+            };
+            let source_lane_start = term.lane * self.coeff_count;
+            for (value, coefficient) in values.iter_mut().zip(coefficients) {
+                if let Some(source_value) = source.values.get(source_lane_start + coefficient) {
+                    *value += term.factor * *source_value;
+                }
+            }
+        }
+        values
+    }
+
+    #[inline]
     pub(crate) fn get(&self, lane: usize, coefficient: usize, coeff_count: usize) -> E {
         debug_assert_eq!(self.coeff_count, coeff_count);
-        let Some(terms) = self.lane_terms.get(lane) else {
-            return E::zero();
-        };
-        terms.iter().fold(E::zero(), |evaluation, term| {
-            let Some(source) = self.sources.get(term.source_index) else {
-                return evaluation;
-            };
-            let index = term.lane * self.coeff_count + coefficient;
-            evaluation
-                + source
-                    .values
-                    .get(index)
-                    .copied()
-                    .map_or_else(E::zero, |value| term.factor * value)
-        })
+        let [value] = self.values_in_lane(lane, [coefficient]);
+        value
     }
 
     #[inline]
@@ -433,14 +440,25 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
 
     #[inline]
     pub(crate) fn pair_flat(&self, index0: usize, index1: usize, coeff_count: usize) -> (E, E) {
-        (
-            self.get(index0 / coeff_count, index0 % coeff_count, coeff_count),
-            self.get(index1 / coeff_count, index1 % coeff_count, coeff_count),
-        )
+        debug_assert_eq!(self.coeff_count, coeff_count);
+        let lane0 = index0 / coeff_count;
+        let lane1 = index1 / coeff_count;
+        let coefficient0 = index0 % coeff_count;
+        let coefficient1 = index1 % coeff_count;
+        if lane0 == lane1 {
+            let [value0, value1] = self.values_in_lane(lane0, [coefficient0, coefficient1]);
+            (value0, value1)
+        } else {
+            (
+                self.get(lane0, coefficient0, coeff_count),
+                self.get(lane1, coefficient1, coeff_count),
+            )
+        }
     }
 
     pub(crate) fn quad_at(&self, lane: usize, base: usize, coeff_count: usize) -> [E; 4] {
-        std::array::from_fn(|offset| self.get(lane, base + offset, coeff_count))
+        debug_assert_eq!(self.coeff_count, coeff_count);
+        self.values_in_lane(lane, [base, base + 1, base + 2, base + 3])
     }
 
     pub(crate) fn validate_len(&self, witness_len: usize) -> Result<(), AkitaError> {
