@@ -250,11 +250,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
     let expected_trace_round2 = trace_compact
         .chunks_exact(4)
-        .map(|quad| {
-            RelationRangeImageProver::<F>::direct_fold_e_quad_two_rounds(
-                quad[0], quad[1], quad[2], quad[3], r0, r1,
-            )
-        })
+        .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
         .collect::<Vec<_>>();
     assert_eq!(
         prover.evaluation_trace.materialize_dense(),

@@ -14,16 +14,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let w10 = E::from_i64(w10 as i64);
         let w01 = E::from_i64(w01 as i64);
         let w11 = E::from_i64(w11 as i64);
-        let x0 = w00 + r0 * (w10 - w00);
-        let x1 = w01 + r0 * (w11 - w01);
-        x0 + r1 * (x1 - x0)
-    }
-
-    #[inline]
-    pub(super) fn direct_fold_e_quad_two_rounds(e00: E, e10: E, e01: E, e11: E, r0: E, r1: E) -> E {
-        let x0 = e00 + r0 * (e10 - e00);
-        let x1 = e01 + r0 * (e11 - e01);
-        x0 + r1 * (x1 - x0)
+        fold_two_round_quad(w00, w10, w01, w11, r0, r1)
     }
 
     #[inline(always)]
@@ -135,7 +126,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let mut out = vec![E::zero(); next_coeff_count];
         for (quad_y, dst) in out.iter_mut().enumerate() {
             let base = 4 * quad_y;
-            *dst = Self::direct_fold_e_quad_two_rounds(
+            *dst = fold_two_round_quad(
                 common_alpha_factor[base],
                 common_alpha_factor[base + 1],
                 common_alpha_factor[base + 2],

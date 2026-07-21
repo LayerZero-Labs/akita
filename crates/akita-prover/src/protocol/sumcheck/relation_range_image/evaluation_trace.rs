@@ -1,6 +1,7 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
-use std::sync::Arc;
+use super::fold_two_round_quad;
+use std::{mem, sync::Arc};
 
 #[cfg(test)]
 use akita_algebra::offset_eq::eval_affine_digit_interval;
@@ -483,42 +484,68 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     }
 
     pub(crate) fn fold_coefficients(&mut self, challenge: E) {
-        let next_coeff_count = self.coeff_count / 2;
+        let coeff_count = self.coeff_count;
+        debug_assert!(coeff_count.is_power_of_two() && coeff_count >= 2);
+        let next_coeff_count = coeff_count / 2;
         for source in &mut self.sources {
-            let mut folded = Vec::with_capacity(source.lane_count * next_coeff_count);
             for lane in 0..source.lane_count {
-                let start = lane * self.coeff_count;
+                let source_start = lane * coeff_count;
+                let target_start = lane * next_coeff_count;
                 for coefficient in 0..next_coeff_count {
-                    let left = source.values[start + 2 * coefficient];
-                    let right = source.values[start + 2 * coefficient + 1];
-                    folded.push(left + challenge * (right - left));
+                    let left = source.values[source_start + 2 * coefficient];
+                    let right = source.values[source_start + 2 * coefficient + 1];
+                    source.values[target_start + coefficient] = left + challenge * (right - left);
                 }
             }
-            source.values = folded;
+            source.values.truncate(source.lane_count * next_coeff_count);
         }
         self.coeff_count = next_coeff_count;
     }
 
     pub(crate) fn fold_two_coefficients(&mut self, r0: E, r1: E) {
-        self.fold_coefficients(r0);
-        self.fold_coefficients(r1);
+        let coeff_count = self.coeff_count;
+        debug_assert!(coeff_count.is_power_of_two() && coeff_count >= 4);
+        let next_coeff_count = coeff_count / 4;
+        for source in &mut self.sources {
+            for lane in 0..source.lane_count {
+                let source_start = lane * coeff_count;
+                let target_start = lane * next_coeff_count;
+                for coefficient in 0..next_coeff_count {
+                    let base = source_start + 4 * coefficient;
+                    source.values[target_start + coefficient] = fold_two_round_quad(
+                        source.values[base],
+                        source.values[base + 1],
+                        source.values[base + 2],
+                        source.values[base + 3],
+                        r0,
+                        r1,
+                    );
+                }
+            }
+            source.values.truncate(source.lane_count * next_coeff_count);
+        }
+        self.coeff_count = next_coeff_count;
     }
 
     pub(crate) fn fold_lanes(&mut self, challenge: E) {
         let next_live_lane_count = self.live_lane_count.div_ceil(2);
-        let mut folded = vec![Vec::new(); next_live_lane_count];
-        for (lane, terms) in self.lane_terms.drain(..).enumerate() {
-            let scale = if lane % 2 == 0 {
-                E::one() - challenge
-            } else {
-                challenge
-            };
-            let target = &mut folded[lane / 2];
-            target.extend(terms.into_iter().map(|mut term| {
-                term.factor *= scale;
-                term
-            }));
+        let even_scale = E::one() - challenge;
+        let mut source_lanes = mem::take(&mut self.lane_terms).into_iter();
+        let mut folded = Vec::with_capacity(next_live_lane_count);
+        while let Some(mut even_terms) = source_lanes.next() {
+            for term in &mut even_terms {
+                term.factor *= even_scale;
+            }
+            if let Some(mut odd_terms) = source_lanes.next() {
+                for term in &mut odd_terms {
+                    term.factor *= challenge;
+                }
+                even_terms.reserve(odd_terms.len());
+                even_terms.append(&mut odd_terms);
+            }
+            folded.push(even_terms);
         }
+        debug_assert_eq!(folded.len(), next_live_lane_count);
         self.lane_terms = folded;
         self.live_lane_count = next_live_lane_count;
     }

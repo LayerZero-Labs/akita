@@ -165,3 +165,56 @@ fn prepared_opening_support_matches_semantic_trace_across_bases_and_extension() 
         assert_prepared_opening_support_matches_semantic_trace::<Ext2<F>>(basis);
     }
 }
+
+#[test]
+fn coefficient_folds_reuse_prepared_source_buffers() {
+    let coeff_count = 8;
+    let live_lane_count = 2;
+    let dense = (1..=live_lane_count * coeff_count)
+        .map(|value| F::from_u64(value as u64))
+        .collect::<Vec<_>>();
+    let r0 = F::from_u64(37);
+    let r1 = F::from_u64(41);
+
+    let mut one_round =
+        PreparedProverEvaluationTrace::from_dense(dense.clone(), live_lane_count, coeff_count);
+    let one_round_allocations = one_round
+        .sources
+        .iter()
+        .map(|source| (source.values.as_ptr(), source.values.capacity()))
+        .collect::<Vec<_>>();
+    one_round.fold_coefficients(r0);
+    for (source, &(pointer, capacity)) in one_round.sources.iter().zip(&one_round_allocations) {
+        assert_eq!(source.values.as_ptr(), pointer);
+        assert_eq!(source.values.capacity(), capacity);
+    }
+    let expected_one_round = dense
+        .chunks_exact(coeff_count)
+        .flat_map(|lane| {
+            lane.chunks_exact(2)
+                .map(|pair| pair[0] + r0 * (pair[1] - pair[0]))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(one_round.materialize_dense(), expected_one_round);
+
+    let mut two_round =
+        PreparedProverEvaluationTrace::from_dense(dense.clone(), live_lane_count, coeff_count);
+    let two_round_allocations = two_round
+        .sources
+        .iter()
+        .map(|source| (source.values.as_ptr(), source.values.capacity()))
+        .collect::<Vec<_>>();
+    two_round.fold_two_coefficients(r0, r1);
+    for (source, &(pointer, capacity)) in two_round.sources.iter().zip(&two_round_allocations) {
+        assert_eq!(source.values.as_ptr(), pointer);
+        assert_eq!(source.values.capacity(), capacity);
+    }
+    let expected_two_round = dense
+        .chunks_exact(coeff_count)
+        .flat_map(|lane| {
+            lane.chunks_exact(4)
+                .map(|quad| fold_two_round_quad(quad[0], quad[1], quad[2], quad[3], r0, r1))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(two_round.materialize_dense(), expected_two_round);
+}

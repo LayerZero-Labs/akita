@@ -121,6 +121,13 @@ fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
 }
 
 #[inline]
+fn fold_two_round_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
+    let x0 = v00 + r0 * (v10 - v00);
+    let x1 = v01 + r0 * (v11 - v01);
+    x0 + r1 * (x1 - x0)
+}
+
+#[inline]
 fn accum_small_signed<E: FieldCore + HasUnreducedOps>(
     accum: &mut [E::MulU64Accum],
     pos_idx: usize,
