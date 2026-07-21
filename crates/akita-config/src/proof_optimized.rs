@@ -194,21 +194,18 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
             push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
             if supports_multi_group_root {
-                for num_precommitted in
-                    1..=crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS
-                {
-                    let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted)
-                    else {
-                        continue;
-                    };
-                    if total_polynomials > max_num_batched_polys {
-                        continue;
-                    }
-                    push_layout(OpeningClaimsLayout::from_root_groups(
-                        &precommitted_groups[..num_precommitted],
-                        main_group,
-                    )?)?;
+                let num_precommitted =
+                    crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
+                let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted) else {
+                    continue;
+                };
+                if total_polynomials > max_num_batched_polys {
+                    continue;
                 }
+                push_layout(OpeningClaimsLayout::from_root_groups(
+                    &precommitted_groups[..num_precommitted],
+                    main_group,
+                )?)?;
             }
         }
     }

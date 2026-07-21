@@ -250,7 +250,10 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(16, 1)],
+        &[
+            PolynomialGroupLayout::new(16, 1),
+            PolynomialGroupLayout::new(16, 1),
+        ],
         PolynomialGroupLayout::new(32, 1),
     )
     .expect("max precommitted group layout");
@@ -258,7 +261,7 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
         .expect("runtime setup envelope")
         .expect("max precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(32, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(32, 3).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
@@ -271,7 +274,10 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(16, 1)],
+        &[
+            PolynomialGroupLayout::new(16, 1),
+            PolynomialGroupLayout::new(16, 1),
+        ],
         PolynomialGroupLayout::new(32, 1),
     )
     .expect("grouped root layout");

@@ -164,30 +164,29 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-            let mut precommitteds = Vec::with_capacity(num_precommitted);
-            let mut supported = true;
-            for _ in 0..num_precommitted {
-                let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-                let params = match conservative_commit_params::<Cfg>(&pre_key) {
-                    Ok(params) => params,
-                    Err(_) => {
-                        supported = false;
-                        break;
-                    }
-                };
-                precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
-            }
-            if !supported {
-                continue;
-            }
-            let candidate = AkitaScheduleLookupKey {
-                final_group: main,
-                precommitteds,
+        let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
+        let mut precommitteds = Vec::with_capacity(num_precommitted);
+        let mut supported = true;
+        for _ in 0..num_precommitted {
+            let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
+            let params = match conservative_commit_params::<Cfg>(&pre_key) {
+                Ok(params) => params,
+                Err(_) => {
+                    supported = false;
+                    break;
+                }
             };
-            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-                keys.push(candidate);
-            }
+            precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
+        }
+        if !supported {
+            continue;
+        }
+        let candidate = AkitaScheduleLookupKey {
+            final_group: main,
+            precommitteds,
+        };
+        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+            keys.push(candidate);
         }
     }
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
