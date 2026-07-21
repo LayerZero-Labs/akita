@@ -6,8 +6,8 @@ use akita_serialization::AkitaSerialize;
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
-    dispatch_for_field, prepare_opening_point, raw_field_segment_bytes, AkitaStage1Proof,
-    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BatchedStage3Geometry, ExecutionSchedule,
+    dispatch_for_field, raw_field_segment_bytes, AkitaStage1Proof, AkitaStage2Proof,
+    AkitaVerifierSetup, BasisMode, BatchedStage3Geometry, ExecutionSchedule,
     ExtensionOpeningReductionProof, FoldLevelProof, FpExtEncoding, LevelParams, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint,
     RelationMatrixRowLayout, RingVec, RingView, Schedule, SegmentTypedWitness, SetupSumcheckProof,
@@ -15,9 +15,9 @@ use akita_types::{
 };
 
 use super::{
-    prepare_terminal_witness_replay, verify_fold, verify_fold_eor, FoldEorReplay,
-    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, RelationReplayInputs,
-    SetupPrefixOpening, TracePreparation,
+    prepare_group_opening_point, prepare_terminal_witness_replay, verify_fold, verify_fold_eor,
+    FoldEorReplay, GroupOpeningPoint, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
+    RelationReplayInputs, SetupPrefixOpening, TracePreparation,
 };
 
 /// Verifier state carried between suffix fold levels.
@@ -60,39 +60,28 @@ where
             let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
-                let target_len = alpha_bits
-                    .checked_add(group_lp.position_index_bits())
-                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
-                    })?;
                 let point_vars = block_claims.group_point_vars(group_index)?;
-                if point_vars.num_vars() != target_len {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "suffix group point width mismatch: group={group_index}, \
-                         groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
-                        opening_batch.num_groups(),
-                        lp.setup_prefix.is_some(),
-                        point_vars.num_vars()
-                    )));
-                }
-                let group_protocol_point = point_vars
-                    .indices()
-                    .iter()
-                    .map(|&idx| {
-                        protocol_point
-                            .get(idx)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                prepared_points.push(prepare_opening_point::<F, E, D>(
-                    &group_protocol_point,
+                match prepare_group_opening_point::<F, E, D>(
+                    group_lp,
+                    point_vars,
+                    protocol_point,
                     BasisMode::Lagrange,
-                    group_lp.num_positions_per_block(),
-                    group_lp.num_live_blocks(),
                     alpha_bits,
-                )?);
+                )? {
+                    GroupOpeningPoint::Prepared(prepared) => prepared_points.push(prepared),
+                    GroupOpeningPoint::WidthMismatch {
+                        target_len,
+                        actual_len,
+                    } => {
+                        return Err(AkitaError::InvalidInput(format!(
+                            "suffix group point width mismatch: group={group_index}, \
+                             groups={}, setup_prefix={}, target_len={target_len}, \
+                             actual_len={actual_len}",
+                            opening_batch.num_groups(),
+                            lp.setup_prefix.is_some(),
+                        )));
+                    }
+                }
             }
             Ok(prepared_points)
         }

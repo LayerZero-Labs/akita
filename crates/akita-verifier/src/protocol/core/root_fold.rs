@@ -14,8 +14,9 @@ use akita_types::{
 };
 
 use super::{
-    verify_fold, verify_fold_eor, FoldVerifyOutput, PreparedFoldPayload, PreparedFoldReplay,
-    PreparedNextWitness, RelationReplayInputs, TracePreparation,
+    prepare_group_opening_point, verify_fold, verify_fold_eor, FoldVerifyOutput, GroupOpeningPoint,
+    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, RelationReplayInputs,
+    TracePreparation,
 };
 
 /// Verify the folded root proof payload.
@@ -360,36 +361,20 @@ where
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = root_lp.group_params(opening_batch, group_index)?;
-        let target_len = alpha_bits
-            .checked_add(group_lp.position_index_bits())
-            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("group opening point length overflow".to_string())
-            })?;
         let point_vars = claims.group_point_vars(group_index)?;
-        if point_vars.num_vars() != target_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        let group_point = point_vars
-            .indices()
-            .iter()
-            .map(|&index| {
-                shared_opening_point
-                    .get(index)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let prepared =
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                prepare_opening_point::<F, E, D>(
-                    &group_point,
+            match dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                prepare_group_opening_point::<F, E, D>(
+                    group_lp,
+                    point_vars,
+                    shared_opening_point,
                     basis,
-                    group_lp.num_positions_per_block(),
-                    group_lp.num_live_blocks(),
                     alpha_bits,
                 )
-            })?;
+            })? {
+                GroupOpeningPoint::Prepared(prepared) => prepared,
+                GroupOpeningPoint::WidthMismatch { .. } => return Err(AkitaError::InvalidProof),
+            };
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
