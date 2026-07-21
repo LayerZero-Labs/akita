@@ -137,7 +137,7 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
 
 #[cfg(feature = "all-schedules")]
 #[test]
-fn catalog_identity_rejects_pre_topology_protocol_epoch() {
+fn catalog_identity_rejects_non_v1_protocol_epoch() {
     let mut catalog = fp128::D64Full::schedule_catalog().expect("shipped catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
@@ -146,7 +146,7 @@ fn catalog_identity_rejects_pre_topology_protocol_epoch() {
         fp128::D64Full::ring_challenge_config,
         fp128::D64Full::fold_challenge_shape_at_level,
     )
-    .expect_err("old protocol epoch must not validate");
+    .expect_err("non-v1 protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
 }
 

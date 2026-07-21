@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire epoch for instance-descriptor protocol version 3: typed
-//! fold topology plus the direct terminal response.
+//! Complete-fold wire fixture for the in-development descriptor v1: typed fold
+//! topology plus the direct terminal response.
 
 mod common;
 
@@ -42,15 +42,15 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
         proof_len: 54_176,
-        proof_digest: "4b5e389c71fed604890cdec773b49131",
+        proof_digest: "c8df00cc15d665229ada8dc337ec702c",
         event_count: 165,
-        event_digest: "efa5119658a633fc78da6167104bcb1e",
+        event_digest: "99c0a238e991d558a25863ddd2de890d",
         terminal_len: 51_212,
-        terminal_digest: "4c8349d0dc77d13c9251ec3a54fc82e0",
+        terminal_digest: "e646145c3e9a49414f3f48bbc0eaa8f7",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "ce44352dd12a3a29164ebeb134ca0197",
+            payload_digest: "c1cabdaab7dff2ceedac0f2e0a5a31af",
         }],
     },
     FoldProtocolEpoch {
@@ -58,32 +58,32 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 80_844,
-        proof_digest: "6d83326842b4c92e88cd7ce95f8e59be",
+        proof_len: 80_829,
+        proof_digest: "0e0cbcc8fb998256e21301cceb0b0f51",
         event_count: 876,
-        event_digest: "039d7b353449b56fe364bd1a0a21b836",
-        terminal_len: 58_540,
-        terminal_digest: "a998907e41a67fa0bee511d3118ff82b",
+        event_digest: "821366da0c45c42a717952fa73c07b76",
+        terminal_len: 58_525,
+        terminal_digest: "d79746542ccdfb3b6c963d7eb4242e91",
         digit_range_levels: &[
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "1833ba4c4e57a4f7d2bea850cc837c4f",
+                payload_digest: "a81664c5d991abf197c2beb0fd145439",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "5fa3e4a264d821afe7b48a67c08c43b8",
+                payload_digest: "e85486acc8992dbfd0988a2ddf37a126",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "f56da8a45a12a62b73884a8b1cea116a",
+                payload_digest: "21eb1b2448c7b4bc39642a60d9a25f13",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "29db6ae00a78afd762c7672ad1285083",
+                payload_digest: "db7b5bcb6453f76939812aab7d7d56f2",
             },
         ],
     },
@@ -163,6 +163,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
                 .iter()
                 .map(|step| &step.params.witness),
         );
+    let mut stage1_digests = Vec::with_capacity(expected.digit_range_levels.len());
     for ((level, scheduled), level_expected) in proof
         .nonterminal_folds()
         .zip(scheduled_nonterminal)
@@ -181,12 +182,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
             "{} Stage 1 payload length",
             expected.name
         );
-        assert_eq!(
-            protocol_epoch_digest::<F>(&bytes),
-            level_expected.payload_digest,
-            "{} Stage 1 payload changed",
-            expected.name
-        );
+        stage1_digests.push(protocol_epoch_digest::<F>(&bytes));
     }
 
     let mut proof_bytes = Vec::new();
@@ -206,21 +202,9 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         expected.name
     );
     assert_eq!(
-        protocol_epoch_digest::<F>(&proof_bytes),
-        expected.proof_digest,
-        "{} complete proof changed",
-        expected.name
-    );
-    assert_eq!(
         prover_events.len(),
         expected.event_count,
         "{} transcript event count",
-        expected.name
-    );
-    assert_eq!(
-        protocol_epoch_digest::<F>(&event_bytes),
-        expected.event_digest,
-        "{} transcript events changed",
         expected.name
     );
     assert_eq!(
@@ -229,11 +213,26 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         "{} terminal payload length",
         expected.name
     );
+    let expected_stage1_digests = expected
+        .digit_range_levels
+        .iter()
+        .map(|level| level.payload_digest.to_string())
+        .collect::<Vec<_>>();
     assert_eq!(
-        protocol_epoch_digest::<F>(&terminal_bytes),
-        expected.terminal_digest,
-        "{} terminal payload changed",
-        expected.name
+        (
+            stage1_digests,
+            protocol_epoch_digest::<F>(&proof_bytes),
+            protocol_epoch_digest::<F>(&event_bytes),
+            protocol_epoch_digest::<F>(&terminal_bytes),
+        ),
+        (
+            expected_stage1_digests,
+            expected.proof_digest.to_string(),
+            expected.event_digest.to_string(),
+            expected.terminal_digest.to_string(),
+        ),
+        "{} protocol digests changed",
+        expected.name,
     );
 }
 

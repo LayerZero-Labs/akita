@@ -195,8 +195,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
-    // `digest_effective_schedule`. The `planner_v8_` prefix marks the typed
-    // schedule-topology protocol epoch; old cache namespaces are not reused.
+    // `digest_effective_schedule`. Akita is still in development, so the cache
+    // namespace remains v1; the digest prevents incompatible schedules from
+    // aliasing within that namespace.
     let raw_schedule =
         match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
             Ok(schedule) => {
@@ -206,7 +207,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                     let _ = write!(hex, "{byte:02x}");
                 }
                 format!(
-                    "planner_v8_nv{}_batch{}_{hex}",
+                    "planner_v1_nv{}_batch{}_{hex}",
                     schedule_lookup_key.num_vars(),
                     schedule_lookup_key.num_polynomials(),
                 )
@@ -546,10 +547,9 @@ mod tests {
         }
 
         #[test]
-        fn cache_file_name_binds_typed_schedule_epoch() {
+        fn cache_file_name_uses_development_v1_namespace() {
             let name = cache_file_name::<Cfg>(16, 4);
-            assert!(name.contains("planner_v8_"), "cache name: {name}");
-            assert!(!name.contains("planner_v7_"), "cache name: {name}");
+            assert!(name.contains("planner_v1_"), "cache name: {name}");
         }
 
         #[test]

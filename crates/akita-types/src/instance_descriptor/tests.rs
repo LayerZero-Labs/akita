@@ -95,7 +95,7 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
 }
 
 #[test]
-fn rejects_pre_topology_descriptor_epoch() {
+fn rejects_non_v1_descriptor_version() {
     let mut descriptor = sample_descriptor();
     descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
     assert!(matches!(
@@ -103,7 +103,9 @@ fn rejects_pre_topology_descriptor_epoch() {
         Err(SerializationError::InvalidData(_))
     ));
 
-    let bytes = descriptor.canonical_bytes().expect("serialize old epoch");
+    let bytes = descriptor
+        .canonical_bytes()
+        .expect("serialize unsupported version");
     assert!(matches!(
         AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &()),
         Err(SerializationError::InvalidData(_))

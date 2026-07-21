@@ -202,9 +202,10 @@ commitment compression.
   arithmetic overflow return `AkitaError` or `SerializationError`.
   Verifier-reachable code does not panic or allocate from unchecked
   schedule-controlled dimensions.
-- Schedule and proof descriptor changes intentionally define a new protocol
-  epoch. Old generated rows, setup artifacts, proofs, and descriptors are not
-  accepted through compatibility shims.
+- Schedule and proof descriptor changes intentionally re-pin the in-development
+  v1 protocol. Akita provides no compatibility guarantee between revisions;
+  old generated rows, setup artifacts, proofs, and descriptors are not accepted
+  through compatibility shims.
 
 ### Non-Goals
 
@@ -648,9 +649,9 @@ pub struct GeneratedRootPrecommittedGroup {
 The precommitted descriptor is part of the schedule lookup key because the
 commitment already exists. Expansion rederives its matrix dimensions, input
 widths, bounds, and flat root-opening geometry and requires descriptor
-equality. The new-epoch descriptor binds the standalone-precommitted role, for
+equality. The current v1 descriptor binds the standalone-precommitted role, for
 which flat challenge security is invariant; it does not expose a selectable
-challenge family. A historical descriptor authorizing tensor use as a
+challenge family. A stale descriptor authorizing tensor use as a
 precommitted group is rejected rather than silently reinterpreted.
 
 ### Witness partitioning
@@ -1529,8 +1530,9 @@ introduced.
   precommitment descriptor and the independently regenerated flat replacement.
 - Require table replay and dynamic planning to produce descriptor-identical
   typed schedules.
-- Bump the instance/proof descriptor epoch once for the combined cutover and
-  reject old schedule, setup, persistence, and proof encodings.
+- Keep the instance/proof descriptor at development version 1, re-pin its
+  fixtures for the combined cutover, and reject stale schedule, setup,
+  persistence, and proof encodings without compatibility shims.
 - Run zero-match checks for the protocol types and identifiers retired in Cuts
   1–3, then validate the regenerated catalogs.
 

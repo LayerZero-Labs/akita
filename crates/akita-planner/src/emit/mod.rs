@@ -310,40 +310,76 @@ fn emit_schedule_entry(
             format!("GeneratedRootFinalChallenge::Tensor {{ fold_low_len: {fold_low_len} }}")
         }
     };
-    let precommitted = entry
-        .root
-        .precommitted_groups
-        .iter()
-        .map(|group| {
-            format!(
-                "GeneratedRootPrecommittedGroup {{ descriptor: {}, commitment: {} }}",
+    writeln!(out, "    GeneratedFoldScheduleEntry {{").map_err(|e| e.to_string())?;
+    writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "            final_group: GeneratedRootFinalGroup {{ layout: {}, source: {}, challenge: {},",
+        emit_key(entry.root.final_group.layout),
+        source,
+        challenge,
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "                commitment: {} }},",
+        emit_committed_group(entry.root.final_group.commitment),
+    )
+    .map_err(|e| e.to_string())?;
+    if entry.root.precommitted_groups.is_empty() {
+        writeln!(out, "            precommitted_groups: &[],").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(out, "            precommitted_groups: &[").map_err(|e| e.to_string())?;
+        for group in entry.root.precommitted_groups {
+            writeln!(
+                out,
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, commitment: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
-                emit_committed_group(group.commitment)
+                emit_committed_group(group.commitment),
             )
-        })
-        .collect::<Vec<_>>()
-        .join(", ");
-    let recursive = entry
-        .recursive_folds
-        .iter()
-        .map(|fold| format!(
-            "GeneratedRecursiveFold {{ witness: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }}",
-            emit_committed_group(fold.witness),
-            emit_open_matrix(fold.open_commit_matrix),
-            emit_setup_prefix(fold.incoming_setup_prefix),
-            emit_partition(fold.witness_partition),
-        ))
-        .collect::<Vec<_>>()
-        .join(", ");
-    writeln!(out,
-        "    GeneratedFoldScheduleEntry {{ root: GeneratedRootFold {{ final_group: GeneratedRootFinalGroup {{ layout: {}, source: {}, challenge: {}, commitment: {} }}, precommitted_groups: &[{}], open_commit_matrix: {}, witness_partition: {} }}, recursive_folds: &[{}], terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }} }} }},",
-        emit_key(entry.root.final_group.layout), source, challenge,
-        emit_committed_group(entry.root.final_group.commitment), precommitted,
-        emit_open_matrix(entry.root.open_commit_matrix), emit_partition(entry.root.witness_partition),
-        recursive, emit_geometry(entry.terminal.geometry),
+            .map_err(|e| e.to_string())?;
+        }
+        writeln!(out, "            ],").map_err(|e| e.to_string())?;
+    }
+    writeln!(
+        out,
+        "            open_commit_matrix: {},",
+        emit_open_matrix(entry.root.open_commit_matrix),
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(
+        out,
+        "            witness_partition: {},",
+        emit_partition(entry.root.witness_partition),
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out, "        }},").map_err(|e| e.to_string())?;
+    if entry.recursive_folds.is_empty() {
+        writeln!(out, "        recursive_folds: &[],").map_err(|e| e.to_string())?;
+    } else {
+        writeln!(out, "        recursive_folds: &[").map_err(|e| e.to_string())?;
+        for fold in entry.recursive_folds {
+            writeln!(
+                out,
+                "            GeneratedRecursiveFold {{ witness: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                emit_committed_group(fold.witness),
+                emit_open_matrix(fold.open_commit_matrix),
+                emit_setup_prefix(fold.incoming_setup_prefix),
+                emit_partition(fold.witness_partition),
+            )
+            .map_err(|e| e.to_string())?;
+        }
+        writeln!(out, "        ],").map_err(|e| e.to_string())?;
+    }
+    writeln!(
+        out,
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }} }},",
+        emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
-    ).map_err(|e| e.to_string())
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out, "    }},").map_err(|e| e.to_string())
 }
 
 fn emit_decomposition(d: akita_types::DecompositionParams) -> String {
@@ -508,6 +544,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
 
     let mut memory_entries: Vec<GeneratedFoldScheduleEntry> = Vec::new();
 
+    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
     writeln!(
         out,
         "pub(crate) static {const_name}: &[GeneratedFoldScheduleEntry] = &["

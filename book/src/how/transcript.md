@@ -33,10 +33,11 @@ Paper reference: §3.5 (`sec:akita-one-step`, transcript binding).
 
 ### Integrator note (Jolt / recursion hosts)
 
-`AKITA_INSTANCE_DESCRIPTOR_VERSION` is **`3`**. This epoch binds the typed
-root/recursive/terminal schedule topology and the direct terminal response.
-Descriptors and proofs from earlier epochs are not accepted. Pin an exact
-Akita git revision and re-run prove/verify integration tests when upgrading.
+`AKITA_INSTANCE_DESCRIPTOR_VERSION` stays at **`1`** during active protocol
+development. Protocol and descriptor changes do **not** increment this constant
+until Akita's first frozen release. There is no compatibility guarantee across
+crate revisions that both identify as v1: pin an exact Akita git revision and
+re-run prove/verify integration tests when upgrading.
 
 After the zk-strip cutover, `SetupSection.protocol_features.zk` is always
 `false` on the wire. Ongoing wire regression is covered by serde roundtrips and
