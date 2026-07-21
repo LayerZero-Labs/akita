@@ -187,6 +187,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
     ProfileMode {
+        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_tensor",
         run: run_profile_onehot_fp128_d64_tensor,
     },
@@ -225,6 +229,10 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
+    },
+    ProfileMode {
+        name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "dense_fp128_d128",
@@ -300,6 +308,7 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_multi_chunk_w4r2",
     "onehot_fp128_d64_multi_chunk_w8r2",
     "onehot_fp128_d64_multi_group_recursive",
+    "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -374,26 +383,54 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
-fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64OneHot;
-    assert_eq!(
-        nv, 32,
-        "onehot_fp128_d64_multi_group_recursive fixes the main group at 32 variables"
-    );
+/// Shared driver for the recursive multi-group profiles. Every such profile
+/// fixes the same shape (two precommitted 16-var singleton groups + a 32-var
+/// main group with 2 polynomials, i.e. `num_polys == 4`); only the base preset
+/// (`Cfg`) and the `layout_note` describing its witness layout differ.
+fn run_recursive_multi_group_mode<
+    const D: usize,
+    Cfg: CommitmentConfig<Field = F, ExtField = F>,
+>(
+    label: &str,
+    layout_note: &str,
+    nv: usize,
+    num_polys: usize,
+) {
+    assert_eq!(nv, 32, "{label} fixes the main group at 32 variables");
     assert_eq!(
         num_polys, 4,
-        "onehot_fp128_d64_multi_group_recursive opens two precommitted singleton groups plus two main polynomials"
+        "{label} opens two precommitted singleton groups plus two main polynomials"
     );
-    let prime = fp128_prime_label();
     tracing::info!(
-        "=== onehot_fp128_d64_multi_group_recursive (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, recursive setup) ===",
-        prime
+        "=== {label} (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
+        fp128_prime_label()
     );
-    run_recursive_multi_group_onehot::<F, { Cfg::D }, Cfg>(
+    run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
+}
+
+fn run_profile_onehot_fp128_d64_multi_group_recursive(nv: usize, num_polys: usize) {
+    type Cfg = fp128::D64OneHot;
+    run_recursive_multi_group_mode::<{ Cfg::D }, Cfg>(
         "onehot_fp128_d64_multi_group_recursive",
-        16,
-        32,
-        2,
+        "recursive setup",
+        nv,
+        num_polys,
+    );
+}
+
+fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
+    nv: usize,
+    num_polys: usize,
+) {
+    // `D64OneHotMultiChunk` is the production W8R2 preset (8 chunks x 2 leading
+    // levels); the recursive adapter (applied inside
+    // `run_recursive_multi_group_onehot`) adds setup offloading.
+    type Cfg = fp128::D64OneHotMultiChunk;
+    run_recursive_multi_group_mode::<{ Cfg::D }, Cfg>(
+        "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+        "recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
+        nv,
+        num_polys,
     );
 }
 

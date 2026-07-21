@@ -576,10 +576,15 @@ pub fn find_group_batch_schedule(
                 continue;
             };
             let root_num_chunks = policy.chunks_at_level(0);
-            if candidate_params
-                .precommitted_groups
-                .iter()
-                .any(|group| group.layout.num_live_blocks < root_num_chunks)
+            // A chunked root fold distributes both the main folded witness and
+            // every precommitted group's folded response across `num_chunks`
+            // block windows, so each needs at least one live block per chunk
+            // (matches the scalar root's `num_live_blocks < num_chunks` skip).
+            if candidate_params.num_live_blocks < root_num_chunks
+                || candidate_params
+                    .precommitted_groups
+                    .iter()
+                    .any(|group| group.layout.num_live_blocks < root_num_chunks)
             {
                 continue;
             }
