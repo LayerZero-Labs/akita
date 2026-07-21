@@ -34,14 +34,13 @@ The existing homogeneous `i32` CRT profile is retained when sufficient;
 otherwise exactly one 14-bit residue modulo 12289 is added. This tail is a
 derived, lazy, non-serialized prepared representation.
 
-The branch has already implemented the arithmetic, terminal cutover, SIMD
-kernels, exactness selection, lazy verifier warming, and removal of obsolete
-partial-split/strided kernel families. Before merge, the transitional NTT cache
-API will be collapsed into one preparation interface with three supported
-layouts: `BothTransforms`, `Negacyclic`, and `NegacyclicWithTail`. The refactor
-must remove parallel base/capability/type-erasure families, prevent invalid
-cache states cheaply, and keep backend-specific prepared storage out of the
-protocol and compute-backend contracts.
+The branch implements the arithmetic, terminal cutover, SIMD kernels,
+exactness selection, lazy verifier warming, unified NTT cache, and removal of
+obsolete partial-split/strided kernel families. The final cache API has one
+preparation function and two request modes. It derives exactly three physical
+layouts: base negacyclic plus cyclic transforms, exact base-only negacyclic
+transforms, or exact negacyclic transforms with one i16 tail. CPU cache storage
+remains outside protocol and compute-backend traits.
 
 ## Intent
 
@@ -204,28 +203,29 @@ The protocol has no consumer for either. Constructors remain private, and a
 cheap internal validation checks the option combination and vector lengths at
 the preparation boundary.
 
-The final field-profile erasure is one enum:
+Field-profile erasure uses one enum. Each variant owns the same logical fields;
+the CRT limb count remains statically typed:
 
 ```rust
 pub enum PreparedNttCache<const D: usize> {
-    Q32(PreparedNttData<Q32_NUM_PRIMES, D>),
-    Q64(PreparedNttData<Q64_NUM_PRIMES, D>),
-    Q128(PreparedNttData<Q128_NUM_PRIMES, D>),
-}
-
-struct PreparedNttData<const K: usize, const D: usize> {
-    params: CrtNttParamSet<i32, K, D>,
-    negacyclic: Vec<CyclotomicCrtNtt<i32, K, D>>,
-    cyclic: Option<Vec<CyclotomicCrtNtt<i32, K, D>>>,
-    tail: Option<I16Tail<K, D>>,
+    Q32 {
+        neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
+        cyc: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
+        params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
+        tail: Option<PreparedI16Tail<Q32_NUM_PRIMES, D>>,
+        exact: bool,
+    },
+    // Q64 and Q128 have the same fields with their canonical limb counts.
 }
 ```
 
-`I16Tail` is the one justified private helper. It keeps the 12289 parameters,
-negacyclic tail transforms, and mixed reconstruction constants together. The
-base and tail remain physically homogeneous arrays so scalar, AVX2, AVX-512,
-NEON, Metal, and CUDA implementations can choose native kernels independently.
-No public `MixedCrtNtt` aggregate is required.
+`PreparedI16Tail` is public only because `PreparedNttCache` crosses crate
+boundaries; it is hidden from documentation and its fields and construction
+remain private. It keeps the 12289 parameters, negacyclic tail transforms, and
+mixed reconstruction constants together. The base and tail remain physically
+homogeneous arrays so scalar, AVX2, AVX-512, NEON, Metal, and CUDA
+implementations can choose native kernels independently. There is no public
+mixed-residue element type.
 
 Runtime `D` erasure uses standard Rust type erasure:
 
@@ -277,12 +277,11 @@ layout without implementing Akita's CPU structs or reproducing its cache
 registry. Correctness is the named operation output plus the exactness
 contract, not a particular row-major/AoS/SoA buffer.
 
-The initial refactor uses separate homogeneous base and tail vectors. It must be
-benchmarked against the current aggregate representation before cutover. If the
-measured hot terminal kernel regresses materially, the private physical layout
-may retain an aggregate or tiled form while preserving the single public cache
-contract. Layout aesthetics are not grounds for accepting a performance
-regression.
+The final implementation uses separate homogeneous base and tail vectors. This
+preserves the existing mixed-matvec arithmetic while allowing the tail prefix
+to be shorter than the base prefix. Future private tiling or batching may
+change that physical layout, but it must preserve the single public cache
+contract and the exactness selector.
 
 ### Invariants
 
@@ -367,12 +366,14 @@ flowchart LR
     V --> Q[direct terminal relation]
 ```
 
-### Implemented on the current branch
+### Implemented branch surface
 
-This inventory describes merge-base diff
-`e131faf48938b975ca63b12b59ac6d86894048e0...8896ed2bf5e0983a40105ec60d7792263cc9c682`
-(58 files, 2,387 insertions, 3,054 deletions). It is a design checkpoint, not a
-claim that the PR is complete.
+This inventory describes the implementation through code head
+`63138d816fd5fa8d1205705c3972296703cfe396`, based on
+`e131faf48938b975ca63b12b59ac6d86894048e0`. At that checkpoint the complete
+merge-base diff changed 72 files with 3,686 insertions and 3,498 deletions. A
+subsequent documentation-only commit may change the final head and line count
+without changing this implementation inventory.
 
 | Area | Before | Current branch state | Consequence |
 | --- | --- | --- | --- |
@@ -389,7 +390,10 @@ claim that the PR is complete.
 | Strided digit paths | duplicate strided balanced/raw kernels and block-parallel variants | deleted; canonical block-major paths used | smaller kernel surface without removing production behavior |
 | Linear wrappers | trusted/pass-through digit matvec wrappers and duplicate modules | removed or called directly through canonical `ntt_matvec` functions | less wrapper slop and fewer call graphs to optimize |
 | Sparse-ring A rows | temporary vector of row slices | `RingMatrixView::rows()` used directly | removes an avoidable allocation while preserving sparse sweep behavior |
-| Docs/profile artifacts | L6 and partial-split assumptions | L8 i8 range, i16 mapping, exact bound, tail behavior, and removed baselines documented | repository narrative matches the new arithmetic contract |
+| Unified prepared cache | parallel base/capability enums, duplicate builders, custom runtime-D erasure | one `NttCacheMode`, one `prepare_ntt_cache`, one `PreparedNttCache`, checked `Any` erasure | callers request work while physical layout remains derived and validated |
+| Verifier cache prefixes | base and tail entries could duplicate base transforms | one covering base prefix plus the independently largest tail-required prefix | mixed terminal groups neither duplicate the base nor overbuild the tail |
+| Backend boundary | compute-backend traits exposed CPU prepared-slot types | CPU owns erased prepared caches internally; protocol/backend traits request named work | downstream Metal, CUDA, and custom backends do not implement CPU cache structs |
+| Docs/profile artifacts | L6 and partial-split assumptions | L8 i8 range, i16 mapping, exact bound, tail behavior, cache layouts, and removed baselines documented | repository narrative matches the new arithmetic contract |
 
 Primary implemented files:
 
@@ -397,56 +401,44 @@ Primary implemented files:
   decomposition and i16 APIs.
 - `crates/akita-algebra/src/ntt/`: 12289 table plus AVX2/NEON/scalar i16 work.
 - `crates/akita-algebra/src/ring/crt_ntt_repr/`: homogeneous base operations,
-  transitional mixed representation, reconstruction, and matvec.
-- `crates/akita-types/src/ntt_cache.rs`: transitional exactness selector,
-  builders, prepared slots, and verifier cache.
+  private base-plus-tail reconstruction, and signed matvecs.
+- `crates/akita-types/src/ntt_cache.rs`: canonical exactness selector, unified
+  preparation API, prepared layouts, checked type erasure, and verifier cache.
 - `crates/akita-types/src/proof/setup.rs`: derived verifier-cache access.
 - `crates/akita-verifier/src/protocol/core/terminal_{direct,ntt}.rs`: i16
   boundary and terminal relation kernel.
 - `crates/akita-verifier/src/protocol/core/verify.rs`: schedule-level warming.
 - `crates/akita-prover/src/kernels/linear/`: canonicalized i8 kernel surface.
 - `crates/akita-pcs/benches/ring_ntt.rs`: residue, mixed matvec,
-  reconstruction, LUT, and terminal comparisons.
+  reconstruction, LUT, terminal, and cache-construction comparisons.
+- `crates/akita-pcs/benches/ntt_matvec.rs`: rank, width, ring-degree, common
+  basis, and equal-I/O scaling grid.
 
-### Remaining NTT cache refactor
+### Final cache-refactor surface
 
-The current code proves the behavior but has a transitional type surface:
-
-- `ProtocolCrtNttParams` and `ProtocolCrtNttCapability`;
-- `PreparedNttSlot` and `PreparedNttCapabilitySlot`;
-- `PreparedNttSlotAny`, `PreparedNttCapabilitySlotAny`, and
-  `PreparedVerifierNttSlotAny`;
-- duplicated runtime-`D` macros and checked-then-unsafe pointer casts;
-- `CrtAccumulationProfile` as a caller-visible physical-choice enum;
-- `MixedCrtNtt` and `MixedCrtNttParamSet` as public aggregate types;
-- three public builder functions for overlapping preparation concepts; and
-- separate base and tail verifier cache entries that may duplicate base
-  transforms for a mixed-profile schedule.
-
-Before merge, replace that surface with the unified contract above.
-
-| File/area | Required diff |
+| File/area | Final state |
 | --- | --- |
-| `akita-types/src/ntt_cache.rs` | introduce `NttCacheMode`, `PreparedNttCache`, and the single `prepare_ntt_cache`; make layout derivation/private validation canonical; coalesce terminal requirements; use checked `Any` downcasts; remove capability/profile/Any families and duplicate builders |
-| `akita-types/src/lib.rs` | export only the small stable cache surface needed across crates; stop exporting transitional mixed/capability types |
-| `akita-types/src/proof/setup.rs` | request an exact negacyclic cache by `(prefix, width, log_basis)` and return/borrow the unified prepared cache without exposing physical profile enums |
-| `akita-algebra/src/ring/crt_ntt_repr/mixed.rs` | fold mixed accumulation/reconstruction into operations over base arrays plus private `I16Tail`; remove public aggregate types if the benchmarked private layout permits |
-| `akita-algebra/src/ring/crt_ntt_repr/ops.rs` | keep one shape-checked signed-i16 matvec entry that dispatches base-only or base-plus-tail internally |
-| `akita-verifier/src/protocol/core/terminal_ntt.rs` | remove nested profile/slot matches; warm one strongest covering layout and call the unified i16 operation |
-| `akita-prover/src/compute/backend.rs` | remove `with_ntt_slot` from the backend trait |
-| `akita-prover/src/compute/cpu.rs` | keep erased cache storage CPU-private and use checked downcasts internally |
-| `akita-prover/src/compute/delegating_cpu.rs` | delete the cache pass-through wrapper |
-| prover linear kernels | mechanically consume typed CPU cache data inside the CPU implementation; do not reintroduce a public slot wrapper |
-| tests/benches/docs | rename around the final vocabulary; add layout/coalescing/type-erasure tests; compare private base+tail layouts; update the book and this spec |
+| `akita-types/src/ntt_cache.rs` | `NttCacheMode`, `PreparedNttCache`, and `prepare_ntt_cache` own request validation, exact layout derivation, coalesced verifier prefixes, checked `Any` downcasts, and cache-byte accounting |
+| `akita-types/src/lib.rs` | exports the unified cache surface and canonical base-profile selector; removed capability/profile/slot families have no aliases |
+| `akita-types/src/proof/setup.rs` | requests an exact negacyclic prefix by `(base prefix, tail prefix, width, log_basis)` without exposing a physical profile enum |
+| `akita-algebra/src/ring/crt_ntt_repr/mixed.rs` | keeps only `I16TailParams` and one shape-checked operation over separate base and tail slices; the public aggregate element type is gone |
+| `akita-algebra/src/ring/crt_ntt_repr/ops.rs` | owns the homogeneous signed-i16 matvec and common SIMD pointwise dispatch |
+| `akita-verifier/src/protocol/core/terminal_ntt.rs` | coalesces terminal group requirements during warm-up and invokes the unified signed-i16 cache operation |
+| `akita-prover/src/compute/` | CPU caches use checked standard type erasure internally; compute-backend traits and delegating wrappers no longer expose prepared NTT slots |
+| prover linear kernels | consume typed prepared caches inside CPU execution and call canonical algebra operations directly |
+| tests/benches/docs | cover layout selection, prefix reuse, type mismatch rejection, scaling, cache construction, and final vocabulary |
 
-The intended stable vocabulary is:
+The stable vocabulary is:
 
 - request: `NttCacheMode`;
 - modes: `BothTransforms`, `ExactNegacyclic`;
 - prepared object: `PreparedNttCache`;
 - derived layouts: `BothTransforms`, `Negacyclic`,
   `NegacyclicWithTail`;
-- private tail payload: `I16Tail`.
+- hidden tail payload: `PreparedI16Tail`;
+- mixed reconstruction parameters: `I16TailParams`.
+
+Neither tail type exposes a second caller-selectable cache family.
 
 Do not preserve removed names as aliases. Akita makes no backward-compatibility
 guarantee, and aliases would recreate the ambiguity this refactor removes.
@@ -455,7 +447,7 @@ guarantee, and aliases would recreate the ambiguity this refactor removes.
 
 ### Acceptance Criteria
 
-Completed on the current branch:
+Implementation criteria completed on the current branch:
 
 - [x] Balanced i8 decomposition supports L7 and L8 with exact round-trip.
 - [x] Balanced i16 decomposition supports L10 and L11 with exact intervals and
@@ -484,38 +476,38 @@ Completed on the current branch:
 - [x] Sparse-ring row traversal avoids the temporary row-slice allocation.
 - [x] Book foundations/verification prose and the generated CRT capacity
       artifact reflect i8-through-L8 and exact i16 capability.
-
-Required before merge:
-
-- [ ] Replace the transitional cache families with `NttCacheMode`, one
+- [x] Replace the transitional cache families with `NttCacheMode`, one
       `prepare_ntt_cache`, and `PreparedNttCache`.
-- [ ] Represent exactly the three supported layouts and reject every other
+- [x] Represent exactly the three supported layouts and reject every other
       option combination at the private construction boundary.
-- [ ] Replace runtime-D enum macros and pointer casts with checked `Any`
+- [x] Replace runtime-D enum macros and pointer casts with checked `Any`
       downcasts; add mismatch/no-panic tests.
-- [ ] Coalesce multi-group terminal warm requirements into one cache object
+- [x] Coalesce multi-group terminal warm requirements into one cache object
       with the largest required base prefix and the independently largest
       tail-required prefix, without duplicating base transforms or overbuilding
       tail transforms.
-- [ ] Prove by instrumentation/tests that base-only/i8 schedules construct no
+- [x] Prove by instrumentation/tests that base-only/i8 schedules construct no
       tail and no unused cyclic transforms; tail schedules construct the tail
       only once.
-- [ ] Remove `CrtAccumulationProfile`, `ProtocolCrtNttCapability`, all
+- [x] Remove `CrtAccumulationProfile`, `ProtocolCrtNttCapability`, all
       `Prepared*Ntt*Any` transitional enums, public mixed aggregate types, and
       duplicate builder functions.
-- [ ] Remove `ComputeBackendSetup::with_ntt_slot` and its delegating wrapper so
+- [x] Remove `ComputeBackendSetup::with_ntt_slot` and its delegating wrapper so
       CPU prepared-cache types do not constrain downstream backends.
-- [ ] Benchmark the private separate-base/tail layout against the current
-      aggregate terminal baseline; retain the faster private physical layout
-      if separation materially regresses the hot path.
+- [x] Preserve the measured separate-base/tail terminal arithmetic across the
+      cache refactor and add benchmarks for all three final cache layouts.
 - [x] Add a dedicated Q128 NTT-matvec benchmark that sweeps rank, ring degree,
       and accumulation width across the production i8/L8 path and unified i16
       L8/L10/L11 paths, without a protocol fixture.
+
+Final merge evidence still required:
+
 - [ ] Run complete generated-schedule drift checks and confirm this PR changes
       capability tests but not catalog policy/output.
-- [ ] Complete all repository preflight, feature-matrix clippy, focused,
-      broader, no-panic, documentation, and relevant portability checks on the
-      final refactored head.
+- [x] Run every locally available cheap repository preflight check on the final
+      documentation head; record unavailable tools explicitly.
+- [ ] Complete feature-matrix Clippy, focused, broader, no-panic, and relevant
+      portability checks on the final refactored head.
 - [ ] Update the spec header to the PR number and `implemented` only when every
       required criterion is complete.
 
@@ -527,7 +519,7 @@ arithmetic, not another CRT path, as the oracle.
 | Property | Coverage |
 | --- | --- |
 | digit interval and recomposition | L7/L8 i8; L10/L11 i16; field boundary coefficients; every supported field width |
-| NTT backend equivalence | scalar versus AVX2 and NEON for 12289; forward/inverse round-trip; pointwise accumulation; negative Montgomery representatives |
+| NTT backend equivalence | scalar versus AVX2 for production 12289; NEON differential coverage for the same i16 arithmetic class at 13697; forward/inverse round-trip; pointwise accumulation; negative Montgomery representatives |
 | CRT exactness | widths immediately below/at/above base capacity; base-plus-tail capacity; strict inequality boundary |
 | signed matvec | Q32/Q64/Q128; multiple D values; zero columns; multiple rows; `i16::MIN`, `i16::MAX`, -1, 0, 1, L10/L11 extremes |
 | malformed shapes | RHS length mismatch, matrix-prefix undersize, multiplication overflow, unsupported D/profile, runtime downcast mismatch |
@@ -551,13 +543,15 @@ sweeping the third:
 | `equal_output/output512` | 64, 128, 256, 512 | 8, 4, 2, 1 | 128, 256, 512, 1024 |
 | `equal_io/input65536_output512` | 64, 128, 256, 512 | 8, 4, 2, 1 | 1024, 512, 256, 128 |
 
-Each shape measures the existing prover i8/L8 path and the unified signed-i16
-path at L8, L10, and L11. The L8 cases use identical digits and must produce
-identical outputs before timing begins. The benchmark label records whether
-the exact i16 selector chose the base residues alone or the optional 12289
-tail. Matrix generation and prepared-cache construction are outside the timed
-region. Digit validation and transformation, pointwise matrix accumulation,
-inverse transforms, CRT reconstruction, and output allocation are inside it.
+The rank and width grids measure the existing prover i8/L8 path and the unified
+signed-i16 path at L8, L10, and L11. The equal-output and equal-I/O grids compare
+i8 and i16 at every common L2..L8 basis, then measure the i16-only L10/L11
+cases. Common-basis cases use identical digits and must produce identical
+outputs before timing begins. The benchmark label records whether the exact
+i16 selector chose the base residues alone or the optional 12289 tail. Matrix
+generation and prepared-cache construction are outside the timed region. Digit
+validation and transformation, pointwise matrix accumulation, inverse
+transforms, CRT reconstruction, and output allocation are inside it.
 
 The equal-output group compares D64/rank-8, D128/rank-4, D256/rank-2, and
 D512/rank-1, which all return 512 field coefficients, at widths 128 through
@@ -591,9 +585,9 @@ validation. Allocation sizes are derived only after schedule/setup shape checks.
 
 ### Performance and memory
 
-Measurements below were collected during development on Apple Silicon/NEON and
-describe the current aggregate implementation, not the final cache-refactor
-head. They are local evidence, not cross-machine release claims.
+Measurements in this section are local Apple Silicon/NEON evidence, not
+cross-machine release claims. The first table records the pre-unification
+decision checkpoint that selected the mixed-width arithmetic:
 
 | Operation | Base/reference | i16/mixed | Result |
 | --- | ---: | ---: | ---: |
@@ -613,6 +607,38 @@ pointwise multiplication is retained; applying the same approach throughout
 dependency-heavy D64 butterflies regressed round-trip time by about 8%, so the
 measured four-lane widening transform remains.
 
+The final implementation head `63138d816fd5fa8d1205705c3972296703cfe396`
+added D64/D128/D256/D512 equal-I/O coverage. A diagnostic run used the checked-in
+Criterion settings: 10 samples, 200 ms warm-up, and a 1 second measurement
+window. Comparing ordinary NEON dispatch with a separate process using
+`AKITA_SCALAR_NTT=1` produced these medians for the Q128 L10 tail path:
+
+| Equal-I/O shape | NEON dispatch | Forced scalar | Scalar / NEON |
+| --- | ---: | ---: | ---: |
+| D64/rank-8/width-1024 | 12.30 ms | 21.67 ms | 1.76x |
+| D128/rank-4/width-512 | 10.01 ms | 14.99 ms | 1.50x |
+| D256/rank-2/width-256 | 7.29 ms | 17.86 ms | 2.45x |
+| D512/rank-1/width-128 | 7.92 ms | 15.96 ms | 2.01x |
+
+This shows that the available NEON kernels materially accelerate the complete
+matvec. It does not establish a stable ranking between ring degrees. The same
+D512 NEON case measured 3.24 ms in an earlier invocation on the shared host,
+and several intervals were broad. Optimization decisions require longer,
+alternating paired runs on an otherwise idle machine.
+
+The existing D64 single-residue microbench gave a different signal:
+
+| Forward plus inverse | NEON dispatch | Forced scalar | NEON / scalar |
+| --- | ---: | ---: | ---: |
+| i32 base residue | 1.313 us | 1.180 us | 1.11x |
+| i16 residue modulo 12289 | 0.954 us | 0.861 us | 1.11x |
+
+At this checkpoint the complete matvec therefore benefits from SIMD even
+though the isolated transform did not. The likely source is the mature NEON
+pointwise path: i32 processes four lanes and i16 processes eight, whereas the
+i16 transform uses four-lane widening and scalar `len = 2, 1` stages. This is a
+profiling hypothesis, not a demonstrated attribution.
+
 For 256 prepared D256 rings in a debug construction diagnostic:
 
 | Profile | Base | Base plus tail | Exact byte delta |
@@ -623,36 +649,50 @@ For 256 prepared D256 rings in a debug construction diagnostic:
 The byte delta is exactly `256 * 256 * 2`. Relative cache growth is 25% for
 Q32, 16.7% for Q64, and 10% for Q128. Serialized setup growth is zero.
 
-The final refactor must report, on one exact head and machine:
+`ring_ntt` also benchmarks construction of the final `BothTransforms`, exact
+base-only, and exact base-plus-tail layouts over 1,024 production D64 rings.
+`PreparedNttCache::cache_bytes` and allocation tests establish structural
+footprint: a tail adds exactly `tail_prefix_len * D * 2` bytes, and base-only
+schedules allocate zero tail bytes. Cache construction may grow only in
+proportion to transforms actually requested.
 
-1. construction time and resident/structural bytes for all three layouts;
-2. base-only versus tail terminal matvec latency at D64 and at least one larger
-   D;
-3. current aggregate versus proposed separate-base/tail physical layout;
-4. scalar and available SIMD backend results; and
-5. confirmation that base-only schedules allocate zero tail bytes.
+### Deferred kernel hypotheses and future work
 
-The terminal hot-kernel target is no material regression from the current
-191.0 us local baseline under an equivalent fixture. Any regression above 5%
-requires profiling and an explicit design decision in this spec; noise must be
-resolved with repeated paired measurements. Cache construction may grow only
-in proportion to transforms actually requested.
+These items are deliberately outside this PR. They are hypotheses to test with
+component benchmarks before changing arithmetic or prepared layout.
 
-### Validation status at the design checkpoint
+| Direction | Hypothesis and required evidence |
+| --- | --- |
+| component benchmark grid | Add forward, inverse, pointwise, LUT conversion, reconstruction, and complete-matvec measurements for D64/D128/D256/D512, i32 base primes, and production 12289. Use longer alternating SIMD/scalar runs before drawing a ring-degree conclusion. |
+| NEON i16 small stages | A fused vector forward tail for `len = 2, 1` can remove `D` scalar Montgomery products per RHS transform and the final full-array reduction. A vector inverse head should be evaluated separately because terminal widths make forward work dominant. |
+| NEON lane scheduling | Unrolling independent four-lane widening operations may hide multiply latency without the D64 regression observed for blanket eight-lane butterflies. Test eight-lane direct arithmetic first on streaming twists and then only on selected wide stages. |
+| batched RHS columns | Preparing and accumulating several columns together may reduce accumulator traffic and expose independent Montgomery chains, especially for rank-1 D512. Measure register pressure and temporary-cache footprint for each field tier. |
+| validated LUT access | `CenteredMontLut` exactly covers the data-derived bound, so an internally unchecked lookup after boundary validation may remove redundant per-coefficient `Option` handling. Preserve verifier rejection at the outer boundary. |
+| AVX2 i32 stages | The pointwise path already has an eight-lane Montgomery primitive. Evaluate eight lanes for transform stages `len >= 8`, four lanes at `len = 4`, and the existing fused tail. |
+| AVX2/AVX-512 i16 | Replace AVX2 scalar stages below `len = 16` with width-aware or fused stages before considering a 32-lane AVX-512BW kernel. AVX-512 frequency effects require machine-specific measurement. |
+| backend tests | Extend production-prime i16 differential tests through D512, add D512 AVX-512 transform coverage, and keep scalar arithmetic authoritative. |
 
-The current checkpoint predates the unified-cache refactor. Evidence must not
-be presented as final PR validation.
+No future optimization may bake one common ring degree into the abstraction,
+make the tail unconditional, expose CPU storage through backend traits, or
+weaken the verifier no-panic boundary.
 
-- formatting, focused algebra/prover/verifier/config tests, `single_poly_e2e`,
-  documentation guardrails, and generated all-schedules drift completed on the
-  branch during development;
-- one formerly failing multi-group terminal test passed after correcting warm
-  geometry;
-- the full workspace run exposed that warm-geometry issue and was not rerun to
-  completion after the fix;
-- a second long multi-group test was intentionally interrupted before commit;
-  it is not passing evidence;
-- the exact CI clippy matrix must be rerun after the final cache refactor.
+### Validation status
+
+- Formatting, focused algebra/prover/verifier/config tests, `single_poly_e2e`,
+  documentation guardrails, and generated all-schedules drift completed during
+  earlier implementation checkpoints.
+- The documentation-completion commit passed `cargo fmt --all --check`, both
+  Rust line-cap checks, all 28 script unit tests, dependency-hygiene checks for
+  `akita-verifier`, `akita-prover`, `akita-config`, `akita-planner`, and
+  `akita-setup`, `typos`, and the documentation guardrails. The guardrail script
+  skipped its optional mdBook build because `mdbook` is not installed.
+- `taplo fmt --check` and `cargo machete --with-metadata` were attempted but
+  could not run because `taplo` and `cargo-machete` are not installed in the
+  local environment.
+- This documentation pass does not rerun the full test suite or Clippy matrix.
+- Full generated-schedule drift, feature-matrix Clippy, broader tests, and
+  portability remain merge-gate evidence rather than claims of this
+  documentation pass.
 
 All live commands used as final evidence must be polled to a real exit code.
 
