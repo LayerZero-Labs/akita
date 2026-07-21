@@ -89,3 +89,33 @@ introducing PR lands, it is compared against merge-base like the other rows.
 
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.
+
+## NTT matvec microbenchmarks
+
+Use the `ntt_matvec` Criterion target to compare the production i8/L8
+commitment kernel with the unified i16 kernel independently of proof setup,
+transcript work, and planner policy:
+
+```bash
+cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
+cargo bench -p akita-pcs --bench ntt_matvec -- width
+```
+
+The first group sweeps ring degrees 32, 64, 128, and 256 and output ranks 1,
+2, 4, and 8 at width 128. The second sweeps widths 8 through 256 at D64 and
+rank 4. Every shape includes the current i8/L8 prover path and unified i16
+L8/L10/L11 paths. Labels state whether the exact i16 path uses only the base
+CRT residues or also the optional i16 tail.
+
+Prepared-cache construction is not timed. The measured work includes digit
+validation and transformation, pointwise accumulation, inverse transforms,
+CRT reconstruction, and output allocation. Criterion throughput counts
+`rank * width * D` coefficient-products. Use a shape filter for quick paired
+measurements:
+
+```bash
+cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
+```
+
+These are kernel measurements, not protocol timings. Use the profile harness
+above for end-to-end proof measurements.

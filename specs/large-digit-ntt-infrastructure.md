@@ -344,6 +344,9 @@ regression.
    but the CPU layout remains an implementation detail.
 9. Reworking planner/security pricing beyond exposing the one canonical
    implementability contract needed by the follow-up planner PR.
+10. Adding a protocol-level benchmark fixture. This PR measures the NTT matvec
+    kernel directly so rank, ring degree, accumulation width, digit storage,
+    and exactness-tail selection can be varied independently.
 
 ## Architecture and Change Surface
 
@@ -505,9 +508,9 @@ Required before merge:
 - [ ] Benchmark the private separate-base/tail layout against the current
       aggregate terminal baseline; retain the faster private physical layout
       if separation materially regresses the hot path.
-- [ ] Run an end-to-end commit/open/verify fixture whose arithmetic explicitly
-      exercises L10 or L11 infrastructure, without changing production planner
-      catalogs.
+- [x] Add a dedicated Q128 NTT-matvec benchmark that sweeps rank, ring degree,
+      and accumulation width across the production i8/L8 path and unified i16
+      L8/L10/L11 paths, without a protocol fixture.
 - [ ] Run complete generated-schedule drift checks and confirm this PR changes
       capability tests but not catalog policy/output.
 - [ ] Complete all repository preflight, feature-matrix clippy, focused,
@@ -534,6 +537,39 @@ arithmetic, not another CRT path, as the oracle.
 | protocol | single- and multi-group commit/open/verify; terminal A relation matches direct ring arithmetic; tampered terminal witness rejected |
 | catalog | every generated terminal has a supported exact capability; generator drift is clean; no new L10/L11 entries in this PR |
 | portability | scalar-only build; x86 AVX2 on AVX2/AVX-512-capable hosts; aarch64 NEON; no backend trait dependency on CPU cache structs |
+
+### NTT matvec benchmark
+
+`crates/akita-pcs/benches/ntt_matvec.rs` is the canonical scaling benchmark for
+this PR. It uses the production Q128 field and holds two axes fixed while
+sweeping the third:
+
+| Group | Ring degrees | Ranks | Accumulation widths |
+| --- | --- | --- | --- |
+| `rank_ring_dim` | 32, 64, 128, 256 | 1, 2, 4, 8 | 128 |
+| `width` | 64 | 4 | 8, 16, 32, 64, 128, 256 |
+
+Each shape measures the existing prover i8/L8 path and the unified signed-i16
+path at L8, L10, and L11. The L8 cases use identical digits and must produce
+identical outputs before timing begins. The benchmark label records whether
+the exact i16 selector chose the base residues alone or the optional 12289
+tail. Matrix generation and prepared-cache construction are outside the timed
+region. Digit validation and transformation, pointwise matrix accumulation,
+inverse transforms, CRT reconstruction, and output allocation are inside it.
+
+Criterion reports throughput in coefficient-products, `rank * width * D`, so
+results across shapes can be normalized without hiding their absolute
+latency. Run the complete groups or one representative shape with:
+
+```bash
+cargo bench -p akita-pcs --bench ntt_matvec -- rank_ring_dim
+cargo bench -p akita-pcs --bench ntt_matvec -- width
+cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
+```
+
+This benchmark is kernel evidence, not a protocol performance claim. Protocol
+profiling remains the responsibility of the existing `examples/profile`
+harness after planner-emitted L10/L11 schedules exist.
 
 Verifier fuzz/no-panic coverage must include malformed serialized terminal
 witnesses and descriptors that maximize claimed lengths before boundary
@@ -689,7 +725,7 @@ tradeoff. It must not reproduce the capacity formula in planner-local code.
 | backend portability | `crates/akita-prover/src/compute/backend.rs`, `cpu.rs`, `delegating_cpu.rs` |
 | dead-code cutover | deleted `partial_split_ntt.rs`; `crates/akita-prover/src/kernels/linear/` |
 | schedule capability | `crates/akita-config/src/proof_optimized/tests.rs` |
-| benchmarks | `crates/akita-pcs/benches/ring_ntt.rs` |
+| benchmarks | `crates/akita-pcs/benches/ntt_matvec.rs`, `crates/akita-pcs/benches/ring_ntt.rs` |
 | generated capacity artifact | `scripts/gen_crt_capacity_profile.py`, `docs/crt-ntt-capacity-profile.md` |
 
 ## References
