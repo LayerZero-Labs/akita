@@ -401,6 +401,15 @@ Tracked so they are not silently lost. Each notes a fix path.
    `--test verifier_differential`). *Fix:* update the stale field access in that
    test; likely belongs to whichever PR renamed the field. Untouched here.
 
+4. **`use super::*` glob: `fold.rs` deferred.** Phase 2 replaced the production
+   `use super::*` wall with explicit imports in `verify.rs`, `root_fold.rs`, and
+   `suffix.rs` (which also let `core.rs` shed the imports that existed only to
+   feed those globs). `fold.rs`'s glob is intentionally left until the M-eval PR
+   lands: `fold.rs` is the per-fold engine that directly drives stage-2 and the
+   relation evaluation, so de-globbing it now (a large import-block rewrite)
+   would collide with that PR. `core.rs` stays a partial import wall until then.
+   Test-module `#[cfg(test)] use super::*;` globs are left as idiomatic.
+
 **Hands-off constraint (active).** A separate PR is in flight reworking the
 verifier's **M (relation-matrix) evaluation logic**, which spans `stages/stage2`,
 `stages/stage3`, the setup-contribution artifacts (`protocol/slice_mle/**`,

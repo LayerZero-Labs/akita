@@ -1,5 +1,22 @@
-use super::*;
-use akita_types::{dispatch_for_field, Commitment, RingView};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, MulBaseUnreduced, RandomSampling,
+};
+use akita_serialization::AkitaSerialize;
+use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
+use akita_transcript::{append_ext_field, Transcript};
+use akita_types::{
+    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
+    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
+    sample_public_row_coefficients, AkitaVerifierSetup, BasisMode, Commitment,
+    ExtensionOpeningReductionProof, FoldLevelProof, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, RelationMatrixRowLayout, RingVec, RingView, SetupSumcheckProof,
+};
+
+use super::{
+    verify_fold, verify_fold_eor, FoldVerifyOutput, PreparedFoldPayload, PreparedFoldReplay,
+    PreparedNextWitness,
+};
 
 /// Verify the folded root proof payload.
 ///

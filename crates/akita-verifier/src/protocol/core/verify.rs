@@ -1,5 +1,5 @@
+use super::root_fold::verify_root;
 use super::suffix::{verify_suffix, SuffixVerifierState, SuffixWitnessState};
-use super::*;
 // Top-level batched verifier orchestration once a schedule is selected.
 
 use akita_config::{
@@ -7,8 +7,8 @@ use akita_config::{
     CommitmentConfig,
 };
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FrobeniusExtField, FromPrimitiveInt, HalvingField,
-    PseudoMersenneField, RandomSampling,
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
@@ -174,8 +174,8 @@ where
 }
 
 use akita_types::{
-    dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup,
-    BasisMode, Commitment, FpExtEncoding, OpeningClaims, Schedule,
+    dispatch_for_field, raw_field_segment_bytes, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaVerifierSetup, BasisMode, Commitment, FpExtEncoding, OpeningClaims, Schedule,
 };
 
 fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(

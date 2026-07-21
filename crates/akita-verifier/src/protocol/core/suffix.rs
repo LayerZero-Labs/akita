@@ -1,5 +1,23 @@
-use super::*;
-use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+    HalvingField, MulBaseUnreduced, PseudoMersenneField, RandomSampling,
+};
+use akita_serialization::AkitaSerialize;
+use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
+use akita_transcript::{append_ext_field, Transcript};
+use akita_types::{
+    dispatch_for_field, prepare_opening_point, raw_field_segment_bytes, AkitaStage1Proof,
+    AkitaStage2Proof, AkitaVerifierSetup, BasisMode, BatchedStage3Geometry, ExecutionSchedule,
+    ExtensionOpeningReductionProof, FoldLevelProof, FpExtEncoding, LevelParams, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint,
+    RelationMatrixRowLayout, RingVec, RingView, Schedule, SegmentTypedWitness, SetupSumcheckProof,
+    TerminalLevelProof,
+};
+
+use super::{
+    prepare_terminal_witness_replay, verify_fold, verify_fold_eor, FoldEorReplay,
+    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, SetupPrefixOpening,
+};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
