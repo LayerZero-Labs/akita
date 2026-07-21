@@ -9,7 +9,7 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
 use akita_field::parallel::*;
@@ -55,7 +55,7 @@ fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError> {
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(depth_open, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(depth_open, log_basis, q);
     let total_rows: usize = pre_folded_e.iter().map(|rows| rows.len()).sum();
     let mut e_hat = DigitBlocks::zeroed(vec![depth_open; total_rows], D)?;
     let mut offset = 0usize;

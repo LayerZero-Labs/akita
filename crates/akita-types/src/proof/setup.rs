@@ -134,14 +134,20 @@ impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
     pub fn prepared_verifier_ntt_prefix<const D: usize>(
         &self,
         num_ring_elements: usize,
-    ) -> Result<Arc<crate::PreparedNttSlotAny>, AkitaError> {
+        tail_num_ring_elements: usize,
+        width: usize,
+        log_basis: u32,
+    ) -> Result<Arc<crate::PreparedNttCache<D>>, AkitaError> {
         let key = crate::NttCacheKey {
             ring_d: D,
             num_ring_elements,
         };
-        self.verifier_ntt.prepare(key, || {
-            crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)
-        })
+        self.verifier_ntt.prepare::<F, D>(
+            &self.expanded,
+            key,
+            tail_num_ring_elements,
+            crate::NttCacheMode::ExactNegacyclic { width, log_basis },
+        )
     }
 }
 

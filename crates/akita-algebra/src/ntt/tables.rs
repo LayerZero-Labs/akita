@@ -40,6 +40,17 @@ pub const Q128_NUM_PRIMES: usize = 5;
 /// Protocol modulus `q = 2^128 - 275`.
 pub const Q128_MODULUS: u128 = u128::MAX - 274;
 
+/// Universal 14-bit tail prime for exact CRT accumulation.
+///
+/// `12289 - 1 = 3 * 2^12`, so negacyclic transforms are available through
+/// `D = 2048`, covering every protocol ring-degree tier.
+pub const I16_TAIL_PRIME: NttPrime<i16> = NttPrime {
+    p: 12289,
+    pinv: -12287,
+    mont: 4091,
+    montsq: -1337,
+};
+
 /// Raw 30-bit primes for Q128 (`logq = 128`, K=5).
 ///
 /// Chosen v₂-descending under prefix min-v₂ floors for future ring-dim headroom

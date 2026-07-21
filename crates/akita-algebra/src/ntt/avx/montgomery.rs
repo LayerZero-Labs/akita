@@ -210,29 +210,16 @@ pub(super) unsafe fn mont_mul_16x_i16_avx2(
     p: __m256i,
     pinv: __m256i,
 ) -> __m256i {
-    let a_lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(a));
-    let b_lo = _mm256_cvtepi16_epi32(_mm256_castsi256_si128(b));
-    let a_hi = _mm256_cvtepi16_epi32(_mm256_extracti128_si256::<1>(a));
-    let b_hi = _mm256_cvtepi16_epi32(_mm256_extracti128_si256::<1>(b));
-
-    let prod_lo = mont_mul_8x_i16_as_i32_avx2(a_lo, b_lo, p, pinv);
-    let prod_hi = mont_mul_8x_i16_as_i32_avx2(a_hi, b_hi, p, pinv);
-    let packed = _mm256_packs_epi32(prod_lo, prod_hi);
-    _mm256_permute4x64_epi64::<0xd8>(packed)
-}
-
-#[target_feature(enable = "avx2")]
-pub(super) unsafe fn mont_mul_8x_i16_as_i32_avx2(
-    a: __m256i,
-    b: __m256i,
-    p: __m256i,
-    pinv: __m256i,
-) -> __m256i {
-    let c = _mm256_mullo_epi32(a, b);
-    let t_wrapped = _mm256_mullo_epi32(c, pinv);
-    let t = _mm256_srai_epi32::<16>(_mm256_slli_epi32::<16>(t_wrapped));
-    let tp = _mm256_mullo_epi32(t, p);
-    _mm256_srai_epi32::<16>(_mm256_sub_epi32(c, tp))
+    // Signed Montgomery reduction with R = 2^16:
+    //   c = a*b, t = low(c)*pinv mod R, out = (c - t*p)/R.
+    // `mulhi` exposes the signed high half directly, while `mullo` computes
+    // the two low halves modulo R. Hence high(c) - high(t*p) is exactly the
+    // desired quotient, with no lane widening or packing.
+    let c_lo = _mm256_mullo_epi16(a, b);
+    let c_hi = _mm256_mulhi_epi16(a, b);
+    let t = _mm256_mullo_epi16(c_lo, pinv);
+    let tp_hi = _mm256_mulhi_epi16(t, p);
+    _mm256_sub_epi16(c_hi, tp_hi)
 }
 
 #[target_feature(enable = "avx2")]
