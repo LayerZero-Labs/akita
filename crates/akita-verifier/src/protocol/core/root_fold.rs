@@ -15,7 +15,7 @@ use akita_types::{
 
 use super::{
     verify_fold, verify_fold_eor, FoldVerifyOutput, PreparedFoldPayload, PreparedFoldReplay,
-    PreparedNextWitness,
+    PreparedNextWitness, TracePreparation,
 };
 
 /// Verify the folded root proof payload.
@@ -287,12 +287,14 @@ where
             next_opening_source_len: w_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
-        trace_prepared_points: Some(vec![prepared_point.clone()]),
-        trace_block_opening: Some(trace_block_opening),
-        trace_eval_target,
-        trace_eval_scale: E::one(),
-        trace_claim_scales,
-        trace_basis: basis,
+        trace: TracePreparation {
+            prepared_points: Some(vec![prepared_point.clone()]),
+            block_opening: Some(trace_block_opening),
+            eval_target: trace_eval_target,
+            eval_scale: E::one(),
+            claim_scales: trace_claim_scales,
+            basis,
+        },
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }
@@ -450,12 +452,14 @@ where
             next_opening_source_len: w_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
-        trace_prepared_points: Some(prepared_points),
-        trace_block_opening: Some(trace_block_opening),
-        trace_eval_target,
-        trace_eval_scale: E::one(),
-        trace_claim_scales: None,
-        trace_basis: basis,
+        trace: TracePreparation {
+            prepared_points: Some(prepared_points),
+            block_opening: Some(trace_block_opening),
+            eval_target: trace_eval_target,
+            eval_scale: E::one(),
+            claim_scales: None,
+            basis,
+        },
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }

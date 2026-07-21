@@ -17,6 +17,7 @@ use akita_types::{
 use super::{
     prepare_terminal_witness_replay, verify_fold, verify_fold_eor, FoldEorReplay,
     PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, SetupPrefixOpening,
+    TracePreparation,
 };
 
 /// Verifier state carried between suffix fold levels.
@@ -547,11 +548,13 @@ where
             .collect(),
         w_len,
         payload,
-        trace_prepared_points: Some(prepared_points),
-        trace_block_opening: None,
-        trace_eval_target,
-        trace_eval_scale,
-        trace_claim_scales: None,
-        trace_basis: current_state.basis,
+        trace: TracePreparation {
+            prepared_points: Some(prepared_points),
+            block_opening: None,
+            eval_target: trace_eval_target,
+            eval_scale: trace_eval_scale,
+            claim_scales: None,
+            basis: current_state.basis,
+        },
     })
 }

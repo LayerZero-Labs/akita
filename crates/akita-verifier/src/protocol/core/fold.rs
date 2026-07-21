@@ -270,14 +270,24 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
+    pub(in crate::protocol::core) trace: TracePreparation<F, E>,
+}
+
+/// Fused evaluation-trace inputs for one fold, grouped out of
+/// [`PreparedFoldReplay`] because every build site produces them together and
+/// [`build_trace_wire`] (and the terminal-direct path) consume them together:
+/// the per-group prepared opening points reused for the trace term, the
+/// optional root trace-block opening, the trace evaluation target/scale,
+/// optional per-claim scales, and the opening basis.
+pub(in crate::protocol::core) struct TracePreparation<F: FieldCore, E: FieldCore> {
     /// Per-group prepared opening points in `OpeningClaims` order (one element
     /// for scalar/suffix folds). Reused for the fused trace term.
-    pub(in crate::protocol::core) trace_prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
-    pub(in crate::protocol::core) trace_block_opening: Option<Vec<E>>,
-    pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_eval_scale: E,
-    pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
-    pub(in crate::protocol::core) trace_basis: BasisMode,
+    pub(in crate::protocol::core) prepared_points: Option<Vec<PreparedOpeningPoint<F, E>>>,
+    pub(in crate::protocol::core) block_opening: Option<Vec<E>>,
+    pub(in crate::protocol::core) eval_target: E,
+    pub(in crate::protocol::core) eval_scale: E,
+    pub(in crate::protocol::core) claim_scales: Option<Vec<E>>,
+    pub(in crate::protocol::core) basis: BasisMode,
 }
 
 #[derive(Clone, Copy)]
@@ -745,6 +755,184 @@ where
     Ok(None)
 }
 
+/// Transcript-free shape/consistency gate run before any replay: validates the
+/// concatenated commitment rows and the opening vector decode at their ring
+/// dimensions, checks the fold grind nonce against the batch contract, and
+/// confirms the per-group opening/multiplier point counts. Because it never
+/// touches the transcript it cannot perturb replay bytes; a failure here is a
+/// malformed-proof rejection.
+fn validate_fold_inputs<F, E>(prepared: &PreparedFoldReplay<'_, F, E>) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore,
+{
+    let _span = tracing::info_span!("fold_validate_inputs").entered();
+    let role_dims = prepared.lp.role_dims();
+    let num_groups = prepared.opening_shape.num_groups();
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        role_dims.d_b(),
+        |D| prepared.commitment_rows.as_ring_slice::<D>().map(|_| ())
+    )?;
+    prepared
+        .lp
+        .fold_witness_grind_batch_contract(
+            &prepared.opening_shape,
+            FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
+        )?
+        .validate_nonce(prepared.fold_grind_nonce)?;
+    if !prepared.v.coeffs().is_empty() {
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            role_dims.d_d(),
+            |D| prepared.v.as_ring_slice::<D>().map(|_| ())
+        )?;
+    }
+    if prepared.group_ring_opening_points.len() != num_groups
+        || prepared.group_ring_multiplier_points.len() != num_groups
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(())
+}
+
+/// Shape the fused evaluation-trace claim wire that `verify_stage2` folds in,
+/// or `None` when the fold carries no trace opening. Selects the recursive /
+/// grouped-root / scalar-root variant from the level params and the prepared
+/// trace inputs. Transcript-free: it only reshapes already-absorbed data, so it
+/// cannot perturb replay bytes.
+///
+/// `EvaluationTrace` is the last padded relation row, so openings are weighted
+/// by `eq(tau1, EvaluationTrace_row_index)`.
+fn build_trace_wire<'a, F, E>(
+    lp: &'a LevelParams,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    row_coefficients: &[E],
+    trace: &TracePreparation<F, E>,
+    relation_instance: &RingRelationInstance<F>,
+    rs: &RingSwitchVerifyOutput<E>,
+    d_a: usize,
+) -> Result<Option<TraceWireAtRoleA<'a, F, E>>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let opening_batch = relation_instance.opening_batch();
+    let evaluation_trace_row =
+        lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
+    ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
+    let trace_witness_layout = relation_instance.segment_layout(lp, None)?;
+    let trace_opening_source_len = trace_witness_layout.total_len();
+    let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
+    let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
+    let trace_ring_bits = d_a.trailing_zeros() as usize;
+    let trace_wire = if trace.prepared_points.is_none() {
+        None
+    } else if trace.block_opening.is_none() && !lp.has_precommitted_groups() {
+        let layout = trace_weight_layout_from_segment(
+            lp,
+            &trace_witness_layout,
+            trace_opening_source_len,
+            trace_col_bits,
+            trace_ring_bits,
+            lp.num_live_blocks,
+        )?;
+        let prepared_point = trace
+            .prepared_points
+            .as_ref()
+            .and_then(|points| points.first())
+            .ok_or(AkitaError::InvalidProof)?;
+        Some(TraceWireAtRoleA::Recursive {
+            lp,
+            layout,
+            trace_coeff: evaluation_trace_weight,
+            trace_opening_claim: evaluation_trace_weight * trace.eval_target,
+            prepared_point: prepared_point.clone(),
+            trace_basis: trace.basis,
+            trace_eval_scale: trace.eval_scale,
+        })
+    } else if lp.has_precommitted_groups() {
+        // Grouped root: dense trace-weight table (per-group `num_live_blocks`,
+        // `num_digits_open`, and group-major e-hat offset). The layout is inert
+        // for dense evaluation, but remains the canonical checked description
+        // of one opening-digit segment. Use its first relation group rather
+        // than the aggregate batch width: groups may have unequal claim counts.
+        let group_id = trace_witness_layout.first_group_index()?;
+        let group_lp = lp.group_params(opening_batch, group_id)?;
+        let num_trace_blocks = opening_batch
+            .group_layout(group_id)?
+            .num_polynomials()
+            .checked_mul(group_lp.num_live_blocks())
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+        let layout = trace_weight_layout_from_segment(
+            lp,
+            &trace_witness_layout,
+            trace_opening_source_len,
+            trace_col_bits,
+            trace_ring_bits,
+            num_trace_blocks,
+        )?;
+        // Stage 2 is evaluated over the Boolean capacity of the exact physical
+        // witness source; the unused suffix is zero.
+        let live_x_cols = trace_x_cols;
+        let prepared_points = trace
+            .prepared_points
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?
+            .clone();
+        Some(TraceWireAtRoleA::MultiGroupRoot {
+            lp,
+            layout,
+            prepared_points,
+            row_coefficients: row_coefficients.to_vec(),
+            trace_coeff: evaluation_trace_weight,
+            trace_eval_target: trace.eval_target,
+            trace_claim_scales: trace.claim_scales.clone(),
+            opening_batch: opening_batch.clone(),
+            live_x_cols,
+            trace_basis: trace.basis,
+        })
+    } else {
+        let num_trace_blocks = opening_batch
+            .num_total_polynomials()
+            .checked_mul(lp.num_live_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
+        let layout = trace_weight_layout_from_segment(
+            lp,
+            &trace_witness_layout,
+            trace_opening_source_len,
+            trace_col_bits,
+            trace_ring_bits,
+            num_trace_blocks,
+        )?;
+        Some(TraceWireAtRoleA::Root {
+            lp,
+            layout,
+            prepared_point: trace
+                .prepared_points
+                .as_ref()
+                .and_then(|points| points.first())
+                .ok_or(AkitaError::InvalidProof)?
+                .clone(),
+            trace_block_opening: trace
+                .block_opening
+                .as_ref()
+                .ok_or(AkitaError::InvalidProof)?
+                .clone(),
+            trace_basis: trace.basis,
+            row_coefficients: row_coefficients.to_vec(),
+            trace_coeff: evaluation_trace_weight,
+            trace_eval_target: trace.eval_target,
+            trace_claim_scales: trace.claim_scales.clone(),
+            opening_batch: opening_batch.clone(),
+        })
+    };
+    Ok(trace_wire)
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(in crate::protocol::core) fn verify_fold<F, E, T>(
@@ -770,35 +958,7 @@ where
         terminal = matches!(&prepared.payload, PreparedFoldPayload::Terminal { .. })
     )
     .entered();
-    {
-        let _span = tracing::info_span!("fold_validate_inputs").entered();
-        dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Outer),
-            F,
-            role_dims.d_b(),
-            |D| commitment_rows.as_ring_slice::<D>().map(|_| ())
-        )?;
-        prepared
-            .lp
-            .fold_witness_grind_batch_contract(
-                &opening_shape,
-                FoldLinfProtocolBinding::CURRENT.max_grind_attempts,
-            )?
-            .validate_nonce(prepared.fold_grind_nonce)?;
-        if !prepared.v.coeffs().is_empty() {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Opening),
-                F,
-                role_dims.d_d(),
-                |D| prepared.v.as_ring_slice::<D>().map(|_| ())
-            )?;
-        }
-        if prepared.group_ring_opening_points.len() != num_groups
-            || prepared.group_ring_multiplier_points.len() != num_groups
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-    }
+    validate_fold_inputs::<F, E>(&prepared)?;
     let group_challenges = {
         let _span = tracing::info_span!("fold_derive_stage1_challenges").entered();
         derive_multi_group_stage1_challenges::<F, T>(
@@ -886,13 +1046,14 @@ where
                     prepared.lp,
                     final_witness,
                     prepared
-                        .trace_prepared_points
+                        .trace
+                        .prepared_points
                         .as_deref()
                         .ok_or(AkitaError::InvalidProof)?,
                     &prepared.row_coefficients,
-                    prepared.trace_claim_scales.as_deref(),
-                    prepared.trace_eval_scale,
-                    prepared.trace_eval_target,
+                    prepared.trace.claim_scales.as_deref(),
+                    prepared.trace.eval_scale,
+                    prepared.trace.eval_target,
                 )?;
                 return Ok((Vec::new(), None));
             }
@@ -956,122 +1117,15 @@ where
         commitment_rows,
     )?;
     let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript)?;
-    // EvaluationTrace is the last padded relation row: weight openings by
-    // `eq(tau1, EvaluationTrace_row_index)`.
-    let opening_batch = relation_instance.opening_batch();
-    let evaluation_trace_row = prepared.lp.evaluation_trace_row_index_for_layout(
+    let trace_wire = build_trace_wire::<F, E>(
+        prepared.lp,
         prepared.relation_matrix_row_layout,
-        opening_batch,
+        &prepared.row_coefficients,
+        &prepared.trace,
+        &relation_instance,
+        &rs,
+        d_a,
     )?;
-    let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
-    ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
-    let trace_witness_layout = relation_instance.segment_layout(prepared.lp, None)?;
-    let trace_opening_source_len = trace_witness_layout.total_len();
-    let trace_x_cols = akita_types::opening_domain_len(trace_opening_source_len)?;
-    let trace_col_bits = trace_x_cols.trailing_zeros() as usize;
-    let trace_ring_bits = d_a.trailing_zeros() as usize;
-    let trace_wire = if prepared.trace_prepared_points.is_none() {
-        None
-    } else if prepared.trace_block_opening.is_none() && !prepared.lp.has_precommitted_groups() {
-        let layout = trace_weight_layout_from_segment(
-            prepared.lp,
-            &trace_witness_layout,
-            trace_opening_source_len,
-            trace_col_bits,
-            trace_ring_bits,
-            prepared.lp.num_live_blocks,
-        )?;
-        let prepared_point = prepared
-            .trace_prepared_points
-            .as_ref()
-            .and_then(|points| points.first())
-            .ok_or(AkitaError::InvalidProof)?;
-        Some(TraceWireAtRoleA::Recursive {
-            lp: prepared.lp,
-            layout,
-            trace_coeff: evaluation_trace_weight,
-            trace_opening_claim: evaluation_trace_weight * prepared.trace_eval_target,
-            prepared_point: prepared_point.clone(),
-            trace_basis: prepared.trace_basis,
-            trace_eval_scale: prepared.trace_eval_scale,
-        })
-    } else if prepared.lp.has_precommitted_groups() {
-        // Grouped root: dense trace-weight table (per-group `num_live_blocks`,
-        // `num_digits_open`, and group-major e-hat offset). The layout is inert
-        // for dense evaluation, but remains the canonical checked description
-        // of one opening-digit segment. Use its first relation group rather
-        // than the aggregate batch width: groups may have unequal claim counts.
-        let group_id = trace_witness_layout.first_group_index()?;
-        let group_lp = prepared.lp.group_params(opening_batch, group_id)?;
-        let num_trace_blocks = opening_batch
-            .group_layout(group_id)?
-            .num_polynomials()
-            .checked_mul(group_lp.num_live_blocks())
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-        let layout = trace_weight_layout_from_segment(
-            prepared.lp,
-            &trace_witness_layout,
-            trace_opening_source_len,
-            trace_col_bits,
-            trace_ring_bits,
-            num_trace_blocks,
-        )?;
-        // Stage 2 is evaluated over the Boolean capacity of the exact physical
-        // witness source; the unused suffix is zero.
-        let live_x_cols = trace_x_cols;
-        let prepared_points = prepared
-            .trace_prepared_points
-            .as_ref()
-            .ok_or(AkitaError::InvalidProof)?
-            .clone();
-        Some(TraceWireAtRoleA::MultiGroupRoot {
-            lp: prepared.lp,
-            layout,
-            prepared_points,
-            row_coefficients: prepared.row_coefficients.clone(),
-            trace_coeff: evaluation_trace_weight,
-            trace_eval_target: prepared.trace_eval_target,
-            trace_claim_scales: prepared.trace_claim_scales.clone(),
-            opening_batch: relation_instance.opening_batch().clone(),
-            live_x_cols,
-            trace_basis: prepared.trace_basis,
-        })
-    } else {
-        let num_trace_blocks = relation_instance
-            .opening_batch()
-            .num_total_polynomials()
-            .checked_mul(prepared.lp.num_live_blocks)
-            .ok_or_else(|| AkitaError::InvalidSetup("trace block count overflow".to_string()))?;
-        let layout = trace_weight_layout_from_segment(
-            prepared.lp,
-            &trace_witness_layout,
-            trace_opening_source_len,
-            trace_col_bits,
-            trace_ring_bits,
-            num_trace_blocks,
-        )?;
-        Some(TraceWireAtRoleA::Root {
-            lp: prepared.lp,
-            layout,
-            prepared_point: prepared
-                .trace_prepared_points
-                .as_ref()
-                .and_then(|points| points.first())
-                .ok_or(AkitaError::InvalidProof)?
-                .clone(),
-            trace_block_opening: prepared
-                .trace_block_opening
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?
-                .clone(),
-            trace_basis: prepared.trace_basis,
-            row_coefficients: prepared.row_coefficients.clone(),
-            trace_coeff: evaluation_trace_weight,
-            trace_eval_target: prepared.trace_eval_target,
-            trace_claim_scales: prepared.trace_claim_scales.clone(),
-            opening_batch: relation_instance.opening_batch().clone(),
-        })
-    };
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,
