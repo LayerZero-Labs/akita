@@ -364,6 +364,51 @@ Risks to resolve first: thin inline coverage of core files (mitigated by the
 harness + characterization corpus); ensuring the recording transcript captures
 *every* absorb (a missed absorb hides a divergence).
 
+## Known gaps & follow-ups (as of P0/P1 on #312)
+
+Tracked so they are not silently lost. Each notes a fix path.
+
+1. **Differential matrix: fp32 cell missing.** The harness covers fp128
+   (dense Lagrange/Monomial, one-hot multi-fold) and fp64 dense (the `E != F`
+   extension-field path), but not fp32. Root cause: `schedules-default` ships
+   **no fp32 *dense* schedule** (only `fp32-d128-onehot`/`fp32-d256-onehot`), so
+   a dense fp32 fixture cannot size its setup, and fp32's degree-4 extension
+   means a one-hot fixture needs an extension-field one-hot opening (the shared
+   `opening_from_poly` helper returns the base field only).
+   *Fix (either):* (a) add a generated `schedules-fp32-*-full` table + feature
+   and use a dense fp32 fixture; or (b) add a generic one-hot fixture that
+   computes the `E`-valued opening via the fold kernel over the extension
+   (mirroring `opening_from_poly_with_basis` but returning `E`), then drive it
+   with `fp32::D128OneHot`. Option (b) is self-contained in the harness.
+   fp64 already exercises the `E != F` code path, so this is coverage breadth,
+   not a correctness hole.
+
+2. **Ring-switch verifier/terminal wrapper collapse — largely superseded.**
+   The Phase-1 target (`ring_switch_verifier`/`_terminal` +
+   `RingSwitchVerifyCoreOutput::into_*`) was mostly dissolved by #311: the
+   terminal is now quotient-free/direct, so `ring_switch_verifier` takes the
+   row layout directly and only `into_intermediate` remains. The residual
+   (`RingSwitchVerifyCoreOutput` + `into_intermediate`) lives in `ring_switch.rs`
+   alongside the M-evaluation logic, which is **off-limits while the M-eval PR
+   is in flight** (see constraint below). *Fix:* revisit after that PR lands;
+   collapse the residual as part of the `ring_switch/{replay,evaluator}` split.
+
+3. **Pre-existing (not introduced here): `fold_protocol_epoch` test.** On #312,
+   `crates/akita-pcs/tests/fold_protocol_epoch.rs` fails to compile under
+   `--all-targets` **with the `logging-transcript` feature** — it reads a
+   `LevelParams` field renamed by #312. CI never hits it (the clippy job runs
+   without `logging-transcript`; the differential job compiles only
+   `--test verifier_differential`). *Fix:* update the stale field access in that
+   test; likely belongs to whichever PR renamed the field. Untouched here.
+
+**Hands-off constraint (active).** A separate PR is in flight reworking the
+verifier's **M (relation-matrix) evaluation logic**, which spans `stages/stage2`,
+`stages/stage3`, the setup-contribution artifacts (`protocol/slice_mle/**`,
+`SetupContributionPlan`), and the `ring_switch` evaluator
+(`eval_at_point`/`eval_flat_at_point`). Phases 2+ under this spec must **not**
+touch that surface until the M-eval PR lands; module re-org and de-dup on those
+files is deferred and re-scoped afterward.
+
 ## References
 
 - Existing: [`docs/verifier-contract.md`](../docs/verifier-contract.md),
