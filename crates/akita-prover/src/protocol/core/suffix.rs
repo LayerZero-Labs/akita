@@ -45,7 +45,7 @@ impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
 /// count, per-level `LevelParams`, successor params, and the terminal direct
 /// witness basis. Earlier suffix levels run intermediate folds; the last
 /// suffix level runs the terminal fold which ships the cleartext
-/// `final_witness`.
+/// `terminal_response`.
 ///
 /// # Errors
 ///

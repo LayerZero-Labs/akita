@@ -309,15 +309,15 @@ fn bump_flat_ring_vec<FField: FieldCore>(flat: &mut akita_types::RingVec<FField>
 }
 
 fn mutate_terminal_e_hat_digit<FField: FieldCore>(
-    witness: &mut akita_types::SegmentTypedWitness<FField>,
+    witness: &mut akita_types::TerminalResponse<FField>,
 ) {
     bump_flat_ring_vec(&mut witness.e_fields);
 }
 
 fn terminal_witness_mut<FField: FieldCore, E: FieldCore>(
     proof: &mut AkitaBatchedProof<FField, E>,
-) -> &mut akita_types::SegmentTypedWitness<FField> {
-    proof.terminal.final_witness_mut()
+) -> &mut akita_types::TerminalResponse<FField> {
+    proof.terminal.terminal_response_mut()
 }
 
 fn assert_invalid_proof<T: core::fmt::Debug>(
@@ -761,7 +761,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
         assert_eq!(
-            proof.final_witness().layout.log_basis_open,
+            proof.terminal_response().layout.log_basis_open,
             schedule_terminal_log_basis(&plan)
         );
 
@@ -875,7 +875,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
         // `Schedule::total_bytes` is the planner's public upper bound. For
-        // segment-typed tails the schedule budgets the variable-length
+        // terminal responses: the schedule budgets the variable-length
         // Golomb `z` segment at its worst-case public length; the proof
         // carries the realized byte length on the wire.
         assert!(
@@ -891,7 +891,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
                  realized variable-length terminal z payload is substituted",
         );
         assert_eq!(
-            decoded.final_witness().layout.log_basis_open,
+            decoded.terminal_response().layout.log_basis_open,
             schedule_terminal_log_basis(&plan)
         );
 
@@ -1009,7 +1009,7 @@ fn batched_onehot_same_point_round_trip() {
         let mut cursor = std::io::Cursor::new(serialized);
         let decoded = AkitaBatchedProof::<F, F>::deserialize_compressed(&mut cursor, &proof_shape)
             .expect("deserialize batched onehot proof");
-        let terminal = decoded.final_witness();
+        let terminal = decoded.terminal_response();
         assert_eq!(
             terminal.layout.groups.len(),
             1,

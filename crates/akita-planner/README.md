@@ -99,7 +99,7 @@ Instead, for each recursive `log_basis`, `derive_candidate_level_params` scans t
 
 After that candidate is chosen, the suffix DP still performs the important global comparison:
 
-- Terminate after this fold and ship the segment-typed cleartext witness.
+- Terminate after this fold and ship the clear terminal response.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
 The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because an ordinary recursive fold uses the full `WithDBlock` witness, while the terminal direct witness has no D/quotient tail. The terminal receives transcript-bound inner `t` from its predecessor and has no commitment block (`WithoutCommitmentBlocks`).
@@ -119,7 +119,7 @@ recursion, and the cap keeps verifier-reachable fallback work bounded.
 The planner uses the same byte formulas that runtime schedule expansion uses:
 
 - `level_proof_bytes` for a fold level.
-- `segment_typed_witness_bytes` for the terminal witness.
+- `terminal_response_bytes` for the terminal witness.
 - `extension_opening_reduction_proof_bytes` for extension-field opening reductions.
 - `w_ring_element_count_with_counts_for_layout_bits` to compute witness sizes
   under the schedule-selected row layout.
@@ -128,7 +128,7 @@ The planner uses the same byte formulas that runtime schedule expansion uses:
 ordinary recursive edges and zero outgoing-commitment bytes for the
 `TerminalInnerState` handoff. Terminal proof bodies contain only the grind
 nonce plus any extension-opening reduction; their clear witness is priced by
-`segment_typed_witness_bytes`.
+`terminal_response_bytes`.
 
 This keeps generated-table expansion and DP fallback aligned. A table hit and a table miss are two ways to produce the same runtime `Schedule` shape.
 

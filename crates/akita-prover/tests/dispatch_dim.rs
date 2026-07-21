@@ -20,8 +20,8 @@ use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_types::{
     validate_schedule_ring_dims, AkitaScheduleLookupKey, AkitaSetupSeed, FoldStep, LevelParams,
-    Schedule, SegmentTypedWitnessShape, SisModulusProfileId, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalWitnessPlan,
+    Schedule, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalResponseShape, TerminalWitnessPlan,
 };
 
 // ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ fn make_fold_step(
 fn make_direct_step() -> TerminalWitnessPlan {
     TerminalWitnessPlan {
         current_w_len: 0,
-        witness_shape: SegmentTypedWitnessShape {
+        witness_shape: TerminalResponseShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
                 log_basis_open: 3,

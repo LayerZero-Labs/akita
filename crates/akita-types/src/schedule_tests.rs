@@ -2,11 +2,11 @@ use super::*;
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::tail_golomb_rice_z_params;
 use crate::{
-    extension_opening_reduction_proof_bytes, level_proof_bytes, segment_typed_witness_bytes,
-    sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RelationMatrixRowLayout,
-    RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SisModulusProfileId,
-    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
+    terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+    DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding,
+    RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof, TerminalResponse,
+    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -91,24 +91,24 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
     ));
 }
 
-fn segment_typed_final_witness(
+fn terminal_response_fixture(
     lp: &LevelParams,
     num_claims: usize,
-) -> (SegmentTypedWitness<F>, SegmentTypedWitnessShape) {
+) -> (TerminalResponse<F>, TerminalResponseShape) {
     let field_bits = F::modulus_bits();
-    let shape = SegmentTypedWitnessShape::from_groups(
+    let shape = TerminalResponseShape::from_groups(
         lp,
         field_bits,
         [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
     )
-    .expect("segment-typed witness shape");
+    .expect("terminal response shape");
     let layout = shape.layout.clone();
     let group = layout.groups[0];
     let (rice_low_bits, zigzag_w) =
         tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
     let z_payload = golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
         .expect("encode zero z segment");
-    let witness = SegmentTypedWitness {
+    let witness = TerminalResponse {
         layout: layout.clone(),
         z_payloads: vec![z_payload],
         e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
@@ -258,20 +258,20 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
 
-        let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
-        let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+        let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+        let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
         let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
             None,
-            final_witness,
+            terminal_response,
             0,
         );
 
         // The planner accounts for the final witness separately
-        // (`segment_typed_witness_bytes` on the terminal plan). Subtract
+        // (`terminal_response_bytes` on the terminal plan). Subtract
         // it from the serialized terminal level to compare against
         // `terminal_level_proof_bytes`.
         let serialized_without_witness =
-            terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+            terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
             level_proof_bytes(
@@ -286,13 +286,13 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             .unwrap(),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
-                 (less final_witness) at log_basis={log_basis}"
+                 (less terminal_response) at log_basis={log_basis}"
         );
 
-        let scheduled_bytes = segment_typed_witness_bytes(128, &witness_shape);
+        let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
         assert!(
-            scheduled_bytes >= final_witness_bytes_runtime,
-            "scheduled direct witness budget must cover serialized segment-typed witness \
+            scheduled_bytes >= terminal_response_bytes_runtime,
+            "scheduled direct witness budget must cover serialized terminal response \
                  at log_basis={log_basis}"
         );
     }

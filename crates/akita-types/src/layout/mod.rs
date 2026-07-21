@@ -28,8 +28,7 @@ pub use params::{
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     packed_digits_bytes, padded_boolean_opening_vars, planned_next_w_len,
-    planned_w_ring_element_count, proof_ring_vec_bytes, segment_typed_witness_bytes,
-    sumcheck_rounds,
+    planned_w_ring_element_count, proof_ring_vec_bytes, sumcheck_rounds, terminal_response_bytes,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

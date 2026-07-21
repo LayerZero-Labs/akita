@@ -10,10 +10,10 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
-    extension_opening_reduction_level_bytes, level_proof_bytes, segment_typed_witness_bytes,
+    extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, FoldStep, LevelParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SegmentTypedWitnessShape,
-    SetupContributionMode, TerminalWitnessPlan,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode,
+    TerminalResponseShape, TerminalWitnessPlan,
 };
 
 use crate::generated::{
@@ -146,7 +146,7 @@ pub(crate) fn walk_generated_schedule_entry(
                     "terminal witness does not support a multi-chunk last fold level".to_string(),
                 ));
             }
-            let shape = SegmentTypedWitnessShape::from_groups(
+            let shape = TerminalResponseShape::from_groups(
                 &lp,
                 field_bits,
                 [(&lp as &dyn akita_types::LevelParamsLike, 1, 1, 1)],
@@ -201,7 +201,7 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated terminal witness has zero length".to_string(),
         ));
     }
-    let terminal_bytes = segment_typed_witness_bytes(field_bits, &witness_shape);
+    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
     total_bytes = total_bytes.checked_add(terminal_bytes).ok_or_else(|| {
         AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
     })?;

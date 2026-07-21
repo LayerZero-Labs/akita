@@ -20,8 +20,8 @@ use akita_types::{
     level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommitmentRingDims,
     DecompositionParams, FoldStep, LevelParams, LevelParamsLike, OpeningClaimsLayout,
     PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SegmentTypedWitnessShape, SetupContributionMode,
-    WitnessLayout, SETUP_OFFLOAD_D_SETUP,
+    RelationMatrixRowLayout, Schedule, SetupContributionMode, TerminalResponseShape, WitnessLayout,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -263,7 +263,7 @@ fn find_schedule_inner(
             )?
             .checked_mul(policy.ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("root next witness length overflow".into()))?;
-            let terminal_shape = SegmentTypedWitnessShape::from_groups(
+            let terminal_shape = TerminalResponseShape::from_groups(
                 &candidate_params,
                 field_bits,
                 [(

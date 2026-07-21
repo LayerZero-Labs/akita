@@ -63,7 +63,7 @@ fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
 }
 
 /// Derive the structural proof shape from the schedule. The terminal carries
-/// only optional EOR, its grind nonce, and the clear segment-typed witness.
+/// only optional EOR, its grind nonce, and the clear terminal response.
 fn expected_same_point_batched_shape(
     max_num_vars: usize,
     num_claims: usize,
@@ -170,7 +170,7 @@ fn expected_same_point_batched_shape(
         .expect("scheduled terminal fold current witness length");
     let terminal = TerminalLevelProofShape {
         extension_opening_reduction: None,
-        final_witness: schedule.terminal.witness_shape.clone(),
+        terminal_response: schedule.terminal.witness_shape.clone(),
     };
 
     AkitaBatchedProofShape {

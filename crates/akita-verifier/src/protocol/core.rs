@@ -40,7 +40,7 @@ use akita_types::{
     FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec, Schedule,
-    SegmentTypedWitness, SetupSumcheckProof, TerminalLevelProof, TerminalWitnessTranscriptParts,
+    SetupSumcheckProof, TerminalLevelProof, TerminalResponse, TerminalWitnessTranscriptParts,
     TraceClaim,
 };
 use akita_types::{
@@ -67,17 +67,17 @@ pub(in crate::protocol::core) use fold::{
 
 fn prepare_terminal_witness_replay<F, T>(
     transcript: &mut T,
-    final_witness: &SegmentTypedWitness<F>,
+    terminal_response: &TerminalResponse<F>,
     final_w_len: usize,
 ) -> Result<TerminalWitnessTranscriptParts, AkitaError>
 where
     F: FieldCore + CanonicalField,
     T: Transcript<F>,
 {
-    if final_witness.num_elems() != final_w_len {
+    if terminal_response.num_elems() != final_w_len {
         return Err(AkitaError::InvalidProof);
     }
-    let parts = final_witness.terminal_transcript_parts()?;
+    let parts = terminal_response.terminal_transcript_parts()?;
     transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &parts.e_folded);
     Ok(parts)
 }

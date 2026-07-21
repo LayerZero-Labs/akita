@@ -655,11 +655,11 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     assert!(
         expected_shape
             .terminal
-            .final_witness
-            .admits_realized(&actual_shape.terminal.final_witness),
+            .terminal_response
+            .admits_realized(&actual_shape.terminal.terminal_response),
         "terminal witness shape {:?} does not admit {:?}",
-        expected_shape.terminal.final_witness,
-        actual_shape.terminal.final_witness
+        expected_shape.terminal.terminal_response,
+        actual_shape.terminal.terminal_response
     );
     let mut bytes = Vec::new();
     proof.serialize_uncompressed(&mut bytes).unwrap();

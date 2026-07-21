@@ -48,8 +48,8 @@ use akita_types::{
     AkitaStage2Proof, BasisMode, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
     FoldLevelProof, LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
     RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
-    SegmentTypedWitness, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
-    TerminalLevelProof, TraceTable,
+    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, TerminalLevelProof,
+    TerminalResponse, TraceTable,
 };
 use std::sync::Arc;
 

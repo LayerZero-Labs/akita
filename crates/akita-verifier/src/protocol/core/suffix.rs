@@ -150,7 +150,7 @@ enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
         stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
     },
     Terminal {
-        final_witness: &'a SegmentTypedWitness<F>,
+        terminal_response: &'a TerminalResponse<F>,
     },
 }
 
@@ -213,7 +213,7 @@ where
             scheduled.next_witness_binding,
             Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
         ) {
-            let witness = terminal.final_witness();
+            let witness = terminal.terminal_response();
             let t_state = raw_field_segment_bytes(&witness.t_fields)?;
             if t_state.is_empty() {
                 return Err(AkitaError::InvalidProof);
@@ -283,7 +283,7 @@ where
     if !matches!(&current_state.witness, SuffixWitnessState::TerminalT(_)) {
         return Err(AkitaError::InvalidProof);
     }
-    if terminal.final_witness().num_elems() != scheduled.next_w_len {
+    if terminal.terminal_response().num_elems() != scheduled.next_w_len {
         return Err(AkitaError::InvalidProof);
     }
     let prepared = prepare_fold_replay::<F, E, T>(
@@ -291,7 +291,7 @@ where
             extension_opening_reduction: terminal.extension_opening_reduction.as_ref(),
             fold_grind_nonce: terminal.fold_grind_nonce,
             kind: FoldReplayKind::Terminal {
-                final_witness: terminal.final_witness(),
+                terminal_response: terminal.terminal_response(),
             },
         },
         setup,
@@ -486,13 +486,13 @@ where
                 next_witness_ring_dim,
             )
         }
-        FoldReplayKind::Terminal { final_witness } => (
+        FoldReplayKind::Terminal { terminal_response } => (
             RingVec::from_coeffs(Vec::new()),
             PreparedFoldPayload::Terminal {
-                final_witness,
+                terminal_response,
                 transcript: prepare_terminal_witness_replay::<F, T>(
                     transcript,
-                    final_witness,
+                    terminal_response,
                     w_len,
                 )?,
             },

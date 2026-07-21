@@ -70,7 +70,7 @@ mod tests {
     use akita_field::{ExtField, Fp32, FpExt4};
     use akita_types::{
         AkitaScheduleLookupKey, FoldStep, LevelParams, LevelParamsLike, PolynomialGroupLayout,
-        SegmentTypedWitnessShape, SetupMatrixEnvelope, SisModulusProfileId, TerminalWitnessPlan,
+        SetupMatrixEnvelope, SisModulusProfileId, TerminalResponseShape, TerminalWitnessPlan,
     };
 
     type Base = Fp32<251>;
@@ -91,8 +91,8 @@ mod tests {
         ))
     }
 
-    fn terminal_shape(params: &LevelParams) -> Result<SegmentTypedWitnessShape, AkitaError> {
-        akita_types::SegmentTypedWitnessShape::from_groups(
+    fn terminal_shape(params: &LevelParams) -> Result<TerminalResponseShape, AkitaError> {
+        akita_types::TerminalResponseShape::from_groups(
             params,
             32,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],

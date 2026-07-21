@@ -9,7 +9,7 @@ use rand::SeedableRng;
 
 type F = Prime128Offset275;
 
-fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
+fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
         log_basis_open: 3,
@@ -21,7 +21,7 @@ fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
         }],
         logical_num_elems: coeffs.len(),
     };
-    SegmentTypedWitness {
+    TerminalResponse {
         layout,
         z_payloads: vec![Vec::new()],
         e_fields: RingVec::from_coeffs(coeffs),
@@ -31,7 +31,7 @@ fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
 
 #[test]
 fn direct_witness_shape_rejects_oversized_allocations() {
-    let err = SegmentTypedWitnessShape {
+    let err = TerminalResponseShape {
         layout: TailSegmentLayout {
             ring_dimension: 64,
             log_basis_open: 3,
@@ -258,10 +258,14 @@ fn terminal_inner_state_omits_outer_commitment_from_tag_free_proof_wire() {
 
 #[test]
 fn terminal_level_proof_serde_round_trip() {
-    let final_witness = test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
+    let terminal_response =
+        test_terminal_witness(vec![F::one(), -F::one(), F::zero(), F::from_u64(2)]);
 
-    let without_reduction =
-        TerminalLevelProof::new_with_extension_opening_reduction(None, final_witness.clone(), 7);
+    let without_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
+        None,
+        terminal_response.clone(),
+        7,
+    );
     assert!(without_reduction.extension_opening_reduction.is_none());
     assert!(without_reduction
         .shape()
@@ -282,7 +286,7 @@ fn terminal_level_proof_serde_round_trip() {
 
     let with_reduction = TerminalLevelProof::new_with_extension_opening_reduction(
         Some(tiny_reduction()),
-        final_witness,
+        terminal_response,
         0,
     );
     let mut bytes_with_reduction = Vec::new();
@@ -304,11 +308,11 @@ fn terminal_level_proof_serde_round_trip() {
 
 #[test]
 fn direct_terminal_relation_proof_serde_round_trip() {
-    let final_witness = test_terminal_witness(vec![F::one(), -F::one()]);
+    let terminal_response = test_terminal_witness(vec![F::one(), -F::one()]);
     let proof = TerminalLevelProof {
         extension_opening_reduction: None,
         fold_grind_nonce: 3,
-        final_witness,
+        terminal_response,
     };
 
     let mut bytes = Vec::new();

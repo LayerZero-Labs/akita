@@ -84,7 +84,7 @@ where
     let terminal_shape = &schedule.terminal.witness_shape;
     if !terminal_shape
         .layout
-        .admits_realized(&proof.terminal.final_witness().layout)
+        .admits_realized(&proof.terminal.terminal_response().layout)
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -126,7 +126,7 @@ where
         root_execution.next_witness_binding,
         Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
     ) {
-        let witness = proof.terminal.final_witness();
+        let witness = proof.terminal.terminal_response();
         let t_state = raw_field_segment_bytes(&witness.t_fields)?;
         if t_state.is_empty() {
             return Err(AkitaError::InvalidProof);

@@ -38,7 +38,7 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
         LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse)
             .with_decomp(1, 4, 1, 1, 1)
             .expect("laid-out fold params");
-    let witness_shape = akita_types::SegmentTypedWitnessShape::from_groups(
+    let witness_shape = akita_types::TerminalResponseShape::from_groups(
         &fold_lp,
         128,
         [(&fold_lp as &dyn LevelParamsLike, 1, 1, 1)],
@@ -362,8 +362,8 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
         padded_setup_prefix_len, setup_prefix_precommitted_params, setup_prefix_slot_id,
-        AjtaiKeyParams, DecompositionParams, FoldStep, LevelParamsLike, SegmentTypedWitnessShape,
-        SetupContributionMode, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
+        AjtaiKeyParams, DecompositionParams, FoldStep, LevelParamsLike, SetupContributionMode,
+        TerminalResponseShape, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
@@ -382,12 +382,12 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     }
 
     fn terminal_direct_step(params: &LevelParams) -> TerminalWitnessPlan {
-        let witness_shape = SegmentTypedWitnessShape::from_groups(
+        let witness_shape = TerminalResponseShape::from_groups(
             params,
             128,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
         )
-        .expect("segment-typed witness shape");
+        .expect("terminal response shape");
         TerminalWitnessPlan {
             current_w_len: witness_shape.layout.logical_num_elems,
             witness_shape,

@@ -60,6 +60,41 @@ pub fn weak_binding_inf_norm(
         .checked_mul(z_inf_norm)
 }
 
+/// Complete A-role collision price for two accepted folded responses.
+///
+/// Both the fold challenge and the raw response may differ between two valid
+/// openings. Their exact symmetric difference intervals contribute one factor
+/// of two each; [`weak_binding_inf_norm`] contributes the lemma's outer factor
+/// of two.
+pub fn role_a_collision_inf_norm_for_response_bound(
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+    response_linf_bound: u128,
+) -> Option<u128> {
+    weak_binding_inf_norm(
+        challenge_l1_norm.checked_mul(2)?,
+        ring_subfield_norm_bound,
+        response_linf_bound.checked_mul(2)?,
+    )
+}
+
+/// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.
+///
+/// This is the exact integer inverse of
+/// [`role_a_collision_inf_norm_for_response_bound`].
+pub fn max_response_linf_for_role_a_collision(
+    collision_linf_capacity: u128,
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+) -> Option<u128> {
+    let price_per_unit = role_a_collision_inf_norm_for_response_bound(
+        challenge_l1_norm,
+        ring_subfield_norm_bound,
+        1,
+    )?;
+    collision_linf_capacity.checked_div(price_per_unit)
+}
+
 /// A-role committed-level coefficient-`L∞` collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
@@ -313,6 +348,32 @@ pub fn fold_witness_digit_plan(
 mod tests {
     use super::super::ajtai_key::DEFAULT_SIS_SECURITY_POLICY;
     use super::*;
+
+    #[test]
+    fn raw_terminal_response_bound_uses_the_complete_difference_interval() {
+        let challenge_l1 = 41;
+        let subfield_norm = 2;
+        let response_bound = 7;
+        let price = role_a_collision_inf_norm_for_response_bound(
+            challenge_l1,
+            subfield_norm,
+            response_bound,
+        )
+        .expect("collision price");
+        assert_eq!(
+            price,
+            8 * challenge_l1 * u128::from(subfield_norm) * response_bound
+        );
+        let unit_price = price / response_bound;
+        assert_eq!(
+            max_response_linf_for_role_a_collision(
+                price + unit_price - 1,
+                challenge_l1,
+                subfield_norm,
+            ),
+            Some(response_bound)
+        );
+    }
 
     #[test]
     fn fold_witness_digit_plan_beta_picks_min_ring_product_side() {

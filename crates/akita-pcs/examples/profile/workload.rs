@@ -148,7 +148,7 @@ where
 /// absolute proof growth is bounded by the CI proof-size regression threshold.
 const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
 
-fn segment_typed_z_planner_slack<FF, E>(
+fn terminal_response_z_planner_slack<FF, E>(
     proof: &AkitaBatchedProof<FF, E>,
     schedule: &Schedule,
 ) -> usize
@@ -163,7 +163,7 @@ where
         .z_payload_bytes()
         .saturating_sub(
             proof
-                .final_witness()
+                .terminal_response()
                 .z_payloads
                 .iter()
                 .map(Vec::len)
@@ -246,7 +246,7 @@ fn report_proof_size_against_planner<FF, E>(
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
-    let z_slack = segment_typed_z_planner_slack(proof, schedule);
+    let z_slack = terminal_response_z_planner_slack(proof, schedule);
     match mode {
         SetupContributionMode::Direct => {
             assert_runtime_matches_planned_proof_size(

@@ -649,6 +649,45 @@ impl LevelParams {
         Ok(inf_norm_bound)
     }
 
+    /// Maximum terminal folded-response norm certified by a group's fixed A matrix.
+    ///
+    /// This inverts the checked-in SIS table for the matrix's exact width and
+    /// rank, then applies the complete A-role weak-binding formula. It performs
+    /// no online lattice estimation and does not use the honest-response cap.
+    pub fn terminal_response_linf_limit_for_params(
+        &self,
+        params: &(impl LevelParamsLike + ?Sized),
+    ) -> Result<u128, AkitaError> {
+        let a_key = params.a_key_params();
+        if a_key.sis_table_key().role != crate::sis::SisMatrixRole::A {
+            return Err(AkitaError::InvalidSetup(
+                "terminal response requires an A-role inner matrix".to_string(),
+            ));
+        }
+        let collision_capacity = a_key.max_secure_collision_linf().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "terminal inner matrix has no supported SIS collision capacity".to_string(),
+            )
+        })?;
+        let challenge = crate::sis::FoldChallengeNorms::new(
+            &self.fold_challenge_config,
+            params.fold_challenge_shape(),
+        );
+        crate::sis::max_response_linf_for_role_a_collision(
+            collision_capacity,
+            challenge.l1_norm,
+            a_key
+                .sis_modulus_profile()
+                .ring_subfield_embedding_norm_bound(),
+        )
+        .filter(|&limit| limit > 0)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "terminal inner matrix cannot certify a nonzero folded response".to_string(),
+            )
+        })
+    }
+
     /// Set the one-hot chunk size `K`, returning the updated params.
     #[inline]
     #[must_use]

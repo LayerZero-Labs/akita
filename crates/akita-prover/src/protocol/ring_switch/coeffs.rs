@@ -11,7 +11,7 @@ use akita_types::{
     WitnessLayout,
 };
 
-/// Per-group prover-side ring artifacts retained for segment-typed terminal encoding.
+/// Per-group prover-side ring artifacts retained for terminal-response encoding.
 pub struct RingSwitchTerminalGroupArtifacts<F: FieldCore> {
     pub group_index: usize,
     pub e_folded: RingVec<F>,
@@ -117,7 +117,7 @@ impl<F: FieldCore> RingSwitchTerminalGroupArtifacts<F> {
     }
 }
 
-/// Prover-side ring artifacts retained for segment-typed terminal encoding.
+/// Prover-side ring artifacts retained for terminal-response encoding.
 ///
 /// Ring dimension is stored at runtime. Scalar tails use one group; grouped
 /// roots retain every group in root witness order plus one shared quotient tail.

@@ -125,6 +125,7 @@ impl PrecommittedLevelParams {
 /// Use this trait when code only needs the shared commitment geometry carried
 /// by both [`LevelParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
+    fn a_key_params(&self) -> &AjtaiKeyParams;
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
@@ -145,6 +146,10 @@ pub trait LevelParamsLike {
 }
 
 impl LevelParamsLike for LevelParams {
+    fn a_key_params(&self) -> &AjtaiKeyParams {
+        &self.a_key
+    }
+
     fn a_rows_len(&self) -> usize {
         self.a_key.row_len()
     }
@@ -215,6 +220,10 @@ impl LevelParamsLike for LevelParams {
 }
 
 impl LevelParamsLike for PrecommittedLevelParams {
+    fn a_key_params(&self) -> &AjtaiKeyParams {
+        &self.a_key
+    }
+
     fn a_rows_len(&self) -> usize {
         self.a_key.row_len()
     }

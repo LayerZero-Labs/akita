@@ -132,6 +132,18 @@ impl SisModulusProfileId {
         }
     }
 
+    /// Infinity-norm expansion of the current trace-subfield embedding.
+    ///
+    /// The 128-bit profile is the base-field path. The 32- and 64-bit profiles
+    /// use the paired-lane trace embedding and therefore carry the certified
+    /// factor-of-two expansion.
+    pub const fn ring_subfield_embedding_norm_bound(self) -> u32 {
+        match self {
+            Self::Q128OffsetA7F7 => 1,
+            Self::Q32Offset99 | Self::Q64Offset59 => 2,
+        }
+    }
+
     /// Validate an exact field modulus against this profile.
     pub const fn matches_modulus(self, modulus: u128) -> bool {
         self.modulus() == modulus
@@ -563,6 +575,26 @@ impl AjtaiKeyParams {
         self.sis_table_key
     }
 
+    /// Largest audited coefficient-`L∞` bucket supported by this fixed matrix.
+    ///
+    /// This inverts the generated SIS floor table using the matrix's exact
+    /// role, ring dimension, input width, output rank, policy, profile, and
+    /// table digest. It does not run the lattice estimator.
+    #[must_use]
+    pub fn max_secure_collision_linf(&self) -> Option<u128> {
+        COEFF_LINF_BUCKETS
+            .iter()
+            .copied()
+            .take_while(|&bound| {
+                let key = SisTableKey {
+                    coeff_linf_bound: bound,
+                    ..self.sis_table_key
+                };
+                min_secure_rank(key, self.col_len as u64).is_some_and(|rank| rank <= self.row_len)
+            })
+            .last()
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
         bytes.push(self.security_policy().tag());
@@ -592,6 +624,34 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn fixed_matrix_capacity_inverts_the_checked_sis_table() {
+        let key = SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            role: SisMatrixRole::A,
+            ring_dimension: 64,
+            coeff_linf_bound: 32_767,
+        };
+        let matrix = AjtaiKeyParams::try_new_with_min_rank(key, 64).expect("audited matrix");
+        let capacity = matrix
+            .max_secure_collision_linf()
+            .expect("fixed matrix capacity");
+        assert!(capacity >= key.coeff_linf_bound);
+        for &larger in COEFF_LINF_BUCKETS.iter().filter(|&&bound| bound > capacity) {
+            let larger_key = SisTableKey {
+                coeff_linf_bound: larger,
+                ..key
+            };
+            assert!(
+                min_secure_rank(larger_key, matrix.col_len() as u64)
+                    .is_none_or(|rank| rank > matrix.row_len()),
+                "capacity must be the largest bucket supported by the fixed matrix"
+            );
+        }
     }
 
     #[test]

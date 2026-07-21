@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, SegmentTypedWitnessShape,
-    TailSegmentGroupLayout, TailSegmentLayout, TerminalWitnessPlan,
+    FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, TailSegmentGroupLayout,
+    TailSegmentLayout, TerminalResponseShape, TerminalWitnessPlan,
 };
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{Prime32Offset99, Prime64Offset59};
@@ -23,7 +23,7 @@ fn sample_level_params() -> LevelParams {
 fn sample_direct_step(logical_num_elems: usize) -> TerminalWitnessPlan {
     TerminalWitnessPlan {
         current_w_len: logical_num_elems,
-        witness_shape: SegmentTypedWitnessShape {
+        witness_shape: TerminalResponseShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
                 log_basis_open: 3,

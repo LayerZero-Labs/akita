@@ -1128,8 +1128,8 @@ mod tests {
     #[test]
     fn terminal_build_stops_before_quotient_and_recursive_witness() {
         use akita_types::{
-            build_segment_typed_witness_from_groups, ring_opening_point_from_field, BasisMode,
-            SegmentTypedWitnessGroupParts,
+            build_terminal_response_from_groups, ring_opening_point_from_field, BasisMode,
+            TerminalResponseGroupParts,
         };
 
         type F = fp128::Field;
@@ -1231,9 +1231,9 @@ mod tests {
         };
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
         let group = artifacts.groups.first().expect("single terminal group");
-        let segment = build_segment_typed_witness_from_groups::<F>(
+        let segment = build_terminal_response_from_groups::<F>(
             artifacts.ring_dim(),
-            &[SegmentTypedWitnessGroupParts {
+            &[TerminalResponseGroupParts {
                 params: &level_params,
                 num_w_vectors: 1,
                 num_t_vectors: 1,

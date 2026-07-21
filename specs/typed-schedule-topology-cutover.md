@@ -217,7 +217,7 @@ commitment compression.
   more choices. Cuts 2, 3, and 5 are behavior-preserving cutovers. Any generated
   value change must be required by Cut 1's protocol correction, the typed
   root-only tensor invariant, or another individually identified correctness
-  requirement, and must appear in the Cut 0 parity report.
+  requirement, and must be recorded in the implementation worklog.
 - Treating open PR behavior as landed. Later commits on this branch may add
   features only after their implementation and canonical formulas are present.
 - Reimplementing the SIS estimator or maintaining a second security model in
@@ -1397,7 +1397,7 @@ total lexicographic order:
 There is no library-default policy and no dependence on candidate enumeration
 order. A catalog family must supply and identity-bind its policy, but the
 cutover assignment is no longer an open decision: every family shipped on
-current main supplies `MinEstimatedDirectPayloadV1`. The selected entry and
+current main supplies `MinEstimatedDirectPayload`. The selected entry and
 every frontier point rejected by the policy are written to the audit report.
 Future catalog families can introduce another reviewed policy ID without
 changing this one's ordering.
@@ -1439,19 +1439,15 @@ spellings internally. Cut 5 performs their repository-wide atomic rename after
 all semantic changes have stabilized. No intermediate compatibility alias is
 introduced.
 
-### Cut 0: freeze a neutral current-main ledger
+### Cut 0: pin current-main parity
 
-- From the exact base commit, emit test fixtures containing effective geometry,
-  digit widths, dimensions, output ranks, input widths, witness lengths, planner byte
-  estimates, measured proof bytes,
-  matrix storage, and descriptor inputs for every shipped catalog entry.
-- Store the fixture in a schema-neutral audit format, not serialized old Rust
-  types. It remains useful after those types are deleted.
-- Add a terminal transcript-order fixture that identifies predecessor-bound
-  `t`, pre-challenge `e`, and response `z` without freezing the old
-  `SegmentTypedWitness` container.
-- Record the intentional terminal-protocol delta separately. All non-terminal
-  values are parity targets; terminal bytes and security inputs are recomputed.
+- Record the exact current-main base commit and use the existing generated-table
+  table-hit-versus-DP tests as the non-terminal schedule parity guard.
+- Use the existing transcript-order tests to preserve predecessor-bound `t`,
+  pre-challenge `e`, and response `z` ordering. Do not add a parallel fixture
+  format that duplicates those authorities.
+- Record intentional protocol or generated-value deltas in the implementation
+  worklog as they occur. Any unexplained generated-table diff is a regression.
 
 ### Cut 1: correct the terminal protocol and accounting
 
@@ -1634,7 +1630,8 @@ and SIS contract exist. The schedule topology does not change again.
       against the per-fold component sum.
 - [ ] Current-main generated catalogs retain non-terminal selected parameters
       and costs; terminal deltas match the reviewed direct-response fixture.
-- [ ] The exact nine-fold migration fixture in this spec has a regression test.
+- [ ] The exact nine-fold migration case remains covered by generated-table
+      table-hit-versus-DP parity and the relevant transcript-order tests.
 - [ ] Table replay and dynamic planning produce equal schedule descriptors for
       every emitted lookup key.
 - [ ] Descriptor mutation tests cover topology, every role dimension and rank,

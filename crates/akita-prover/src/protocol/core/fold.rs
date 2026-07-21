@@ -11,9 +11,9 @@ use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::{
-    build_segment_typed_witness_from_groups, dispatch_for_field, DigitRangeEqualityPoint,
-    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, SegmentTypedWitnessGroupParts,
-    SegmentTypedWitnessShape,
+    build_terminal_response_from_groups, dispatch_for_field, DigitRangeEqualityPoint,
+    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, TerminalResponseGroupParts,
+    TerminalResponseShape,
 };
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
@@ -538,7 +538,7 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     scheduled: &ExecutionSchedule,
     prepared_fold: PreparedFold<F, E>,
     is_terminal_fold: bool,
-    terminal_direct_witness_shape: Option<&SegmentTypedWitnessShape>,
+    terminal_direct_witness_shape: Option<&TerminalResponseShape>,
 ) -> Result<FoldProveOutput<F, E>, AkitaError>
 where
     F: FieldCore
@@ -583,7 +583,7 @@ where
         let RingSwitchBuildOutput::Terminal(terminal_artifacts) = build_output else {
             return Err(AkitaError::InvalidProof);
         };
-        let final_witness = bind_terminal_witness::<F, T>(
+        let terminal_response = bind_terminal_witness::<F, T>(
             transcript,
             lp,
             terminal_artifacts,
@@ -600,7 +600,7 @@ where
         let proof = TerminalLevelProof {
             extension_opening_reduction: prepared_fold.extension_opening_reduction,
             fold_grind_nonce,
-            final_witness,
+            terminal_response,
         };
         return Ok(FoldProveOutput::Terminal(Box::new(proof)));
     }
@@ -886,10 +886,10 @@ pub(in crate::protocol::core) fn bind_terminal_witness<F, T>(
     transcript: &mut T,
     lp: &LevelParams,
     artifacts: RingSwitchTerminalArtifacts<F>,
-    terminal_direct_witness_shape: Option<&SegmentTypedWitnessShape>,
+    terminal_direct_witness_shape: Option<&TerminalResponseShape>,
     opening_batch: &OpeningClaimsLayout,
     bound_t_state: &RingVec<F>,
-) -> Result<SegmentTypedWitness<F>, AkitaError>
+) -> Result<TerminalResponse<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
     T: Transcript<F>,
@@ -910,7 +910,7 @@ where
                     &scheduled_shape.layout,
                     layout_index,
                 )?;
-            Ok(SegmentTypedWitnessGroupParts {
+            Ok(TerminalResponseGroupParts {
                 params,
                 num_w_vectors,
                 num_t_vectors,
@@ -921,11 +921,10 @@ where
             })
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    let segment =
-        build_segment_typed_witness_from_groups::<F>(artifacts.ring_dim(), &group_parts, lp)?;
+    let segment = build_terminal_response_from_groups::<F>(artifacts.ring_dim(), &group_parts, lp)?;
     if segment.layout != scheduled_shape.layout {
         return Err(AkitaError::InvalidSetup(
-            "segment-typed witness layout does not match schedule".to_string(),
+            "terminal response layout does not match schedule".to_string(),
         ));
     }
     let parts = segment.terminal_transcript_parts()?;

@@ -253,7 +253,7 @@ pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
 
 pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
     Terminal {
-        final_witness: &'a SegmentTypedWitness<F>,
+        terminal_response: &'a TerminalResponse<F>,
         transcript: TerminalWitnessTranscriptParts,
     },
     Recursive {
@@ -815,7 +815,7 @@ where
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         match prepared.payload {
             PreparedFoldPayload::Terminal {
-                final_witness,
+                terminal_response,
                 transcript: terminal_replay,
             } => {
                 let _terminal_span = tracing::info_span!(
@@ -841,12 +841,12 @@ where
                     setup,
                     &relation_instance,
                     prepared.lp,
-                    final_witness,
+                    terminal_response,
                 )?;
                 super::terminal_direct::verify_terminal_trace(
                     &relation_instance,
                     prepared.lp,
-                    final_witness,
+                    terminal_response,
                     prepared
                         .trace_prepared_points
                         .as_deref()

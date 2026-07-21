@@ -1,4 +1,4 @@
-//! Deterministic terminal checks over the revealed segment-typed witness.
+//! Deterministic terminal checks over the revealed terminal response.
 
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{Challenges, SparseChallenge};
@@ -7,9 +7,9 @@ use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, HalvingField,
 };
 use akita_types::{
-    decode_terminal_z_golomb_payload_with_cap, dispatch_for_field,
-    recover_ring_subfield_inner_product, AkitaVerifierSetup, FpExtEncoding, LevelParams,
-    PreparedOpeningPoint, RelationMatrixRowLayout, RingRelationInstance, SegmentTypedWitness,
+    decode_terminal_z_golomb_payload, dispatch_for_field, recover_ring_subfield_inner_product,
+    AkitaVerifierSetup, FpExtEncoding, LevelParams, PreparedOpeningPoint, RelationMatrixRowLayout,
+    RingRelationInstance, TerminalResponse,
 };
 
 fn sparse_challenge_ring<F, const D: usize>(
@@ -139,12 +139,12 @@ pub(super) fn verify_terminal_ring_relations<F>(
     setup: &AkitaVerifierSetup<F>,
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
-    final_witness: &SegmentTypedWitness<F>,
+    terminal_response: &TerminalResponse<F>,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
 {
-    let witness = final_witness;
+    let witness = terminal_response;
     if relation.relation_matrix_row_layout() != RelationMatrixRowLayout::WithoutCommitmentBlocks
         || witness.layout.ring_dimension != relation.role_dims().d_a()
         || witness.layout.groups.len() != relation.opening_batch().num_groups()
@@ -225,18 +225,20 @@ where
                     let t = t_rings
                         .get(t_offset / D_A..t_end / D_A)
                         .ok_or(AkitaError::InvalidProof)?;
-                    let cap = lp.fold_witness_linf_cap_for_params(
+                    let coding_scale = lp.fold_witness_linf_cap_for_params(
                         params,
                         num_polynomials,
                         F::modulus_bits(),
                     )?;
-                    let z_values = decode_terminal_z_golomb_payload_with_cap(
+                    let admissible_cap = lp.terminal_response_linf_limit_for_params(params)?;
+                    let z_values = decode_terminal_z_golomb_payload(
                         witness
                             .z_payloads
                             .get(layout_index)
                             .ok_or(AkitaError::InvalidProof)?,
                         group_layout.z_coords,
-                        cap,
+                        coding_scale,
+                        admissible_cap,
                         Some(group_layout.z_payload_bytes),
                     )?;
                     (e, t, z_values)
@@ -374,7 +376,7 @@ where
 pub(super) fn verify_terminal_trace<F, E>(
     relation: &RingRelationInstance<F>,
     lp: &LevelParams,
-    final_witness: &SegmentTypedWitness<F>,
+    terminal_response: &TerminalResponse<F>,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
     claim_scales: Option<&[E]>,
@@ -385,7 +387,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt,
     E: ExtField<F> + FpExtEncoding<F>,
 {
-    let witness = final_witness;
+    let witness = terminal_response;
     if prepared_points.len() != relation.opening_batch().num_groups()
         || row_coefficients.len() != relation.opening_batch().num_total_polynomials()
         || claim_scales.is_some_and(|scales| scales.len() != row_coefficients.len())
@@ -477,11 +479,11 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        build_segment_typed_witness_from_groups, AkitaExpandedSetup, AkitaSetupSeed,
+        build_terminal_response_from_groups, AkitaExpandedSetup, AkitaSetupSeed,
         CommitmentRingDims, FlatMatrix, OpeningClaimsLayout, PolynomialGroupLayout,
         PrecommittedGroupParams, PrecommittedLevelParams, RingMultiplierOpeningPoint,
-        RingOpeningPoint, RingVec, SegmentTypedWitnessGroupParts, SetupPrefixVerifierRegistry,
-        SisModulusProfileId,
+        RingOpeningPoint, RingVec, SetupPrefixVerifierRegistry, SisModulusProfileId,
+        TerminalResponseGroupParts,
     };
 
     type F = Prime128OffsetA7F7;
@@ -638,7 +640,7 @@ mod tests {
         AkitaVerifierSetup<F>,
         RingRelationInstance<F>,
         LevelParams,
-        SegmentTypedWitness<F>,
+        TerminalResponse<F>,
         [TerminalGroupFixture<D>; 2],
     ) {
         let dims = CommitmentRingDims {
@@ -722,10 +724,10 @@ mod tests {
         let final_t = [RingVec::from_ring_elems(&[groups[1].t])];
         let precommitted_e = RingVec::from_ring_elems(&[groups[0].e]);
         let precommitted_t = [RingVec::from_ring_elems(&[groups[0].t])];
-        let witness = build_segment_typed_witness_from_groups(
+        let witness = build_terminal_response_from_groups(
             D,
             &[
-                SegmentTypedWitnessGroupParts {
+                TerminalResponseGroupParts {
                     params: &params,
                     num_w_vectors: 1,
                     num_t_vectors: 1,
@@ -734,7 +736,7 @@ mod tests {
                     recomposed_inner_rows: &final_t,
                     z_folded_centered_flat: &groups[1].z_centered,
                 },
-                SegmentTypedWitnessGroupParts {
+                TerminalResponseGroupParts {
                     params: &params.precommitted_groups[0],
                     num_w_vectors: 1,
                     num_t_vectors: 1,

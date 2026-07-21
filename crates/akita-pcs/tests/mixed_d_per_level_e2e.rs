@@ -439,7 +439,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // from the cleartext terminal witness (which lives at D = 64 here).
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             witness.z_payloads[0].pop();
             verify_mixed(&fixture, &proof, &fixture.commitment)
                 .expect_err("wrong-length terminal witness must be rejected");
@@ -448,7 +448,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Terminal witness digit-field (e_fields) length.
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             let len = witness.e_fields.coeffs().len();
             truncate_ring_vec(&mut witness.e_fields, len.saturating_sub(1));
             verify_mixed(&fixture, &proof, &fixture.commitment)
@@ -459,7 +459,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // linked to the response by the direct A relation.
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             let mut coeffs = witness.t_fields.coeffs().to_vec();
             coeffs[0] += F::one();
             witness.t_fields = RingVec::from_coeffs(coeffs);

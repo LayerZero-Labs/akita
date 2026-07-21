@@ -2,7 +2,7 @@
 
 use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::{LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, SegmentTypedWitnessShape};
+use crate::{LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape};
 use akita_field::{AkitaError, CanonicalField};
 
 /// Public inputs that deterministically select one level's active Akita params.
@@ -373,7 +373,7 @@ pub fn detect_field_modulus<F: CanonicalField>() -> u128 {
 
 /// Total ring elements in an intermediate recursive witness polynomial.
 /// Terminal witnesses are quotient-free and must be sized from their
-/// [`crate::SegmentTypedWitnessShape`] instead.
+/// [`crate::TerminalResponseShape`] instead.
 pub fn intermediate_w_ring_element_count_with_counts<F: CanonicalField>(
     lp: &LevelParams,
     num_polynomials: usize,
@@ -520,7 +520,7 @@ pub struct TerminalWitnessPlan {
     /// Witness length entering the direct step.
     pub current_w_len: usize,
     /// Serialized terminal witness payload shape.
-    pub witness_shape: SegmentTypedWitnessShape,
+    pub witness_shape: TerminalResponseShape,
     /// Direct witness bytes.
     pub terminal_bytes: usize,
 }

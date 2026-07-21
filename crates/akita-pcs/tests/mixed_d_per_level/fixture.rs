@@ -15,11 +15,10 @@ use akita_types::sis::{
     rounded_up_role_a_inf_norm, SisMatrixRole, SisTableDigest, SisTableKey,
 };
 use akita_types::{
-    intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes,
-    segment_typed_witness_bytes, AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CommitmentRingDims, DecompositionParams, FoldStep, LevelParams, LevelParamsLike,
-    PolynomialGroupLayout, RelationMatrixRowLayout, Schedule, SegmentTypedWitnessShape,
-    TerminalWitnessPlan,
+    intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes, terminal_response_bytes,
+    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims,
+    DecompositionParams, FoldStep, LevelParams, LevelParamsLike, PolynomialGroupLayout,
+    RelationMatrixRowLayout, Schedule, TerminalResponseShape, TerminalWitnessPlan,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
@@ -465,7 +464,7 @@ where
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
             let next_w_len = if is_terminal_fold {
-                SegmentTypedWitnessShape::from_groups(
+                TerminalResponseShape::from_groups(
                     &params,
                     field_bits,
                     [(&params as &dyn LevelParamsLike, 1, 1, 1)],
@@ -548,7 +547,7 @@ where
         } else {
             1
         };
-        let witness_shape = SegmentTypedWitnessShape::from_groups(
+        let witness_shape = TerminalResponseShape::from_groups(
             terminal_lp,
             field_bits,
             [(
@@ -558,7 +557,7 @@ where
                 1,
             )],
         )?;
-        let terminal_bytes = segment_typed_witness_bytes(field_bits, &witness_shape);
+        let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
         let current_w_len = witness_shape.logical_num_elems();
         if let Some(terminal_fold) = mixed_folds.last_mut() {
             let challenge_field_bits = field_bits * policy_of::<SuffixCfg>().chal_ext_degree as u32;

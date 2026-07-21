@@ -248,7 +248,7 @@ mod tests {
     use crate::layout::LevelParams;
     use crate::schedule::{FoldStep, Schedule, TerminalWitnessPlan};
     use crate::sis::SisModulusProfileId;
-    use crate::SegmentTypedWitnessShape;
+    use crate::TerminalResponseShape;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::AkitaError;
 
@@ -304,7 +304,7 @@ mod tests {
     fn make_direct_step() -> TerminalWitnessPlan {
         TerminalWitnessPlan {
             current_w_len: 0,
-            witness_shape: SegmentTypedWitnessShape {
+            witness_shape: TerminalResponseShape {
                 layout: crate::TailSegmentLayout {
                     ring_dimension: 64,
                     log_basis_open: 3,

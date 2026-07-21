@@ -8,8 +8,8 @@ use akita_config::{effective_batched_schedule, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::{
     validate_role_dispatch, validate_schedule_ring_dims, AkitaScheduleLookupKey, FoldStep,
-    LevelParams, OpeningClaimsLayout, RingRole, Schedule, SegmentTypedWitnessShape,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalWitnessPlan,
+    LevelParams, OpeningClaimsLayout, RingRole, Schedule, SisModulusProfileId,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape, TerminalWitnessPlan,
 };
 
 fn real_schedule<Cfg: CommitmentConfig>(num_vars: usize) -> Schedule {
@@ -60,7 +60,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
         folds: vec![make_fold_step(128)],
         terminal: TerminalWitnessPlan {
             current_w_len: 64,
-            witness_shape: SegmentTypedWitnessShape {
+            witness_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,
                     log_basis_open: 3,

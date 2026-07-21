@@ -3,9 +3,9 @@ use std::collections::{BTreeMap, HashMap};
 use akita_field::AkitaError;
 use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    padded_setup_prefix_len, segment_typed_witness_bytes, FoldStep, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, RelationMatrixRowLayout, SegmentTypedWitnessShape,
-    SetupContributionMode, TerminalWitnessPlan, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    padded_setup_prefix_len, terminal_response_bytes, FoldStep, LevelParams, OpeningClaimsLayout,
+    PolynomialGroupLayout, RelationMatrixRowLayout, SetupContributionMode, TerminalResponseShape,
+    TerminalWitnessPlan, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::PlannerPolicy;
@@ -77,7 +77,7 @@ fn make_terminal_direct_step(
     }
     let witness_shape = match opening_layout {
         Some(layout) => terminal_witness_shape_for_opening_layout(terminal_lp, field_bits, layout)?,
-        None => SegmentTypedWitnessShape::from_groups(
+        None => TerminalResponseShape::from_groups(
             terminal_lp,
             field_bits,
             [(
@@ -88,7 +88,7 @@ fn make_terminal_direct_step(
             )],
         )?,
     };
-    let terminal_bytes = segment_typed_witness_bytes(field_bits, &witness_shape);
+    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
     Ok(TerminalWitnessPlan {
         current_w_len,
         witness_shape,

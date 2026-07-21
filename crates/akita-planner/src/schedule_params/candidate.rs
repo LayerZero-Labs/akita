@@ -302,7 +302,7 @@ pub(crate) fn terminal_witness_shape_for_opening_layout(
     terminal_lp: &LevelParams,
     field_bits: u32,
     opening_layout: &OpeningClaimsLayout,
-) -> Result<SegmentTypedWitnessShape, AkitaError> {
+) -> Result<TerminalResponseShape, AkitaError> {
     if !terminal_lp.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
             "grouped terminal direct witness layout is unsupported".to_string(),
@@ -316,7 +316,7 @@ pub(crate) fn terminal_witness_shape_for_opening_layout(
         let group_polys = opening_layout.group_layout(group_index)?.num_polynomials();
         group_shapes.push((group_lp, group_polys, group_polys, 1));
     }
-    SegmentTypedWitnessShape::from_groups(terminal_lp, field_bits, group_shapes)
+    TerminalResponseShape::from_groups(terminal_lp, field_bits, group_shapes)
 }
 
 fn derive_setup_prefix_group(
@@ -593,7 +593,7 @@ pub(crate) fn derive_candidate_level_params(
             1,
             num_chunks,
         )?;
-        let terminal_shape = SegmentTypedWitnessShape::from_groups(
+        let terminal_shape = TerminalResponseShape::from_groups(
             &candidate_params,
             policy.decomposition.field_bits(),
             [(&candidate_params as &dyn LevelParamsLike, 1, 1, 1)],
