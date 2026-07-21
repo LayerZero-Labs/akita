@@ -26,8 +26,9 @@ use akita_prover::{
 use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode, LevelParams,
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
@@ -67,7 +68,7 @@ fn onehot_k_for_num_vars(nv: usize) -> usize {
 fn opening_from_poly<'a, I>(
     poly: &'a OneHotPoly<F, I>,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<F, String>
 where
@@ -240,10 +241,11 @@ fn run() -> Result<(), String> {
         "generating Akita verifier-input artifact (single-poly OneHot, D=64)"
     );
 
-    let layout: LevelParams = <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
-        &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
-    )
-    .expect("layout");
+    let layout: CommittedGroupParams =
+        <Cfg as CommitmentConfig>::get_params_for_batched_commitment(
+            &OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
+        )
+        .expect("layout");
     let alpha_bits = D.trailing_zeros() as usize;
     let required_vars = layout.position_index_bits() + layout.block_index_bits() + alpha_bits;
     // Both `main` (`required_vars <= nv`, layout fits in nv) and
