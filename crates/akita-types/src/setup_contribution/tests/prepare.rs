@@ -12,7 +12,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         akita_challenges::SparseChallengeConfig::production_for_ring_dim(64)
             .expect("supported test ring dimension"),
     )
-    .with_decomp(8, 24, 2, 3)
+    .with_decomp(8, 24, 2, 3, 3)
     .expect("valid test level params");
     lp.a_key = crate::AjtaiKeyParams::new_unchecked(
         crate::sis::DEFAULT_SIS_SECURITY_POLICY,

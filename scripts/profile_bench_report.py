@@ -295,6 +295,7 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_bytes",
     "final_w_num_elems",
     "final_w_bits_per_elem",
+    "tail_log_basis_open",
     "tail_log_basis",
     "tail_z_prefix_bytes",
     "tail_z_golomb_bytes",
@@ -354,8 +355,10 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
         summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
     elif "z_beta_inf" in kvs:
         summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
-    if summary.get("tail_log_basis") is not None:
-        summary["terminal_log_basis"] = summary["tail_log_basis"]
+    tail_log_basis_open = summary.get("tail_log_basis_open", summary.get("tail_log_basis"))
+    if tail_log_basis_open is not None:
+        summary["tail_log_basis_open"] = tail_log_basis_open
+        summary["terminal_log_basis"] = tail_log_basis_open
 
 
 def render_tail_encoding(current: dict[str, object]) -> None:
@@ -393,10 +396,13 @@ def render_tail_encoding(current: dict[str, object]) -> None:
     if encoding != "segment_typed":
         return
 
-    if current.get("tail_num_elems") is not None and current.get("tail_log_basis") is not None:
+    if (
+        current.get("tail_num_elems") is not None
+        and current.get("tail_log_basis_open") is not None
+    ):
         print(
             f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"gadget basis width `{current['tail_log_basis']}` bits, "
+            f"D/open gadget basis width `{current['tail_log_basis_open']}` bits, "
             "folded-witness (`z`) segment first on the wire"
         )
 
@@ -803,15 +809,18 @@ def extract_summary(
                 "n_b": int(kvs["n_b"]),
                 "n_d": int(kvs["n_d"]),
                 "challenge_l1_mass": int(kvs["challenge_l1_mass"]),
-                "log_basis": int(kvs["log_basis"]),
+                "log_basis_inner": int(kvs.get("log_basis_inner") or kvs["log_basis"]),
+                "log_basis_outer": int(kvs.get("log_basis_outer") or kvs["log_basis"]),
+                "log_basis_open": int(kvs.get("log_basis_open") or kvs["log_basis"]),
                 "position_index_bits": position_index_bits,
                 "block_index_bits": block_index_bits,
                 "num_positions_per_block": num_positions_per_block,
                 "num_live_blocks": num_live_blocks,
                 "num_live_ring_elements_per_claim": num_live_ring_elements_per_claim,
                 "block_index_domain_size": block_index_domain_size,
-                "delta_commit": int(kvs["delta_commit"]),
-                "delta_open": int(kvs["delta_open"]),
+                "num_digits_inner": int(kvs.get("num_digits_inner") or kvs["delta_commit"]),
+                "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
+                "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
                 "current_w_len": int(kvs["current_w_len"]),
                 "next_w_len": int(kvs["next_w_len"]),
@@ -1309,6 +1318,18 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
             level.setdefault("d_a", legacy_d)
             level.setdefault("d_b", legacy_d)
             level.setdefault("d_d", legacy_d)
+            legacy_log_basis = level.get("log_basis")
+            if legacy_log_basis is not None:
+                level.setdefault("log_basis_inner", legacy_log_basis)
+                level.setdefault("log_basis_outer", legacy_log_basis)
+                level.setdefault("log_basis_open", legacy_log_basis)
+            legacy_commit_digits = level.get("delta_commit")
+            if legacy_commit_digits is not None:
+                level.setdefault("num_digits_inner", legacy_commit_digits)
+            legacy_open_digits = level.get("delta_open")
+            if legacy_open_digits is not None:
+                level.setdefault("num_digits_outer", legacy_open_digits)
+                level.setdefault("num_digits_open", legacy_open_digits)
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
     # All production CRT profiles currently use moduli below 2^30 stored in
@@ -1397,6 +1418,13 @@ def fmt_bytes(value: float) -> str:
     return f"{int(round(value)):,}"
 
 
+def fmt_mib_with_exact_bytes(value_bytes: float) -> str:
+    return (
+        f"{fmt_mib_from_bytes(value_bytes)}<br>"
+        f"<sub>{fmt_bytes(value_bytes)} bytes</sub>"
+    )
+
+
 def fmt_count(value: float) -> str:
     return f"{int(round(value)):,}"
 
@@ -1430,9 +1458,9 @@ REPORT_METRICS = [
     Metric("verify_total_s", "Verify", "ms", fmt_milliseconds),
     Metric("max_rss_kib", "Peak process RSS", "MiB", fmt_mib),
     Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
-    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_from_bytes),
-    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_from_bytes),
-    Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_from_bytes),
+    Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_with_exact_bytes),
+    Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_with_exact_bytes),
+    Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_with_exact_bytes),
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
@@ -1680,8 +1708,8 @@ def render_matrix_summary(
                 current,
                 baseline,
                 "proof_size_bytes",
-                lambda value: f"{value / 1024.0:.1f}",
-                " KiB",
+                fmt_bytes,
+                " bytes",
                 main_baseline is not None,
             ),
         ]
@@ -1764,20 +1792,23 @@ def render_planned_levels(
     print("#### Security and proof sizing")
     print()
     print(
-        "| Fold level | A rows | B rows | D rows | Gadget basis bits | "
-        "Fold-challenge L1 bound | Commit digits | Opening digits | Folded-witness digits | "
+        "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
+        "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
         "Next-witness field elements | Planned fold-level proof bytes |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
         print(
             f"| L{level['level']} | {level_value(level, baseline, 'n_a')} | "
             f"{level_value(level, baseline, 'n_b')} | {level_value(level, baseline, 'n_d')} | "
-            f"{level_value(level, baseline, 'log_basis')} | "
+            f"{level_value(level, baseline, 'log_basis_inner')} | "
+            f"{level_value(level, baseline, 'log_basis_outer')} | "
+            f"{level_value(level, baseline, 'log_basis_open')} | "
             f"{level_value(level, baseline, 'challenge_l1_mass')} | "
-            f"{level_value(level, baseline, 'delta_commit')} | "
-            f"{level_value(level, baseline, 'delta_open')} | "
+            f"{level_value(level, baseline, 'num_digits_inner')} | "
+            f"{level_value(level, baseline, 'num_digits_outer')} | "
+            f"{level_value(level, baseline, 'num_digits_open')} | "
             f"{level_value(level, baseline, 'delta_fold')} | "
             f"{level_value(level, baseline, 'next_w_len')} | "
             f"{level_value(level, baseline, 'level_bytes', fmt_bytes, ' bytes')} |"

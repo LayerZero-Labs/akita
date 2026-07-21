@@ -277,8 +277,8 @@ where
                 let n_a = params.a_rows_len();
                 let n_a_cols = params.a_col_len();
                 let num_positions = params.num_positions_per_block();
-                let num_digits_commit = params.num_digits_commit();
-                let log_basis = params.log_basis();
+                let num_digits_inner = params.num_digits_inner();
+                let log_basis_inner = params.log_basis_inner();
                 let multiplier = relation.group_ring_multiplier_point(group_index)?;
                 let position_rings = multiplier.position_rings_trusted::<D_A>()?;
                 let (consistency, a_rows) = cfg_join!(
@@ -302,18 +302,20 @@ where
                             let _span = tracing::info_span!(
                                 "terminal_direct_consistency_reduce_z",
                                 positions = num_positions,
-                                digits = num_digits_commit
+                                digits = num_digits_inner
                             )
                             .entered();
-                            let gadget =
-                                akita_types::gadget_row_scalars::<F>(num_digits_commit, log_basis);
+                            let gadget = akita_types::gadget_row_scalars::<F>(
+                                num_digits_inner,
+                                log_basis_inner,
+                            );
                             let mut reduced = CyclotomicRing::zero();
                             for position in 0..num_positions {
                                 let start = position
-                                    .checked_mul(num_digits_commit)
+                                    .checked_mul(num_digits_inner)
                                     .ok_or(AkitaError::InvalidProof)?;
                                 let mut z_value = CyclotomicRing::zero();
-                                for digit in 0..num_digits_commit {
+                                for digit in 0..num_digits_inner {
                                     let index =
                                         start.checked_add(digit).ok_or(AkitaError::InvalidProof)?;
                                     z_value += centered_ring::<F, D_A>(
@@ -654,16 +656,54 @@ mod tests {
             SparseChallengeConfig::production_for_ring_dim(D)
                 .expect("supported A-role challenge dimension"),
         )
-        .with_decomp(1, 1, 1, 1)
+        .with_decomp(1, 1, 1, 1, 1)
         .expect("terminal fixture layout")
         .with_role_dims(dims)
         .expect("nested role dimensions");
         let precommitted_layout = PolynomialGroupLayout::new(0, 1);
+        let mut precommitted_params =
+            PrecommittedGroupParams::from_params(precommitted_layout, &base_params);
+        precommitted_params.n_a = base_params.a_key.row_len();
+        precommitted_params.n_b = base_params.b_key.row_len();
+        precommitted_params.a_coeff_linf_bound = 1;
+        precommitted_params.b_coeff_linf_bound = 1;
+        let precommitted_a_width = precommitted_params
+            .num_positions_per_block
+            .checked_mul(base_params.num_digits_inner)
+            .expect("precommitted A width");
+        let precommitted_b_width = precommitted_params
+            .n_a
+            .checked_mul(base_params.num_digits_outer)
+            .and_then(|width| width.checked_mul(precommitted_params.num_live_blocks))
+            .and_then(|width| width.checked_mul(precommitted_layout.num_polynomials()))
+            .expect("precommitted B width");
+        let precommitted_a_key = akita_types::sis::AjtaiKeyParams::new_unchecked(
+            akita_types::DEFAULT_SIS_SECURITY_POLICY,
+            akita_types::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            akita_types::SisMatrixRole::A,
+            precommitted_params.n_a,
+            precommitted_a_width,
+            precommitted_params.a_coeff_linf_bound,
+            D,
+        );
+        let precommitted_b_key = akita_types::sis::AjtaiKeyParams::new_unchecked(
+            akita_types::DEFAULT_SIS_SECURITY_POLICY,
+            akita_types::SisTableDigest::CURRENT,
+            SisModulusProfileId::Q128OffsetA7F7,
+            akita_types::SisMatrixRole::B,
+            precommitted_params.n_b,
+            precommitted_b_width,
+            precommitted_params.b_coeff_linf_bound,
+            D,
+        );
         let precommitted = PrecommittedLevelParams {
-            layout: PrecommittedGroupParams::from_params(precommitted_layout, &base_params),
-            a_key: base_params.a_key.clone(),
-            b_key: base_params.b_key.clone(),
-            num_digits_commit: base_params.num_digits_commit,
+            layout: precommitted_params,
+            a_key: precommitted_a_key,
+            b_key: precommitted_b_key,
+            log_basis_open: base_params.log_basis_open,
+            num_digits_inner: base_params.num_digits_inner,
+            num_digits_outer: base_params.num_digits_outer,
             num_digits_open: base_params.num_digits_open,
             num_digits_fold_one: base_params.num_digits_fold_one,
         };

@@ -9,7 +9,7 @@
 //!
 //! ```ignore
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
-//!     num_positions_per_block, decomposition_digits::num_digits_s_commit(decomp, is_root))?;
+//!     num_positions_per_block, decomposition_digits::num_digits_inner(decomp, is_root))?;
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
 //!     bits, family, d, decomp, &stage1, shape, is_root, k, nu, num_live_blocks, num_claims, width_s as u64)?;
 //! let n_a = ajtai_key::min_secure_rank(
@@ -39,7 +39,7 @@ pub use ajtai_key::{
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_full_field, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
-    num_digits_for_bound, num_digits_open, num_digits_s_commit, num_digits_setup_prefix_commit,
+    num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
 };
 pub use fold_witness_grind::{
     FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,

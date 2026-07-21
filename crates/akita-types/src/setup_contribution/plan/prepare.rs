@@ -73,9 +73,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
                 let num_positions_per_block =
                     group.num_positions_per_block(level_params, opening_batch)?;
-                let depth_open = group.depth_open(level_params, opening_batch)?;
+                let depth_witness = group.depth_witness(level_params, opening_batch)?;
                 let depth_commit = group.depth_commit(level_params, opening_batch)?;
-                let log_basis = group.log_basis(level_params, opening_batch)?;
+                let depth_open = group.depth_open(level_params, opening_batch)?;
+                let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
                 let n_a = group.n_a(level_params, opening_batch)?;
                 let n_b = group.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
@@ -86,7 +87,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .checked_mul(t_vector_width)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
                 let z_cols = num_positions_per_block
-                    .checked_mul(depth_commit)
+                    .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let a_row_weights: std::sync::Arc<[E]> =
                     checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
@@ -116,7 +117,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         opening_source_len,
                         group.group_id,
                         num_live_blocks,
-                        depth_open,
+                        depth_commit,
                         n_a,
                         group.num_claims,
                         &eq_window,
@@ -133,11 +134,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     fold_gadget
                 } else {
                     fold_gadget_storage =
-                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis);
+                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
                     &fold_gadget_storage
                 };
                 let z_range = num_positions_per_block
-                    .checked_mul(depth_commit)
+                    .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let mut z_eq_slice = vec![E::zero(); z_range];
                 {
@@ -147,7 +148,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         opening_source_len,
                         group.group_id,
                         num_positions_per_block,
-                        depth_commit,
+                        depth_witness,
                         group.depth_fold,
                         &eq_window,
                         fold_gadget,
@@ -250,17 +251,22 @@ fn validate_static_inputs<E: FieldCore>(
     for group_index in 0..num_groups {
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
-        let depth_commit = group_params.num_digits_commit();
+        let depth_witness = group_params.num_digits_inner();
+        let depth_commit = group_params.num_digits_outer();
         let depth_open = group_params.num_digits_open();
         let num_positions_per_block = group_params.num_positions_per_block();
         let num_live_blocks = group_params.num_live_blocks();
-        if num_positions_per_block == 0 || depth_commit == 0 || depth_open == 0 {
+        if num_positions_per_block == 0
+            || depth_witness == 0
+            || depth_commit == 0
+            || depth_open == 0
+        {
             return Err(AkitaError::InvalidSetup(
                 "setup evaluator layout has zero width".into(),
             ));
         }
         let inner_width = num_positions_per_block
-            .checked_mul(depth_commit)
+            .checked_mul(depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("inner width overflow".into()))?;
         if group_params.a_col_len() < inner_width {
             return Err(AkitaError::InvalidSetup(
@@ -270,7 +276,7 @@ fn validate_static_inputs<E: FieldCore>(
         let expected_b_width = group_layout
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
-            .and_then(|width| width.checked_mul(depth_open))
+            .and_then(|width| width.checked_mul(depth_commit))
             .and_then(|width| width.checked_mul(num_live_blocks))
             .ok_or_else(|| AkitaError::InvalidSetup("B-matrix width overflow".into()))?;
         if group_params.b_col_len() < expected_b_width {

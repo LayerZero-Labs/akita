@@ -228,8 +228,8 @@ where
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
                     num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_commit(),
-                    log_basis: params.log_basis(),
+                    num_digits: params.num_digits_inner(),
+                    log_basis: params.log_basis_inner(),
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
@@ -245,8 +245,8 @@ where
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
                                     num_positions_per_block: params.num_positions_per_block(),
-                                    num_digits: params.num_digits_commit(),
-                                    log_basis: params.log_basis(),
+                                    num_digits: params.num_digits_inner(),
+                                    log_basis: params.log_basis_inner(),
                                 },
                             )
                         })
@@ -276,8 +276,8 @@ where
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
                     num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_commit(),
-                    log_basis: params.log_basis(),
+                    num_digits: params.num_digits_inner(),
+                    log_basis: params.log_basis_inner(),
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
@@ -479,7 +479,7 @@ impl RingRelationProver {
         OB: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
         RB: DigitRowsComputeBackend<F>,
     {
-        validate_i8_setup_log_basis(lp.log_basis, "for i8 prover decomposition")?;
+        validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
         if !matches!(
             relation_matrix_row_layout,
@@ -618,7 +618,7 @@ impl RingRelationProver {
                         decompose_e_hat::<F, D_D>(
                             &pre_folded_typed,
                             group_lp.num_digits_open(),
-                            group_lp.log_basis(),
+                            group_lp.log_basis_open(),
                         )?
                     };
                     Ok::<_, AkitaError>((

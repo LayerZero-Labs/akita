@@ -440,14 +440,14 @@ where
                 n_rows: plan.n_a,
                 num_positions_per_block: plan.num_positions_per_block,
                 num_live_blocks,
-                num_digits_commit: plan.num_digits_commit,
-                log_basis: plan.log_basis,
+                num_digits_inner: plan.num_digits_inner,
+                log_basis_inner: plan.log_basis_inner,
                 known_balanced_log_basis: self.known_balanced_log_basis,
             },
         )?;
 
         let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_open, plan.log_basis)?;
+            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
         CommitInnerWitness::from_parts(t, decomposed_inner_rows)
     }
 }

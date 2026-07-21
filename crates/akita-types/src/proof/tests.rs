@@ -12,7 +12,7 @@ type F = Prime128Offset275;
 fn test_terminal_witness(coeffs: Vec<F>) -> SegmentTypedWitness<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
-        log_basis: 3,
+        log_basis_open: 3,
         groups: vec![TailSegmentGroupLayout {
             z_coords: 1,
             e_field_elems: coeffs.len(),
@@ -34,7 +34,7 @@ fn direct_witness_shape_rejects_oversized_allocations() {
     let err = SegmentTypedWitnessShape {
         layout: TailSegmentLayout {
             ring_dimension: 64,
-            log_basis: 3,
+            log_basis_open: 3,
             groups: vec![TailSegmentGroupLayout {
                 z_coords: 1,
                 e_field_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,

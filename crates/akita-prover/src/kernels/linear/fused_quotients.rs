@@ -586,7 +586,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     t_hat: &[[i8; D]],
     z_folded_rings: &[[i32; D]],
     z_folded_max_abs: u32,
-    log_basis: u32,
+    log_basis_open: u32,
+    log_basis_outer: u32,
 ) -> Result<
     (
         Vec<CyclotomicRing<F, D>>,
@@ -595,8 +596,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     ),
     AkitaError,
 > {
-    validate_i8_log_basis(log_basis)?;
-    let digit_bound = balanced_digit_abs_bound(log_basis);
+    validate_i8_log_basis(log_basis_open)?;
+    validate_i8_log_basis(log_basis_outer)?;
     fused_split_eq_quotients_with_digit_bound(
         slot,
         n_d,
@@ -606,8 +607,8 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
         t_hat,
         z_folded_rings,
         z_folded_max_abs,
-        digit_bound,
-        digit_bound,
+        balanced_digit_abs_bound(log_basis_open),
+        balanced_digit_abs_bound(log_basis_outer),
     )
 }
 

@@ -354,13 +354,16 @@ where
         let e_folded = &group.e_folded;
         let recomposed_inner_rows = &group.recomposed_inner_rows;
         let group_layout = opening_batch.group_layout(group_index)?;
-        let log_basis = group.params.log_basis();
+        let log_basis_outer = group.params.log_basis_outer();
+        let log_basis_open = group.params.log_basis_open();
+        let num_digits_outer = group.params.num_digits_outer();
         let num_digits_open = group.params.num_digits_open();
         let n_a = group.params.a_rows_len();
         let n_b = group.params.b_rows_len();
         let num_live_blocks_per_claim = group.params.num_live_blocks();
         let inner_width = group.params.a_col_len();
-        validate_i8_setup_log_basis(log_basis, "for multi-group relation quotient")?;
+        validate_i8_setup_log_basis(log_basis_outer, "for multi-group relation quotient")?;
+        validate_i8_setup_log_basis(log_basis_open, "for multi-group relation quotient")?;
         if group_layout.num_polynomials() == 0 {
             return Err(AkitaError::InvalidProof);
         }
@@ -403,7 +406,7 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let expected_t_hat_block_digits = n_a
-            .checked_mul(num_digits_open)
+            .checked_mul(num_digits_outer)
             .ok_or(AkitaError::InvalidProof)?;
         if group.t_hat.block_count() != expected_blocks
             || group
@@ -430,7 +433,8 @@ where
                 n_d: 0,
                 n_b: 0,
                 n_a,
-                log_basis,
+                log_basis_open,
+                log_basis_outer,
             },
         )
         .map_err(|err| AkitaError::InvalidInput(format!("A quotient rows failed: {err:?}")))?;
@@ -466,8 +470,8 @@ where
                 ring_multiplier_point,
                 &group.z_centered,
                 group.params.num_positions_per_block(),
-                group.params.num_digits_commit(),
-                log_basis,
+                group.params.num_digits_inner(),
+                group.params.log_basis_inner(),
             )?;
             quotient_from_cyclic_and_reduced(&consistency_z_cyclic, &consistency_z_reduced)
         };
@@ -540,7 +544,8 @@ where
                         n_d: 0,
                         n_b,
                         n_a: 0,
-                        log_basis,
+                        log_basis_open,
+                        log_basis_outer,
                     },
                 )
                 .map_err(|err| {
@@ -594,7 +599,8 @@ where
                         n_d: n_d_active,
                         n_b: 0,
                         n_a: 0,
-                        log_basis: lp.shared_d_digit_log_basis(),
+                        log_basis_open: lp.shared_d_digit_log_basis(),
+                        log_basis_outer: lp.shared_d_digit_log_basis(),
                     },
                 )
                 .map_err(|err| {

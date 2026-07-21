@@ -354,7 +354,7 @@ where
         });
     }
     let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let levels = r_decomp_levels::<F>(lp.log_basis);
+    let levels = r_decomp_levels::<F>(lp.log_basis_open);
     let witness_layout = instance.segment_layout(lp, None)?;
     let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
         AkitaError::InvalidSetup("relation quotient witness width overflow".to_string())
@@ -452,10 +452,13 @@ where
         if challenges.logical_len() != total_blocks {
             return Err(AkitaError::InvalidProof);
         }
+        let depth_witness = group_lp.num_digits_inner();
+        let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
-        let depth_commit = group_lp.num_digits_commit();
         let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
-        let log_basis = group_lp.log_basis();
+        let log_basis_inner = group_lp.log_basis_inner();
+        let log_basis_outer = group_lp.log_basis_outer();
+        let log_basis_open = group_lp.log_basis_open();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
         let inner_width = group_lp.a_col_len();
@@ -464,7 +467,7 @@ where
         let num_live_blocks_g = group_lp.num_live_blocks();
         let num_positions_per_block_g = group_lp.num_positions_per_block();
         let semantic_t_vector_width = n_a
-            .checked_mul(depth_open)
+            .checked_mul(depth_commit)
             .and_then(|len| len.checked_mul(num_live_blocks_g))
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("multi-group B vector width overflow".to_string())
@@ -491,15 +494,19 @@ where
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
             return Err(AkitaError::InvalidProof);
         }
-        let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis)
+        let g_open: Vec<E> = gadget_row_scalars::<F>(depth_open, log_basis_open)
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis)
+        let t_commit_gadget: Vec<E> = gadget_row_scalars::<F>(depth_commit, log_basis_outer)
             .into_iter()
             .map(E::lift_base)
             .collect();
-        let fold_gadget: Vec<E> = gadget_row_scalars::<F>(depth_fold, log_basis)
+        let witness_gadget: Vec<E> = gadget_row_scalars::<F>(depth_witness, log_basis_inner)
+            .into_iter()
+            .map(E::lift_base)
+            .collect();
+        let fold_gadget: Vec<E> = gadget_row_scalars::<F>(depth_fold, log_basis_open)
             .into_iter()
             .map(E::lift_base)
             .collect();
@@ -565,7 +572,7 @@ where
                 }
                 for a_idx in 0..n_a {
                     let a_row_weight = eq_tau1.eval_at(a_range.start + a_idx)?;
-                    for (digit, &opening_gadget) in g_open.iter().enumerate() {
+                    for (digit, &opening_gadget) in t_commit_gadget.iter().enumerate() {
                         let block_claim = num_live_blocks_g
                             .checked_mul(claim)
                             .and_then(|base| base.checked_add(global_block))
@@ -574,12 +581,19 @@ where
                             .checked_mul(block_claim)
                             .and_then(|base| base.checked_add(a_idx))
                             .ok_or(AkitaError::InvalidProof)?;
-                        let semantic_col = depth_open
+                        let semantic_col = depth_commit
                             .checked_mul(row_block_claim)
                             .and_then(|base| base.checked_add(digit))
                             .ok_or(AkitaError::InvalidProof)?;
-                        let witness_col =
-                            unit.t_index(k_g, n_a, depth_open, claim, global_block, a_idx, digit)?;
+                        let witness_col = unit.t_index(
+                            k_g,
+                            n_a,
+                            depth_commit,
+                            claim,
+                            global_block,
+                            a_idx,
+                            digit,
+                        )?;
                         for role_subcol in 0..b_ratio {
                             let local_col = semantic_col
                                 .checked_mul(b_ratio)
@@ -634,11 +648,11 @@ where
         // not multiply by G_commit.
         let z_base = cfg_into_iter!(0..inner_width)
             .map(|k| {
-                let block_idx = k / depth_commit;
-                let digit_idx = k % depth_commit;
+                let block_idx = k / depth_witness;
+                let digit_idx = k % depth_witness;
                 let opening_a_eval =
                     ring_multiplier_point.eval_position_at_dyn::<E>(block_idx, alpha_pows_a)?;
-                let mut acc = consistency_weight * opening_a_eval * commit_gadget[digit_idx];
+                let mut acc = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
                 for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
                     let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
                     if !eq_i.is_zero() {
@@ -654,12 +668,12 @@ where
             .collect::<Result<Vec<_>, AkitaError>>()?;
         for unit in units {
             for position in 0..num_positions_per_block_g {
-                for commit_digit in 0..depth_commit {
+                for commit_digit in 0..depth_witness {
                     for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
-                        let phys_k = position * depth_commit + commit_digit;
+                        let phys_k = position * depth_witness + commit_digit;
                         let witness_col = unit.z_index(
                             num_positions_per_block_g,
-                            depth_commit,
+                            depth_witness,
                             depth_fold,
                             position,
                             commit_digit,
@@ -682,7 +696,7 @@ where
             }
         }
     }
-    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis)
+    let r_gadget: Vec<E> = gadget_row_scalars::<F>(levels, lp.log_basis_open)
         .into_iter()
         .map(E::lift_base)
         .collect();

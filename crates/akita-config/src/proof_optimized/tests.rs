@@ -36,7 +36,7 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp =
         LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse)
-            .with_decomp(1, 4, 1, 1)
+            .with_decomp(1, 4, 1, 1, 1)
             .expect("laid-out fold params");
     let witness_shape = akita_types::SegmentTypedWitnessShape::from_groups(
         &fold_lp,
@@ -270,6 +270,51 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
 }
 
 #[test]
+fn setup_envelope_dominates_bounded_precommit_shape_grid() {
+    type Cfg = fp128::D64OneHot;
+
+    const MIN_NUM_VARS: usize = 16;
+    const MAX_NUM_VARS: usize = 32;
+    let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(MAX_NUM_VARS, 1)
+        .expect("bounded setup envelope");
+    let mut schedulable_shapes = 0usize;
+
+    for main_num_vars in MIN_NUM_VARS..=MAX_NUM_VARS {
+        let main_group = PolynomialGroupLayout::new(main_num_vars, 1);
+        for first_num_vars in MIN_NUM_VARS..=MAX_NUM_VARS {
+            for second_num_vars in 0..=MAX_NUM_VARS {
+                if second_num_vars != 0 && second_num_vars < MIN_NUM_VARS {
+                    continue;
+                }
+                let mut precommitted = vec![PolynomialGroupLayout::new(first_num_vars, 1)];
+                if second_num_vars != 0 {
+                    precommitted.push(PolynomialGroupLayout::new(second_num_vars, 1));
+                }
+                let layout = OpeningClaimsLayout::from_root_groups(&precommitted, main_group)
+                    .expect("bounded precommit layout");
+                let Some(required) = setup_matrix_envelope_for_shape::<Cfg>(&layout)
+                    .expect("bounded precommit shape must either schedule or be infeasible")
+                else {
+                    continue;
+                };
+                schedulable_shapes += 1;
+                assert!(
+                    setup_envelope.max_setup_len >= required.max_setup_len,
+                    "setup envelope {} does not cover requirement {} for main_num_vars={main_num_vars}, precommitted={precommitted:?}",
+                    setup_envelope.max_setup_len,
+                    required.max_setup_len,
+                );
+            }
+        }
+    }
+
+    assert!(
+        schedulable_shapes > 0,
+        "bounded shape grid must exercise at least one schedulable precommit layout"
+    );
+}
+
+#[test]
 fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
@@ -332,7 +377,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             2,
             SparseChallengeConfig::pm1_only(3),
         )
-        .with_decomp(2, 3, full_field_digits, 2)
+        .with_decomp(2, 3, full_field_digits, 2, 2)
         .expect("scalar params")
     }
 
@@ -619,12 +664,17 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
     level: &LevelParams,
 ) {
     assert!(
-        (1..=MAX_I8_LOG_BASIS).contains(&level.log_basis),
-        "generated schedule uses log_basis={} outside the i8 kernel contract for {} key={key:?}",
-        level.log_basis,
+        [
+            level.log_basis_inner,
+            level.log_basis_outer,
+            level.log_basis_open
+        ]
+        .into_iter()
+        .all(|basis| (1..=MAX_I8_LOG_BASIS).contains(&basis)),
+        "generated schedule uses semantic basis outside the i8 kernel contract for {} key={key:?}",
         std::any::type_name::<Cfg>()
     );
-    let balanced_digit_bound = 1u64 << (level.log_basis - 1);
+    let balanced_digit_bound = 1u64 << (level.log_basis_open - 1);
     let (profile_id, _product) = crt_product_for_small_field_cfg::<Cfg>();
     for (role, rhs_abs_bound) in [
         ("schedule balanced digit", balanced_digit_bound),

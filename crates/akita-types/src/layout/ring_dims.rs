@@ -279,6 +279,7 @@ mod tests {
             num_live_blocks * num_positions_per_block,
             2,
             2,
+            2,
         )
         .expect("valid ring-dimension test params")
     }
@@ -306,7 +307,7 @@ mod tests {
             witness_shape: SegmentTypedWitnessShape {
                 layout: crate::TailSegmentLayout {
                     ring_dimension: 64,
-                    log_basis: 3,
+                    log_basis_open: 3,
                     groups: vec![crate::TailSegmentGroupLayout {
                         z_coords: 1,
                         e_field_elems: 0,

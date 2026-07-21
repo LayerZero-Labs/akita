@@ -93,7 +93,7 @@ pub(super) fn balanced_digit_abs_bound(log_basis: u32) -> u64 {
 /// Whether every coefficient across `blocks` (fold-major) is a balanced gadget
 /// digit for `log_basis`, i.e. lies in `[-2^(log_basis-1), 2^(log_basis-1))`.
 ///
-/// A `num_digits_commit == 1` recursive witness is a raw signed-i8 coefficient
+/// A `num_digits_inner == 1` recursive witness is a raw signed-i8 coefficient
 /// stream: degree-one fields yield balanced digits (the fast predecomposed
 /// digit commit applies), but extension-field tensor base-lift packing sums
 /// gadget digits and can exceed this range, requiring the general raw ring

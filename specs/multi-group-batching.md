@@ -142,14 +142,17 @@ singleton proof path.
 `K_g`
 : Number of polynomials committed in group `g`.
 
-`l_g`
-: `log_basis` used by group `g` for gadget decomposition.
+`l_inner,g`
+: `log_basis_inner` used by group `g` for the A/source decomposition.
 
-`l_max`
-: Maximum allowed root `log_basis` from the configuration's basis range.
+`l_outer,g`
+: `log_basis_outer` used by group `g` for the B/`t_hat` decomposition.
 
-`n_b'_g`
-: Conservative B rank used when committing group `g`.
+`l_open`
+: Root-selected `log_basis_open` used by D/`e_hat` and the shared relation tail.
+
+`n_b,g`
+: Frozen B rank used when committing group `g` at `l_outer,g`.
 
 `z_g`
 : Folded group response before decomposition.
@@ -418,20 +421,21 @@ pub struct AkitaScheduleLookupKey {
 
 pub struct PrecommittedGroupParams {
     pub group: PolynomialGroupLayout,
-    pub position_index_bits: usize,
-    pub block_index_bits: usize,
-    pub log_basis: u32,
+    pub num_live_ring_elements_per_claim: usize,
+    pub num_positions_per_block: usize,
+    pub num_live_blocks: usize,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
     pub n_a: usize,
-    pub conservative_n_b: usize,
+    pub n_b: usize,
 }
 ```
 
 `PrecommittedGroupParams` records the root layout that was used to create the
 group commitment. The final planner must use the same `t_hat_g` shape for that
 group. In the `commit_final_group`/opening phase, every precommitted group must
-verify against the frozen `conservative_n_b`. The final group may use a
-non-conservative B rank because it is committed after the full multi-group root
-shape is known.
+verify against the frozen `n_b`. The final group is likewise priced against its
+selected outer basis after the full multi-group root shape is known.
 
 The public final-commit API accepts precommitted `PolynomialGroupLayout`s and
 recomputes `PrecommittedGroupParams` internally under
@@ -528,26 +532,26 @@ K_g in {1, 2, 4} including more unequal group sizes
 num_vars in supported family ranges
 ```
 
-## Conservative-Rank Configuration
+## Precommit Configuration
 
-Conservative-rank standalone group commits use the existing one-hot
+Standalone precommitted group commits use the existing one-hot
 `proof_optimized` presets through `ConservativeCommitmentConfig<Cfg>`. The
 adapter overrides ordinary scalar schedule/commit layout selection so
 precommitted groups can be produced with the existing `batched_commit` API while
-using a B rank conservative for the parent config's maximum root basis. Dense
+freezing their independently planned inner basis and minimum selected outer basis. Dense
 backends and tiered conservative/multi-group roots return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
 
 For a group committed before the final multi-group proof is known:
 
-1. Pick the group log basis as the minimum allowed root `log_basis` in the
-   code/config basis range:
+1. Pick the group's outer basis as the minimum allowed root basis in the
+   code/config basis range. The inner basis is planned independently for A:
    ```text
-   l_g = l_min = min_basis(Cfg)
+   l_outer,g = l_min = min_basis(Cfg)
    ```
 2. Use the existing proof-optimized schedule planner with the basis search range
-   pinned to `log_basis = l_g`, for example by resolving the standalone group
+   pinned to `log_basis = l_outer,g`, for example by resolving the standalone group
    key under:
    ```text
    basis_range = (l_g, l_g)
@@ -557,29 +561,25 @@ For a group committed before the final multi-group proof is known:
 3. Require a one-hot root layout in the conservative precommit path.
 4. Freeze the fields that determine the committed `t_hat_g` shape:
    ```text
-   key, position_index_bits, block_index_bits, log_basis = l_g, n_a
+   key, position_index_bits, block_index_bits,
+   log_basis_inner = l_inner,g, log_basis_outer = l_outer,g, n_a
    ```
-5. Pick the highest allowed root basis:
+5. Ask the SIS estimator for the B rank required for the derived B width
+   `params.b_key.col_len()` at the B-role norm induced by the frozen
+   `l_outer,g`. Call it `n_b,g`.
+6. Commit this group using:
    ```text
-   l_max = max_basis(Cfg)
+   m_g, r_g, n_a_g, derived_B_width_g, n_b,g,
+   log_basis_inner = l_inner,g, log_basis_outer = l_outer,g, ...
    ```
 
-6. Ask the SIS estimator for the B rank required for the derived B width
-   `params.b_key.col_len()` at the B-role norm induced by `l_max`. Call it
-   `n_b'`.
-7. Commit this group using:
-   ```text
-   m_g, r_g, n_a_g, derived_B_width_g, n_b'_g, log_basis = l_g, num_digits_open(l_g), ...
-   ```
+7. Store the frozen fields and `n_b,g` in `PrecommittedGroupParams`.
 
-8. Store the frozen fields and `n_b'_g` in `PrecommittedGroupParams`.
-
-This protects the B relation for the precommitted group against any later
-root-group choice whose `log_basis <= l_max`, but only for the B role and only
-for the frozen `t_hat_g` shape. The final multi-group root must not change the
-precommitted group's `m`, `r`, `n_a`, `log_basis`, or derived B width. The A and
-D roles must still be sized and bound according to their own actual layouts in
-the final multi-group root plan.
+The final multi-group root must not change the precommitted group's `m`, `r`,
+`n_a`, `n_b`, inner/outer bases, or derived B width. A later root-selected
+`log_basis_open` changes only the fresh D/`e_hat` decomposition and cannot alter
+the frozen B/`t_hat` relation. The A and D roles remain sized and bound from their
+own actual layouts.
 
 ### Last Group
 
@@ -618,21 +618,20 @@ come directly from `schedule.root_fold()?.params`.
 Standalone conservative precommit scheduling is not a public trait hook. It is
 implemented by `ConservativeCommitmentConfig<Cfg>`, which overrides
 `get_params_for_prove` / `get_params_for_batched_commitment` and uses
-crate-private helpers to plan at `min_basis` and widen B for `max_basis`.
+crate-private helpers to plan the frozen outer basis at `min_basis`.
 
 There is no separate `MultiGroupRootSchedule` type in the implementation. A
 multi-group root is represented by the first schedule step's `LevelParams`:
 
 ```rust
 pub struct GroupRootParams {
-    pub layout: PrecommittedGroupParams,
-    pub a_key: AjtaiKeyParams,
-    pub b_key: AjtaiKeyParams,
+    pub group: PolynomialGroupLayout,
     pub num_live_blocks: usize,
     pub num_positions_per_block: usize,
-    pub num_digits_commit: usize,
-    pub num_digits_open: usize,
-    pub num_digits_fold_one: usize,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub n_a: usize,
+    pub n_b: usize,
 }
 
 pub struct LevelParams {
@@ -644,7 +643,12 @@ pub struct LevelParams {
     pub num_positions_per_block: usize,
     pub position_index_bits: usize,
     pub block_index_bits: usize,
-    pub log_basis: u32,
+    pub log_basis_inner: u32,
+    pub log_basis_outer: u32,
+    pub log_basis_open: u32,
+    pub num_digits_inner: usize,
+    pub num_digits_outer: usize,
+    pub num_digits_open: usize,
     // ...
     pub precommitted_groups: Vec<GroupRootParams>,
 }
@@ -751,8 +755,8 @@ For each group, the planner prices:
 
 ```text
 e_hat_g = num_live_blocks_g * num_digits_open_g
-t_hat_g = K_g * num_live_blocks_g * n_a_g * num_digits_open_g
-z_hat_g = num_positions_per_block_g * num_digits_commit_g * num_digits_fold_g
+t_hat_g = K_g * num_live_blocks_g * n_a_g * num_digits_outer_g
+z_hat_g = num_positions_per_block_g * num_digits_inner_g * num_digits_fold_g
 ```
 
 For a folded multi-group root, the multi-group root's next recursive witness ring count
@@ -911,7 +915,7 @@ position_index_bits
 block_index_bits
 log_basis
 n_a
-conservative_n_b
+n_b
 ```
 
 Changing the group partition or normalized point-variable arity changes the
@@ -948,8 +952,8 @@ existing descriptor already has the two bindings needed for this shape:
   `precommitted_groups`, each `PrecommittedGroupParams`, conservative B ranks, A/B
   keys, block geometry, and digit counts.
 
-Setup seed and policy fields, including the basis range that defines `l_g` and
-`l_max`, remain bound through the existing `SetupSection` / `AlgebraSection`
+Setup seed and policy fields, including the configured basis range, remain bound
+through the existing `SetupSection` / `AlgebraSection`
 descriptor fields. One-hot chunk size and decomposition policy remain bound
 through the existing level/schedule descriptor bytes.
 
@@ -976,7 +980,7 @@ position_index_bits
 block_index_bits
 log_basis
 n_a
-conservative_n_b
+n_b
 ```
 
 Multi-group schedule precommitted params encode in transcript order through the
@@ -1041,7 +1045,7 @@ The verifier must follow this order:
 5. Reject if any schedule-derived precommitted layout differs from the layout
    recomputed from config policy.
 6. Reject if any precommitted group's commitment row count differs from its
-  frozen `conservative_n_b`.
+  frozen `n_b`.
 7. Validate commitment row counts and opening-batch routing.
 8. Only then run ring-switch replay and suffix verification.
 
@@ -1100,8 +1104,8 @@ The planner exposes three modes:
 unless the caller explicitly needs separate commitment objects.
 - Staggered workflows currently use `ConservativeCommitmentConfig<Cfg>` plus
   ordinary `batched_commit` for precommitted groups, then `commit_final_group`
-  for the final group. They pay the conservative-rank cost for precommitted
-  groups.
+  for the final group. Each precommitted group freezes its A/B layout before the
+  final root selects the shared open basis.
 
 ## Validation Rules
 
@@ -1114,8 +1118,8 @@ At conservative precommit time:
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
 - the `PrecommittedGroupParams` must determine the same `t_hat_g` shape used by
   the commit witness;
-- conservative `n_b'` must pass `AjtaiKeyParams::try_new` for
-  `(derived_B_width_g, norm_B(l_max))`;
+- frozen `n_b` must pass `AjtaiKeyParams::try_new` for
+  `(derived_B_width_g, norm_B(l_outer,g))`;
 - the selected params must fit setup capacity.
 
 At Phase 1 multi-group schedule lookup time:
@@ -1286,13 +1290,13 @@ kernels land if B-row time is a bottleneck.
 - `OpeningClaimsLayout::from_group_sizes(nv, &[1, 3])` derives two groups.
 - `[1, 3]` and `[4]` produce different opening-batch digests.
 - Generated group-batch schedule lookup compares precommitted group params,
-  frozen group params, and `conservative_n_b`.
+  frozen group params, and `n_b`.
 - Descriptor bytes change when a precommitted group's `PrecommittedGroupParams`
-  `m`, `r`, `log_basis`, `n_a`, or conservative `n_b'` changes.
+  `m`, `r`, semantic bases, `n_a`, or `n_b` changes.
 - Scheduler multi-group root sizing accounts for one `z_hat_g` segment per group.
 - Scheduler multi-group D width reports `total_d_w_rings = sum_g w_hat_rings_g`.
 - Multi-group terminal root folds reject until the terminal witness layout exists.
-- Conservative B rank uses the derived B width and norm from `l_max`.
+- Frozen B rank uses the derived B width and norm from `l_outer,g`.
 - `log_basis != min_basis(Cfg)` rejects.
 
 ### Commit Tests
@@ -1406,18 +1410,15 @@ polynomials in one commitment object. This is the preferred path when the
 polynomials are available at the same time and the caller does not need separate
 commitment identities.
 
-This path avoids conservative B ranks and avoids per-group `z_hat_g`, COMMIT,
+This path avoids per-group A/B setup and avoids per-group `z_hat_g`, COMMIT,
 and A blocks. It does not support workflows where earlier commitments must keep
 their original identity.
 
 ### Known-final-schedule precommit
 
-A caller can avoid conservative rank when it knows the final multi-group root layout
-before committing the earlier groups. In that mode, each group commits with the
-actual final root layout rather than the `l_max` B norm.
-
-This is cheaper than conservative precommit, but it is only safe when the caller
-binds the final multi-group root key before the first group commit.
+A caller that knows the final multi-group root layout before committing earlier
+groups could freeze those exact A/B layouts instead of using the minimum-outer-basis
+precommit policy. This is not a separate implemented API today.
 
 ### Shared A for identical group layouts
 

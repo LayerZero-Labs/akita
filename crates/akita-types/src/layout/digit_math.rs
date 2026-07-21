@@ -29,9 +29,11 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
     let base = F::from_canonical_u128_reduced(1u128 << log_basis);
     let mut out = Vec::with_capacity(levels);
     let mut power = F::one();
-    for _ in 0..levels {
+    for i in 0..levels {
+        if i > 0 {
+            power *= base;
+        }
         out.push(power);
-        power *= base;
     }
     out
 }
@@ -134,6 +136,7 @@ pub fn optimal_block_geometry_split(
             sis_modulus_profile,
             d as usize,
             decomposition,
+            decomposition.log_basis,
             fold_challenge_config,
             fold_challenge_shape,
             log_commit_bound == 1,

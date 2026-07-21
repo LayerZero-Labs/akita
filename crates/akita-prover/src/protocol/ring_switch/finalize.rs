@@ -191,7 +191,7 @@ where
             ring_bits,
             tau0,
             tau1,
-            b: 1usize << lp.log_basis,
+            b: 1usize << lp.log_basis_open,
             alpha,
         })
     })

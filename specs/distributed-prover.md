@@ -115,7 +115,7 @@ This is the layout the [planner](distributed-planner.md) prices
 [verifier](distributed-verifier-row-eval.md) evaluates (`segment_layout` /
 `eval_at_point`). The per-window segment lengths are:
 
-- `z_len_i = num_digits_fold · num_digits_commit · num_positions_per_block` (replicated, full),
+- `z_len_i = num_digits_fold · num_digits_inner · num_positions_per_block` (replicated, full),
 - `e_len_i = num_digits_open · num_claims · blocks_in_chunk(i)` (partitioned),
 - `t_len_i = num_digits_open · n_a · num_t_vectors · blocks_in_chunk(i)` (partitioned),
 - per-window stride `L = z_len_i + e_len_i + t_len_i`,

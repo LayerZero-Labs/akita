@@ -192,7 +192,9 @@ mod tests {
     fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
         GeneratedFoldStep {
             ring_d: lp.ring_dimension as u32,
-            log_basis: lp.log_basis,
+            log_basis_inner: lp.log_basis_inner,
+            log_basis_outer: lp.log_basis_outer,
+            log_basis_open: lp.log_basis_open,
             position_index_bits: lp.position_index_bits() as u32,
             block_index_bits: lp.block_index_bits() as u32,
             num_live_blocks: lp.num_live_blocks as u32,
@@ -386,6 +388,47 @@ mod tests {
     }
 
     #[test]
+    fn generated_step_rejects_malformed_inner_outer_and_open_bases() {
+        let key = PolynomialGroupLayout::new(30, 1);
+        let policy = flat_policy();
+        let schedule = find_single_schedule(key, &policy).expect("find schedule");
+
+        for (role, mutate) in [
+            (
+                "inner",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_inner = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+            (
+                "outer",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_outer = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+            (
+                "open",
+                (|fold: &mut GeneratedFoldStep| fold.log_basis_open = 7)
+                    as fn(&mut GeneratedFoldStep),
+            ),
+        ] {
+            let mut folds = generated_folds_from_schedule(&schedule);
+            mutate_first_generated_fold_step(&mut folds, mutate);
+            let entry = generated_entry_from_folds(key, folds);
+            let err = validate_generated_schedule_entry(
+                &entry,
+                &AkitaScheduleLookupKey::single(key),
+                &policy,
+                &ring_challenge_config,
+                &fold_shape,
+            )
+            .expect_err("mismatched semantic basis must be rejected");
+            assert!(
+                matches!(err, AkitaError::InvalidSetup(ref msg) if msg.contains("outside policy")),
+                "unexpected {role} error: {err}"
+            );
+        }
+    }
+
+    #[test]
     fn validate_generated_entry_rejects_inexact_num_live_blocks() {
         let key = PolynomialGroupLayout::new(30, 1);
         let policy = flat_policy();
@@ -511,12 +554,14 @@ mod tests {
         assert_eq!(validated, materialized.total_bytes);
     }
 
-    fn multi_group_sample_key() -> AkitaScheduleLookupKey {
+    fn multi_group_sample_key(policy: &PlannerPolicy) -> AkitaScheduleLookupKey {
         let pre_key = PolynomialGroupLayout::new(16, 1);
-        let policy = flat_policy();
+        let mut precommit_policy = *policy;
+        precommit_policy.decomposition.log_basis = 4;
+        precommit_policy.basis_range = (4, 4);
         let pre = PrecommittedGroupParams::from_params(
             pre_key,
-            find_single_schedule(pre_key, &policy)
+            find_single_schedule(pre_key, &precommit_policy)
                 .expect("precommit schedule")
                 .folds
                 .first()
@@ -542,8 +587,10 @@ mod tests {
 
     #[test]
     fn validate_generated_multi_group_entry_accepts_materialized_dp_schedule() {
-        let key = multi_group_sample_key();
-        let policy = flat_policy();
+        let mut policy = flat_policy();
+        policy.decomposition.log_basis = 4;
+        policy.basis_range = (4, 4);
+        let key = multi_group_sample_key(&policy);
         let schedule = find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
             .expect("multi-group schedule");
         let entry =
@@ -561,9 +608,11 @@ mod tests {
 
     #[test]
     fn resolve_group_batch_schedule_rejects_stale_one_fold_table_hit() {
-        let key = multi_group_sample_key();
         let mut policy = flat_policy();
+        policy.decomposition.log_basis = 4;
         policy.decomposition.log_open_bound = Some(128);
+        policy.basis_range = (4, 4);
+        let key = multi_group_sample_key(&policy);
         let regenerated =
             find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_shape)
                 .expect("multi-group schedule");

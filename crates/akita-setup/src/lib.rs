@@ -567,9 +567,12 @@ mod tests {
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
                         fold_challenge_shape: akita_types::TensorChallengeShape::Flat,
-                        log_basis: 1,
+                        log_basis_inner: 1,
+                        log_basis_outer: 1,
                         n_a: 1,
-                        conservative_n_b: 1,
+                        a_coeff_linf_bound: 1,
+                        n_b: 1,
+                        b_coeff_linf_bound: 1,
                     },
                     a_key: AjtaiKeyParams::new_unchecked(
                         DEFAULT_SIS_SECURITY_POLICY,
@@ -591,7 +594,9 @@ mod tests {
                         1,
                         TEST_D,
                     ),
-                    num_digits_commit: 1,
+                    log_basis_open: 1,
+                    num_digits_inner: 1,
+                    num_digits_outer: 1,
                     num_digits_open: 1,
                     num_digits_fold_one: 1,
                 };
@@ -762,7 +767,7 @@ mod tests {
                             &prepared,
                             lp.b_key.row_len(),
                             typed_digits.typed_planes::<TEST_D>().unwrap(),
-                            lp.log_basis,
+                            lp.log_basis_outer,
                         )
                         .unwrap()
                 };

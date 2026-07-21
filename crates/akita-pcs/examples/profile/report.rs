@@ -71,7 +71,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_num_elems = num_elems,
             final_w_encoding = "segment_typed",
             final_w_policy = "non_zk_default",
-            tail_log_basis = segment.layout.log_basis,
+            tail_log_basis_open = segment.layout.log_basis_open,
             tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -128,7 +128,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         eprintln!(
             "[{label}]   final_w: encoding=segment_typed (non-zk default), total={tail_bytes} bytes, \
              logical_elems={num_elems}, log_basis={}{}",
-            segment.layout.log_basis,
+            segment.layout.log_basis_open,
             golomb_line,
         );
         eprintln!(
@@ -312,15 +312,18 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_b = lp.b_key.row_len(),
             n_d = lp.d_key.row_len(),
             challenge_l1_mass = lp.challenge_l1_mass(),
-            log_basis = lp.log_basis,
+            log_basis_inner = lp.log_basis_inner,
+            log_basis_outer = lp.log_basis_outer,
+            log_basis_open = lp.log_basis_open,
             position_index_bits = lp.position_index_bits(),
             block_index_bits = lp.block_index_bits(),
             num_live_ring_elements_per_claim = lp.num_live_ring_elements_per_claim,
             num_live_blocks = lp.num_live_blocks,
             block_index_domain_size = lp.block_index_domain_size().unwrap_or(0),
             num_positions_per_block = lp.num_positions_per_block,
-            delta_commit = lp.num_digits_commit,
-            delta_open = lp.num_digits_open,
+            num_digits_inner = lp.num_digits_inner,
+            num_digits_outer = lp.num_digits_outer,
+            num_digits_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
             current_w_len = level.current_w_len,
             next_w_len = level.next_w_len,
@@ -615,10 +618,13 @@ pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: 
         num_live_blocks = layout.num_live_blocks,
         block_index_domain_size = layout.block_index_domain_size().unwrap_or(0),
         num_positions_per_block = layout.num_positions_per_block,
-        delta_commit = layout.num_digits_commit,
-        delta_open = layout.num_digits_open,
+        num_digits_inner = layout.num_digits_inner,
+        num_digits_outer = layout.num_digits_outer,
+        num_digits_open = layout.num_digits_open,
         delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),
-        log_basis = layout.log_basis,
+        log_basis_inner = layout.log_basis_inner,
+        log_basis_outer = layout.log_basis_outer,
+        log_basis_open = layout.log_basis_open,
         "layout"
     );
 }
