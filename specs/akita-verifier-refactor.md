@@ -134,9 +134,10 @@ Preserve all of these; each names the mechanism that protects it.
 
 - [ ] `batched_verify` signature and behavior unchanged; all existing
       `akita-pcs` tests and `profile/akita-recursion` e2e pass throughout.
-- [ ] Differential harness exists, covers the proof-shape matrix (below), and is
-      green: legacy vs. new produce identical `Result` **and** identical recorded
-      transcript bytes on every fixture.
+- [x] Differential harness existed, covered the proof-shape matrix
+      ({fp32,fp64,fp128} × {dense,one-hot}), and reached full green parity
+      (legacy vs. live: identical `Result` **and** identical recorded transcript
+      bytes, 6/6). Retired at Phase-3 end (commit removing `akita-verifier-legacy`).
 - [ ] CI builds `akita-verifier` standalone and for the guest target; a
       dependency-allowlist check fails on any new/heavy dependency.
 - [ ] No function in `akita-verifier/src` exceeds ~80 lines; no struct exceeds
@@ -145,10 +146,17 @@ Preserve all of these; each names the mechanism that protects it.
       `RelationMatrixEvaluator<F>`-style misnomers).
 - [ ] No `#[cfg(test)]` harness code remains in shipped `src/` (moved to `tests/`
       or a `test-support` feature).
-- [ ] Total verifier logic LOC decreases materially (target: shrink the ~5,300
-      logic LOC; report the before/after).
-- [ ] The temporary `akita-verifier-legacy` crate (the frozen legacy monolith)
-      is removed at the end of Phase 3.
+- [~] Total verifier logic LOC decreases materially — **not yet met for the
+      crate itself.** `akita-verifier/src` is 6,911 LOC vs 6,722 at the #312
+      branch point (+189): the de-glob (explicit imports) and Phase-3
+      decomposition (function/struct boundaries + docs) improved auditability
+      but added lines. The path to a net decrease is item 3 (relocate the
+      472-line `slice_mle/setup_contribution` test module out of `src/`) plus the
+      const-`D` `eval_position_at` deletion; the mega-function breakups (item 2)
+      are LOC-neutral. Separately, retiring the temporary scaffolding removed
+      **7,369 LOC** repo-wide (6,722 legacy crate + 647 differential test).
+- [x] The temporary `akita-verifier-legacy` crate (the frozen legacy monolith)
+      is removed at the end of Phase 3 (after full-matrix parity held).
 
 ### Testing Strategy
 
@@ -179,8 +187,8 @@ Preserve all of these; each names the mechanism that protects it.
 - **Reject cases:** bit-flip proof bytes / commitment / claim value / opening
   point / schedule shape; assert legacy and new reject with the *same*
   `AkitaError` variant. This guards invariant #2 (no-panic) as well.
-- **Retire** the `akita-verifier-legacy` crate + monolith once parity holds
-  across the matrix.
+- **Retired** the `akita-verifier-legacy` crate + monolith after parity held
+  across the full {fp32,fp64,fp128} matrix (6/6 green). Done at Phase-3 end.
 
 **Secondary — characterization tests:** the core files (`fold`, `root`,
 `suffix`, `ring_switch`) currently have *no* inline tests. Before Phase 3
@@ -376,22 +384,19 @@ collapses (`RingSwitchVerifyCoreOutput` + `into_intermediate`; the pointless
 fully mined out (`proof/mod.rs` and `core/extension_opening_reduction.rs` were
 removed upstream by #311).
 
-Three items remain, in execution order:
+Of the three items, #1 is **DONE**; #2 and #3 remain, in execution order.
 
-1. **Close the fp32 differential cell, then retire legacy (closes Known-gap #1;
-   Phase-3 end).** Add a self-contained fp32 one-hot fixture to the differential
-   harness (option (b)): fp32's degree-4 extension means `E != F`, and every
-   `OpeningFoldKernel` impl is base-field-only, so the `E`-valued opening is
-   computed the way the fp64 dense fixture already computes its `E`-opening — a
-   plain Lagrange sum (`dense_lagrange_opening::<F, E>`) over the one-hot poly's
-   densified evals (`evals[chunk·K + hot] = 1`, matching
-   `OneHotPoly::direct_field_evals`) — driven by `fp32::D128OneHot` (the only
-   fp32 dense preset ships no schedule table; the one-hot preset ships
-   `schedules-fp32-d128-onehot`). With the matrix then covering
-   {fp32, fp64, fp128}, full parity holds, and `akita-verifier-legacy` +
-   `crates/akita-pcs/tests/verifier_differential.rs` + the `verifier-differential`
-   CI job + the `logging-transcript`-gated differential wiring are deleted (report
-   before/after LOC).
+1. **Close the fp32 differential cell, then retire legacy — DONE.** Added a
+   self-contained fp32 one-hot fixture (`fp32_onehot_fixture`, option (b)):
+   fp32's degree-4 extension means `E != F`, and every `OpeningFoldKernel` impl
+   is base-field-only, so the `E`-valued opening is a plain Lagrange sum
+   (`dense_lagrange_opening::<F, E>`) over the one-hot poly's densified evals
+   (`evals[chunk·K + hot] = 1`, matching `OneHotPoly::direct_field_evals`),
+   driven by `fp32::D128OneHot` (`schedules-fp32-d128-onehot`). The matrix
+   reached 6/6 green across {fp32, fp64, fp128}, so full parity held and
+   `akita-verifier-legacy` + `verifier_differential.rs` + the
+   `verifier-differential` CI job + the differential wiring were deleted
+   (−7,369 LOC repo-wide).
 
 2. **Auditability breakups (LOC-neutral; now unblocked).** The remaining
    mega-functions — `ring_switch::eval_at_point` (~204) / `eval_flat_at_point`,
@@ -419,7 +424,8 @@ Three items remain, in execution order:
 
 Tracked so they are not silently lost. Each notes a fix path.
 
-1. **Differential matrix: fp32 cell missing.** The harness covers fp128
+1. **Differential matrix: fp32 cell — CLOSED (harness now retired).** The
+   harness covered fp128
    (dense Lagrange/Monomial, one-hot multi-fold) and fp64 dense (the `E != F`
    extension-field path), but not fp32. Root cause: `schedules-default` ships
    **no fp32 *dense* schedule** (only `fp32-d128-onehot`/`fp32-d256-onehot`), so
@@ -428,8 +434,9 @@ Tracked so they are not silently lost. Each notes a fix path.
    `opening_from_poly` helper returns the base field only).
    *Fix (either):* (a) add a generated `schedules-fp32-*-full` table + feature
    and use a dense fp32 fixture; or (b) add a generic one-hot fixture driven by
-   `fp32::D128OneHot`. **Being closed now via option (b)** — see "Phase 3 status
-   §1" above for the concrete mechanism. Correction to the earlier note: every
+   `fp32::D128OneHot`. **Closed via option (b)** (`fp32_onehot_fixture`; the
+   harness is now retired) — the matrix reached 6/6 green across
+   {fp32,fp64,fp128}. Correction to the earlier note: every
    `OpeningFoldKernel` impl is base-field-only, so the `E`-valued opening is *not*
    computed "via the fold kernel over the extension"; it is a plain
    `dense_lagrange_opening::<F, E>` over the one-hot poly's densified evals (the
@@ -450,11 +457,14 @@ Tracked so they are not silently lost. Each notes a fix path.
 
 3. **Pre-existing (not introduced here): `fold_protocol_epoch` test.** On #312,
    `crates/akita-pcs/tests/fold_protocol_epoch.rs` fails to compile under
-   `--all-targets` **with the `logging-transcript` feature** — it reads a
-   `LevelParams` field renamed by #312. CI never hits it (the clippy job runs
-   without `logging-transcript`; the differential job compiles only
-   `--test verifier_differential`). *Fix:* update the stale field access in that
-   test; likely belongs to whichever PR renamed the field. Untouched here.
+   `--all-targets` **with the `logging-transcript` feature** — it reads
+   `LevelParams::log_basis` (line ~161), a field renamed by #312. CI never hits
+   it: the clippy job runs without `logging-transcript`, and the only job that
+   built akita-pcs with `logging-transcript` (the differential job) compiled
+   only `--test verifier_differential` — and that job is now removed with the
+   harness, so *no* CI job compiles this test. *Fix:* update the stale field
+   access (likely `log_basis_open`); belongs to whichever PR renamed the field.
+   Untouched here (out of scope for the refactor).
 
 4. **`use super::*` glob: `fold.rs` — now unblocked.** Phase 2 replaced the
    production `use super::*` wall with explicit imports in `verify.rs`,
