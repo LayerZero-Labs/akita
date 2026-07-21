@@ -1,9 +1,10 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
+use akita_transcript::labels::ABSORB_SUMCHECK_CLAIM;
 use akita_types::{
     build_multi_group_root_stage2_trace_table, dispatch_for_field, DigitRangeEqualityPoint,
-    DigitRangePlan,
+    DigitRangePlan, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
@@ -170,10 +171,15 @@ where
             &eta,
             row_coefficients,
         )?;
-        let (final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
+        // Non-zk EOR sumcheck: bind the input claim, then replay the public
+        // sumcheck rounds. The final claim is enforced downstream through the
+        // fused stage-2 `trace_eval_target` and per-claim scales, so there is no
+        // standalone on-wire opening handle to read here.
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &input_claim);
+        let (final_claim, rho) = reduction.sumcheck.verify::<F, T, _>(
             input_claim,
             shape.num_rounds,
-            &reduction.sumcheck,
+            EXTENSION_OPENING_REDUCTION_DEGREE,
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;

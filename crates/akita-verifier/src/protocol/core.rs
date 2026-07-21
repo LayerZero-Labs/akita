@@ -4,7 +4,6 @@
 //! in `verify`, `root_fold`, and `suffix`. Schedule/config dispatch stays with
 //! the scheme crate until the verifier-facing config boundary is extracted.
 
-mod extension_opening_reduction;
 mod verify;
 use crate::protocol::ring_switch::{
     ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
@@ -46,7 +45,6 @@ use akita_types::{
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
 };
-use extension_opening_reduction::verify_extension_opening_reduction_sumcheck;
 
 mod fold;
 mod root_fold;
