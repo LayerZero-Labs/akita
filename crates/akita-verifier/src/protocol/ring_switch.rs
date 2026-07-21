@@ -48,31 +48,6 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     pub alpha: E,
 }
 
-struct RingSwitchVerifyCoreOutput<E: FieldCore> {
-    relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    col_bits: usize,
-    ring_bits: usize,
-    tau0: Option<Vec<E>>,
-    tau1: Vec<E>,
-    b: usize,
-    alpha: E,
-}
-
-impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
-    fn into_intermediate(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
-        Ok(RingSwitchVerifyOutput {
-            relation_matrix_evaluator: self.relation_matrix_evaluator,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
-            tau0,
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
-}
-
 /// Precomputed challenge-derived data for prepared relation-matrix MLE evaluation.
 ///
 /// Stores only data that cannot be derived from context at evaluation time:
@@ -239,18 +214,21 @@ where
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
-    RingSwitchVerifyCoreOutput {
+    // Basis-size check before the tau0 presence check preserves the former
+    // `into_intermediate` order (WithoutCommitmentBlocks layouts carry no tau0).
+    let b = 1usize
+        .checked_shl(lp.log_basis_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?;
+    let tau0 = tau0.ok_or(AkitaError::InvalidProof)?;
+    Ok(RingSwitchVerifyOutput {
         relation_matrix_evaluator,
         col_bits,
         ring_bits,
         tau0,
         tau1,
-        b: 1usize
-            .checked_shl(lp.log_basis_open)
-            .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
+        b,
         alpha,
-    }
-    .into_intermediate()
+    })
 }
 
 /// Prepare relation-matrix evaluator state from a fixed
