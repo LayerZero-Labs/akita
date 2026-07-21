@@ -139,17 +139,22 @@ commitment compression.
 
 - Inner, outer, and opening decomposition bases are independent planner
   choices. In particular, the inner source decomposition is not constrained by
-  a range check unless a concrete protocol relation requires it.
-- Generated rows store selected log bases and matrix ranks. They do not author
+  a range check unless a concrete protocol relation requires it. These outer
+  and opening choices exist only at non-terminal folds that actually construct
+  the corresponding decompositions and commitment relations.
+- Generated entries store selected log bases and matrix output ranks. They do not author
   digit depths, coefficient bounds, or SIS table buckets.
 - Expansion derives digit depths and certified coefficient bounds using the
   same canonical functions consumed by verifier validation and SIS sizing.
 - `AjtaiKeyParams::try_new` or its renamed canonical successor audits every
-  expanded `(role, ring dimension, rows, columns, coefficient bound)` tuple.
-- The certified folded-response bound is derived from the digit certification
-  relation, including the tight difference interval, one-hot average-case
-  bound, snapping rule, tensor factor, and trace-subfield norm factor where
-  applicable. Generated rows cannot substitute an optimistic bound.
+  expanded `(role, ring dimension, output rank, input width, coefficient
+  bound)` tuple.
+- A recursive folded response uses the protocol's digit-certification relation
+  and its tight difference interval. A terminal folded response instead uses
+  the direct accepted interval checked by the verifier. Both incorporate the
+  canonical one-hot average-case bound, snap rule, tensor factor, and
+  trace-subfield norm factor where applicable. Generated entries cannot
+  substitute an optimistic bound.
 - Frozen standalone commitments bind their exact security descriptor. On
   replay, the descriptor is rederived and equality-checked; it is not accepted
   as an unaudited override.
@@ -178,7 +183,7 @@ commitment compression.
 - The instance descriptor binds topology tags, ordered groups, exact root
   challenge shape, all matrix dimensions and ranks, decomposition bases, block
   geometry, witness partitions, setup-prefix identities, slicing/compression
-  plans, witness lengths, and terminal witness shape.
+  plans, witness lengths, and terminal response shape.
 - Serialization uses explicit root, recursive, and terminal sections. It does
   not serialize a homogeneous fold list and infer roles during decoding.
 - Malformed counts, dimensions, slice ranges, prefix identities, or arithmetic
@@ -278,7 +283,7 @@ The current generated `fp128_d64_onehot_recursive` row for a 32-variable,
 two-polynomial final group and two 16-variable standalone precommitted groups is
 the primary topology migration fixture. It contains nine folds:
 
-| Protocol level | Current variant | `log2` bases inner/outer/open | Position bits | Block bits | Live blocks | `d_inner/d_outer/d_open` | Inner/outer/open rows | Incoming prefix natural length | Outgoing setup mode |
+| Protocol level | Current variant | `log2` bases inner/outer/open | Position bits | Block bits | Live blocks | `d_inner/d_outer/d_open` | Inner/outer/open output ranks | Incoming prefix natural length | Outgoing setup mode |
 |----------------|-----------------|--------------------------------|---------------|------------|-------------|--------------------------|-----------------------|--------------------------------|---------------------|
 | L0 root | metadata | 3/3/3 | 15 | 11 | 2048 | 64/64/64 | 5/2/1 | none | recursive |
 | L1 recursive | metadata | 3/3/3 | 13 | 8 | 148 | 64/64/64 | 5/1/1 | 112,721,920 | recursive |
@@ -290,6 +295,11 @@ the primary topology migration fixture. It contains nine folds:
 | L7 recursive | plain | 6/6/6 | 8 | 4 | 9 | 64/64/64 | 4/1/1 | none | direct |
 | L8 terminal | plain | 6/6/6 | 8 | 3 | 7 | 64/64/64 | 4/1/1 | none | direct |
 
+The L8 outer/open basis, dimensions, and output ranks in this table document
+current-main's homogeneous representation; they are not target protocol
+parameters. The cutover retains only L8's inner basis, inner ring dimension,
+inner output rank, geometry, and derived direct-response bound/shape.
+
 The root final group has exact source geometry:
 
 ```text
@@ -300,9 +310,9 @@ live ring elements per claim   = 67,108,864
 positions per block            = 32,768
 live blocks                    = 2,048
 root challenge                 = Flat
-inner basis / rows             = 3 / 5
-outer basis / rows             = 3 / 2
-shared open basis / rows       = 3 / 1
+inner basis / output rank      = 3 / 5
+outer basis / output rank      = 3 / 2
+shared open basis / output rank = 3 / 1
 ```
 
 Each of the two standalone root groups has:
@@ -314,17 +324,18 @@ live ring elements per claim   = 1,024
 positions per block            = 32
 live blocks                    = 32
 root challenge                 = Flat
-inner basis / rows             = 2 / 4
-outer basis / rows             = 2 / 2
+inner basis / output rank      = 2 / 4
+outer basis / output rank      = 2 / 2
 ```
 
 The L1 incoming setup prefix has `N=2,097,152`, `M=2,048`, `B=1,024`,
-inner/outer/open bases `3/3/3`, inner/outer rows `7/1`, and uniform dimension
+inner/outer/open bases `3/3/3`, inner/outer output ranks `7/1`, and uniform dimension
 64. The L2 incoming setup prefix has `N=1,048,576`, `M=2,048`, `B=512`, bases
-`5/5/5`, rows `7/2`, and uniform dimension 64.
+`5/5/5`, output ranks `7/2`, and uniform dimension 64.
 
-The first cutover regeneration must reproduce these effective parameters and
-proof byte counts exactly, modulo the intentional descriptor/version change.
+The first cutover regeneration must reproduce all non-terminal effective
+parameters and costs. Terminal proof bytes and security inputs intentionally
+change to the direct-response model and must have an explicit old/new fixture.
 
 ## Terminology and Naming Cutover
 
@@ -353,24 +364,37 @@ Field and method names use the same vocabulary:
 a_key                    -> inner_commit_matrix
 b_key                    -> outer_commit_matrix
 d_key                    -> open_commit_matrix
-n_a                      -> inner_commit_rows
-n_b                      -> outer_commit_rows
-n_d                      -> open_commit_rows
+n_a                      -> inner_commit_output_rank
+n_b                      -> outer_commit_output_rank
+n_d                      -> open_commit_output_rank
 d_a                      -> inner_commit_ring_dimension
 d_b                      -> outer_commit_ring_dimension
 d_d                      -> open_commit_ring_dimension
 log_basis_inner          -> inner_log_basis
-log_basis_outer          -> outer_log_basis
-log_basis_open           -> open_log_basis
-inner_width              -> inner_commit_columns
-outer_width              -> outer_commit_columns
-d_matrix_width           -> open_commit_columns
+log_basis_outer          -> outer_log_basis (non-terminal committed groups)
+log_basis_open           -> open_log_basis (folds with an opening matrix)
+inner_width              -> inner_commit_input_width
+outer_width              -> outer_commit_input_width
+d_matrix_width           -> open_commit_input_width
 ```
 
 Compact generated source may use constructors to avoid repeating long field
 names, but public types and constructor parameters remain descriptive. Do not
 introduce aliases that keep both vocabularies alive. Mathematical helpers may
 use local variables `a`, `b`, or `d` when directly transcribing a formula.
+
+The three matrix dimensions have deliberately different nouns:
+
+- `ring_dimension` is the number of base-field coefficients in one ring
+  element;
+- `input_width` is the number of ring elements consumed by the matrix; and
+- `output_rank` is the number of ring elements produced, equivalently the SIS
+  output-module rank.
+
+Thus a commitment matrix is a map
+`R^input_width -> R^output_rank`. The API does not use bare `rows`, `columns`,
+`height`, or `width`, because those names do not say which module or scalar
+domain is being counted. Slice ranges use `input_start` and `input_width`.
 
 ### Matrix ownership
 
@@ -381,16 +405,20 @@ are different:
 ```rust
 pub struct InnerCommitMatrixParams {
     pub ring_dimension: usize,
-    pub rows: usize,
-    pub columns: usize,
+    /// Number of output ring elements; the SIS module rank (n_A).
+    pub output_rank: usize,
+    /// Number of input ring elements accepted by the matrix.
+    pub input_width: usize,
     pub coeff_linf_bound: u128,
     pub sis_table_key: SisTableKey,
 }
 
 pub struct OuterCommitMatrixParams {
     pub ring_dimension: usize,
-    pub rows: usize,
-    pub columns: usize,
+    /// Number of output ring elements; the SIS module rank (n_B).
+    pub output_rank: usize,
+    /// Number of input ring elements accepted by the matrix.
+    pub input_width: usize,
     pub coeff_linf_bound: u128,
     pub sis_table_key: SisTableKey,
     pub layout: CommitMatrixLayout,
@@ -399,8 +427,10 @@ pub struct OuterCommitMatrixParams {
 
 pub struct OpenCommitMatrixParams {
     pub ring_dimension: usize,
-    pub rows: usize,
-    pub columns: usize,
+    /// Number of output ring elements; the SIS module rank (n_D).
+    pub output_rank: usize,
+    /// Number of input ring elements accepted by the matrix.
+    pub input_width: usize,
     pub coeff_linf_bound: u128,
     pub sis_table_key: SisTableKey,
     pub layout: CommitMatrixLayout,
@@ -454,7 +484,7 @@ counts remain explicit so partial final blocks are not lost.
 pub struct GeneratedInnerCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    pub rows: u32,
+    pub output_rank: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -476,7 +506,7 @@ pub struct GeneratedOpenCommitMatrix {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedCommitMatrixLayout {
     Monolithic {
-        rows: u32,
+        output_rank: u32,
     },
     Sliced {
         slices: &'static [GeneratedCommitMatrixSlice],
@@ -485,12 +515,12 @@ pub enum GeneratedCommitMatrixLayout {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedCommitMatrixSlice {
-    /// Start column in the unsliced logical matrix.
-    pub column_start: u64,
-    /// Exact number of logical columns in this slice.
-    pub columns: u64,
-    /// SIS-secure output rows for this slice.
-    pub rows: u32,
+    /// First input coordinate in the unsliced logical matrix.
+    pub input_start: u64,
+    /// Exact number of logical input coordinates in this slice.
+    pub input_width: u64,
+    /// SIS-secure output module rank for this slice.
+    pub output_rank: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -515,7 +545,7 @@ separate spec and explicit witness-cost model.
 For a monolithic matrix, exact flat setup storage is:
 
 ```text
-matrix_field_elements = rows * columns * ring_dimension
+matrix_field_elements = output_rank * input_width * ring_dimension
 ```
 
 For a sliced matrix it is the sum of this quantity over slices. Compression
@@ -570,7 +600,7 @@ pub struct GeneratedRootPrecommittedGroup {
 ```
 
 The precommitted descriptor is part of the schedule lookup key because the
-commitment already exists. Expansion rederives its matrix dimensions, columns,
+commitment already exists. Expansion rederives its matrix dimensions, input widths,
 bounds, and root challenge geometry and requires descriptor equality.
 
 ### Witness partitioning
@@ -643,22 +673,29 @@ the nesting and setup-generator constraints.
 pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
-    /// Basis used to decompose terminal t values in the cleartext witness.
-    pub outer_log_basis: u32,
-    /// Basis used for terminal e and folded-response certification.
-    pub open_log_basis: u32,
 }
 ```
 
-The terminal relation has no outer or open commitment matrix object. It still
-needs the semantic outer/open bases because the terminal cleartext witness
-contains decomposed `t`, `e`, and `z` segments. The terminal runtime expansion
-derives their digit depths and exact `SegmentTypedWitnessShape`.
+The terminal relation has no outer or open commitment matrix and no terminal
+outer/open decomposition basis. Its response contains raw field-valued `t` and
+`e`, plus centered folded-response coefficients `z` encoded losslessly. The
+verifier decodes `z`, checks every coefficient directly against the canonical
+accepted interval, and then checks the opening and inner-commitment relations.
+It neither receives nor verifies a digit decomposition of terminal `t`, `e`,
+or `z`.
 
-If implementation inspection finds a terminal proof relation that genuinely
-uses an outer or open matrix after the current `WithoutCommitmentBlocks`
-cutover, the relation must be documented and the type amended before code is
-merged. Placeholder `rows=1` fields are not acceptable.
+The terminal folded-response interval is a derived security value, not a
+generated choice. Expansion derives it from the honest response distribution,
+the configured average-case failure probability, the exact one-hot/tensor/trace
+factors where applicable, and the canonical snap rule. The inner-matrix SIS
+calculation uses the width of the accepted interval exactly. Lossless response
+encoding parameters are derived from that same interval and do not create a
+second bound.
+
+The predecessor terminal-binding path computes the inner commitment and binds
+raw `t`. It must not decompose `t` merely to satisfy a shared non-terminal code
+path. Likewise, raw terminal `e` is checked by its trace and consistency
+relations and does not acquire an opening basis for accounting purposes.
 
 ### Complete table entry
 
@@ -694,9 +731,9 @@ pub struct CommittedGroupParams {
 ```
 
 `BlockGeometry` contains exact `N`, `M`, live `B`, and checked index-domain
-sizes. Matrix params contain exact rows, columns, ring dimension, collision
-bound, and SIS identity. Digit depths are expanded results, never independent
-generated inputs.
+sizes. Matrix params contain exact output rank, input width, ring dimension,
+collision bound, and SIS identity. Digit depths are expanded results, never
+independent generated inputs.
 
 ### Typed fold params
 
@@ -720,7 +757,8 @@ pub struct RecursiveFoldParams {
 pub struct TerminalFoldParams {
     pub witness: TerminalCommittedGroupParams,
     pub sparse_challenge_config: SparseChallengeConfig,
-    pub witness_shape: SegmentTypedWitnessShape,
+    pub response_bound: TerminalResponseBound,
+    pub response_shape: TerminalResponseShape,
 }
 ```
 
@@ -729,33 +767,39 @@ Only `RootFinalGroupParams` and `RootPrecommittedGroupParams` contain a
 by type. Sparse sampler configuration remains explicit because it determines
 challenge distribution and certified norms even for a flat challenge.
 
-`TerminalCommittedGroupParams` contains the inner matrix and semantic digit
-bases/depths required for the cleartext terminal witness, not fabricated outer
-or open matrix keys.
+`TerminalCommittedGroupParams` contains the geometry, inner matrix, and inner
+source-decomposition depth required by the terminal relation. It contains no
+outer/open matrix, no terminal outer/open basis, and no fabricated digit depth
+for raw response values.
+
+`TerminalResponseBound` is the verifier's exact accepted centered interval for
+each `z` coefficient. `TerminalResponseShape` separately counts encoded `z`
+coefficients, raw `e` field elements, raw `t` field elements, and the checked
+serialized-byte limit. Neither type expresses these raw values as digit-plane
+equivalents.
 
 ### Typed schedule steps
 
 ```rust
 pub struct RootFoldStep {
     pub params: RootFoldParams,
-    pub current_w_len: usize,
-    pub next_w_len: usize,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
     pub proof_bytes: usize,
 }
 
 pub struct RecursiveFoldStep {
     pub params: RecursiveFoldParams,
-    pub current_w_len: usize,
-    pub next_w_len: usize,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
     pub proof_bytes: usize,
 }
 
 pub struct TerminalFoldStep {
     pub params: TerminalFoldParams,
-    pub current_w_len: usize,
-    pub output_w_len: usize,
+    pub input_witness_len: usize,
     pub proof_bytes: usize,
-    pub terminal_witness_bytes: usize,
+    pub terminal_response_bytes: usize,
 }
 
 pub struct Schedule {
@@ -766,8 +810,28 @@ pub struct Schedule {
 }
 ```
 
-The terminal cleartext handoff is part of `TerminalFoldStep`; it is not a
-second object adjacent to a homogeneous fold vector.
+The terminal cleartext response is part of `TerminalFoldStep`; it is not a
+second object adjacent to a homogeneous fold vector. A terminal step has no
+`output_witness_len`: recursion ends there, and its raw response shape is not a
+fictional decomposed recursive witness.
+
+The proof wire uses an equally direct type:
+
+```rust
+pub struct TerminalResponse<F: LatticeField> {
+    /// Lossless centered encoding; every decoded coefficient is range-checked.
+    pub folded_response_payloads: Vec<Vec<u8>>,
+    /// Raw full-field partial evaluations.
+    pub partial_evaluations: RingVec<F>,
+    /// Raw full-field inner commitments bound by the predecessor transcript.
+    pub inner_commitments: RingVec<F>,
+}
+```
+
+This replaces the misleading `SegmentTypedWitness` terminology. The transcript
+continues to bind terminal `t` at its predecessor, and binds terminal `e` and
+`z` in their existing challenge order. Renaming the container does not change
+that order.
 
 Execution APIs consume a typed reference:
 
@@ -785,31 +849,32 @@ should take the concrete type directly.
 
 ## Exact Expansion Rules
 
-### Group columns
+### Group input widths
 
 For each group with block width `M`, live block count `B`, polynomial count
-`C`, inner rows `n_inner`, and digit depths `delta_inner`, `delta_outer`, and
+`C`, inner output rank `n_inner`, and digit depths `delta_inner`, `delta_outer`, and
 `delta_open`:
 
 ```text
-inner_commit_columns = M * delta_inner
-outer_commit_columns = C * B * n_inner * delta_outer
-open_segment_columns  = C * B * delta_open
+inner_commit_input_width = M * delta_inner
+outer_commit_input_width = C * B * n_inner * delta_outer
+open_segment_input_width  = C * B * delta_open
 ```
 
-The fold-shared open matrix column count is the checked sum of
-`open_segment_columns` over the root or recursive groups opened at that fold.
-Sliced layouts partition exactly the corresponding logical column interval;
+The fold-shared open matrix input width is the checked sum of
+`open_segment_input_width` over the root or recursive groups opened at that
+fold. Sliced layouts partition exactly the corresponding logical input
+interval;
 their ranges must be ordered, non-overlapping, gap-free, and cover it once.
 
 ### Ring projections
 
-The formulas above are semantic matrix columns. Changing a role dimension does
+The formulas above are semantic matrix input widths. Changing a role dimension does
 not silently multiply or divide this semantic address space. A native matrix
 entry contains `ring_dimension` field coefficients, so role-specific storage
 changes with the selected dimension.
 
-After semantic columns are known, the canonical mixed-ring
+After semantic input widths are known, the canonical mixed-ring
 `SetupProjectionGeometry` views every native matrix footprint over one common
 base ring. With shared open dimension `d_open`, it uses:
 
@@ -822,11 +887,11 @@ open_projection_ratio     = 1
 The corresponding relation/witness subcolumn ratios are
 `d_inner[g] / d_outer[g]` and `d_inner[g] / d_open`. These ratios route the
 native outer/open lanes inside the inner-ring witness representation; they are
-not extra semantic matrix columns. Stage 3 setup footprint and evaluation work
-multiply each native `(rows * columns)` footprint by its projection ratio.
+not extra semantic matrix inputs. Stage 3 setup footprint and evaluation work
+multiply each native `(output_rank * input_width)` footprint by its projection ratio.
 
 No caller may derive an alternative projected column layout. Group order,
-semantic columns, witness ownership, and mixed-ring projection remain separate
+semantic input widths, witness ownership, and mixed-ring projection remain separate
 canonical objects.
 
 ### Matrix storage
@@ -834,14 +899,15 @@ canonical objects.
 For each raw matrix slice:
 
 ```text
-storage_ring_elements = rows * columns
-storage_field_elements = rows * columns * ring_dimension
+storage_ring_elements = output_rank * input_width
+storage_field_elements = output_rank * input_width * ring_dimension
 storage_bytes = storage_field_elements * canonical_field_element_bytes
 ```
 
 The audit report records, per fold and group:
 
-- exact inner, outer, and open matrix dimensions `(rows, columns, ring_d)`;
+- exact inner, outer, and open matrix dimensions
+  `(output_rank, input_width, ring_dimension)`;
 - raw field elements and bytes;
 - slicing and compression map storage;
 - the largest individual matrix and its role;
@@ -875,7 +941,7 @@ is deleted. Its replacement cannot name a recursive level:
 ```rust
 pub struct RootFoldPlanningInputs {
     pub statement: RootStatementLayout,
-    pub current_w_len: usize,
+    pub input_witness_len: usize,
 }
 
 pub enum RootChallengeFamily {
@@ -972,7 +1038,7 @@ The durable planner searches, subject to implemented capabilities:
 The planner derives through canonical functions:
 
 - digit depths;
-- matrix columns;
+- matrix input widths;
 - honest and certified folded-response bounds;
 - collision-difference bounds;
 - SIS coefficient buckets and minimum ranks;
@@ -1007,48 +1073,98 @@ Preset selection applies a named, digest-bound policy to that frontier. The
 selected row and rejected neighboring frontier points are available in the
 audit report.
 
-## Migration Plan
+## Full-Cutover Implementation Plan
 
-### Phase 1: terminology and canonical matrix role
+This is one merge cutover, not a compatibility migration. It should be
+implemented as reviewable, compiling commits on one branch, but the branch is
+merged only after the old schema, old names, homogeneous topology, and old
+terminal accounting are gone. In particular, do not make the topology change
+look artificially small by adding forwarding accessors, conversion wrappers,
+or a second schedule model that survives the branch.
+
+One commit will necessarily cross many crates: the typed schedule topology is
+a single ownership change. Keeping that commit atomic is safer than merging a
+half-old/half-new schedule behind adapters. The surrounding semantic and
+mechanical changes are separated so that this atomic commit is still
+reviewable.
+
+### Cut 0: freeze a neutral current-main ledger
+
+- From the exact base commit, emit test fixtures containing effective geometry,
+  bases, dimensions, output ranks, input widths, witness lengths, proof bytes,
+  matrix storage, and descriptor inputs for every shipped catalog entry.
+- Store the fixture in a schema-neutral audit format, not serialized old Rust
+  types. It remains useful after those types are deleted.
+- Add a terminal transcript-order fixture that identifies predecessor-bound
+  `t`, pre-challenge `e`, and response `z` without freezing the old
+  `SegmentTypedWitness` container.
+- Record the intentional terminal-protocol delta separately. All non-terminal
+  values are parity targets; terminal bytes and security inputs are recomputed.
+
+### Cut 1: correct the terminal protocol and accounting
+
+- Replace `SegmentTypedWitness` and `TerminalWitnessPlan` with the direct
+  `TerminalResponse`, `TerminalResponseBound`, and `TerminalResponseShape`.
+- Make the canonical bound function return the accepted centered interval.
+  The verifier checks decoded `z` coefficients directly, and inner-matrix SIS
+  sizing consumes the exact interval width.
+- Keep `e` and `t` as raw field elements. Remove their digit-plane-equivalent
+  length accounting from wire size and remove terminal `outer_log_basis` and
+  `open_log_basis` from planner and schedule inputs.
+- Split the predecessor path before outer decomposition: terminal binding
+  computes the inner commitment, binds raw `t`, and never constructs `t_hat`.
+- Derive lossless folded-response coding parameters solely from the certified
+  interval. Encoding and verification share that one bound.
+- Update prover, verifier, transcript tests, serialization, proof sizing, and
+  planner terminal costs together. This cut is a deliberate protocol change.
+
+### Cut 2: perform the vocabulary cutover repository-wide
 
 - Introduce descriptive matrix-role types and rename public fields and methods.
 - Replace `SisMatrixRole::A/B/D`-style public terminology with
-  `Inner/Outer/Open`, retaining A/B/D only in docstrings and table-generation
-  compatibility internals removed before merge.
-- Move ring dimension ownership into each matrix parameter object.
-- Delete duplicate `LevelParams.ring_dimension` versus `role_dims` authority.
-- Update setup, prover, verifier, persistence, profiler, and documentation
-  names in one cutover. Do not leave forwarding accessors.
+  `Inner/Outer/Open`; retain A/B/D only in mathematical docstrings.
+- Replace row/column count APIs with `output_rank` and `input_width`.
+  Specifically, `row_len()` becomes `output_rank()` and `col_len()` becomes
+  `input_width()`; there are no forwarding aliases.
+- Replace every `w_len` spelling with the precise contextual name:
+  `input_witness_len`, `output_witness_len`, or `witness_len` when no direction
+  exists. A terminal response size is never called a witness length.
+- Move ring dimension ownership into each matrix parameter object and delete
+  duplicate `LevelParams.ring_dimension` versus `role_dims` authority.
+- Update setup, prover, verifier, persistence, profiler, tests, and docs in this
+  commit. Use compiler errors plus an `rg` zero-match gate as the burn-down
+  list; do not retain compatibility names.
 
-### Phase 2: typed generated topology
+### Cut 3: atomically replace the schedule topology
 
-- Add the generated root, recursive, and terminal types in this spec.
-- Replace `GeneratedFold` and `GeneratedFoldStepWithSetupMetadata`.
-- Move root standalone precommitted groups into `GeneratedRootFold`.
-- Move setup prefix metadata onto recursive consumers.
-- Emit exact root tensor factorization.
-- Make witness partition explicit per eligible fold.
-- Update lookup, sorting, catalog hashing, emission, replay, and validation.
+- Add the generated and runtime root, recursive, terminal, and committed-group
+  types in this spec.
+- Replace `GeneratedFold`, `GeneratedFoldStepWithSetupMetadata`, `LevelParams`,
+  `Schedule.folds`, and the adjacent terminal plan in one cross-crate commit.
+- Move root standalone precommitted groups into `GeneratedRootFold`; move setup
+  prefix metadata onto recursive consumers; emit exact root tensor
+  factorization; and make partitioning explicit on every eligible fold.
+- Update planner expansion, generated lookup/sorting/hashing/emission, setup,
+  prover, verifier, PCS orchestration, persistence, profiles, and tests against
+  the concrete typed steps.
+- Delete `get_execution_schedule` and all index-based root/terminal/penultimate
+  inference in the same commit. Exhaustive typed dispatch is the only runtime
+  bridge and must not reconstitute a shared `LevelParams`.
 
-### Phase 3: typed runtime topology
-
-- Split `LevelParams` into root, recursive, terminal, and committed-group
-  parameter objects.
-- Replace `Schedule.folds` with typed root, recursive, and terminal fields.
-- Delete `get_execution_schedule` index-role inference.
-- Update prover/verifier orchestration to dispatch over typed steps.
-- Move the cleartext terminal witness plan into `TerminalFoldStep`.
-- Revise instance descriptors and serialization under a new protocol epoch.
-
-### Phase 4: parity regeneration
+### Cut 4: regenerate, audit, and seal the epoch
 
 - Regenerate every catalog shipped on current main.
-- Compare every table row against dynamic planning from the exact base commit.
-- Assert equal effective bases, block geometry, uniform ring dimensions, ranks,
-  witness lengths, terminal shapes, and proof byte counts.
-- Record expected descriptor changes and reject old encodings.
+- Compare all non-terminal selected decisions and derived values against the
+  Cut 0 ledger. Compare terminal values against the new direct-response model,
+  with an explicit old/new byte and security-bound report.
+- Require table replay and dynamic planning to produce descriptor-identical
+  typed schedules.
+- Bump the instance/proof descriptor epoch once for the combined cutover and
+  reject old schedule, setup, persistence, and proof encodings.
+- Run zero-match checks for every retired type and identifier, then the full
+  repository validation matrix.
 
-### Phase 5: capability additions
+### Cut 5: capability additions
 
 As implementations land, enable one capability at a time:
 
@@ -1083,15 +1199,21 @@ and SIS contract exist. The schedule topology does not change again.
       is derived from successor input topology.
 - [ ] Every generated inner, outer, and open matrix carries its own ring
       dimension and rank or slice ranks.
-- [ ] Expanded matrices carry exact rows, columns, coefficient bound, ring
-      dimension, role, SIS policy, and table digest.
+- [ ] Expanded matrices carry exact output rank, input width, coefficient
+      bound, ring dimension, role, SIS policy, and table digest.
 - [ ] Mixed dimensions validate `d_open | d_outer | d_inner` per group and
       generator divisibility across the entire schedule.
-- [ ] Terminal params contain no unused outer/open matrix key placeholders.
+- [ ] Terminal params contain no outer/open matrix, outer/open basis, or
+      digit-plane accounting for raw `e`, `t`, or `z`.
+- [ ] Terminal verification directly checks every decoded centered `z`
+      coefficient against the canonical interval, and SIS sizing uses that
+      interval's exact difference width.
+- [ ] The predecessor terminal path binds raw `t` without constructing
+      `t_hat`; terminal `e` and `t` remain raw field elements on the wire.
 - [ ] Generated rows store independent choices while canonical expansion owns
       digit depths, collision bounds, SIS buckets, widths, and bytes.
-- [ ] Current-main generated catalogs regenerate to parameter- and byte-identical
-      effective schedules apart from the intentional protocol descriptor epoch.
+- [ ] Current-main generated catalogs retain non-terminal selected parameters
+      and costs; terminal deltas match the reviewed direct-response fixture.
 - [ ] The exact nine-fold migration fixture in this spec has a regression test.
 - [ ] Table replay and dynamic planning produce equal schedule descriptors for
       every emitted lookup key.
