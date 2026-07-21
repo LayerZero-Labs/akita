@@ -11,7 +11,7 @@ use crate::compute::plans::{
 };
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    mat_vec_mul_ntt_dense_digits_i8_trusted, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
+    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
     mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
     CrtI8CapacityProfile,
@@ -20,9 +20,10 @@ use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    build_negacyclic_and_cyclic_ntt_slot, dispatch_for_field, AkitaExpandedSetup, NttCacheKey,
-    PreparedNttSlot, PreparedNttSlotAny,
+    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
+    PreparedNttCache,
 };
+use std::any::Any;
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -39,11 +40,27 @@ pub struct CpuBackend;
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
-    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<PreparedNttSlotAny>>>,
+    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<ErasedCpuNttCache>>>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
     setup_contract_ntt_keys: Mutex<HashSet<NttCacheKey>>,
+}
+
+struct ErasedCpuNttCache {
+    ring_d: usize,
+    cache_bytes: usize,
+    cache: Arc<dyn Any + Send + Sync>,
+}
+
+impl core::fmt::Debug for ErasedCpuNttCache {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ErasedCpuNttCache")
+            .field("ring_d", &self.ring_d)
+            .field("cache_bytes", &self.cache_bytes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// CRT/NTT profile and universal i8 capacity metadata for a prepared setup.
@@ -86,7 +103,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
-        f: impl FnOnce(&PreparedNttSlot<D>) -> Result<R, AkitaError>,
+        f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
         let slot = {
@@ -101,7 +118,17 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                 ))
             })?)
         };
-        f(slot.as_d::<D>()?)
+        if slot.ring_d != D {
+            return Err(AkitaError::InvalidSetup(format!(
+                "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
+                slot.ring_d
+            )));
+        }
+        let typed = slot
+            .cache
+            .downcast_ref::<PreparedNttCache<D>>()
+            .ok_or_else(|| AkitaError::InvalidSetup("prepared CPU NTT type mismatch".into()))?;
+        f(typed)
     }
 
     /// In-memory byte footprint of all shared setup NTT caches.
@@ -110,7 +137,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .values()
-            .map(|slot| slot.cache_bytes())
+            .map(|slot| slot.cache_bytes)
             .sum()
     }
 
@@ -133,14 +160,17 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
-) -> Result<PreparedNttSlotAny, AkitaError> {
+) -> Result<ErasedCpuNttCache, AkitaError> {
     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
-        let slot = build_negacyclic_and_cyclic_ntt_slot(view)?;
-        let any: PreparedNttSlotAny = slot.into();
-        Ok(any)
+        let cache = Arc::new(prepare_ntt_cache(view, NttCacheMode::BothTransforms)?);
+        Ok(ErasedCpuNttCache {
+            ring_d: RING_D,
+            cache_bytes: cache.cache_bytes(),
+            cache,
+        })
     })
 }
 
@@ -298,27 +328,6 @@ where
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
-    fn with_ntt_slot<R>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        key: NttCacheKey,
-        f: impl FnOnce(&PreparedNttSlotAny) -> Result<R, AkitaError>,
-    ) -> Result<R, AkitaError> {
-        let slot = {
-            let cache = prepared
-                .shared_ntt
-                .lock()
-                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            Arc::clone(cache.get(&key).ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })?)
-        };
-        f(&slot)
-    }
-
     fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,
@@ -343,7 +352,7 @@ where
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
                 prepared.with_shared_ntt::<D, _>(|ntt| {
-                    mat_vec_mul_ntt_dense_digits_i8_trusted(
+                    mat_vec_mul_ntt_dense_digits_i8(
                         ntt,
                         plan.n_a,
                         row_width,
@@ -447,11 +456,8 @@ where
             .expanded
             .shared_matrix
             .ring_view::<D>(plan.n_a, active_a_cols)?;
-        let a_rows = (0..plan.n_a)
-            .map(|idx| a_view.row(idx))
-            .collect::<Result<Vec<_>, _>>()?;
         Ok(column_sweep_sparse(
-            &a_rows,
+            &a_view,
             &plan.blocks.block_slices()?,
             plan.n_a,
             plan.num_positions_per_block,
@@ -718,9 +724,11 @@ mod tests {
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
-        CpuBackend
-            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
-            .expect("envelope slot from setup contract");
+        assert!(prepared
+            .shared_ntt
+            .lock()
+            .unwrap()
+            .contains_key(&envelope_key));
     }
 
     #[test]
@@ -733,9 +741,11 @@ mod tests {
         assert!(prepared.shared_ntt_cache_bytes() > 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
-        CpuBackend
-            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
-            .expect("envelope slot available");
+        assert!(prepared
+            .shared_ntt
+            .lock()
+            .unwrap()
+            .contains_key(&envelope_key));
     }
 
     #[test]
@@ -753,19 +763,15 @@ mod tests {
             .ensure_ntt_slot(&prepared, partial_key)
             .expect("warm partial slot");
         assert!(prepared.shared_ntt_cache_bytes() > 0);
-        CpuBackend
-            .with_ntt_slot(&prepared, envelope_key, |_| Ok(()))
-            .expect("envelope slot still available");
-        CpuBackend
-            .with_ntt_slot(&prepared, partial_key, |_| Ok(()))
-            .expect("partial slot retrievable");
+        let cache = prepared.shared_ntt.lock().unwrap();
+        assert!(cache.contains_key(&envelope_key));
+        assert!(cache.contains_key(&partial_key));
+        drop(cache);
         let miss = NttCacheKey {
             ring_d: D,
             num_ring_elements: 99_999,
         };
-        assert!(CpuBackend
-            .with_ntt_slot(&prepared, miss, |_| Ok(()))
-            .is_err());
+        assert!(!prepared.shared_ntt.lock().unwrap().contains_key(&miss));
     }
 
     #[test]

@@ -91,9 +91,32 @@ fn balanced_digit_to_field<F: CanonicalField>(digit: i128, q: u128) -> F {
     }
 }
 
-/// Precomputed parameters for balanced power-of-two `i8` decomposition.
+trait BalancedSignedDigit: Copy + Default {
+    const MAX_LOG_BASIS: u32;
+    fn from_i128(value: i128) -> Self;
+}
+
+impl BalancedSignedDigit for i8 {
+    const MAX_LOG_BASIS: u32 = 8;
+
+    #[inline(always)]
+    fn from_i128(value: i128) -> Self {
+        value as Self
+    }
+}
+
+impl BalancedSignedDigit for i16 {
+    const MAX_LOG_BASIS: u32 = 16;
+
+    #[inline(always)]
+    fn from_i128(value: i128) -> Self {
+        value as Self
+    }
+}
+
+/// Precomputed parameters for balanced power-of-two signed decomposition.
 #[derive(Clone, Copy, Debug)]
-pub struct BalancedDecomposePow2I8Params {
+pub struct BalancedDecomposePow2Params {
     levels: usize,
     log_basis: u32,
     q: u128,
@@ -104,17 +127,17 @@ pub struct BalancedDecomposePow2I8Params {
     overflow_possible: bool,
 }
 
-impl BalancedDecomposePow2I8Params {
+impl BalancedDecomposePow2Params {
     /// Build decomposition parameters for `levels` digits in base `2^log_basis`.
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is outside `1..=6`, or if the requested digit
+    /// Panics if `log_basis` is outside `1..=16`, or if the requested digit
     /// budget exceeds the supported field-width guard.
     pub fn new(levels: usize, log_basis: u32, q: u128) -> Self {
         assert!(
-            log_basis > 0 && log_basis <= 6,
-            "log_basis must be in 1..=6 for i8 output"
+            log_basis > 0 && log_basis <= 16,
+            "log_basis must be in 1..=16 for signed i16 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -322,11 +345,11 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     /// but stores each digit as `i8` instead of a field element, avoiding
     /// the cost of `F::from_canonical_u128_reduced`.
     ///
-    /// Requires `log_basis <= 6` so digits fit in `[-32, 31]` (i8 range).
+    /// Requires `log_basis <= 8` so digits fit in `[-128, 127]`.
     ///
     /// # Panics
     ///
-    /// Panics if `log_basis` is 0 or > 6, or if `levels * log_basis > 128 + log_basis`.
+    /// Panics if `log_basis` is 0 or > 8, or if `levels * log_basis > 128 + log_basis`.
     #[inline]
     pub fn balanced_decompose_pow2_i8_into(&self, out: &mut [[i8; D]], log_basis: u32)
     where
@@ -334,8 +357,8 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     {
         let levels = out.len();
         assert!(
-            log_basis > 0 && log_basis <= 6,
-            "log_basis must be in 1..=6 for i8 output"
+            log_basis > 0 && log_basis <= 8,
+            "log_basis must be in 1..=8 for i8 output"
         );
         assert!(
             (levels as u32).saturating_mul(log_basis) <= 128 + log_basis,
@@ -357,7 +380,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     ) where
         F: CanonicalField,
     {
-        let params = BalancedDecomposePow2I8Params::new(out.len(), log_basis, q);
+        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
         self.balanced_decompose_pow2_i8_into_with_params(out, &params);
     }
 
@@ -366,24 +389,52 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     pub fn balanced_decompose_pow2_i8_into_with_params(
         &self,
         out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
+        params: &BalancedDecomposePow2Params,
+    ) where
+        F: CanonicalField,
+    {
+        assert!(
+            params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
+            "log_basis must be in 1..=8 for i8 output"
+        );
+        self.balanced_decompose_pow2_signed_into_with_params(out, params);
+    }
+
+    /// Balanced decomposition directly into signed i16 digit planes.
+    ///
+    /// This is the canonical large-basis path. `log_basis` may be in
+    /// `1..=16`; bases 10 and 11 map to `[-512, 511]` and `[-1024, 1023]`.
+    pub fn balanced_decompose_pow2_i16_into(&self, out: &mut [[i16; D]], log_basis: u32)
+    where
+        F: CanonicalField,
+    {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let params = BalancedDecomposePow2Params::new(out.len(), log_basis, q);
+        self.balanced_decompose_pow2_signed_into_with_params(out, &params);
+    }
+
+    fn balanced_decompose_pow2_signed_into_with_params<T: BalancedSignedDigit>(
+        &self,
+        out: &mut [[T; D]],
+        params: &BalancedDecomposePow2Params,
     ) where
         F: CanonicalField,
     {
         debug_assert_eq!(out.len(), params.levels);
+        debug_assert!(params.log_basis <= T::MAX_LOG_BASIS);
         if params.overflow_possible {
-            self.balanced_decompose_pow2_i8_overflow(out, params);
+            self.balanced_decompose_pow2_signed_overflow(out, params);
         } else {
-            self.balanced_decompose_pow2_i8_fast(out, params);
+            self.balanced_decompose_pow2_signed_fast(out, params);
         }
     }
 
     /// Fast path: no i128 overflow possible (threshold >= q - i128::MAX).
     #[inline]
-    fn balanced_decompose_pow2_i8_fast(
+    fn balanced_decompose_pow2_signed_fast<T: BalancedSignedDigit>(
         &self,
-        out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
+        out: &mut [[T; D]],
+        params: &BalancedDecomposePow2Params,
     ) where
         F: CanonicalField,
     {
@@ -418,7 +469,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d0
                 };
                 c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = balanced0 as i8;
+                plane[base] = T::from_i128(balanced0);
 
                 let d1 = c1 & params.mask;
                 let balanced1 = if d1 >= params.half_b {
@@ -427,7 +478,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d1
                 };
                 c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = balanced1 as i8;
+                plane[base + 1] = T::from_i128(balanced1);
 
                 let d2 = c2 & params.mask;
                 let balanced2 = if d2 >= params.half_b {
@@ -436,7 +487,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d2
                 };
                 c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = balanced2 as i8;
+                plane[base + 2] = T::from_i128(balanced2);
             }
         }
 
@@ -452,17 +503,17 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 let d = c & params.mask;
                 let balanced = if d >= params.half_b { d - params.b } else { d };
                 c = (c - balanced) >> params.log_basis;
-                plane[i] = balanced as i8;
+                plane[i] = T::from_i128(balanced);
             }
         }
     }
 
     /// Overflow-aware path: peels the first digit per coefficient, then keeps
     /// the remaining digits in the same 3-at-a-time register loop.
-    fn balanced_decompose_pow2_i8_overflow(
+    fn balanced_decompose_pow2_signed_overflow<T: BalancedSignedDigit>(
         &self,
-        out: &mut [[i8; D]],
-        params: &BalancedDecomposePow2I8Params,
+        out: &mut [[T; D]],
+        params: &BalancedDecomposePow2Params,
     ) where
         F: CanonicalField,
     {
@@ -504,9 +555,9 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 params.log_basis,
             );
 
-            first_plane[base] = d0 as i8;
-            first_plane[base + 1] = d1 as i8;
-            first_plane[base + 2] = d2 as i8;
+            first_plane[base] = T::from_i128(d0);
+            first_plane[base + 1] = T::from_i128(d1);
+            first_plane[base + 2] = T::from_i128(d2);
 
             for plane in remaining.iter_mut() {
                 let d0 = c0 & params.mask;
@@ -516,7 +567,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d0
                 };
                 c0 = (c0 - balanced0) >> params.log_basis;
-                plane[base] = balanced0 as i8;
+                plane[base] = T::from_i128(balanced0);
 
                 let d1 = c1 & params.mask;
                 let balanced1 = if d1 >= params.half_b {
@@ -525,7 +576,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d1
                 };
                 c1 = (c1 - balanced1) >> params.log_basis;
-                plane[base + 1] = balanced1 as i8;
+                plane[base + 1] = T::from_i128(balanced1);
 
                 let d2 = c2 & params.mask;
                 let balanced2 = if d2 >= params.half_b {
@@ -534,7 +585,7 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                     d2
                 };
                 c2 = (c2 - balanced2) >> params.log_basis;
-                plane[base + 2] = balanced2 as i8;
+                plane[base + 2] = T::from_i128(balanced2);
             }
         }
 
@@ -549,12 +600,12 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
                 params.b,
                 params.log_basis,
             );
-            first_plane[i] = d0 as i8;
+            first_plane[i] = T::from_i128(d0);
             for plane in remaining.iter_mut() {
                 let d = c & params.mask;
                 let balanced = if d >= params.half_b { d - params.b } else { d };
                 c = (c - balanced) >> params.log_basis;
-                plane[i] = balanced as i8;
+                plane[i] = T::from_i128(balanced);
             }
         }
     }
@@ -566,6 +617,17 @@ impl<F: CanonicalField, const D: usize> CyclotomicRing<F, D> {
     {
         let mut digit_planes: Vec<[i8; D]> = vec![[0i8; D]; levels];
         self.balanced_decompose_pow2_i8_into(&mut digit_planes, log_basis);
+        digit_planes
+    }
+
+    /// Allocating signed-i16 balanced decomposition for large bases.
+    #[must_use]
+    pub fn balanced_decompose_pow2_i16(&self, levels: usize, log_basis: u32) -> Vec<[i16; D]>
+    where
+        F: CanonicalField,
+    {
+        let mut digit_planes = vec![[0i16; D]; levels];
+        self.balanced_decompose_pow2_i16_into(&mut digit_planes, log_basis);
         digit_planes
     }
 

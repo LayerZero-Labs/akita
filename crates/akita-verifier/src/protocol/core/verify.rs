@@ -236,6 +236,12 @@ where
     validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
     validate_proof_against_schedule(proof, &schedule)?;
 
+    // Schedule resolution is the earliest point at which the terminal ring
+    // dimension, A widths, and exact base-versus-i16-tail capabilities are all
+    // known. Warm those derived, non-serialized prefixes before transcript
+    // replay so terminal verification performs cache lookup only.
+    super::terminal_ntt::warm_for_schedule(setup, &schedule)?;
+
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
     // the prover binds for uniform-D presets. Dispatch on the runtime value so

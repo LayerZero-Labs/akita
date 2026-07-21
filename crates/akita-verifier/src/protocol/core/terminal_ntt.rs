@@ -1,294 +1,79 @@
 //! Exact negacyclic NTT kernels for terminal verifier matrix relations.
 
-use akita_algebra::ntt::prime::PrimeWidth;
-use akita_algebra::{
-    CenteredMontLut, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing, DigitMontLut,
+use akita_algebra::CyclotomicRing;
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::{
+    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, OpeningClaimsLayout,
+    PolynomialGroupLayout, Schedule,
 };
-use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
-use akita_types::{max_safe_crt_accumulation_width, AkitaVerifierSetup, PreparedNttSlot};
 
-const MAX_I8_LOG_BASIS: u32 = 6;
-const CENTERED_LUT_MAX_ABS: u64 = (1 << 16) - 1;
+pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 
-fn checked_matrix_prefix<T>(
-    flat: &[T],
-    num_rows: usize,
-    num_cols: usize,
-) -> Result<&[T], AkitaError> {
-    let required = num_rows
-        .checked_mul(num_cols)
-        .ok_or(AkitaError::InvalidProof)?;
-    let prefix = flat.get(..required).ok_or_else(|| {
-        AkitaError::InvalidSetup("prepared verifier matrix prefix is undersized".into())
-    })?;
-    Ok(prefix)
-}
-
-fn safe_chunk_width<F, W, const K: usize, const D: usize>(
-    params: &CrtNttParamSet<W, K, D>,
-    full_width: usize,
-    rhs_abs_bound: u64,
-) -> Option<usize>
-where
-    F: CanonicalField,
-    W: PrimeWidth,
-{
-    if full_width == 0 {
-        return Some(0);
-    }
-    max_safe_crt_accumulation_width::<F, W, K, D>(params, rhs_abs_bound)
-        .map(|width| width.min(full_width))
-        .filter(|&width| width != 0)
-}
-
-fn accumulate_i8<F, W, const K: usize, const D: usize>(
-    flat: &[CyclotomicCrtNtt<W, K, D>],
-    num_rows: usize,
-    num_cols: usize,
-    rhs: &[[i8; D]],
-    log_basis: u32,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-{
-    if !(1..=MAX_I8_LOG_BASIS).contains(&log_basis) || rhs.len() != num_cols {
-        return Err(AkitaError::InvalidProof);
-    }
-    let digit_bound = 1i16 << (log_basis - 1);
-    if rhs
-        .iter()
-        .flatten()
-        .any(|&digit| !(-digit_bound..digit_bound).contains(&i16::from(digit)))
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    if num_rows == 0 || num_cols == 0 {
-        return Ok(vec![CyclotomicRing::zero(); num_rows]);
-    }
-    let matrix = checked_matrix_prefix(flat, num_rows, num_cols)?;
-    let rhs_bound = (1u64 << (log_basis - 1)).max(1);
-    let chunk_width = safe_chunk_width::<F, W, K, D>(params, num_cols, rhs_bound)
-        .ok_or_else(|| AkitaError::InvalidSetup("CRT profile cannot fit one i8 product".into()))?;
-    let lut = DigitMontLut::new_with_digit_bound(params, rhs_bound);
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
-    for start in (0..num_cols).step_by(chunk_width) {
-        let end = (start + chunk_width).min(num_cols);
-        let mut accumulators = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
-        for column in start..end {
-            let digit = &rhs[column];
-            if digit.iter().all(|&coefficient| coefficient == 0) {
-                continue;
-            }
-            let transformed = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
-            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
-                accumulator.add_assign_pointwise_mul_with_params(
-                    &row[column],
-                    &transformed,
-                    params,
-                );
-            }
-        }
-        for (dst, accumulator) in out.iter_mut().zip(accumulators) {
-            *dst += accumulator.to_ring_with_params(params);
-        }
-    }
-    Ok(out)
-}
-
-fn centered_i32<F, W, const K: usize, const D: usize>(
-    flat: &[CyclotomicCrtNtt<W, K, D>],
-    num_rows: usize,
-    num_cols: usize,
-    rhs: &[[i32; D]],
-    rhs_abs_bound: u64,
-    chunk_width: usize,
-    params: &CrtNttParamSet<W, K, D>,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    W: PrimeWidth,
-{
-    if rhs.len() != num_cols {
-        return Err(AkitaError::InvalidProof);
-    }
-    if num_rows == 0 || num_cols == 0 {
-        return Ok(vec![CyclotomicRing::zero(); num_rows]);
-    }
-    let matrix = checked_matrix_prefix(flat, num_rows, num_cols)?;
-    let lut = (rhs_abs_bound <= CENTERED_LUT_MAX_ABS)
-        .then(|| CenteredMontLut::new(params, rhs_abs_bound as i32));
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
-    for start in (0..num_cols).step_by(chunk_width) {
-        let end = (start + chunk_width).min(num_cols);
-        let mut accumulators = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
-        for column in start..end {
-            let value = &rhs[column];
-            if value.iter().all(|&coefficient| coefficient == 0) {
-                continue;
-            }
-            let transformed = if let Some(ref lut) = lut {
-                CyclotomicCrtNtt::from_centered_i32_with_lut(value, params, lut)
-            } else {
-                CyclotomicCrtNtt::from_centered_i32_with_params(value, params)
-            };
-            for (accumulator, row) in accumulators.iter_mut().zip(matrix.chunks_exact(num_cols)) {
-                accumulator.add_assign_pointwise_mul_with_params(
-                    &row[column],
-                    &transformed,
-                    params,
-                );
-            }
-        }
-        for (dst, accumulator) in out.iter_mut().zip(accumulators) {
-            *dst += accumulator.to_ring_with_params(params);
-        }
-    }
-    Ok(out)
-}
-
-fn balanced_i64_planes<const D: usize>(rhs: &[[i64; D]]) -> Vec<Vec<[i8; D]>> {
-    let mut remaining = rhs
-        .iter()
-        .map(|ring| ring.map(i128::from))
+/// Warm every exact terminal i16 representation selected by a validated schedule.
+pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
+    setup: &AkitaVerifierSetup<F>,
+    schedule: &Schedule,
+) -> Result<(), AkitaError> {
+    let terminal_params = &schedule
+        .folds
+        .last()
+        .ok_or_else(|| AkitaError::InvalidSetup("schedule has no terminal fold".into()))?
+        .params;
+    let precommitteds = terminal_params
+        .precommitted_group_iter()
+        .map(|params| params.layout.group)
         .collect::<Vec<_>>();
-    let mut planes = Vec::new();
-    while remaining
-        .iter()
-        .flatten()
-        .any(|&coefficient| coefficient != 0)
-    {
-        let mut plane = vec![[0i8; D]; rhs.len()];
-        for (source, digits) in remaining.iter_mut().zip(&mut plane) {
-            for (coefficient, digit) in source.iter_mut().zip(digits) {
-                let residue = *coefficient & 63;
-                let balanced = if residue >= 32 { residue - 64 } else { residue };
-                *coefficient = (*coefficient - balanced) >> 6;
-                *digit = balanced as i8;
+    let opening_batch = OpeningClaimsLayout::from_root_groups(
+        &precommitteds,
+        PolynomialGroupLayout::new(terminal_params.recursive_opening_num_vars()?, 1),
+    )?;
+    let ring_d = terminal_params.role_dims().d_a();
+    dispatch_for_field!(
+        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+        F,
+        ring_d,
+        |D| {
+            let mut base_prefix_len = 0usize;
+            let mut tail_prefix_len = 0usize;
+            let mut max_width = 0usize;
+            for group_index in 0..opening_batch.num_groups() {
+                let params = terminal_params.group_params(&opening_batch, group_index)?;
+                let width = params.a_col_len();
+                let prefix_len =
+                    params
+                        .a_rows_len()
+                        .checked_mul(width)
+                        .ok_or(AkitaError::InvalidSetup(
+                            "terminal A cache prefix length overflow".into(),
+                        ))?;
+                base_prefix_len = base_prefix_len.max(prefix_len);
+                max_width = max_width.max(width);
+                if ntt_cache_requires_i16_tail::<F, D>(width, TERMINAL_I16_LOG_BASIS)? {
+                    tail_prefix_len = tail_prefix_len.max(prefix_len);
+                }
             }
-        }
-        planes.push(plane);
-    }
-    planes
-}
-
-fn balanced_i64_plane_count<const D: usize>(rhs: &[[i64; D]]) -> usize {
-    rhs.iter()
-        .flatten()
-        .map(|&value| {
-            let mut remaining = i128::from(value);
-            let mut planes = 0;
-            while remaining != 0 {
-                let residue = remaining & 63;
-                let balanced = if residue >= 32 { residue - 64 } else { residue };
-                remaining = (remaining - balanced) >> 6;
-                planes += 1;
+            if base_prefix_len > 0 {
+                setup.prepared_verifier_ntt_prefix::<D>(
+                    base_prefix_len,
+                    tail_prefix_len,
+                    max_width,
+                    TERMINAL_I16_LOG_BASIS,
+                )?;
             }
-            planes
-        })
-        .max()
-        .unwrap_or(0)
+            Ok::<(), AkitaError>(())
+        }
+    )
 }
 
-fn try_centered_i32<const D: usize>(rhs: &[[i64; D]]) -> Option<Vec<[i32; D]>> {
-    let mut centered = Vec::with_capacity(rhs.len());
-    for ring in rhs {
-        let mut converted = [0i32; D];
-        for (dst, &source) in converted.iter_mut().zip(ring) {
-            *dst = i32::try_from(source).ok()?;
-        }
-        centered.push(converted);
-    }
-    Some(centered)
-}
-
-fn accumulate_centered_i64<F, W, const K: usize, const D: usize>(
-    flat: &[CyclotomicCrtNtt<W, K, D>],
-    num_rows: usize,
-    num_cols: usize,
-    rhs: &[[i64; D]],
-    params: &CrtNttParamSet<W, K, D>,
-) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    W: PrimeWidth,
-{
-    if rhs.len() != num_cols {
-        return Err(AkitaError::InvalidProof);
-    }
-    let actual_bound = {
-        let _span = tracing::info_span!("terminal_ntt_a_bound_scan", columns = rhs.len()).entered();
-        rhs.iter()
-            .flatten()
-            .map(|&value| value.unsigned_abs())
-            .max()
-            .unwrap_or(0)
-    };
-    if actual_bound == 0 {
-        return Ok(vec![CyclotomicRing::zero(); num_rows]);
-    }
-    let centered_safe = safe_chunk_width::<F, W, K, D>(params, num_cols, actual_bound);
-    let balanced_planes = balanced_i64_plane_count(rhs);
-    let centered_chunks = centered_safe.map_or(usize::MAX, |width| num_cols.div_ceil(width));
-    tracing::debug!(
-        target: "akita_verifier::terminal_ntt",
-        ring_d = D,
-        num_rows,
-        num_cols,
-        rhs_abs_bound = actual_bound,
-        centered_safe_width = centered_safe.unwrap_or(0),
-        centered_chunks,
-        balanced_planes,
-        "selected exact terminal A matrix-product strategy"
-    );
-    if centered_chunks <= balanced_planes.max(1) {
-        if let Some(chunk_width) = centered_safe {
-            if let Some(centered) = try_centered_i32(rhs) {
-                let _span = tracing::info_span!(
-                    "terminal_ntt_a_centered_i32",
-                    chunk_width,
-                    chunks = centered_chunks
-                )
-                .entered();
-                return centered_i32::<F, W, K, D>(
-                    flat,
-                    num_rows,
-                    num_cols,
-                    &centered,
-                    actual_bound,
-                    chunk_width,
-                    params,
-                );
-            }
-        }
-    }
-
-    let _span =
-        tracing::info_span!("terminal_ntt_a_balanced_planes", planes = balanced_planes).entered();
-    let planes = balanced_i64_planes(rhs);
-    let mut out = vec![CyclotomicRing::<F, D>::zero(); num_rows];
-    let mut scale = F::one();
-    let radix = F::from_i64(64);
-    for plane in planes {
-        let rows = accumulate_i8::<F, W, K, D>(flat, num_rows, num_cols, &plane, 6, params)?;
-        for (dst, row) in out.iter_mut().zip(rows) {
-            *dst += row.scale(&scale);
-        }
-        scale *= radix;
-    }
-    Ok(out)
-}
-
-/// Compute a prepared negacyclic matrix product with arbitrary centered i64 rings.
+/// Compute the terminal prepared negacyclic matrix product for signed-i16 rings.
 pub(super) fn centered_rows<F, const D: usize>(
     setup: &AkitaVerifierSetup<F>,
     num_rows: usize,
-    rhs: &[[i64; D]],
+    rhs: &[[i16; D]],
     prepared_prefix_len: usize,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
+    F: FieldCore + CanonicalField,
 {
     let _span = tracing::info_span!(
         "terminal_ntt_a_product",
@@ -306,29 +91,41 @@ where
             "verifier A cache prefix is undersized".into(),
         ));
     }
-    let slot = {
-        let _span = tracing::info_span!("terminal_ntt_a_cache_lookup").entered();
-        setup.prepared_verifier_ntt_prefix::<D>(prepared_prefix_len)?
-    };
-    let _span = tracing::info_span!("terminal_ntt_a_accumulate").entered();
-    match slot.as_d::<D>()? {
-        PreparedNttSlot::Q32 { neg, params, .. } => {
-            accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
-        }
-        PreparedNttSlot::Q64 { neg, params, .. } => {
-            accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
-        }
-        PreparedNttSlot::Q128 { neg, params, .. } => {
-            accumulate_centered_i64(neg, num_rows, rhs.len(), rhs, params)
-        }
+    if num_rows == 0 || rhs.is_empty() {
+        return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
+
+    let slot = {
+        let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
+        let tail_prefix_len =
+            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)? {
+                prepared_prefix_len
+            } else {
+                0
+            };
+        setup.prepared_verifier_ntt_prefix::<D>(
+            prepared_prefix_len,
+            tail_prefix_len,
+            rhs.len(),
+            TERMINAL_I16_LOG_BASIS,
+        )?
+    };
+    let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate").entered();
+    slot.mat_vec_i16(TERMINAL_I16_LOG_BASIS, num_rows, rhs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_algebra::ntt::tables::{q128_primes, Q128_NUM_PRIMES};
-    use akita_field::Prime128Offset275 as F;
+    use akita_algebra::ntt::tables::{Q128_NUM_PRIMES, Q32_NUM_PRIMES};
+    use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
+    use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
+    use akita_types::{
+        max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
+        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, LevelParamsLike, PolynomialGroupLayout,
+        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
+    };
+    use std::sync::Arc;
 
     const D: usize = 64;
 
@@ -358,74 +155,170 @@ mod tests {
             .collect()
     }
 
-    #[test]
-    fn negacyclic_digit_and_centered_kernels_match_schoolbook() {
-        let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
-        let matrix = matrix();
-        let prepared = matrix
-            .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
-            .collect::<Vec<_>>();
+    fn verifier_setup(matrix: &[CyclotomicRing<F, D>]) -> AkitaVerifierSetup<F> {
+        AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupSeed {
+                        max_num_vars: 1,
+                        max_num_batched_polys: 1,
+                        gen_ring_dim: D,
+                        max_setup_len: matrix.len(),
+                        public_matrix_seed: [9; 32],
+                    },
+                    FlatMatrix::from_ring_slice(matrix),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new(),
+        )
+    }
 
-        let digits = (0..5)
-            .map(|column| {
-                std::array::from_fn(|coefficient| ((column + coefficient) % 17) as i8 - 8)
-            })
-            .collect::<Vec<_>>();
-        let digit_rings = digits
+    fn centered_rings(values: &[[i16; D]]) -> Vec<CyclotomicRing<F, D>> {
+        values
             .iter()
             .map(|ring| {
                 CyclotomicRing::from_coefficients(ring.map(|value| F::from_i64(i64::from(value))))
             })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            accumulate_i8::<F, _, Q128_NUM_PRIMES, D>(&prepared, 2, 5, &digits, 6, &params,)
-                .expect("digit matvec"),
-            expected(&matrix, &digit_rings)
-        );
+            .collect()
+    }
 
+    #[test]
+    fn terminal_i16_tail_path_materializes_exactly_one_small_prime() {
+        let matrix = matrix();
+        let setup = verifier_setup(&matrix);
         let centered = (0..5)
             .map(|column| {
-                std::array::from_fn(|coefficient| {
-                    ((column * 911 + coefficient * 37) % 4031) as i64 - 2015
+                std::array::from_fn(|coefficient| match (column + coefficient) % 5 {
+                    0 => i16::MIN,
+                    1 => -1024,
+                    2 => -1,
+                    3 => 1023,
+                    _ => i16::MAX,
                 })
             })
             .collect::<Vec<_>>();
-        let centered_rings = centered
-            .iter()
-            .map(|ring| CyclotomicRing::from_coefficients(ring.map(F::from_i64)))
-            .collect::<Vec<_>>();
+        assert!(
+            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_LOG_BASIS)
+                .expect("tail capability")
+        );
         assert_eq!(
-            accumulate_centered_i64::<F, _, Q128_NUM_PRIMES, D>(
-                &prepared, 2, 5, &centered, &params,
-            )
-            .expect("centered matvec"),
-            expected(&matrix, &centered_rings)
+            centered_rows(&setup, 2, &centered, 10).expect("mixed i16 terminal matvec"),
+            expected(&matrix, &centered_rings(&centered))
+        );
+        assert_eq!(
+            setup.verifier_ntt_cache_bytes().expect("cache bytes"),
+            10 * D * (Q128_NUM_PRIMES * core::mem::size_of::<i32>() + core::mem::size_of::<i16>())
         );
     }
 
     #[test]
-    fn centered_kernel_covers_full_i64_via_exact_digit_fallback() {
-        let params = CrtNttParamSet::<i32, Q128_NUM_PRIMES, D>::new(q128_primes());
+    fn terminal_cache_rejects_an_undersized_setup_without_panicking() {
         let matrix = matrix();
-        let prepared = matrix
-            .iter()
-            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+        let setup = verifier_setup(&matrix[..1]);
+        let centered = vec![[1i16; D]; 5];
+        assert!(matches!(
+            centered_rows(&setup, 2, &centered, 10),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn q32_terminal_i16_width_uses_only_the_base_cache() {
+        let matrix = (0..10)
+            .map(|entry| {
+                CyclotomicRing::<F32, D>::from_coefficients(std::array::from_fn(|coefficient| {
+                    F32::from_i64(((entry * 17 + coefficient * 5) % 31) as i64 - 15)
+                }))
+            })
             .collect::<Vec<_>>();
-        let mut centered = vec![[0i64; D]; 5];
-        centered[0][0] = i64::MAX;
-        centered[1][1] = -i64::MAX;
-        centered[2][2] = i64::MIN;
-        let centered_rings = centered
-            .iter()
-            .map(|ring| CyclotomicRing::from_coefficients(ring.map(F::from_i64)))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            accumulate_centered_i64::<F, _, Q128_NUM_PRIMES, D>(
-                &prepared, 2, 5, &centered, &params,
-            )
-            .expect("full i64 matvec"),
-            expected(&matrix, &centered_rings)
+        let setup = AkitaVerifierSetup::from_parts(
+            Arc::new(
+                AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                    AkitaSetupSeed {
+                        max_num_vars: 1,
+                        max_num_batched_polys: 1,
+                        gen_ring_dim: D,
+                        max_setup_len: matrix.len(),
+                        public_matrix_seed: [8; 32],
+                    },
+                    FlatMatrix::from_ring_slice(&matrix),
+                ),
+            ),
+            SetupPrefixVerifierRegistry::new(),
         );
+        let rhs = vec![[i16::MAX; D]; 5];
+        assert!(
+            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)
+                .expect("q32 terminal capability")
+        );
+        centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
+        assert_eq!(
+            setup.verifier_ntt_cache_bytes().expect("cache bytes"),
+            10 * D * Q32_NUM_PRIMES * core::mem::size_of::<i32>()
+        );
+    }
+
+    #[test]
+    fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
+        let group = PolynomialGroupLayout::new(15, 1);
+        let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
+            .expect("D64 schedule");
+        let params = &schedule.folds.last().expect("terminal fold").params;
+        let prefix_len = params
+            .a_rows_len()
+            .checked_mul(params.a_col_len())
+            .expect("terminal prefix");
+        let matrix = vec![CyclotomicRing::<F, D>::zero(); prefix_len];
+        let setup = verifier_setup(&matrix);
+
+        assert_eq!(setup.verifier_ntt_cache_bytes().expect("empty cache"), 0);
+        warm_for_schedule(&setup, &schedule).expect("warm cache");
+        let warmed_bytes = setup.verifier_ntt_cache_bytes().expect("warmed cache");
+        assert!(warmed_bytes > 0);
+        warm_for_schedule(&setup, &schedule).expect("reuse warm cache");
+        assert_eq!(
+            setup.verifier_ntt_cache_bytes().expect("reused cache"),
+            warmed_bytes
+        );
+    }
+
+    #[test]
+    fn base_and_tail_requests_share_one_strongest_prefix() {
+        let setup = verifier_setup(&matrix());
+        let ProtocolCrtNttParams::Q128(params) =
+            select_crt_ntt_params::<F, D>().expect("Q128 params")
+        else {
+            panic!("Q128 field must select Q128 params");
+        };
+        let safe_width = max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
+            &params,
+            1 << (TERMINAL_I16_LOG_BASIS - 1),
+        )
+        .expect("base profile supports a terminal width");
+        assert!(safe_width < 4);
+
+        let initial_tail = setup
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .expect("tail prefix");
+        assert!(initial_tail.has_i16_tail());
+
+        let combined = setup
+            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_LOG_BASIS)
+            .expect("larger base-only prefix");
+        assert!(combined.has_i16_tail());
+        assert_eq!(
+            setup.verifier_ntt_cache_bytes().expect("combined bytes"),
+            10 * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+                + 4 * D * core::mem::size_of::<i16>()
+        );
+        let reused_other_basis = setup
+            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 15)
+            .expect("same physical cache for another exact bound");
+        assert!(Arc::ptr_eq(&combined, &reused_other_basis));
+
+        let reused_tail = setup
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .expect("reused tail prefix");
+        assert!(Arc::ptr_eq(&combined, &reused_tail));
     }
 }

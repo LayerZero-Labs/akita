@@ -1233,7 +1233,7 @@ This enum is intentionally left open-ended and is NOT the extensibility contract
   the non-streaming path. The palette is a convenience for the standard CpuBackend
   reduction, not a gate.
 - Risk acknowledged: a fixed encoding enum can become too restrictive (a packed
-  device buffer, a strided layout, a wider small-scalar type). The mitigation is to
+  device buffer, a non-contiguous layout, a wider small-scalar type). The mitigation is to
   keep the palette minimal at first, let real sources drive additions, and rely on
   the generic `S` escape hatch rather than enumerating speculatively. Whether this
   enum is introduced in the first cutover at all, or deferred until a streaming

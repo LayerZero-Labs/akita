@@ -119,6 +119,10 @@ name = "ring_ntt"
 harness = false
 
 [[bench]]
+name = "ntt_matvec"
+harness = false
+
+[[bench]]
 name = "field_arith"
 harness = false
 

@@ -211,6 +211,80 @@ fn scalar_inverse_ntt_i32<const D: usize>(
     }
 }
 
+fn scalar_forward_ntt_i16<const D: usize>(
+    a: &mut [MontCoeff<i16>; D],
+    prime: NttPrime<i16>,
+    tw: &NttTwiddles<i16, D>,
+) {
+    for (coefficient, psi) in a.iter_mut().zip(tw.psi_pows.iter()) {
+        *coefficient = prime.mul(*coefficient, *psi);
+    }
+    let mut len = D / 2;
+    while len > 0 {
+        let twiddle_base = len - 1;
+        for start in (0..D).step_by(2 * len) {
+            for j in 0..len {
+                let u = a[start + j];
+                let v = a[start + j + len];
+                a[start + j] =
+                    prime.reduce_range(MontCoeff::from_raw(u.raw().wrapping_add(v.raw())));
+                a[start + j + len] = prime.mul(
+                    MontCoeff::from_raw(u.raw().wrapping_sub(v.raw())),
+                    tw.fwd_twiddles[twiddle_base + j],
+                );
+            }
+        }
+        len /= 2;
+    }
+    prime.reduce_range_in_place(a);
+}
+
+fn scalar_inverse_ntt_i16<const D: usize>(
+    a: &mut [MontCoeff<i16>; D],
+    prime: NttPrime<i16>,
+    tw: &NttTwiddles<i16, D>,
+) {
+    let mut len = 1usize;
+    while len < D {
+        let twiddle_base = len - 1;
+        for start in (0..D).step_by(2 * len) {
+            for j in 0..len {
+                let u = a[start + j];
+                let v = prime.mul(a[start + j + len], tw.inv_twiddles[twiddle_base + j]);
+                a[start + j] =
+                    prime.reduce_range(MontCoeff::from_raw(u.raw().wrapping_add(v.raw())));
+                a[start + j + len] =
+                    prime.reduce_range(MontCoeff::from_raw(u.raw().wrapping_sub(v.raw())));
+            }
+        }
+        len *= 2;
+    }
+    for (coefficient, scale) in a.iter_mut().zip(tw.d_inv_psi_inv.iter()) {
+        *coefficient = prime.mul(*coefficient, *scale);
+    }
+}
+
+fn assert_i16_mont_arrays_eq_mod<const D: usize>(
+    actual: &[MontCoeff<i16>; D],
+    expected: &[MontCoeff<i16>; D],
+    prime: NttPrime<i16>,
+    phase: &str,
+) {
+    // Montgomery coefficients are range-bounded residues, not unique raw
+    // representatives. SIMD and scalar butterflies may differ by one modulus.
+    for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            actual.raw() > -prime.p && actual.raw() < prime.p,
+            "{phase} AVX2 output outside (-p, p) at {i}: {actual:?}"
+        );
+        assert_eq!(
+            prime.to_canonical(*actual),
+            prime.to_canonical(*expected),
+            "{phase} mismatch modulo p at {i}: avx2={actual:?}, scalar={expected:?}"
+        );
+    }
+}
+
 fn scalar_forward_ntt_cyclic_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
@@ -299,6 +373,27 @@ fn avx2_ntt_i32_transforms_match_scalar() {
     unsafe { inverse_ntt_cyclic_i32(&mut avx_cyclic, prime, &tw) };
     scalar_inverse_ntt_cyclic_i32(&mut scalar_cyclic, prime, &tw);
     assert_eq!(avx_cyclic, scalar_cyclic);
+}
+
+#[test]
+fn avx2_ntt_i16_transforms_match_scalar() {
+    if !std::is_x86_feature_detected!("avx2") {
+        return;
+    }
+    let prime = NttPrime::compute(12289_i16);
+    let tw = NttTwiddles::<i16, 64>::compute(prime);
+    let input = random_mont_array_i16::<64>(prime, 0x1616);
+
+    let mut avx = input;
+    let mut scalar = input;
+    unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
+    scalar_forward_ntt_i16(&mut scalar, prime, &tw);
+    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
+
+    unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
+    scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
+    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
+    assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
 }
 
 #[test]
