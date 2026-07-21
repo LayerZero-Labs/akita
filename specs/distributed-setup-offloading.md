@@ -4,7 +4,7 @@
 |---------------|--------------------------------------------|
 | Author(s)     |                                            |
 | Created       | 2026-07-16                                 |
-| Status        | proposed                                   |
+| Status        | implemented                                |
 | PR            |                                            |
 | Supersedes    |                                            |
 | Superseded-by |                                            |
@@ -27,21 +27,22 @@ They have never been combined. The setup-offloading design record
 (`specs/setup-offloading-planner.md`) explicitly lists *"Distributed or
 multi-chunk setup offloading"* as a non-goal.
 
-This spec covers the **mix**: `4` witness chunks over `2` activated fold levels
-(`W4R2`) **and** recursive setup offloading, for the `fp128 D=64` one-hot preset
-only. It is split into two parts:
+This spec covers the **mix**: `8` witness chunks over `2` activated fold levels
+(`W8R2`) **and** recursive setup offloading, for the `fp128 D=64` one-hot preset
+only. `W8R2` is the single production slice shipped here; other chunk widths
+(`W2R2`, `W4R2`, …) follow the same recipe but are out of scope. It is split into
+two parts:
 
-- **Part 1 (landed with this spec): the planner + generated schedule table.** A
-  new generated family `fp128_d64_onehot_recursive_multi_chunk_w4r2` is emitted
-  by the config `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>`. The
-  planner DP already prices both techniques together; one latent gap was fixed
-  (the chunked multi-group **root** fold did not skip candidates whose *main*
-  group had fewer live blocks than `num_chunks`). See
-  [Part 1: what landed](#part-1-what-landed).
-- **Part 2 (this design; not yet implemented): the end-to-end prover / verifier /
-  setup path.** The runtime machinery *largely composes* already, but the mix has
-  never been exercised end to end, and several interaction points at the two
-  chunked+recursive fold levels are new. See
+- **Part 1: the planner + generated schedule table.** A new generated family
+  `fp128_d64_onehot_recursive_multi_chunk_w8r2` is emitted by the config
+  `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>`. The planner DP already
+  prices both techniques together; one latent gap was fixed (the chunked
+  multi-group **root** fold did not skip candidates whose *main* group had fewer
+  live blocks than `num_chunks`). See [Part 1: what landed](#part-1-what-landed).
+- **Part 2: the end-to-end prover / verifier / setup path.** The runtime
+  machinery *largely composes* already; the genuinely new interaction points are
+  the two chunked+recursive leading fold levels, now exercised end to end by
+  `crates/akita-pcs/tests/distributed_setup_offload_e2e.rs`. See
   [Part 2: end-to-end plan](#part-2-end-to-end-implementation-plan).
 
 ## Intent
@@ -49,22 +50,22 @@ only. It is split into two parts:
 ### Goal
 
 Make an evaluation opening prove and verify under
-`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>`
+`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>`
 for the shipped recursive profiling key
 (`final_group = (32, 2)`, `precommitteds = [(16, 1), (16, 1)]`), so that the
-leading two fold levels are **both** chunked (`num_chunks = 4`) **and** run the
+leading two fold levels are **both** chunked (`num_chunks = 8`) **and** run the
 Stage-3 setup-product sum-check (`SetupContributionMode::Recursive`), with the
 carried setup-prefix opening discharged into the next fold's grouped opening
 batch — exactly as the generated table
-`fp128_d64_onehot_recursive_multi_chunk_w4r2` prescribes.
+`fp128_d64_onehot_recursive_multi_chunk_w8r2` prescribes.
 
 ### Invariants
 
 - **Config selects the family.** Only
-  `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>` activates the mix:
+  `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` activates the mix:
   `recursive_setup_planning() == true` (from the adapter) and
-  `chunked_witness_cfg() == W4R2` (delegated from the base
-  `D64OneHotMultiChunkW4R2`). `D == SETUP_OFFLOAD_D_SETUP == 64`.
+  `chunked_witness_cfg() == W8R2` (delegated from the base
+  `D64OneHotMultiChunk`). `D == SETUP_OFFLOAD_D_SETUP == 64`.
 - **Cutover aligns recursion and chunking.** `num_activated_levels = R = 2`
   chunks fold levels `0, 1`; the recursion window (`level <= 1`) also covers
   levels `0, 1`. Level `2` and beyond are single-chunk and, once no later fold
@@ -92,9 +93,9 @@ batch — exactly as the generated table
 ### Non-Goals
 
 - Ring dimensions other than uniform `D = 64`.
-- Chunk profiles other than `W4R2` (`num_chunks = 4`, `num_activated_levels = 2`).
-  Other profiles (`W2R2`, `W8R2`, …) follow the same recipe but are out of scope
-  for the first rollout.
+- Chunk profiles other than `W8R2` (`num_chunks = 8`, `num_activated_levels = 2`).
+  Other profiles (`W2R2`, `W4R2`, …) follow the same recipe but are out of scope
+  for this rollout.
 - Full-field (`fp128_d64_full`) or tensor-verifier companions.
 - Distributing setup preprocessing across machines. Setup-prefix commitments are
   a single-node preprocessing artifact; only the *witness fold* is distributed.
@@ -160,19 +161,19 @@ The following are already implemented and verified (the
 `generated_schedule_tables_match_key_planner` drift guard passes with and without
 `all-schedules`, and `cargo clippy -- -D warnings` is clean):
 
-1. **Feature flags.** `fp128-d64-onehot-recursive-multi-chunk-w4r2` on
-   `akita-schedules`; `schedules-fp128-d64-onehot-recursive-multi-chunk-w4r2` on
+1. **Feature flags.** `fp128-d64-onehot-recursive-multi-chunk-w8r2` on
+   `akita-schedules`; `schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2` on
    `akita-config`; both added to the respective `all-schedules` aggregates.
 2. **Config family.** A `GeneratedFamily` row for
-   `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>` in
+   `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>` in
    `crates/akita-config/src/generated_families.rs` (module
-   `fp128_d64_onehot_recursive_multi_chunk_w4r2`, `emit_group_batch = true`,
+   `fp128_d64_onehot_recursive_multi_chunk_w8r2`, `emit_group_batch = true`,
    reusing `recursive_profile_group_batch_keys`). The capacity selector
    `recursive_group_batch_candidates_for_capacity` now also returns the profiling
    key(s) for the mix config.
 3. **Catalog wiring.** `RecursiveCommitmentConfig::schedule_catalog`
    (`crates/akita-config/src/recursive_commitment.rs`) returns the mix table for
-   the `D64OneHotMultiChunkW4R2` base under the new feature; the `TypeId` import
+   the `D64OneHotMultiChunk` base under the new feature; the `TypeId` import
    gate widened accordingly.
 4. **Drift-guard arms.** New match arms in
    `crates/akita-config/tests/generated_tables.rs`
@@ -183,26 +184,26 @@ The following are already implemented and verified (the
    candidate whose **main** group has `num_live_blocks < num_chunks` (previously
    only precommitted groups were checked; the main-group case was unreachable
    until a multi-group family started emitting chunked roots).
-6. **Generated table.** `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w4r2.rs`
+6. **Generated table.** `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w8r2.rs`
    plus `mod.rs` wiring. The multi-group profiling row
    (`final_group = (32, 2)`, two `(16, 1)` precommits) is:
 
    | Level | mode | `setup_prefix_group` | chunked? |
    |-------|------|----------------------|----------|
-   | 0 | `Recursive` | `None` (produces prefix) | yes (`num_chunks = 4`) |
-   | 1 | `Recursive` | `Some(..)` (consumes L0, produces its own) | yes (`num_chunks = 4`) |
+   | 0 | `Recursive` | `None` (produces prefix) | yes (`num_chunks = 8`) |
+   | 1 | `Recursive` | `Some(..)` (consumes L0, produces its own) | yes (`num_chunks = 8`) |
    | 2 | `Direct`    | `Some(..)` (consumes L1) | no (single-chunk) |
    | 3+ | `Direct`   | `None` | no |
 
    Catalog identity carries
-   `witness_chunk = { num_chunks: 4, num_activated_levels: 2 }` and
+   `witness_chunk = { num_chunks: 8, num_activated_levels: 2 }` and
    `recursive_setup_planning = true`.
 
 Regenerate with:
 
 ```bash
 cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
-  crates/akita-schedules/src/generated fp128_d64_onehot_recursive_multi_chunk_w4r2
+  crates/akita-schedules/src/generated fp128_d64_onehot_recursive_multi_chunk_w8r2
 cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- \
   crates/akita-schedules/src/generated --wiring-only
 ```
@@ -229,7 +230,7 @@ Implement in the order below; each step is gated by its acceptance check.
 ### Step 1 — Setup preprocessing materializes the mix prefix slots
 
 **What.** Confirm that
-`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>>::setup_prover(FINAL_NV=32, TOTAL_GROUP_SIZE=4)`
+`AkitaCommitmentScheme<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>::setup_prover(FINAL_NV=32, TOTAL_GROUP_SIZE=4)`
 materializes exactly the setup-prefix slots the mix schedule references, at
 `gen_ring_dim = SETUP_OFFLOAD_D_SETUP`.
 
@@ -248,8 +249,9 @@ materializes exactly the setup-prefix slots the mix schedule references, at
 **Why it should work.** `natural_len` is chunk-independent (setup-matrix
 footprint), and the slot id's block geometry is exactly the planner's
 `derive_setup_prefix_group` output, which enforced `num_live_blocks >= num_chunks`
-(the generated table shows `num_live_blocks = 1024` at L1 and `512` at L2, both
-`>= 4`). The commitment is chunk-independent — chunking only affects how the
+(the generated table shows the carried setup-prefix group with
+`num_live_blocks = 2048` at L1 and `1024` at L2, both `>= 8`). The commitment is
+chunk-independent — chunking only affects how the
 *fold response* is later laid out, not the committed prefix rows.
 
 **Risk to close.** Two prefix-geometry code paths exist:
@@ -271,20 +273,22 @@ geometry for the mix. If it is, unify on the planner's derived geometry.
 
 ### Step 2 — End-to-end prove/verify test scaffolding
 
-**What.** Add `crates/akita-pcs/tests/distributed_setup_offload_e2e.rs`, a close
-copy of `recursive_setup_e2e.rs`, parameterized on
-`RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>`. Same key
+**What.** `crates/akita-pcs/tests/distributed_setup_offload_e2e.rs`, sharing the
+`recursive_multi_group_round_trip` helper with `recursive_setup_e2e.rs`,
+parameterized on `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>`. Same key
 (`final_group = (32, 2)`, two `(16, 1)` precommits), same flow: `setup_prover`,
 `batched_commit` the two precommitted groups (conservative adapter),
-`commit_final_group`, build `OpeningClaims::from_groups`, `batched_prove` with
-`SetupContributionMode::Recursive`, serialize/deserialize, `batched_verify`.
+`commit_final_group`, build `OpeningClaims::from_groups`, `batched_prove` (the
+schedule selects `SetupContributionMode::Recursive`), serialize/deserialize,
+`batched_verify`.
 
-**Assertions (beyond `recursive_setup_e2e.rs`).**
-- The resolved schedule has `>= 1` fold with `params.witness_chunk.num_chunks > 1`
-  **and** `>= 1` fold with `params.setup_prefix.is_some()` (i.e. the mix is
-  actually exercised, mirroring `chunked_multi_chunk_prove_verify` +
-  `proof_has_recursive_setup_sumcheck`).
-- Level 0 and level 1 fold params are both chunked and both `Recursive`.
+**Assertions (beyond `recursive_setup_e2e.rs`).** The `on_schedule` hook asserts
+the exact W8R2 profile shape, so a W4R2/W8R2 regression or a mode/level swap
+fails the test:
+- Levels 0 and 1 are both chunked with `num_chunks == 8` and
+  `num_activated_levels == 2`, and both `SetupContributionMode::Recursive`.
+- Level 1 and level 2 carry a `setup_prefix` group (L1 consumes L0's prefix and
+  produces its own; L2 consumes L1's), and level 2 is `Direct` and single-chunk.
 
 **Why.** This is the single most valuable artifact: it turns "the machinery
 composes" into "the machinery is proven to compose", and it is the harness for
@@ -401,7 +405,7 @@ verifies.
 - Update the `Non-Goal` line in `specs/setup-offloading-planner.md`
   ("Distributed or multi-chunk setup offloading") to reference this spec once the
   e2e path lands.
-- (Optional follow-up) Generalize to other profiles (`W2R2`, `W8R2`) by adding
+- (Optional follow-up) Generalize to other profiles (`W2R2`, `W4R2`) by adding
   the corresponding families; the recipe is identical.
 
 ## Security and open questions
@@ -435,10 +439,10 @@ verifies.
 
 ### Acceptance Criteria
 
-- [ ] `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunkW4R2>::setup_prover(32, 4)`
+- [ ] `RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>::setup_prover(32, 4)`
       materializes the mix setup-prefix slots (Step 1).
 - [ ] An e2e test proves and verifies the mix for the profiling key, with level 0
-      and level 1 both chunked (`num_chunks = 4`) and both `Recursive` (Step 2).
+      and level 1 both chunked (`num_chunks = 8`) and both `Recursive` (Step 2).
 - [ ] The carried setup-prefix group folds per-chunk with `emitted == next_w_len`
       and a matching verifier row-MLE at level 1 (Step 3).
 - [ ] Stage-3 prover/verifier accept at levels 0, 1 with the chunked current fold
@@ -487,4 +491,4 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `crates/akita-setup/src/recursive_prefixes.rs`
 - `crates/akita-pcs/tests/recursive_setup_e2e.rs`
 - `crates/akita-pcs/src/scheme/tests/onehot.rs` (`multi_group_multi_chunk_fold_round_trips`)
-- `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w4r2.rs`
+- `crates/akita-schedules/src/generated/fp128_d64_onehot_recursive_multi_chunk_w8r2.rs`
