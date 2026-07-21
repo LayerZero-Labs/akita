@@ -1,0 +1,59 @@
+# TEMPORARY frozen snapshot of `akita-verifier` at the start of the
+# akita-verifier refactor (see specs/akita-verifier-refactor.md, Phase 0),
+# taken at the folded-only-proofs base (main @ #312).
+#
+# Byte-for-byte copy of the verifier replay logic before the refactor began. It
+# exists ONLY so the differential harness in
+# `akita-pcs/tests/verifier_differential.rs` can run the pre-refactor
+# (`akita_verifier_legacy::batched_verify`) and post-refactor
+# (`akita_verifier::batched_verify`) pipelines side by side and assert identical
+# results AND identical recorded transcript bytes.
+#
+# DO NOT refactor or touch anything under this crate: its whole value is that it
+# stays frozen. Deleted at the end of Phase 3 once parity holds.
+[package]
+name = "akita-verifier-legacy"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.95"
+publish = false
+authors = [
+  "Markos Georghiades <mgeorghiades@a16z.com>",
+  "Quang Dao <qvd@andrew.cmu.edu>",
+  "Amirhossein Khajehpour <amir.kh@layerzerolabs.org>",
+  "Omid Bodaghi <omibo@layerzero.foundation>",
+  "Giuseppe Vitto <giuseppe.vitto@layerzerolabs.org>",
+]
+license = "Apache-2.0 OR MIT"
+description = "TEMPORARY frozen pre-refactor snapshot of akita-verifier; differential-harness oracle only. Deleted at the end of the akita-verifier refactor Phase 3."
+repository = "https://github.com/LayerZero-Labs/akita"
+
+[dependencies]
+akita-algebra = { version = "0.1.0", path = "../akita-algebra" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
+akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
+akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
+akita-types = { version = "0.1.0", path = "../akita-types" }
+tracing = "0.1"
+
+[features]
+default = ["schedules-default"]
+schedules-default = ["akita-config/schedules-default"]
+parallel = [
+  "akita-algebra/parallel",
+  "akita-field/parallel",
+  "akita-sumcheck/parallel",
+]
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false, features = [
+  "test-support",
+  "schedules-fp128-d128-full",
+  "schedules-fp128-d64-full",
+] }
