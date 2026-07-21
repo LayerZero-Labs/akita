@@ -770,12 +770,19 @@ def extract_summary(
                 kvs.get("block_index_bits", kvs.get("block_bits", kvs.get("r_vars")))
             )
             legacy_d = int(kvs["d"])
+            # The typed-schedule cutover renamed `current_w_len`/`next_w_len` to
+            # `input_witness_len`/`output_witness_len` and dropped the planner
+            # byte estimate (`level_bytes`) from the runtime log. Prefer the new
+            # names and fall back to the merge-base names so both the PR binary
+            # and its merge-base binary parse.
+            input_witness_len = int(kvs.get("input_witness_len", kvs.get("current_w_len")))
+            output_witness_len = int(kvs.get("output_witness_len", kvs.get("next_w_len")))
             num_live_ring_elements_per_claim = int(
                 kvs.get(
                     "num_live_ring_elements_per_claim",
                     kvs.get(
                         "live_ring_elements_per_claim",
-                        int(kvs["current_w_len"]) // legacy_d,
+                        input_witness_len // legacy_d,
                     ),
                 )
             )
@@ -825,10 +832,13 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
-                "current_w_len": int(kvs["current_w_len"]),
-                "next_w_len": int(kvs["next_w_len"]),
-                "level_bytes": int(kvs["level_bytes"]),
+                "current_w_len": input_witness_len,
+                "next_w_len": output_witness_len,
             }
+            # `level_bytes` is only emitted by the pre-cutover merge-base binary
+            # and is display-only (no correctness comparison), so keep it optional.
+            if "level_bytes" in kvs:
+                planned_levels[level]["level_bytes"] = int(kvs["level_bytes"])
         elif "proof fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             present_byte_fields = [field for field in PROOF_LEVEL_BYTE_FIELDS if field in kvs]
@@ -1814,7 +1824,7 @@ def render_planned_levels(
             f"{level_value(level, baseline, 'num_digits_open')} | "
             f"{level_value(level, baseline, 'delta_fold')} | "
             f"{level_value(level, baseline, 'next_w_len')} | "
-            f"{level_value(level, baseline, 'level_bytes', fmt_bytes, ' bytes')} |"
+            f"{optional_value_with_main_delta(level, baseline, 'level_bytes', fmt_bytes, ' bytes', baseline is not None)} |"
         )
     if baseline_levels is not None:
         print()

@@ -241,7 +241,6 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
 fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let output_witness_len = D * 8;
     let num_claims = 3;
 
     for log_basis in 2..=6 {
@@ -267,13 +266,15 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 
         // The planner accounts for the final witness separately
         // (`terminal_response_bytes` on the terminal plan). Subtract
-        // it from the serialized terminal level to compare against
-        // `terminal_level_proof_bytes`.
+        // it from the serialized terminal level: a direct terminal level
+        // carries only the `fold_grind_nonce` (plus any extension-opening
+        // reduction, absent from this fixture), matching the planner's
+        // terminal-direct accounting.
         let serialized_without_witness =
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            level_proof_bytes(128, 128, &lp, None, output_witness_len, None,).unwrap(),
+            crate::FOLD_GRIND_NONCE_BYTES,
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
