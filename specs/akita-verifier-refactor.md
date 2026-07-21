@@ -364,6 +364,57 @@ Risks to resolve first: thin inline coverage of core files (mitigated by the
 harness + characterization corpus); ensuring the recording transcript captures
 *every* absorb (a missed absorb hides a divergence).
 
+## Phase 3 status & remaining work (as of 2026-07-21)
+
+Phase 3 is largely complete and the crate is green throughout. Landed this cycle
+(each its own differential-green commit): the `verify_fold` decomposition + the
+`PreparedFoldReplay` god-struct split (24 → 6 cohesive fields), the per-group
+opening-point loop de-dup (`prepare_group_opening_point` / `GroupOpeningPoint`,
+each caller keeping its own width-mismatch error variant), and two thin-wrapper
+collapses (`RingSwitchVerifyCoreOutput` + `into_intermediate`; the pointless
+`stage2` `witness_eval` tracing span). The thin-wrapper collapse list is now
+fully mined out (`proof/mod.rs` and `core/extension_opening_reduction.rs` were
+removed upstream by #311).
+
+Three items remain, in execution order:
+
+1. **Close the fp32 differential cell, then retire legacy (closes Known-gap #1;
+   Phase-3 end).** Add a self-contained fp32 one-hot fixture to the differential
+   harness (option (b)): fp32's degree-4 extension means `E != F`, and every
+   `OpeningFoldKernel` impl is base-field-only, so the `E`-valued opening is
+   computed the way the fp64 dense fixture already computes its `E`-opening — a
+   plain Lagrange sum (`dense_lagrange_opening::<F, E>`) over the one-hot poly's
+   densified evals (`evals[chunk·K + hot] = 1`, matching
+   `OneHotPoly::direct_field_evals`) — driven by `fp32::D128OneHot` (the only
+   fp32 dense preset ships no schedule table; the one-hot preset ships
+   `schedules-fp32-d128-onehot`). With the matrix then covering
+   {fp32, fp64, fp128}, full parity holds, and `akita-verifier-legacy` +
+   `crates/akita-pcs/tests/verifier_differential.rs` + the `verifier-differential`
+   CI job + the `logging-transcript`-gated differential wiring are deleted (report
+   before/after LOC).
+
+2. **Auditability breakups (LOC-neutral; now unblocked).** The remaining
+   mega-functions — `ring_switch::eval_at_point` (~204) / `eval_flat_at_point`,
+   `suffix::prepare_fold_replay` (~212), the `verify_fold` recursive tail — still
+   exceed the ~80-line budget. Also the `_multi_group`/`_inner` eval-path
+   convergence + const-`D` `eval_position_at` deletion (~30 LOC), which is blocked
+   only by legacy still calling that `akita-types` method.
+   **Sequencing tension:** these are the most soundness-sensitive changes, yet
+   retiring legacy in item 1 removes the byte-exact differential net *before* they
+   land. After B4 they rely on the `akita-pcs` scheme roundtrip tests +
+   `profile/akita-recursion` e2e + `mixed_d_rejections` (which catch accept/reject
+   regressions but not a transcript-order divergence that still verifies). The
+   safer ordering is to do these breakups *before* B4, while the differential
+   still exists; doing B4 first (per the current directive) is a deliberate
+   trade of that net for getting the legacy crate out sooner.
+
+3. **Relocate test-only code out of shipped `src/`.** `slice_mle/setup_contribution`
+   is a whole `#[cfg(test)]` submodule (~17 KB of tests + a naive oracle) shipped
+   in `src/`. Move it behind a `test-support` feature — it needs crate internals,
+   so a plain move to `tests/` would widen the public surface (invariant #4); a
+   feature keeps the surface minimal. Satisfies the "no `#[cfg(test)]` harness
+   code in shipped `src/`" acceptance criterion.
+
 ## Known gaps & follow-ups (as of P0/P1 on #312)
 
 Tracked so they are not silently lost. Each notes a fix path.
@@ -376,22 +427,26 @@ Tracked so they are not silently lost. Each notes a fix path.
    means a one-hot fixture needs an extension-field one-hot opening (the shared
    `opening_from_poly` helper returns the base field only).
    *Fix (either):* (a) add a generated `schedules-fp32-*-full` table + feature
-   and use a dense fp32 fixture; or (b) add a generic one-hot fixture that
-   computes the `E`-valued opening via the fold kernel over the extension
-   (mirroring `opening_from_poly_with_basis` but returning `E`), then drive it
-   with `fp32::D128OneHot`. Option (b) is self-contained in the harness.
-   fp64 already exercises the `E != F` code path, so this is coverage breadth,
-   not a correctness hole.
+   and use a dense fp32 fixture; or (b) add a generic one-hot fixture driven by
+   `fp32::D128OneHot`. **Being closed now via option (b)** — see "Phase 3 status
+   §1" above for the concrete mechanism. Correction to the earlier note: every
+   `OpeningFoldKernel` impl is base-field-only, so the `E`-valued opening is *not*
+   computed "via the fold kernel over the extension"; it is a plain
+   `dense_lagrange_opening::<F, E>` over the one-hot poly's densified evals (the
+   same way the fp64 dense fixture computes its `E`-opening). fp64 already
+   exercises the `E != F` code path, so this is coverage breadth, not a
+   correctness hole.
 
-2. **Ring-switch verifier/terminal wrapper collapse — largely superseded.**
+2. **Ring-switch verifier/terminal wrapper collapse — DONE.**
    The Phase-1 target (`ring_switch_verifier`/`_terminal` +
-   `RingSwitchVerifyCoreOutput::into_*`) was mostly dissolved by #311: the
-   terminal is now quotient-free/direct, so `ring_switch_verifier` takes the
-   row layout directly and only `into_intermediate` remains. The residual
-   (`RingSwitchVerifyCoreOutput` + `into_intermediate`) lives in `ring_switch.rs`
-   alongside the M-evaluation logic, which is **off-limits while the M-eval PR
-   is in flight** (see constraint below). *Fix:* revisit after that PR lands;
-   collapse the residual as part of the `ring_switch/{replay,evaluator}` split.
+   `RingSwitchVerifyCoreOutput::into_*`) was mostly dissolved by #311 (terminal
+   is now quotient-free/direct, so `ring_switch_verifier` takes the row layout
+   directly and only `into_intermediate` remained). The residual
+   (`RingSwitchVerifyCoreOutput` + `into_intermediate`) was collapsed once the
+   M-eval hands-off constraint lifted: `ring_switch_verifier` now builds
+   `RingSwitchVerifyOutput` directly (−22 LOC), preserving the basis-check /
+   tau0-unwrap order. Remaining `ring_switch/{replay,evaluator}` file split is
+   still open (see the `eval_at_point` breakup below).
 
 3. **Pre-existing (not introduced here): `fold_protocol_epoch` test.** On #312,
    `crates/akita-pcs/tests/fold_protocol_epoch.rs` fails to compile under
