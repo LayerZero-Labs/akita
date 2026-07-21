@@ -144,10 +144,9 @@ pub use tail_golomb_rice_low_bits::{
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,
 };
 pub use trace_weight::{
-    build_evaluation_trace_weights, ensure_trace_stage2_supported,
-    prepare_evaluation_trace_group_parameters, scale_evaluation_trace_claim_coefficients,
-    EvaluationTraceGroupParameters, EvaluationTraceSegment, EvaluationTraceTerm,
-    EvaluationTraceWeightInputs, EvaluationTraceWeights, TraceSparseColumn, TraceTable,
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    scale_evaluation_trace_claim_coefficients, EvaluationTraceGroupParameters,
+    EvaluationTraceInputs,
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{

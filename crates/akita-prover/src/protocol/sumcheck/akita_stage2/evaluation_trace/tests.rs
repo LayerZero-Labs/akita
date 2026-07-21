@@ -4,11 +4,10 @@ use akita_algebra::CyclotomicRing;
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
-    basis_weights_prefix, build_evaluation_trace_weights, r_decomp_levels, relation_rhs_layout_for,
-    relation_rhs_row_count, ring_opening_point_from_field, BasisMode, DigitRangePlan,
-    EvaluationTraceWeightInputs, EvaluationTraceWeights, FlatBooleanDomain, FpExtEncoding,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RelationRangeImagePlan,
-    RingMultiplierOpeningPoint, WitnessLayout,
+    basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
+    ring_opening_point_from_field, BasisMode, DigitRangePlan, EvaluationTraceInputs,
+    FlatBooleanDomain, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
+    RelationMatrixRowLayout, RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
 };
 
 type Cfg = fp128::D128Full;
@@ -39,26 +38,26 @@ fn materialize_semantic_trace_oracle<E: FieldCore>(
     weights: &EvaluationTraceWeights<E>,
     output_scale: E,
 ) -> Vec<E> {
-    let mut table = vec![E::zero(); weights.physical_field_len()];
-    for term in weights.terms() {
+    let mut table = vec![E::zero(); weights.physical_field_len];
+    for term in &weights.terms {
         let block_weights = basis_weights_prefix(
-            term.block_opening_point(),
-            term.block_opening_basis(),
-            term.group_block_count(),
+            &term.block_opening_point,
+            term.basis,
+            term.group_block_count,
         )
         .unwrap();
-        let block_stride = term.opening_digit_weights().len() * term.source_ring_dimension();
-        for segment in term.segments() {
-            for local_block in 0..segment.block_count() {
-                let global_block = segment.global_block_start() + local_block;
-                let block_start = segment.physical_coefficient_start() + local_block * block_stride;
-                for (digit, &digit_weight) in term.opening_digit_weights().iter().enumerate() {
-                    let digit_start = block_start + digit * term.source_ring_dimension();
+        let block_stride = term.opening_digit_weights.len() * term.source_ring_dimension;
+        for segment in &term.segments {
+            for local_block in 0..segment.block_count {
+                let global_block = segment.global_block_start + local_block;
+                let block_start = segment.physical_coefficient_start + local_block * block_stride;
+                for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate() {
+                    let digit_start = block_start + digit * term.source_ring_dimension;
                     let factor = output_scale
-                        * term.coefficient()
+                        * term.coefficient
                         * block_weights[global_block]
                         * digit_weight;
-                    for (inner_coordinate, &inner_weight) in term.inner_trace().iter().enumerate() {
+                    for (inner_coordinate, &inner_weight) in term.inner_trace.iter().enumerate() {
                         table[digit_start + inner_coordinate] += factor * inner_weight;
                     }
                 }
@@ -122,7 +121,7 @@ where
         CyclotomicRing::<F, D>::one(),
     )];
     let claim_coefficients = vec![E::from_u64(41), E::from_u64(43)];
-    let semantic_trace = build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
+    let semantic_trace = build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
         digit_witness_domain: plan.digit_witness_domain(),
         witness_layout: plan.witness_layout(),
         role_dims: plan.role_dims(),

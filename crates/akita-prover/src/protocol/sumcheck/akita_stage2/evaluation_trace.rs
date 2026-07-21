@@ -1,7 +1,170 @@
 //! Prover-owned evaluation-trace support prepared for Stage 2.
 
+use std::sync::Arc;
+
+#[cfg(test)]
+use akita_algebra::offset_eq::eval_affine_digit_interval;
+#[cfg(test)]
+use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, FieldCore};
-use akita_types::{basis_weights_prefix, EvaluationTraceWeights};
+use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
+#[cfg(test)]
+use akita_types::basis_weights;
+use akita_types::{
+    basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
+    EvaluationTraceInputs, FpExtEncoding,
+};
+
+/// One contiguous physical opening-digit run for a claim inside one witness chunk.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvaluationTraceSegment {
+    physical_coefficient_start: usize,
+    global_block_start: usize,
+    block_count: usize,
+}
+
+/// One opening claim's rank-one evaluation-trace factors and physical support.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EvaluationTraceTerm<E: FieldCore> {
+    coefficient: E,
+    block_opening_point: Arc<[E]>,
+    basis: BasisMode,
+    group_block_count: usize,
+    source_ring_dimension: usize,
+    opening_digit_weights: Arc<[E]>,
+    inner_trace: Arc<[E]>,
+    segments: Vec<EvaluationTraceSegment>,
+}
+
+/// Complete nonempty evaluation-trace weight function over one flat witness domain.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct EvaluationTraceWeights<E: FieldCore> {
+    terms: Vec<EvaluationTraceTerm<E>>,
+    physical_field_len: usize,
+    #[cfg(test)]
+    num_vars: usize,
+}
+
+impl<E: FieldCore> EvaluationTraceWeights<E> {
+    #[cfg(test)]
+    fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
+        if point.len() != self.num_vars {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_vars,
+                actual: point.len(),
+            });
+        }
+        let mut evaluation = E::zero();
+        for term in &self.terms {
+            if term.source_ring_dimension == 0 || !term.source_ring_dimension.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(
+                    "trace source ring dimension must be a power of two".into(),
+                ));
+            }
+            let coefficient_bits = term.source_ring_dimension.trailing_zeros() as usize;
+            let (coefficient_point, column_point) = point
+                .split_at_checked(coefficient_bits)
+                .ok_or(AkitaError::InvalidProof)?;
+            let inner_trace_evaluation = multilinear_eval(&term.inner_trace, coefficient_point)?;
+            let low_bits = term.block_opening_point.len() / 2;
+            let low_weights = basis_weights(&term.block_opening_point[..low_bits], term.basis)?;
+            let high_weights = basis_weights(&term.block_opening_point[low_bits..], term.basis)?;
+            let mut term_evaluation = E::zero();
+            for segment in &term.segments {
+                if !segment
+                    .physical_coefficient_start
+                    .is_multiple_of(term.source_ring_dimension)
+                {
+                    return Err(AkitaError::InvalidSetup(
+                        "trace segment is not source-ring aligned".into(),
+                    ));
+                }
+                term_evaluation += eval_affine_digit_interval(
+                    column_point,
+                    segment.physical_coefficient_start / term.source_ring_dimension,
+                    segment.global_block_start,
+                    segment.block_count,
+                    term.opening_digit_weights.len(),
+                    &term.opening_digit_weights,
+                    &high_weights,
+                    &low_weights,
+                )?;
+            }
+            evaluation += term.coefficient * inner_trace_evaluation * term_evaluation;
+        }
+        Ok(evaluation)
+    }
+}
+
+/// Build one canonical prover term per opening claim and witness chunk.
+pub(crate) fn build_evaluation_trace_weights<F, E, const D: usize>(
+    inputs: EvaluationTraceInputs<'_, F, E>,
+) -> Result<EvaluationTraceWeights<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
+{
+    let group_parameters = prepare_evaluation_trace_group_parameters::<F, E, D>(&inputs)?;
+    let mut terms = Vec::with_capacity(inputs.claim_coefficients.len());
+    for parameters in group_parameters {
+        let group_index = parameters.group_index();
+        let group_layout = inputs.opening_batch.group_layout(group_index)?;
+        let units = inputs.witness_layout.units_for_group(group_index)?;
+        for (local_claim, claim_index) in parameters.claim_range().enumerate() {
+            let mut segments = Vec::with_capacity(units.len());
+            for &unit in &units {
+                let physical_column_start = unit.e_index(
+                    group_layout.num_polynomials(),
+                    parameters.opening_digit_weights().len(),
+                    local_claim,
+                    unit.global_block_start(),
+                    0,
+                )?;
+                let physical_coefficient_start = physical_column_start
+                    .checked_mul(D)
+                    .ok_or_else(|| AkitaError::InvalidSetup("trace address overflow".into()))?;
+                let coefficient_count = unit
+                    .num_live_blocks()
+                    .checked_mul(parameters.opening_digit_weights().len())
+                    .and_then(|count| count.checked_mul(D))
+                    .ok_or_else(|| AkitaError::InvalidSetup("trace segment overflow".into()))?;
+                let end = physical_coefficient_start
+                    .checked_add(coefficient_count)
+                    .ok_or_else(|| AkitaError::InvalidSetup("trace segment end overflow".into()))?;
+                if end > inputs.digit_witness_domain.live_len() {
+                    return Err(AkitaError::InvalidProof);
+                }
+                segments.push(EvaluationTraceSegment {
+                    physical_coefficient_start,
+                    global_block_start: unit.global_block_start(),
+                    block_count: unit.num_live_blocks(),
+                });
+            }
+            terms.push(EvaluationTraceTerm {
+                coefficient: *inputs
+                    .claim_coefficients
+                    .get(claim_index)
+                    .ok_or(AkitaError::InvalidProof)?,
+                block_opening_point: parameters.shared_block_opening_point(),
+                basis: parameters.basis(),
+                group_block_count: parameters.group_block_count(),
+                source_ring_dimension: parameters.source_ring_dimension(),
+                opening_digit_weights: parameters.shared_opening_digit_weights(),
+                inner_trace: parameters.shared_inner_trace(),
+                segments,
+            });
+        }
+    }
+    if terms.len() != inputs.claim_coefficients.len() || terms.is_empty() {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(EvaluationTraceWeights {
+        terms,
+        physical_field_len: inputs.digit_witness_domain.live_len(),
+        #[cfg(test)]
+        num_vars: inputs.digit_witness_domain.num_vars(),
+    })
+}
 
 /// One opening block/digit contribution over contiguous common-coordinate columns.
 struct PreparedOpeningSupport<E: FieldCore> {
@@ -67,9 +230,9 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         skip_all,
         name = "PreparedProverEvaluationTrace::new",
         fields(
-            terms = weights.terms().len(),
+            terms = weights.terms.len(),
             coeff_count,
-            physical_field_len = weights.physical_field_len()
+            physical_field_len = weights.physical_field_len
         )
     )]
     pub(crate) fn new(
@@ -79,68 +242,60 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     ) -> Result<Self, AkitaError> {
         if coeff_count == 0
             || !coeff_count.is_power_of_two()
-            || !weights.physical_field_len().is_multiple_of(coeff_count)
+            || !weights.physical_field_len.is_multiple_of(coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "evaluation-trace common-coordinate geometry is malformed".into(),
             ));
         }
-        let live_column_count = weights.physical_field_len() / coeff_count;
-        let opening_support_count =
-            weights
-                .terms()
-                .iter()
-                .try_fold(0usize, |term_count, term| {
-                    term.segments()
-                        .iter()
-                        .try_fold(term_count, |count, segment| {
-                            segment
-                                .block_count()
-                                .checked_mul(term.opening_digit_weights().len())
-                                .and_then(|segment_count| count.checked_add(segment_count))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup(
-                                        "evaluation-trace support count overflow".into(),
-                                    )
-                                })
-                        })
-                })?;
+        let live_column_count = weights.physical_field_len / coeff_count;
+        let opening_support_count = weights.terms.iter().try_fold(0usize, |term_count, term| {
+            term.segments.iter().try_fold(term_count, |count, segment| {
+                segment
+                    .block_count
+                    .checked_mul(term.opening_digit_weights.len())
+                    .and_then(|segment_count| count.checked_add(segment_count))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("evaluation-trace support count overflow".into())
+                    })
+            })
+        })?;
         let mut opening_support = Vec::new();
         opening_support
             .try_reserve_exact(opening_support_count)
             .map_err(|_| {
                 AkitaError::InvalidInput("evaluation-trace support allocation failed".into())
             })?;
-        let mut source_inner_traces = Vec::with_capacity(weights.terms().len());
-        for term in weights.terms() {
-            let source_ring_dimension = term.source_ring_dimension();
+        let mut source_inner_traces = Vec::with_capacity(weights.terms.len());
+        for term in &weights.terms {
+            let source_ring_dimension = term.source_ring_dimension;
             if source_ring_dimension == 0
                 || !source_ring_dimension.is_power_of_two()
                 || !source_ring_dimension.is_multiple_of(coeff_count)
-                || term.inner_trace().len() != source_ring_dimension
+                || term.inner_trace.len() != source_ring_dimension
             {
                 return Err(AkitaError::InvalidSetup(
                     "evaluation-trace source ring is incompatible with Stage 2".into(),
                 ));
             }
             let block_weights = basis_weights_prefix(
-                term.block_opening_point(),
-                term.block_opening_basis(),
-                term.group_block_count(),
+                &term.block_opening_point,
+                term.basis,
+                term.group_block_count,
             )?;
             let block_stride = term
-                .opening_digit_weights()
+                .opening_digit_weights
                 .len()
                 .checked_mul(source_ring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("evaluation-trace block stride overflow".into())
                 })?;
             let inner_trace_index = source_inner_traces.len();
-            source_inner_traces.push(term.shared_inner_trace());
-            for segment in term.segments() {
-                for local_block in 0..segment.block_count() {
+            source_inner_traces.push(Arc::clone(&term.inner_trace));
+            for segment in &term.segments {
+                for local_block in 0..segment.block_count {
                     let global_block = segment
-                        .global_block_start()
+                        .global_block_start
                         .checked_add(local_block)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup(
@@ -157,14 +312,14 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                             )
                         })?;
                     let block_start = segment
-                        .physical_coefficient_start()
+                        .physical_coefficient_start
                         .checked_add(local_block_offset)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup(
                                 "evaluation-trace block address overflow".into(),
                             )
                         })?;
-                    for (digit, &digit_weight) in term.opening_digit_weights().iter().enumerate() {
+                    for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate() {
                         let digit_offset =
                             source_ring_dimension.checked_mul(digit).ok_or_else(|| {
                                 AkitaError::InvalidSetup(
@@ -195,7 +350,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                         }
                         opening_support.push(PreparedOpeningSupport {
                             first_column,
-                            factor: output_scale * term.coefficient() * block_weight * digit_weight,
+                            factor: output_scale * term.coefficient * block_weight * digit_weight,
                             inner_trace_index,
                         });
                     }

@@ -34,7 +34,7 @@ use akita_types::{
     relation_claim_from_layout_extension, relation_rhs_layout_for,
     ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
     scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, EvaluationTraceWeightInputs,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, EvaluationTraceInputs,
     ExecutionSchedule, ExtensionOpeningReductionProof, FlatBooleanDomain, FoldLevelProof,
     FoldLinfProtocolBinding, FpExtEncoding, LevelParams, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RelationMatrixRowLayout,

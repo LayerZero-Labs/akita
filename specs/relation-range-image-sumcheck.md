@@ -18,11 +18,12 @@ relation-weight factorization, prepared evaluation-trace support, direct mixed-r
 verifier differential coverage, and direct consumption of prepared trace support by the
 Stage 2 prover. The trace consumer no longer materializes a `TraceTable`. A direct-setup
 root with `d_a/d_b/d_d = 128/64/32` now commits, proves, and verifies through the public
-PCS API with audited role-native SIS ranks. Prover-only relation events and their
-common-alpha factorization now live in `akita-prover`; `akita-types` retains only the
-checked role/layout geometry needed across protocol sides. Mixed-role
-multigroup/multichunk coverage, prover-only trace-state ownership cleanup, and the
-remaining compact-kernel cutover are still outstanding.
+PCS API with audited role-native SIS ranks. Prover-only relation events, common-alpha
+factorization, evaluation-trace terms, segment addressing, and fold storage now live in
+`akita-prover`; `akita-types` retains only checked role/layout and trace-group geometry
+needed across protocol sides. The legacy dense/sparse trace-table implementation is
+test-only. Mixed-role multigroup/multichunk coverage and the remaining compact-kernel
+cutover are still outstanding.
 
 The sum-check has three semantic terms:
 

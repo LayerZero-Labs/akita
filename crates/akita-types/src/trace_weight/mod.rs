@@ -13,6 +13,7 @@ mod evaluation_trace;
 mod layout;
 #[cfg(test)]
 mod stage2;
+#[cfg(test)]
 mod trace_table;
 
 #[cfg(test)]
@@ -31,10 +32,9 @@ pub use eval::{
     TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm,
 };
 pub use evaluation_trace::{
-    build_evaluation_trace_weights, ensure_trace_stage2_supported,
-    prepare_evaluation_trace_group_parameters, scale_evaluation_trace_claim_coefficients,
-    EvaluationTraceGroupParameters, EvaluationTraceSegment, EvaluationTraceTerm,
-    EvaluationTraceWeightInputs, EvaluationTraceWeights,
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    scale_evaluation_trace_claim_coefficients, EvaluationTraceGroupParameters,
+    EvaluationTraceInputs,
 };
 #[cfg(test)]
 pub use layout::TraceWeightLayout;
@@ -46,6 +46,7 @@ pub use stage2::{
     trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TracePublicWeights,
     TraceTermBatch,
 };
+#[cfg(test)]
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
 #[cfg(test)]

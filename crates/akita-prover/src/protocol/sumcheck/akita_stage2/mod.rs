@@ -252,7 +252,7 @@ mod round_flow;
 mod x_prefix;
 mod y_prefix;
 
-pub(crate) use evaluation_trace::PreparedProverEvaluationTrace;
+pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     // Fused relation (`alpha * m`) + trace-weight addend for one witness

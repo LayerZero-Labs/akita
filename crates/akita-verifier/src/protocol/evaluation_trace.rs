@@ -10,8 +10,8 @@ use akita_algebra::offset_eq::eval_affine_digit_interval;
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
-    basis_weights, prepare_evaluation_trace_group_parameters, BasisMode,
-    EvaluationTraceWeightInputs, FpExtEncoding,
+    basis_weights, prepare_evaluation_trace_group_parameters, BasisMode, EvaluationTraceInputs,
+    FpExtEncoding,
 };
 
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
@@ -107,7 +107,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
 /// Prepare the verifier's compact group/chunk descriptors from checked common
 /// trace parameters.
 pub(crate) fn prepare_evaluation_trace<F, E, const D: usize>(
-    inputs: &EvaluationTraceWeightInputs<'_, F, E>,
+    inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<PreparedEvaluationTrace<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
@@ -184,14 +184,14 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_types::{
-        build_evaluation_trace_weights, r_decomp_levels, relation_rhs_layout_for,
-        relation_rhs_row_count, ring_opening_point_from_field, BasisMode, DigitRangePlan,
-        FlatBooleanDomain, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
-        RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
+        basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
+        ring_opening_point_from_field, BasisMode, DigitRangePlan, FlatBooleanDomain,
+        OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RelationRangeImagePlan,
+        RingMultiplierOpeningPoint, WitnessLayout,
     };
 
     #[test]
-    fn compact_trace_matches_prover_weight_function() {
+    fn compact_trace_matches_dense_definition() {
         type Cfg = fp128::D128Full;
         type F = fp128::Field;
         type E = F;
@@ -254,7 +254,7 @@ mod tests {
             CyclotomicRing::<F, D>::one(),
         )];
         let claim_coefficients = vec![E::from_u64(41), E::from_u64(43)];
-        let inputs = || EvaluationTraceWeightInputs {
+        let inputs = || EvaluationTraceInputs {
             digit_witness_domain: plan.digit_witness_domain(),
             witness_layout: plan.witness_layout(),
             role_dims: plan.role_dims(),
@@ -266,14 +266,58 @@ mod tests {
         };
         let verifier_trace =
             prepare_evaluation_trace::<F, E, D>(&inputs()).expect("compact verifier trace");
-        let prover_trace = build_evaluation_trace_weights::<F, E, D>(inputs())
-            .expect("canonical prover trace weights");
+        let parameters = prepare_evaluation_trace_group_parameters::<F, E, D>(&inputs())
+            .expect("checked trace geometry");
+        let mut dense = vec![E::zero(); digit_witness_domain.live_len()];
+        for parameters in parameters {
+            let group_layout = opening_batch
+                .group_layout(parameters.group_index())
+                .expect("group layout");
+            let units = plan
+                .witness_layout()
+                .units_for_group(parameters.group_index())
+                .expect("group witness units");
+            let block_weights = basis_weights_prefix(
+                parameters.block_opening_point(),
+                parameters.basis(),
+                parameters.group_block_count(),
+            )
+            .expect("block weights");
+            for (local_claim, claim_index) in parameters.claim_range().enumerate() {
+                for unit in &units {
+                    for local_block in 0..unit.num_live_blocks() {
+                        let block = unit.global_block_start() + local_block;
+                        for (digit, &digit_weight) in
+                            parameters.opening_digit_weights().iter().enumerate()
+                        {
+                            let column = unit
+                                .e_index(
+                                    group_layout.num_polynomials(),
+                                    parameters.opening_digit_weights().len(),
+                                    local_claim,
+                                    block,
+                                    digit,
+                                )
+                                .expect("trace column");
+                            let factor = claim_coefficients[claim_index]
+                                * block_weights[block]
+                                * digit_weight;
+                            for (coefficient, &inner) in parameters.inner_trace().iter().enumerate()
+                            {
+                                dense[column * D + coefficient] += factor * inner;
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let point = (0..digit_witness_domain.num_vars())
             .map(|index| E::from_u64(47 + 2 * index as u64))
             .collect::<Vec<_>>();
+        dense.resize(1usize << point.len(), E::zero());
         assert_eq!(
             verifier_trace.evaluate_at_point(&point).unwrap(),
-            prover_trace.evaluate_at_point(&point).unwrap()
+            multilinear_eval(&dense, &point).unwrap()
         );
     }
 }

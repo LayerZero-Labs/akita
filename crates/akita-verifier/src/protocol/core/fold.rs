@@ -684,7 +684,7 @@ where
     .entered();
     let evaluation_trace =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-            prepare_evaluation_trace::<F, E, D>(&EvaluationTraceWeightInputs {
+            prepare_evaluation_trace::<F, E, D>(&EvaluationTraceInputs {
                 digit_witness_domain: trace_domain,
                 witness_layout: trace_witness_layout,
                 role_dims: relation_instance.role_dims(),

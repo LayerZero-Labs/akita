@@ -675,7 +675,7 @@ where
         ring_d,
         |D| {
             let semantic_trace =
-                build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
+                build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
                     digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
                     witness_layout: relation_range_image_plan.witness_layout(),
                     role_dims: relation_range_image_plan.role_dims(),
