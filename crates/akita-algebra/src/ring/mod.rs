@@ -5,8 +5,8 @@ pub mod cyclotomic;
 pub mod eval;
 
 pub use crt_ntt_repr::{
-    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, DigitMontLut,
-    MixedCrtNtt, MixedCrtNttParamSet,
+    mat_vec_i16_with_tail, CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet,
+    CyclotomicCrtNtt, DigitMontLut, I16TailParams,
 };
 pub use cyclotomic::{CyclotomicRing, WideCyclotomicRing};
 pub use eval::{

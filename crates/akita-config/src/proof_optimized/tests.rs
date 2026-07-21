@@ -16,7 +16,7 @@ use akita_schedules::{
     fp64_d256_onehot_table,
 };
 #[cfg(feature = "schedules-default")]
-use akita_types::{select_crt_ntt_capability, CrtAccumulationProfile, SisModulusProfileId};
+use akita_types::{ntt_cache_requires_i16_tail, SisModulusProfileId};
 
 #[cfg(feature = "schedules-default")]
 const MAX_I8_LOG_BASIS: u32 = 8;
@@ -753,11 +753,9 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         let width = terminal.a_key.col_len();
         min_width = min_width.min(width);
         max_width = max_width.max(width);
-        assert_eq!(
-            select_crt_ntt_capability::<Cfg::Field, D>(width, 1 << 15)
-                .expect("generated terminal i16 accumulation should fit")
-                .profile(),
-            CrtAccumulationProfile::I16Tail,
+        assert!(
+            ntt_cache_requires_i16_tail::<Cfg::Field, D>(width, 16)
+                .expect("generated terminal i16 accumulation should fit"),
             "generated q32 terminal unexpectedly fits the base CRT profile for {} key={key:?}, D={D}, width={width}",
             std::any::type_name::<Cfg>(),
         );

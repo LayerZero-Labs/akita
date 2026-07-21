@@ -27,12 +27,14 @@ CRT-capability selector keeps the base profile when
 the 12289 i16 tail. A schedule whose accumulation exceeds both profiles is
 rejected as an invalid setup.
 
-The verifier warms every representation selected by the validated terminal
-schedule before transcript replay. Prepared forms are derived from the
-coefficient setup, keyed independently by ring dimension and exact capability,
-and never serialized. Thus a base-only schedule never constructs the tail,
-while a tail schedule pays that cost before the terminal check. Shape and
-setup-prefix checks happen before either kernel indexes prepared state.
+The verifier warms the strongest representation selected by the validated
+terminal schedule before transcript replay. Prepared forms are derived from
+the coefficient setup, keyed by ring dimension, and never serialized. Groups
+share one base prefix; its optional tail is only as long as the largest
+tail-requiring group. Thus a base-only schedule never constructs the tail, and
+a larger base-only group cannot unnecessarily extend one required by a smaller
+group. Shape and setup-prefix checks happen before either kernel indexes
+prepared state.
 
 The verifier never constructs prover-only polynomial backends or setup expansion
 kernels.

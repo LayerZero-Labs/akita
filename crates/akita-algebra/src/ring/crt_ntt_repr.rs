@@ -47,7 +47,7 @@ mod ops;
 mod tests;
 
 pub use lut::{CenteredMontLut, DigitMontLut};
-pub use mixed::{MixedCrtNtt, MixedCrtNttParamSet};
+pub use mixed::{mat_vec_i16_with_tail, I16TailParams};
 
 impl<W: PrimeWidth, const K: usize, const D: usize> CrtNttParamSet<W, K, D> {
     /// Build a full parameter set from CRT primes.

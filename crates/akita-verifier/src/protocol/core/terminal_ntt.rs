@@ -1,14 +1,13 @@
 //! Exact negacyclic NTT kernels for terminal verifier matrix relations.
 
-use akita_algebra::{CyclotomicCrtNtt, CyclotomicRing, MixedCrtNtt};
+use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    dispatch_for_field, select_crt_ntt_capability, AkitaVerifierSetup, CrtAccumulationProfile,
-    OpeningClaimsLayout, PolynomialGroupLayout, PreparedNttCapabilitySlot, PreparedNttSlot,
-    PreparedVerifierNttSlotAny, Schedule,
+    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, OpeningClaimsLayout,
+    PolynomialGroupLayout, Schedule,
 };
 
-pub(super) const TERMINAL_I16_ABS_BOUND: u64 = 1 << 15;
+pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 
 /// Warm every exact terminal i16 representation selected by a validated schedule.
 pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
@@ -34,8 +33,9 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
         F,
         ring_d,
         |D| {
-            let mut base_requirement = None;
-            let mut tail_requirement = None;
+            let mut base_prefix_len = 0usize;
+            let mut tail_prefix_len = 0usize;
+            let mut max_width = 0usize;
             for group_index in 0..opening_batch.num_groups() {
                 let params = terminal_params.group_params(&opening_batch, group_index)?;
                 let width = params.a_col_len();
@@ -46,24 +46,19 @@ pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
                         .ok_or(AkitaError::InvalidSetup(
                             "terminal A cache prefix length overflow".into(),
                         ))?;
-                let update = |requirement: &mut Option<(usize, usize)>| {
-                    if requirement.is_none_or(|(_, current_prefix)| prefix_len > current_prefix) {
-                        *requirement = Some((width, prefix_len));
-                    }
-                };
-                match select_crt_ntt_capability::<F, D>(width, TERMINAL_I16_ABS_BOUND)?.profile() {
-                    CrtAccumulationProfile::Base => update(&mut base_requirement),
-                    CrtAccumulationProfile::I16Tail => update(&mut tail_requirement),
+                base_prefix_len = base_prefix_len.max(prefix_len);
+                max_width = max_width.max(width);
+                if ntt_cache_requires_i16_tail::<F, D>(width, TERMINAL_I16_LOG_BASIS)? {
+                    tail_prefix_len = tail_prefix_len.max(prefix_len);
                 }
             }
-            for requirement in [base_requirement, tail_requirement] {
-                if let Some((width, prefix_len)) = requirement {
-                    setup.prepared_verifier_ntt_prefix::<D>(
-                        prefix_len,
-                        width,
-                        TERMINAL_I16_ABS_BOUND,
-                    )?;
-                }
+            if base_prefix_len > 0 {
+                setup.prepared_verifier_ntt_prefix::<D>(
+                    base_prefix_len,
+                    tail_prefix_len,
+                    max_width,
+                    TERMINAL_I16_LOG_BASIS,
+                )?;
             }
             Ok::<(), AkitaError>(())
         }
@@ -100,52 +95,23 @@ where
         return Ok(vec![CyclotomicRing::zero(); num_rows]);
     }
 
-    let profile = select_crt_ntt_capability::<F, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)?.profile();
     let slot = {
-        let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup", ?profile).entered();
+        let _span = tracing::info_span!("terminal_ntt_a_i16_cache_lookup").entered();
+        let tail_prefix_len =
+            if ntt_cache_requires_i16_tail::<F, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)? {
+                prepared_prefix_len
+            } else {
+                0
+            };
         setup.prepared_verifier_ntt_prefix::<D>(
             prepared_prefix_len,
+            tail_prefix_len,
             rhs.len(),
-            TERMINAL_I16_ABS_BOUND,
+            TERMINAL_I16_LOG_BASIS,
         )?
     };
-    let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate", ?profile).entered();
-    match (profile, slot.as_ref()) {
-        (CrtAccumulationProfile::Base, PreparedVerifierNttSlotAny::Base(slot)) => {
-            match slot.as_d::<D>()? {
-                PreparedNttSlot::Q32 { neg, params, .. } => {
-                    CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-                PreparedNttSlot::Q64 { neg, params, .. } => {
-                    CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-                PreparedNttSlot::Q128 { neg, params, .. } => {
-                    CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-            }
-        }
-        (CrtAccumulationProfile::I16Tail, PreparedVerifierNttSlotAny::I16Tail(slot)) => {
-            match slot.as_d::<D>()? {
-                PreparedNttCapabilitySlot::Q32I16Tail { neg, params } => {
-                    MixedCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-                PreparedNttCapabilitySlot::Q64I16Tail { neg, params } => {
-                    MixedCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-                PreparedNttCapabilitySlot::Q128I16Tail { neg, params } => {
-                    MixedCrtNtt::mat_vec_i16(neg, num_rows, rhs.len(), rhs, params)
-                }
-                PreparedNttCapabilitySlot::Q32Base { .. }
-                | PreparedNttCapabilitySlot::Q64Base { .. }
-                | PreparedNttCapabilitySlot::Q128Base { .. } => Err(AkitaError::InvalidSetup(
-                    "verifier i16-tail cache contains a base-only slot".into(),
-                )),
-            }
-        }
-        _ => Err(AkitaError::InvalidSetup(
-            "verifier NTT cache profile does not match the requested capability".into(),
-        )),
-    }
+    let _span = tracing::info_span!("terminal_ntt_a_i16_accumulate").entered();
+    slot.mat_vec_i16(TERMINAL_I16_LOG_BASIS, num_rows, rhs)
 }
 
 #[cfg(test)]
@@ -155,8 +121,9 @@ mod tests {
     use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
-        AkitaExpandedSetup, AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, LevelParamsLike,
-        PolynomialGroupLayout, SetupPrefixVerifierRegistry,
+        max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
+        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, LevelParamsLike, PolynomialGroupLayout,
+        ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
 
@@ -230,11 +197,9 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        assert_eq!(
-            select_crt_ntt_capability::<F, D>(5, TERMINAL_I16_ABS_BOUND)
+        assert!(
+            ntt_cache_requires_i16_tail::<F, D>(5, TERMINAL_I16_LOG_BASIS)
                 .expect("tail capability")
-                .profile(),
-            CrtAccumulationProfile::I16Tail
         );
         assert_eq!(
             centered_rows(&setup, 2, &centered, 10).expect("mixed i16 terminal matvec"),
@@ -242,7 +207,7 @@ mod tests {
         );
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * core::mem::size_of::<MixedCrtNtt<Q128_NUM_PRIMES, D>>()
+            10 * D * (Q128_NUM_PRIMES * core::mem::size_of::<i32>() + core::mem::size_of::<i16>())
         );
     }
 
@@ -282,16 +247,14 @@ mod tests {
             SetupPrefixVerifierRegistry::new(),
         );
         let rhs = vec![[i16::MAX; D]; 5];
-        assert_eq!(
-            select_crt_ntt_capability::<F32, D>(rhs.len(), TERMINAL_I16_ABS_BOUND)
+        assert!(
+            !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)
                 .expect("q32 terminal capability")
-                .profile(),
-            CrtAccumulationProfile::Base
         );
         centered_rows(&setup, 2, &rhs, 10).expect("q32 i16 terminal matvec");
         assert_eq!(
             setup.verifier_ntt_cache_bytes().expect("cache bytes"),
-            10 * core::mem::size_of::<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>()
+            10 * D * Q32_NUM_PRIMES * core::mem::size_of::<i32>()
         );
     }
 
@@ -317,5 +280,45 @@ mod tests {
             setup.verifier_ntt_cache_bytes().expect("reused cache"),
             warmed_bytes
         );
+    }
+
+    #[test]
+    fn base_and_tail_requests_share_one_strongest_prefix() {
+        let setup = verifier_setup(&matrix());
+        let ProtocolCrtNttParams::Q128(params) =
+            select_crt_ntt_params::<F, D>().expect("Q128 params")
+        else {
+            panic!("Q128 field must select Q128 params");
+        };
+        let safe_width = max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
+            &params,
+            1 << (TERMINAL_I16_LOG_BASIS - 1),
+        )
+        .expect("base profile supports a terminal width");
+        assert!(safe_width < 4);
+
+        let initial_tail = setup
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .expect("tail prefix");
+        assert!(initial_tail.has_i16_tail());
+
+        let combined = setup
+            .prepared_verifier_ntt_prefix::<D>(10, 0, safe_width, TERMINAL_I16_LOG_BASIS)
+            .expect("larger base-only prefix");
+        assert!(combined.has_i16_tail());
+        assert_eq!(
+            setup.verifier_ntt_cache_bytes().expect("combined bytes"),
+            10 * D * Q128_NUM_PRIMES * core::mem::size_of::<i32>()
+                + 4 * D * core::mem::size_of::<i16>()
+        );
+        let reused_other_basis = setup
+            .prepared_verifier_ntt_prefix::<D>(10, 0, 1, 15)
+            .expect("same physical cache for another exact bound");
+        assert!(Arc::ptr_eq(&combined, &reused_other_basis));
+
+        let reused_tail = setup
+            .prepared_verifier_ntt_prefix::<D>(4, 4, safe_width + 1, TERMINAL_I16_LOG_BASIS)
+            .expect("reused tail prefix");
+        assert!(Arc::ptr_eq(&combined, &reused_tail));
     }
 }

@@ -5,15 +5,15 @@ macro_rules! dispatch_slot {
         let nr: usize = $num_rows;
         let nc: usize = $num_cols;
         match $slot {
-            PreparedNttSlot::Q32 { neg, params: p, .. } => {
+            PreparedNttCache::Q32 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
-            PreparedNttSlot::Q64 { neg, params: p, .. } => {
+            PreparedNttCache::Q64 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
-            PreparedNttSlot::Q128 { neg, params: p, .. } => {
+            PreparedNttCache::Q128 { neg, params: p, .. } => {
                 let rows: Vec<&[_]> = (0..nr).map(|i| &neg[i * nc..(i + 1) * nc]).collect();
                 $func(&rows, $($arg,)* p)
             }
@@ -33,7 +33,7 @@ macro_rules! dispatch_slot {
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8")]
 pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -58,7 +58,7 @@ pub fn mat_vec_mul_ntt_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// almost always wasted work on dense witnesses.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense")]
 pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
@@ -80,7 +80,7 @@ pub fn mat_vec_mul_ntt_i8_dense<F: FieldCore + CanonicalField, const D: usize>(
 /// Single-row dense variant of [`mat_vec_mul_ntt_i8_dense`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_i8_dense_single_row")]
 pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_cols: usize,
     blocks: &[&[CyclotomicRing<F, D>]],
     num_digits: usize,
@@ -106,7 +106,7 @@ pub fn mat_vec_mul_ntt_i8_dense_single_row<F: FieldCore + CanonicalField, const 
 /// balanced digit plane for a validated `log_basis <= 8`.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_digits_i8")]
 pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],
@@ -140,7 +140,7 @@ pub fn mat_vec_mul_ntt_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// full scan at each commit.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_dense_digits_i8")]
 pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],
@@ -167,7 +167,7 @@ pub(crate) fn mat_vec_mul_ntt_dense_digits_i8<F: FieldCore + CanonicalField, con
 /// lift are rejected as `AkitaError` rather than panicking.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_raw_digits_i8")]
 pub fn mat_vec_mul_ntt_raw_digits_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     blocks: &[&[[i8; D]]],

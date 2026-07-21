@@ -6,13 +6,14 @@ use akita_algebra::ntt::tables::{
     Q128_NUM_PRIMES, Q32_MAX_RING_D, Q32_MODULUS, Q32_NUM_PRIMES, Q32_PRIMES, Q64_MAX_RING_D,
     Q64_MODULUS, Q64_NUM_PRIMES, Q64_PRIMES,
 };
-use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, MixedCrtNtt, MixedCrtNttParamSet};
+use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, I16TailParams};
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{
     cfg_iter, AkitaError, CanonicalField, FieldCore, Prime128Offset159, Prime128Offset2355,
     Prime128OffsetA7F7, PseudoMersenneField,
 };
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -58,40 +59,6 @@ pub enum ProtocolCrtNttParams<const D: usize> {
     Q32(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
     Q64(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
     Q128(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
-}
-
-/// Minimum exact CRT representation required by one accumulation schedule.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum CrtAccumulationProfile {
-    /// The field's existing i32 CRT profile is sufficient.
-    Base,
-    /// One additional 12289 residue is required.
-    I16Tail,
-}
-
-/// Exact CRT parameters selected for one accumulation schedule.
-#[derive(Clone)]
-#[allow(missing_docs, clippy::large_enum_variant)]
-pub enum ProtocolCrtNttCapability<const D: usize> {
-    Q32Base(CrtNttParamSet<i32, Q32_NUM_PRIMES, D>),
-    Q32I16Tail(MixedCrtNttParamSet<Q32_NUM_PRIMES, D>),
-    Q64Base(CrtNttParamSet<i32, Q64_NUM_PRIMES, D>),
-    Q64I16Tail(MixedCrtNttParamSet<Q64_NUM_PRIMES, D>),
-    Q128Base(CrtNttParamSet<i32, Q128_NUM_PRIMES, D>),
-    Q128I16Tail(MixedCrtNttParamSet<Q128_NUM_PRIMES, D>),
-}
-
-impl<const D: usize> ProtocolCrtNttCapability<D> {
-    /// Physical residue profile chosen by the exactness bound.
-    #[must_use]
-    pub const fn profile(&self) -> CrtAccumulationProfile {
-        match self {
-            Self::Q32Base(_) | Self::Q64Base(_) | Self::Q128Base(_) => CrtAccumulationProfile::Base,
-            Self::Q32I16Tail(_) | Self::Q64I16Tail(_) | Self::Q128I16Tail(_) => {
-                CrtAccumulationProfile::I16Tail
-            }
-        }
-    }
 }
 
 /// Select the canonical CRT+NTT parameter set for protocol field `F` and degree `D`.
@@ -235,73 +202,22 @@ fn required_profile_for_params<F, W, const K: usize, const D: usize>(
     params: &CrtNttParamSet<W, K, D>,
     width: usize,
     rhs_abs_bound: u64,
-) -> Result<CrtAccumulationProfile, AkitaError>
+) -> Result<bool, AkitaError>
 where
     F: CanonicalField,
     W: PrimeWidth,
 {
     let mut product = crt_product(params);
     if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
-        return Ok(CrtAccumulationProfile::Base);
+        return Ok(false);
     }
     product.mul_u128(I16_TAIL_PRIME.p as u128);
     if crt_width_is_safe::<F, D>(&product, width, rhs_abs_bound) {
-        return Ok(CrtAccumulationProfile::I16Tail);
+        return Ok(true);
     }
     Err(AkitaError::InvalidSetup(format!(
         "CRT accumulation exceeds base plus i16-tail capacity for D={D}, width={width}, rhs_abs_bound={rhs_abs_bound}"
     )))
-}
-
-/// Select the minimum exact CRT parameters for a concrete accumulation.
-///
-/// Exact centered reconstruction requires
-/// `2 * width * D * floor(q/2) * rhs_abs_bound < product(CRT primes)`.
-/// The 12289 tail is constructed only when the base product fails this strict
-/// inequality.
-pub fn select_crt_ntt_capability<F: CanonicalField, const D: usize>(
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<ProtocolCrtNttCapability<D>, AkitaError> {
-    let tail = || CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
-    Ok(match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => {
-            match required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(
-                &params,
-                width,
-                rhs_abs_bound,
-            )? {
-                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q32Base(params),
-                CrtAccumulationProfile::I16Tail => {
-                    ProtocolCrtNttCapability::Q32I16Tail(MixedCrtNttParamSet::new(params, tail()))
-                }
-            }
-        }
-        ProtocolCrtNttParams::Q64(params) => {
-            match required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(
-                &params,
-                width,
-                rhs_abs_bound,
-            )? {
-                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q64Base(params),
-                CrtAccumulationProfile::I16Tail => {
-                    ProtocolCrtNttCapability::Q64I16Tail(MixedCrtNttParamSet::new(params, tail()))
-                }
-            }
-        }
-        ProtocolCrtNttParams::Q128(params) => {
-            match required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(
-                &params,
-                width,
-                rhs_abs_bound,
-            )? {
-                CrtAccumulationProfile::Base => ProtocolCrtNttCapability::Q128Base(params),
-                CrtAccumulationProfile::I16Tail => {
-                    ProtocolCrtNttCapability::Q128I16Tail(MixedCrtNttParamSet::new(params, tail()))
-                }
-            }
-        }
-    })
 }
 
 /// Conservative maximum matrix width that one signed CRT accumulator can hold.
@@ -352,191 +268,405 @@ pub fn max_safe_crt_accumulation_width<
     Some(low)
 }
 
-/// Prepared matrix transforms shared by prover and verifier caches.
+/// NTT representations requested by protocol and backend consumers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NttCacheMode {
+    /// Materialize the base-profile negacyclic and cyclic transforms.
+    BothTransforms,
+    /// Materialize the minimum exact negacyclic representation for balanced
+    /// base-`2^log_basis` signed coefficients.
+    ExactNegacyclic { width: usize, log_basis: u32 },
+}
+
+/// Optional homogeneous i16 tail attached to one prepared base profile.
 ///
-/// Verifier slots leave `cyc` absent; prover slots materialize it for quotient
-/// kernels. The CRT family remains statically typed in each variant.
+/// This type is public only because [`PreparedNttCache`] crosses crate
+/// boundaries. Its fields and construction remain private to the cache
+/// implementation.
+#[doc(hidden)]
+#[derive(Debug)]
+pub struct PreparedI16Tail<const K: usize, const D: usize> {
+    negacyclic: Vec<CyclotomicCrtNtt<i16, 1, D>>,
+    params: I16TailParams<K, D>,
+}
+
+/// One prepared NTT cache over the field-selected CRT profile.
+///
+/// Every variant always contains the base negacyclic representation. `cyc` is
+/// present only for [`NttCacheMode::BothTransforms`]; `tail` is present only
+/// when an exact negacyclic request exceeds the base CRT product.
 #[derive(Debug)]
 #[allow(missing_docs, clippy::large_enum_variant)]
-pub enum PreparedNttSlot<const D: usize> {
+pub enum PreparedNttCache<const D: usize> {
+    #[non_exhaustive]
     Q32 {
         neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
+        tail: Option<PreparedI16Tail<Q32_NUM_PRIMES, D>>,
+        exact: bool,
     },
+    #[non_exhaustive]
     Q64 {
         neg: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
+        tail: Option<PreparedI16Tail<Q64_NUM_PRIMES, D>>,
+        exact: bool,
     },
+    #[non_exhaustive]
     Q128 {
         neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
         cyc: Option<Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>>,
         params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
+        tail: Option<PreparedI16Tail<Q128_NUM_PRIMES, D>>,
+        exact: bool,
     },
 }
 
-impl<const D: usize> PreparedNttSlot<D> {
-    /// In-memory byte footprint of all materialized transform entries.
-    #[must_use]
-    pub fn cache_bytes(&self) -> usize {
-        match self {
-            Self::Q32 { neg, cyc, .. } => {
-                (neg.len() + cyc.as_ref().map_or(0, Vec::len))
-                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>()
-            }
-            Self::Q64 { neg, cyc, .. } => {
-                (neg.len() + cyc.as_ref().map_or(0, Vec::len))
-                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>()
-            }
-            Self::Q128 { neg, cyc, .. } => {
-                (neg.len() + cyc.as_ref().map_or(0, Vec::len))
-                    * core::mem::size_of::<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>()
-            }
+impl<const D: usize> PreparedNttCache<D> {
+    fn validate(&self) -> Result<(), AkitaError> {
+        macro_rules! validate {
+            ($neg:expr, $cyc:expr, $params:expr, $tail:expr, $exact:expr) => {{
+                if $exact == $cyc.is_some() {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT cache has an unsupported domain combination".into(),
+                    ));
+                }
+                if $cyc.as_ref().is_some_and(|cyc| cyc.len() != $neg.len()) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared cyclic and negacyclic NTT lengths differ".into(),
+                    ));
+                }
+                if $tail.as_ref().is_some_and(|tail| {
+                    tail.negacyclic.is_empty() || tail.negacyclic.len() > $neg.len()
+                }) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared i16-tail NTT prefix is empty or exceeds its base".into(),
+                    ));
+                }
+                if let Some(tail) = $tail.as_ref() {
+                    if !$exact
+                        || tail.params.wide != *$params
+                        || tail.params.tail.primes != [I16_TAIL_PRIME]
+                    {
+                        return Err(AkitaError::InvalidSetup(
+                            "prepared i16-tail NTT parameters do not match the base".into(),
+                        ));
+                    }
+                }
+            }};
         }
-    }
-}
-
-/// Prepared negacyclic matrix selected by an exact accumulation bound.
-#[derive(Debug)]
-#[allow(missing_docs, clippy::large_enum_variant)]
-pub enum PreparedNttCapabilitySlot<const D: usize> {
-    Q32Base {
-        neg: Vec<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>,
-        params: CrtNttParamSet<i32, Q32_NUM_PRIMES, D>,
-    },
-    Q32I16Tail {
-        neg: Vec<MixedCrtNtt<Q32_NUM_PRIMES, D>>,
-        params: MixedCrtNttParamSet<Q32_NUM_PRIMES, D>,
-    },
-    Q64Base {
-        neg: Vec<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>,
-        params: CrtNttParamSet<i32, Q64_NUM_PRIMES, D>,
-    },
-    Q64I16Tail {
-        neg: Vec<MixedCrtNtt<Q64_NUM_PRIMES, D>>,
-        params: MixedCrtNttParamSet<Q64_NUM_PRIMES, D>,
-    },
-    Q128Base {
-        neg: Vec<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>,
-        params: CrtNttParamSet<i32, Q128_NUM_PRIMES, D>,
-    },
-    Q128I16Tail {
-        neg: Vec<MixedCrtNtt<Q128_NUM_PRIMES, D>>,
-        params: MixedCrtNttParamSet<Q128_NUM_PRIMES, D>,
-    },
-}
-
-impl<const D: usize> PreparedNttCapabilitySlot<D> {
-    /// Physical exactness profile materialized by this slot.
-    #[must_use]
-    pub const fn profile(&self) -> CrtAccumulationProfile {
         match self {
-            Self::Q32Base { .. } | Self::Q64Base { .. } | Self::Q128Base { .. } => {
-                CrtAccumulationProfile::Base
-            }
-            Self::Q32I16Tail { .. } | Self::Q64I16Tail { .. } | Self::Q128I16Tail { .. } => {
-                CrtAccumulationProfile::I16Tail
-            }
-        }
-    }
-
-    /// Exact transform payload size, excluding small parameter tables.
-    #[must_use]
-    pub fn cache_bytes(&self) -> usize {
-        match self {
-            Self::Q32Base { neg, .. } => {
-                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q32_NUM_PRIMES, D>>()
-            }
-            Self::Q32I16Tail { neg, .. } => {
-                neg.len() * core::mem::size_of::<MixedCrtNtt<Q32_NUM_PRIMES, D>>()
-            }
-            Self::Q64Base { neg, .. } => {
-                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q64_NUM_PRIMES, D>>()
-            }
-            Self::Q64I16Tail { neg, .. } => {
-                neg.len() * core::mem::size_of::<MixedCrtNtt<Q64_NUM_PRIMES, D>>()
-            }
-            Self::Q128Base { neg, .. } => {
-                neg.len() * core::mem::size_of::<CyclotomicCrtNtt<i32, Q128_NUM_PRIMES, D>>()
-            }
-            Self::Q128I16Tail { neg, .. } => {
-                neg.len() * core::mem::size_of::<MixedCrtNtt<Q128_NUM_PRIMES, D>>()
-            }
-        }
-    }
-}
-
-/// Prepare only the negacyclic representation required by an accumulation.
-pub fn build_negacyclic_ntt_capability_slot<F: FieldCore + CanonicalField, const D: usize>(
-    mat: RingMatrixView<'_, F, D>,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<PreparedNttCapabilitySlot<D>, AkitaError> {
-    macro_rules! base {
-        ($params:expr, $variant:ident) => {{
-            let params = $params;
-            let neg = cfg_iter!(mat.as_slice())
-                .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
-                .collect();
-            PreparedNttCapabilitySlot::$variant { neg, params }
-        }};
-    }
-    macro_rules! tail {
-        ($params:expr, $variant:ident) => {{
-            let params = $params;
-            let neg = cfg_iter!(mat.as_slice())
-                .map(|ring| MixedCrtNtt::from_ring(ring, &params))
-                .collect();
-            PreparedNttCapabilitySlot::$variant { neg, params }
-        }};
-    }
-    Ok(
-        match select_crt_ntt_capability::<F, D>(width, rhs_abs_bound)? {
-            ProtocolCrtNttCapability::Q32Base(params) => base!(params, Q32Base),
-            ProtocolCrtNttCapability::Q32I16Tail(params) => tail!(params, Q32I16Tail),
-            ProtocolCrtNttCapability::Q64Base(params) => base!(params, Q64Base),
-            ProtocolCrtNttCapability::Q64I16Tail(params) => tail!(params, Q64I16Tail),
-            ProtocolCrtNttCapability::Q128Base(params) => base!(params, Q128Base),
-            ProtocolCrtNttCapability::Q128I16Tail(params) => tail!(params, Q128I16Tail),
-        },
-    )
-}
-
-/// Prepare exactly the supplied coefficient-matrix view in negacyclic NTT form.
-#[tracing::instrument(skip_all, name = "build_negacyclic_ntt_slot", fields(ring_d = D, rings = mat.as_slice().len()))]
-pub fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
-    mat: RingMatrixView<'_, F, D>,
-) -> Result<PreparedNttSlot<D>, AkitaError> {
-    macro_rules! convert {
-        ($params:expr, $variant:ident) => {{
-            let params = $params;
-            let neg = cfg_iter!(mat.as_slice())
-                .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
-                .collect();
-            PreparedNttSlot::$variant {
+            Self::Q32 {
                 neg,
-                cyc: None,
+                cyc,
                 params,
-            }
-        }};
+                tail,
+                exact,
+            } => validate!(neg, cyc, params, tail, *exact),
+            Self::Q64 {
+                neg,
+                cyc,
+                params,
+                tail,
+                exact,
+            } => validate!(neg, cyc, params, tail, *exact),
+            Self::Q128 {
+                neg,
+                cyc,
+                params,
+                tail,
+                exact,
+            } => validate!(neg, cyc, params, tail, *exact),
+        }
+        Ok(())
     }
+
+    /// In-memory byte footprint of all materialized matrix transforms.
+    #[must_use]
+    pub fn cache_bytes(&self) -> usize {
+        macro_rules! bytes {
+            ($neg:expr, $cyc:expr, $tail:expr, $k:expr) => {{
+                let base_entries = $neg.len() + $cyc.as_ref().map_or(0, Vec::len);
+                let base = base_entries * D * $k * core::mem::size_of::<i32>();
+                let tail = $tail.as_ref().map_or(0, |tail| {
+                    tail.negacyclic.len() * D * core::mem::size_of::<i16>()
+                });
+                base + tail
+            }};
+        }
+        match self {
+            Self::Q32 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q32_NUM_PRIMES),
+            Self::Q64 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q64_NUM_PRIMES),
+            Self::Q128 { neg, cyc, tail, .. } => bytes!(neg, cyc, tail, Q128_NUM_PRIMES),
+        }
+    }
+
+    /// Whether the cyclic base representation was materialized.
+    #[must_use]
+    pub const fn has_cyclic(&self) -> bool {
+        match self {
+            Self::Q32 { cyc, .. } => cyc.is_some(),
+            Self::Q64 { cyc, .. } => cyc.is_some(),
+            Self::Q128 { cyc, .. } => cyc.is_some(),
+        }
+    }
+
+    /// Whether the exactness tail was materialized.
+    #[must_use]
+    pub const fn has_i16_tail(&self) -> bool {
+        match self {
+            Self::Q32 { tail, .. } => tail.is_some(),
+            Self::Q64 { tail, .. } => tail.is_some(),
+            Self::Q128 { tail, .. } => tail.is_some(),
+        }
+    }
+
+    /// Compute a shape-checked exact signed-i16 matrix product.
+    pub fn mat_vec_i16<F: FieldCore + CanonicalField>(
+        &self,
+        log_basis: u32,
+        num_rows: usize,
+        rhs: &[[i16; D]],
+    ) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError> {
+        self.validate()?;
+        match self {
+            Self::Q32 {
+                neg,
+                params,
+                tail,
+                exact,
+                ..
+            } => {
+                if !matches!(
+                    select_crt_ntt_params::<F, D>()?,
+                    ProtocolCrtNttParams::Q32(_)
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT field profile mismatch".into(),
+                    ));
+                }
+                mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
+            }
+            Self::Q64 {
+                neg,
+                params,
+                tail,
+                exact,
+                ..
+            } => {
+                if !matches!(
+                    select_crt_ntt_params::<F, D>()?,
+                    ProtocolCrtNttParams::Q64(_)
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT field profile mismatch".into(),
+                    ));
+                }
+                mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
+            }
+            Self::Q128 {
+                neg,
+                params,
+                tail,
+                exact,
+                ..
+            } => {
+                if !matches!(
+                    select_crt_ntt_params::<F, D>()?,
+                    ProtocolCrtNttParams::Q128(_)
+                ) {
+                    return Err(AkitaError::InvalidSetup(
+                        "prepared NTT field profile mismatch".into(),
+                    ));
+                }
+                mat_vec_i16_from_cache(neg, params, tail.as_ref(), *exact, log_basis, num_rows, rhs)
+            }
+        }
+    }
+}
+
+fn mat_vec_i16_from_cache<F, const K: usize, const D: usize>(
+    neg: &[CyclotomicCrtNtt<i32, K, D>],
+    params: &CrtNttParamSet<i32, K, D>,
+    tail: Option<&PreparedI16Tail<K, D>>,
+    exact: bool,
+    log_basis: u32,
+    num_rows: usize,
+    rhs: &[[i16; D]],
+) -> Result<Vec<akita_algebra::CyclotomicRing<F, D>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+{
+    if !exact {
+        return Err(AkitaError::InvalidSetup(
+            "signed-i16 matvec requested from a cyclic cache".into(),
+        ));
+    }
+    if !(1..=16).contains(&log_basis) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let width = rhs.len();
+    if width == 0 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let bound = 1i32 << (log_basis - 1);
+    if rhs
+        .iter()
+        .flatten()
+        .any(|&digit| !(-bound..bound).contains(&i32::from(digit)))
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let needs_tail =
+        required_profile_for_params::<F, _, K, D>(params, width, 1u64 << (log_basis - 1))?;
+    if needs_tail {
+        let tail = tail.ok_or_else(|| {
+            AkitaError::InvalidSetup("prepared exact NTT cache is missing its required tail".into())
+        })?;
+        akita_algebra::mat_vec_i16_with_tail(
+            neg,
+            &tail.negacyclic,
+            num_rows,
+            width,
+            rhs,
+            &tail.params,
+        )
+    } else {
+        CyclotomicCrtNtt::mat_vec_i16(neg, num_rows, width, rhs, params)
+    }
+}
+
+fn validate_cache_mode(mode: NttCacheMode) -> Result<(), AkitaError> {
+    if let NttCacheMode::ExactNegacyclic { width, log_basis } = mode {
+        if width == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "exact negacyclic NTT width must be nonzero".into(),
+            ));
+        }
+        if !(1..=16).contains(&log_basis) {
+            return Err(AkitaError::InvalidSetup(
+                "exact negacyclic log_basis must be in 1..=16".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Return whether an exact balanced-digit request requires the i16 tail.
+pub fn ntt_cache_requires_i16_tail<F: CanonicalField, const D: usize>(
+    width: usize,
+    log_basis: u32,
+) -> Result<bool, AkitaError> {
+    let mode = NttCacheMode::ExactNegacyclic { width, log_basis };
+    validate_cache_mode(mode)?;
+    let rhs_abs_bound = 1u64 << (log_basis - 1);
     Ok(match select_crt_ntt_params::<F, D>()? {
-        ProtocolCrtNttParams::Q32(params) => convert!(params, Q32),
-        ProtocolCrtNttParams::Q64(params) => convert!(params, Q64),
-        ProtocolCrtNttParams::Q128(params) => convert!(params, Q128),
+        ProtocolCrtNttParams::Q32(params) => {
+            required_profile_for_params::<F, _, Q32_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
+        }
+        ProtocolCrtNttParams::Q64(params) => {
+            required_profile_for_params::<F, _, Q64_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
+        }
+        ProtocolCrtNttParams::Q128(params) => {
+            required_profile_for_params::<F, _, Q128_NUM_PRIMES, D>(&params, width, rhs_abs_bound)?
+        }
     })
 }
 
-/// Prepare exactly the supplied coefficient-matrix view in both NTT domains.
-#[tracing::instrument(skip_all, name = "build_negacyclic_and_cyclic_ntt_slot", fields(ring_d = D, rings = mat.as_slice().len()))]
-pub fn build_negacyclic_and_cyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
-    mat: RingMatrixView<'_, F, D>,
-) -> Result<PreparedNttSlot<D>, AkitaError> {
-    let params = select_crt_ntt_params::<F, D>()?;
-    Ok(build_negacyclic_and_cyclic_ntt_slot_from_params(
-        mat, params,
-    ))
+/// Prepare exactly the NTT representations requested by `mode`.
+#[tracing::instrument(skip_all, name = "prepare_ntt_cache", fields(ring_d = D, rings = matrix.as_slice().len(), ?mode))]
+pub fn prepare_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    mode: NttCacheMode,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    prepare_ntt_cache_with_tail_prefix(matrix, mode, None)
+}
+
+fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    mode: NttCacheMode,
+    tail_prefix_len: Option<usize>,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    validate_cache_mode(mode)?;
+    if matches!(mode, NttCacheMode::ExactNegacyclic { width, .. } if width > matrix.as_slice().len())
+    {
+        return Err(AkitaError::InvalidSetup(
+            "exact negacyclic NTT matrix is shorter than its row width".into(),
+        ));
+    }
+    if tail_prefix_len.is_some_and(|len| len > matrix.as_slice().len()) {
+        return Err(AkitaError::InvalidSetup(
+            "i16-tail NTT prefix exceeds the prepared base prefix".into(),
+        ));
+    }
+    macro_rules! prepare {
+        ($params:expr, $variant:ident, $k:expr) => {{
+            let params = $params;
+            match mode {
+                NttCacheMode::BothTransforms => {
+                    let (neg, cyc) = convert_flat_pair(matrix, &params);
+                    PreparedNttCache::$variant {
+                        neg,
+                        cyc: Some(cyc),
+                        params,
+                        tail: None,
+                        exact: false,
+                    }
+                }
+                NttCacheMode::ExactNegacyclic { width, log_basis } => {
+                    let rhs_abs_bound = 1u64 << (log_basis - 1);
+                    let needs_tail =
+                        required_profile_for_params::<F, _, $k, D>(&params, width, rhs_abs_bound)?;
+                    let neg = cfg_iter!(matrix.as_slice())
+                        .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &params))
+                        .collect();
+                    let requested_tail_len = if needs_tail {
+                        Some(tail_prefix_len.unwrap_or(matrix.as_slice().len()))
+                    } else {
+                        tail_prefix_len.filter(|&len| len > 0)
+                    };
+                    let tail = if let Some(tail_len) = requested_tail_len {
+                        if tail_len == 0 {
+                            return Err(AkitaError::InvalidSetup(
+                                "required i16-tail NTT prefix is empty".into(),
+                            ));
+                        }
+                        let tail_params = CrtNttParamSet::<i16, 1, D>::new([I16_TAIL_PRIME]);
+                        let tail_rings = matrix.as_slice().get(..tail_len).ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "i16-tail NTT prefix exceeds the base matrix".into(),
+                            )
+                        })?;
+                        let negacyclic = cfg_iter!(tail_rings)
+                            .map(|ring| CyclotomicCrtNtt::from_ring_with_params(ring, &tail_params))
+                            .collect();
+                        Some(PreparedI16Tail {
+                            negacyclic,
+                            params: I16TailParams::new(params.clone(), tail_params),
+                        })
+                    } else {
+                        None
+                    };
+                    PreparedNttCache::$variant {
+                        neg,
+                        cyc: None,
+                        params,
+                        tail,
+                        exact: true,
+                    }
+                }
+            }
+        }};
+    }
+    let prepared = match select_crt_ntt_params::<F, D>()? {
+        ProtocolCrtNttParams::Q32(params) => prepare!(params, Q32, Q32_NUM_PRIMES),
+        ProtocolCrtNttParams::Q64(params) => prepare!(params, Q64, Q64_NUM_PRIMES),
+        ProtocolCrtNttParams::Q128(params) => prepare!(params, Q128, Q128_NUM_PRIMES),
+    };
+    prepared.validate()?;
+    Ok(prepared)
 }
 
 fn convert_flat_pair<F, W, const K: usize, const D: usize>(
@@ -555,234 +685,35 @@ where
         .unzip()
 }
 
-fn build_negacyclic_and_cyclic_ntt_slot_from_params<
-    F: FieldCore + CanonicalField,
-    const D: usize,
->(
-    mat: RingMatrixView<'_, F, D>,
-    params: ProtocolCrtNttParams<D>,
-) -> PreparedNttSlot<D> {
-    match params {
-        ProtocolCrtNttParams::Q32(params) => {
-            let (neg, cyc) = convert_flat_pair(mat, &params);
-            PreparedNttSlot::Q32 {
-                neg,
-                cyc: Some(cyc),
-                params,
-            }
-        }
-        ProtocolCrtNttParams::Q64(params) => {
-            let (neg, cyc) = convert_flat_pair(mat, &params);
-            PreparedNttSlot::Q64 {
-                neg,
-                cyc: Some(cyc),
-                params,
-            }
-        }
-        ProtocolCrtNttParams::Q128(params) => {
-            let (neg, cyc) = convert_flat_pair(mat, &params);
-            PreparedNttSlot::Q128 {
-                neg,
-                cyc: Some(cyc),
-                params,
-            }
-        }
-    }
-}
-
-/// Build a type-erased exact verifier prefix for a runtime NTT cache key.
-pub(crate) fn build_verifier_ntt_slot_for_key<F: FieldCore + CanonicalField>(
-    expanded: &AkitaExpandedSetup<F>,
-    key: NttCacheKey,
-) -> Result<PreparedNttSlotAny, AkitaError> {
-    // The verifier cache key already selects one active ring dimension. Use
-    // the outer-role dispatch table as the type-erased dimension registry;
-    // this does not imply a terminal B role (terminals use A only).
-    crate::dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        key.ring_d,
-        |D| {
-            let matrix = expanded
-                .shared_matrix()
-                .ring_view::<D>(1, key.num_ring_elements)?;
-            let slot = build_negacyclic_ntt_slot(matrix)?;
-            let any: PreparedNttSlotAny = slot.into();
-            Ok(any)
-        }
-    )
-}
-
-pub(crate) fn build_verifier_ntt_capability_slot_for_key<F: FieldCore + CanonicalField>(
-    expanded: &AkitaExpandedSetup<F>,
-    key: NttCacheKey,
-    width: usize,
-    rhs_abs_bound: u64,
-) -> Result<PreparedNttCapabilitySlotAny, AkitaError> {
-    crate::dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Outer),
-        F,
-        key.ring_d,
-        |D| {
-            let matrix = expanded
-                .shared_matrix()
-                .ring_view::<D>(1, key.num_ring_elements)?;
-            let slot = build_negacyclic_ntt_capability_slot(matrix, width, rhs_abs_bound)?;
-            if slot.profile() != CrtAccumulationProfile::I16Tail {
-                return Err(AkitaError::InvalidSetup(
-                    "verifier mixed NTT cache requested without an i16-tail requirement".into(),
-                ));
-            }
-            let any: PreparedNttCapabilitySlotAny = slot.into();
-            Ok(any)
-        }
-    )
-}
-
-macro_rules! define_prepared_ntt_slot_any {
-    ($( $d:literal => $variant:ident ),+ $(,)?) => {
-        /// Type-erased prepared NTT slot over supported ring degrees.
-        #[derive(Debug)]
-        #[allow(clippy::large_enum_variant)]
-        pub enum PreparedNttSlotAny {
-            $( $variant(PreparedNttSlot<$d>), )+
-        }
-
-        impl PreparedNttSlotAny {
-            /// Runtime ring degree.
-            #[must_use]
-            pub const fn ring_d(&self) -> usize {
-                match self { $( Self::$variant(_) => $d, )+ }
-            }
-
-            /// In-memory byte footprint.
-            #[must_use]
-            pub fn cache_bytes(&self) -> usize {
-                match self { $( Self::$variant(slot) => slot.cache_bytes(), )+ }
-            }
-
-            /// Checked typed access.
-            pub fn as_d<const D: usize>(&self) -> Result<&PreparedNttSlot<D>, AkitaError> {
-                if self.ring_d() != D {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "prepared NTT slot ring_d mismatch: stored {}, requested {D}",
-                        self.ring_d()
-                    )));
-                }
-                // SAFETY: the runtime degree uniquely selects the identical const-generic variant.
-                Ok(unsafe { self.as_d_assuming_match::<D>() })
-            }
-
-            unsafe fn as_d_assuming_match<const D: usize>(&self) -> &PreparedNttSlot<D> {
-                match self {
-                    $( Self::$variant(slot) => &*(slot as *const PreparedNttSlot<$d> as *const PreparedNttSlot<D>), )+
-                }
-            }
-        }
-
-        $( impl From<PreparedNttSlot<$d>> for PreparedNttSlotAny {
-            fn from(slot: PreparedNttSlot<$d>) -> Self { Self::$variant(slot) }
-        } )+
-    };
-}
-
-define_prepared_ntt_slot_any!(
-    16 => D16,
-    32 => D32,
-    64 => D64,
-    128 => D128,
-    256 => D256,
-    512 => D512,
-    1024 => D1024,
-    2048 => D2048,
-);
-
-macro_rules! define_prepared_ntt_capability_slot_any {
-    ($( $d:literal => $variant:ident ),+ $(,)?) => {
-        /// Type-erased exact-capability NTT slot over supported ring degrees.
-        #[derive(Debug)]
-        #[allow(clippy::large_enum_variant)]
-        pub enum PreparedNttCapabilitySlotAny {
-            $( $variant(PreparedNttCapabilitySlot<$d>), )+
-        }
-
-        impl PreparedNttCapabilitySlotAny {
-            /// Runtime ring degree.
-            #[must_use]
-            pub const fn ring_d(&self) -> usize {
-                match self { $( Self::$variant(_) => $d, )+ }
-            }
-
-            /// In-memory byte footprint.
-            #[must_use]
-            pub fn cache_bytes(&self) -> usize {
-                match self { $( Self::$variant(slot) => slot.cache_bytes(), )+ }
-            }
-
-            /// Checked typed access.
-            pub fn as_d<const D: usize>(&self) -> Result<&PreparedNttCapabilitySlot<D>, AkitaError> {
-                if self.ring_d() != D {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "prepared capability NTT slot ring_d mismatch: stored {}, requested {D}",
-                        self.ring_d()
-                    )));
-                }
-                // SAFETY: the runtime degree uniquely selects the identical const-generic variant.
-                Ok(unsafe { self.as_d_assuming_match::<D>() })
-            }
-
-            unsafe fn as_d_assuming_match<const D: usize>(&self) -> &PreparedNttCapabilitySlot<D> {
-                match self {
-                    $( Self::$variant(slot) => &*(slot as *const PreparedNttCapabilitySlot<$d> as *const PreparedNttCapabilitySlot<D>), )+
-                }
-            }
-        }
-
-        $( impl From<PreparedNttCapabilitySlot<$d>> for PreparedNttCapabilitySlotAny {
-            fn from(slot: PreparedNttCapabilitySlot<$d>) -> Self { Self::$variant(slot) }
-        } )+
-    };
-}
-
-define_prepared_ntt_capability_slot_any!(
-    16 => D16,
-    32 => D32,
-    64 => D64,
-    128 => D128,
-    256 => D256,
-    512 => D512,
-    1024 => D1024,
-    2048 => D2048,
-);
-
-/// Prepared verifier matrix representation selected by exact accumulation capability.
-#[derive(Debug)]
-pub enum PreparedVerifierNttSlotAny {
-    /// Base i32 CRT profile.
-    Base(PreparedNttSlotAny),
-    /// Base profile plus the i16 tail prime.
-    I16Tail(PreparedNttCapabilitySlotAny),
-}
-
-impl PreparedVerifierNttSlotAny {
-    fn cache_bytes(&self) -> usize {
-        match self {
-            Self::Base(slot) => slot.cache_bytes(),
-            Self::I16Tail(slot) => slot.cache_bytes(),
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct VerifierNttCacheKey {
-    matrix: NttCacheKey,
-    profile: CrtAccumulationProfile,
+    ring_d: usize,
+}
+
+struct ErasedVerifierNttCache {
+    ring_d: usize,
+    base_prefix_len: usize,
+    tail_prefix_len: usize,
+    cache_bytes: usize,
+    cache: Arc<dyn Any + Send + Sync>,
+}
+
+impl core::fmt::Debug for ErasedVerifierNttCache {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("ErasedVerifierNttCache")
+            .field("ring_d", &self.ring_d)
+            .field("base_prefix_len", &self.base_prefix_len)
+            .field("tail_prefix_len", &self.tail_prefix_len)
+            .field("cache_bytes", &self.cache_bytes)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Derived verifier cache. It is deliberately excluded from setup serialization and equality.
 #[derive(Default)]
 pub(crate) struct VerifierNttCache {
-    slots: Mutex<HashMap<VerifierNttCacheKey, Arc<PreparedVerifierNttSlotAny>>>,
+    slots: Mutex<HashMap<VerifierNttCacheKey, Arc<ErasedVerifierNttCache>>>,
 }
 
 impl core::fmt::Debug for VerifierNttCache {
@@ -793,7 +724,7 @@ impl core::fmt::Debug for VerifierNttCache {
                 .field("keys", &slots.keys().collect::<Vec<_>>())
                 .field(
                     "cache_bytes",
-                    &slots.values().map(|slot| slot.cache_bytes()).sum::<usize>(),
+                    &slots.values().map(|slot| slot.cache_bytes).sum::<usize>(),
                 )
                 .finish(),
             Err(_) => formatter
@@ -810,323 +741,269 @@ impl VerifierNttCache {
             .slots
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
-        Ok(slots.values().map(|slot| slot.cache_bytes()).sum())
+        Ok(slots.values().map(|slot| slot.cache_bytes).sum())
     }
 
-    /// Build and atomically install an entry when needed.
-    pub(crate) fn prepare(
+    /// Build, erase, and atomically install an entry when needed.
+    pub(crate) fn prepare<F: FieldCore + CanonicalField, const D: usize>(
         &self,
+        expanded: &AkitaExpandedSetup<F>,
         matrix: NttCacheKey,
-        profile: CrtAccumulationProfile,
-        build: impl FnOnce() -> Result<PreparedVerifierNttSlotAny, AkitaError>,
-    ) -> Result<Arc<PreparedVerifierNttSlotAny>, AkitaError> {
-        let key = VerifierNttCacheKey { matrix, profile };
-        let covering = |slots: &HashMap<VerifierNttCacheKey, Arc<PreparedVerifierNttSlotAny>>| {
-            slots
-                .iter()
-                .filter(|(candidate, _)| {
-                    candidate.profile == key.profile
-                        && candidate.matrix.ring_d == key.matrix.ring_d
-                        && candidate.matrix.num_ring_elements >= key.matrix.num_ring_elements
-                })
-                .min_by_key(|(candidate, _)| candidate.matrix.num_ring_elements)
-                .map(|(_, slot)| Arc::clone(slot))
+        tail_prefix_len: usize,
+        mode: NttCacheMode,
+    ) -> Result<Arc<PreparedNttCache<D>>, AkitaError> {
+        let NttCacheMode::ExactNegacyclic { width, log_basis } = mode else {
+            return Err(AkitaError::InvalidSetup(
+                "verifier NTT cache requires exact negacyclic mode".into(),
+            ));
         };
-        let slots = self
-            .slots
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
-        if let Some(slot) = covering(&slots) {
-            return Ok(slot);
+        if matrix.ring_d != D {
+            return Err(AkitaError::InvalidSetup(format!(
+                "verifier NTT cache ring_d mismatch: key {}, requested {D}",
+                matrix.ring_d
+            )));
         }
-        drop(slots);
-        let built = Arc::new(build()?);
+        let with_i16_tail = ntt_cache_requires_i16_tail::<F, D>(width, log_basis)?;
+        if with_i16_tail != (tail_prefix_len > 0) {
+            return Err(AkitaError::InvalidSetup(
+                "verifier tail prefix disagrees with exactness requirement".into(),
+            ));
+        }
+        if tail_prefix_len > matrix.num_ring_elements {
+            return Err(AkitaError::InvalidSetup(
+                "verifier tail prefix exceeds its base prefix".into(),
+            ));
+        }
+        if width > matrix.num_ring_elements {
+            return Err(AkitaError::InvalidSetup(
+                "verifier NTT matrix prefix is shorter than its row width".into(),
+            ));
+        }
+        let key = VerifierNttCacheKey { ring_d: D };
         let mut slots = self
             .slots
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("verifier NTT cache lock poisoned".into()))?;
-        if let Some(slot) = covering(&slots) {
-            return Ok(slot);
+        if let Some(slot) = slots.get(&key) {
+            if slot.base_prefix_len >= matrix.num_ring_elements
+                && slot.tail_prefix_len >= tail_prefix_len
+            {
+                return downcast_verifier_cache::<D>(Arc::clone(slot));
+            }
         }
-        slots.retain(|candidate, _| {
-            candidate.profile != key.profile
-                || candidate.matrix.ring_d != key.matrix.ring_d
-                || candidate.matrix.num_ring_elements > key.matrix.num_ring_elements
+        let base_prefix_len = slots.get(&key).map_or(matrix.num_ring_elements, |slot| {
+            slot.base_prefix_len.max(matrix.num_ring_elements)
+        });
+        let tail_prefix_len = slots.get(&key).map_or(tail_prefix_len, |slot| {
+            slot.tail_prefix_len.max(tail_prefix_len)
+        });
+        let view = expanded
+            .shared_matrix()
+            .ring_view::<D>(1, base_prefix_len)?;
+        let prepared = Arc::new(prepare_ntt_cache_with_tail_prefix(
+            view,
+            mode,
+            Some(tail_prefix_len),
+        )?);
+        if prepared.has_i16_tail() != (tail_prefix_len > 0) {
+            return Err(AkitaError::InvalidSetup(
+                "prepared verifier NTT layout disagrees with exactness selection".into(),
+            ));
+        }
+        let built = Arc::new(ErasedVerifierNttCache {
+            ring_d: D,
+            base_prefix_len,
+            tail_prefix_len,
+            cache_bytes: prepared.cache_bytes(),
+            cache: prepared,
         });
         slots.insert(key, Arc::clone(&built));
-        Ok(built)
+        downcast_verifier_cache::<D>(built)
     }
+}
+
+fn downcast_verifier_cache<const D: usize>(
+    erased: Arc<ErasedVerifierNttCache>,
+) -> Result<Arc<PreparedNttCache<D>>, AkitaError> {
+    if erased.ring_d != D {
+        return Err(AkitaError::InvalidSetup(format!(
+            "prepared verifier NTT ring_d mismatch: stored {}, requested {D}",
+            erased.ring_d
+        )));
+    }
+    Arc::clone(&erased.cache)
+        .downcast::<PreparedNttCache<D>>()
+        .map_err(|_| AkitaError::InvalidSetup("prepared verifier NTT type mismatch".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{
-        Prime128Offset159, Prime128Offset2355, Prime128Offset275, Prime128OffsetA7F7,
-        Prime32Offset99, Prime64Offset59,
-    };
+    use akita_algebra::CyclotomicRing;
+    use akita_field::{Prime128Offset275, Prime32Offset99, Prime64Offset59};
+    use core::mem::size_of;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
 
-    fn sample_negacyclic_slot<F: FieldCore + CanonicalField, const D: usize>() -> PreparedNttSlot<D>
-    {
-        let ring = akita_algebra::CyclotomicRing::<F, D>::zero();
-        let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
-        build_negacyclic_ntt_slot(flat.ring_view::<D>(1, 1).expect("view"))
-            .expect("prepared NTT slot")
+    fn flat_zeros<F: FieldCore, const D: usize>(len: usize) -> crate::FlatMatrix<F> {
+        crate::FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<F, D>::zero(); len])
     }
 
     #[test]
-    fn prepared_slot_materializes_only_requested_domains() {
-        let neg_only = sample_negacyclic_slot::<Prime32Offset99, 64>();
-        let ring = akita_algebra::CyclotomicRing::<Prime32Offset99, 64>::zero();
-        let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
-        let both = build_negacyclic_and_cyclic_ntt_slot(flat.ring_view::<64>(1, 1).expect("view"))
-            .expect("prepared NTT slot");
-        let PreparedNttSlot::Q32 {
-            cyc: neg_only_cyc, ..
-        } = neg_only
-        else {
-            panic!("Q32 field must select Q32 transforms");
-        };
-        let PreparedNttSlot::Q32 { cyc: both_cyc, .. } = both else {
-            panic!("Q32 field must select Q32 transforms");
-        };
-        assert!(neg_only_cyc.is_none());
-        assert_eq!(both_cyc.as_ref().map(Vec::len), Some(1));
-    }
+    fn prepare_materializes_exactly_the_requested_layout() {
+        const D: usize = 64;
+        let flat = flat_zeros::<Prime32Offset99, D>(10);
+        let view = flat.ring_view::<D>(1, 10).expect("matrix view");
+        let both = prepare_ntt_cache(view, NttCacheMode::BothTransforms).expect("both transforms");
+        assert!(both.has_cyclic());
+        assert!(!both.has_i16_tail());
 
-    #[test]
-    fn prepared_slot_any_rejects_ring_degree_mismatch() {
-        let any: PreparedNttSlotAny = sample_negacyclic_slot::<Prime32Offset99, 64>().into();
-        assert_eq!(any.ring_d(), 64);
-        assert!(matches!(any.as_d::<32>(), Err(AkitaError::InvalidSetup(_))));
-    }
-
-    #[test]
-    fn prepared_slot_any_maps_every_supported_ring_degree() {
-        let slots: [PreparedNttSlotAny; 8] = [
-            sample_negacyclic_slot::<Prime128OffsetA7F7, 16>().into(),
-            sample_negacyclic_slot::<Prime64Offset59, 32>().into(),
-            sample_negacyclic_slot::<Prime32Offset99, 64>().into(),
-            sample_negacyclic_slot::<Prime32Offset99, 128>().into(),
-            sample_negacyclic_slot::<Prime32Offset99, 256>().into(),
-            sample_negacyclic_slot::<Prime32Offset99, 512>().into(),
-            sample_negacyclic_slot::<Prime64Offset59, 1024>().into(),
-            sample_negacyclic_slot::<Prime32Offset99, 2048>().into(),
-        ];
-        for (slot, expected) in slots.iter().zip([16, 32, 64, 128, 256, 512, 1024, 2048]) {
-            assert_eq!(slot.ring_d(), expected);
-        }
-    }
-
-    fn assert_selects_q32<F: CanonicalField, const D: usize>() {
-        assert!(matches!(
-            select_crt_ntt_params::<F, D>(),
-            Ok(ProtocolCrtNttParams::Q32(_))
-        ));
-    }
-
-    fn assert_selects_q64<F: CanonicalField, const D: usize>() {
-        assert!(matches!(
-            select_crt_ntt_params::<F, D>(),
-            Ok(ProtocolCrtNttParams::Q64(_))
-        ));
-    }
-
-    fn assert_selects_q128<F: CanonicalField, const D: usize>() {
-        assert!(matches!(
-            select_crt_ntt_params::<F, D>(),
-            Ok(ProtocolCrtNttParams::Q128(_))
-        ));
-    }
-
-    #[test]
-    fn selects_supported_protocol_tier_bands() {
-        assert!(matches!(
-            select_crt_ntt_params::<Prime32Offset99, 32>(),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        assert_selects_q32::<Prime32Offset99, 64>();
-        assert_selects_q32::<Prime32Offset99, 128>();
-        assert_selects_q32::<Prime32Offset99, 256>();
-
-        assert_selects_q64::<Prime64Offset59, 32>();
-        assert_selects_q64::<Prime64Offset59, 64>();
-        assert_selects_q64::<Prime64Offset59, 128>();
-        assert_selects_q64::<Prime64Offset59, 256>();
-
-        assert_selects_q128::<Prime128OffsetA7F7, 16>();
-        assert_selects_q128::<Prime128OffsetA7F7, 32>();
-        assert_selects_q128::<Prime128OffsetA7F7, 64>();
-        assert_selects_q128::<Prime128OffsetA7F7, 128>();
-        assert_selects_q128::<Prime128Offset159, 32>();
-        assert_selects_q128::<Prime128Offset2355, 32>();
-        assert_selects_q128::<Prime128Offset275, 256>();
-    }
-
-    fn assert_capability_boundary<F: CanonicalField, const D: usize>(rhs_abs_bound: u64) {
-        let safe_width = match select_crt_ntt_params::<F, D>().expect("base parameters") {
-            ProtocolCrtNttParams::Q32(params) => {
-                max_safe_crt_accumulation_width::<F, _, Q32_NUM_PRIMES, D>(&params, rhs_abs_bound)
-            }
-            ProtocolCrtNttParams::Q64(params) => {
-                max_safe_crt_accumulation_width::<F, _, Q64_NUM_PRIMES, D>(&params, rhs_abs_bound)
-            }
-            ProtocolCrtNttParams::Q128(params) => {
-                max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(&params, rhs_abs_bound)
-            }
-        }
-        .expect("one base term must fit");
-
-        assert_eq!(
-            select_crt_ntt_capability::<F, D>(safe_width, rhs_abs_bound)
-                .expect("base boundary")
-                .profile(),
-            CrtAccumulationProfile::Base
-        );
-        assert_eq!(
-            select_crt_ntt_capability::<F, D>(safe_width + 1, rhs_abs_bound)
-                .expect("tail boundary")
-                .profile(),
-            CrtAccumulationProfile::I16Tail
-        );
-    }
-
-    #[test]
-    fn exact_capability_selects_tail_only_past_base_boundary() {
-        assert_capability_boundary::<Prime32Offset99, 256>(1 << 10);
-        assert_capability_boundary::<Prime64Offset59, 256>(1 << 10);
-        assert_capability_boundary::<Prime128Offset275, 256>(1 << 10);
-    }
-
-    #[test]
-    fn capability_factory_materializes_i16_residue_only_when_required() {
-        const D: usize = 256;
-        let ring = akita_algebra::CyclotomicRing::<Prime64Offset59, D>::zero();
-        let flat = crate::FlatMatrix::from_ring_slice(&[ring]);
-        let view = flat.ring_view::<D>(1, 1).expect("view");
-        let base_params = CrtNttParamSet::<i32, Q64_NUM_PRIMES, D>::new(Q64_PRIMES);
-        let rhs_abs_bound = 1 << 10;
-        let base_width = max_safe_crt_accumulation_width::<Prime64Offset59, _, Q64_NUM_PRIMES, D>(
-            &base_params,
-            rhs_abs_bound,
+        let view = flat.ring_view::<D>(1, 10).expect("matrix view");
+        let base = prepare_ntt_cache(
+            view,
+            NttCacheMode::ExactNegacyclic {
+                width: 5,
+                log_basis: 16,
+            },
         )
-        .expect("base capacity");
+        .expect("base negacyclic");
+        assert!(!base.has_cyclic());
+        assert!(!base.has_i16_tail());
 
-        let base = build_negacyclic_ntt_capability_slot(view, base_width, rhs_abs_bound)
-            .expect("base slot");
-        let tail = build_negacyclic_ntt_capability_slot(view, base_width + 1, rhs_abs_bound)
-            .expect("tail slot");
-        assert_eq!(base.profile(), CrtAccumulationProfile::Base);
-        assert_eq!(tail.profile(), CrtAccumulationProfile::I16Tail);
-        assert_eq!(
-            base.cache_bytes(),
-            D * Q64_NUM_PRIMES * core::mem::size_of::<i32>()
-        );
+        let flat = flat_zeros::<Prime128Offset275, D>(10);
+        let view = flat.ring_view::<D>(1, 10).expect("matrix view");
+        let tail = prepare_ntt_cache(
+            view,
+            NttCacheMode::ExactNegacyclic {
+                width: 5,
+                log_basis: 16,
+            },
+        )
+        .expect("tail negacyclic");
+        assert!(!tail.has_cyclic());
+        assert!(tail.has_i16_tail());
         assert_eq!(
             tail.cache_bytes(),
-            base.cache_bytes() + D * core::mem::size_of::<i16>()
+            10 * D * (Q128_NUM_PRIMES * size_of::<i32>() + size_of::<i16>())
         );
     }
 
     #[test]
-    #[ignore = "manual construction-time measurement"]
-    fn measure_base_and_i16_tail_slot_construction() {
-        fn measure<F: FieldCore + CanonicalField, const D: usize>(label: &str) {
-            let rings = vec![akita_algebra::CyclotomicRing::<F, D>::zero(); 256];
-            let flat = crate::FlatMatrix::from_ring_slice(&rings);
-            let view = flat.ring_view::<D>(1, rings.len()).expect("view");
-            let rhs_abs_bound = 1 << 10;
-            let base_width = match select_crt_ntt_params::<F, D>().expect("params") {
-                ProtocolCrtNttParams::Q32(params) => {
-                    max_safe_crt_accumulation_width::<F, _, Q32_NUM_PRIMES, D>(
-                        &params,
-                        rhs_abs_bound,
-                    )
-                }
-                ProtocolCrtNttParams::Q64(params) => {
-                    max_safe_crt_accumulation_width::<F, _, Q64_NUM_PRIMES, D>(
-                        &params,
-                        rhs_abs_bound,
-                    )
-                }
-                ProtocolCrtNttParams::Q128(params) => {
-                    max_safe_crt_accumulation_width::<F, _, Q128_NUM_PRIMES, D>(
-                        &params,
-                        rhs_abs_bound,
-                    )
-                }
-            }
-            .expect("base width");
-            let base_start = std::time::Instant::now();
-            let base = build_negacyclic_ntt_capability_slot(view, base_width, rhs_abs_bound)
-                .expect("base");
-            let base_elapsed = base_start.elapsed();
-
-            let tail_start = std::time::Instant::now();
-            let tail = build_negacyclic_ntt_capability_slot(view, base_width + 1, rhs_abs_bound)
-                .expect("base plus tail");
-            let tail_elapsed = tail_start.elapsed();
-            eprintln!(
-                "{label}: base={base_elapsed:?}/{} bytes tail={tail_elapsed:?}/{} bytes",
-                base.cache_bytes(),
-                tail.cache_bytes()
-            );
+    fn exact_mode_rejects_invalid_balanced_bounds() {
+        const D: usize = 64;
+        let flat = flat_zeros::<Prime64Offset59, D>(1);
+        for mode in [
+            NttCacheMode::ExactNegacyclic {
+                width: 0,
+                log_basis: 10,
+            },
+            NttCacheMode::ExactNegacyclic {
+                width: 1,
+                log_basis: 0,
+            },
+            NttCacheMode::ExactNegacyclic {
+                width: 1,
+                log_basis: 17,
+            },
+        ] {
+            let view = flat.ring_view::<D>(1, 1).expect("matrix view");
+            assert!(matches!(
+                prepare_ntt_cache(view, mode),
+                Err(AkitaError::InvalidSetup(_))
+            ));
         }
-
-        measure::<Prime64Offset59, 256>("Q64 D256 x256");
-        measure::<Prime128Offset275, 256>("Q128 D256 x256");
     }
 
     #[test]
-    fn profile_caps_limit_crt_ring_degree_by_modulus() {
-        assert!(select_crt_ntt_params::<Prime32Offset99, 2048>().is_ok());
-        assert!(select_crt_ntt_params::<Prime64Offset59, 1024>().is_ok());
-        assert!(matches!(
-            select_crt_ntt_params::<Prime64Offset59, 2048>(),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-        assert!(select_crt_ntt_params::<Prime128Offset275, 512>().is_ok());
-        assert!(matches!(
-            select_crt_ntt_params::<Prime128Offset275, 1024>(),
-            Err(AkitaError::InvalidSetup(_))
-        ));
-    }
-
-    #[test]
-    fn selects_each_protocol_crt_family() {
-        assert!(matches!(
-            select_crt_ntt_params::<Prime32Offset99, 64>(),
-            Ok(ProtocolCrtNttParams::Q32(_))
-        ));
-        assert!(matches!(
-            select_crt_ntt_params::<Prime64Offset59, 64>(),
-            Ok(ProtocolCrtNttParams::Q64(_))
-        ));
-        assert!(matches!(
-            select_crt_ntt_params::<Prime128OffsetA7F7, 64>(),
-            Ok(ProtocolCrtNttParams::Q128(_))
-        ));
-    }
-
-    #[test]
-    fn q128_d64_centered_z_capacity_matches_profile_tail() {
+    fn exact_selector_changes_layout_at_the_strict_capacity_boundary() {
         const D: usize = 64;
         let ProtocolCrtNttParams::Q128(params) =
-            select_crt_ntt_params::<Prime128Offset275, D>().expect("Q128 parameters")
+            select_crt_ntt_params::<Prime128Offset275, D>().expect("Q128 params")
         else {
-            panic!("fp128 must select Q128 parameters");
+            panic!("Q128 field must select Q128 params");
         };
-        assert_eq!(
-            max_safe_crt_accumulation_width::<Prime128Offset275, _, Q128_NUM_PRIMES, D>(
-                &params, 2015,
-            ),
-            Some(32)
+        let safe = max_safe_crt_accumulation_width::<Prime128Offset275, i32, Q128_NUM_PRIMES, D>(
+            &params,
+            1 << 15,
+        )
+        .expect("one term fits");
+        assert!(!ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe, 16).unwrap());
+        assert!(ntt_cache_requires_i16_tail::<Prime128Offset275, D>(safe + 1, 16).unwrap());
+    }
+
+    #[test]
+    fn signed_i16_cache_checks_shape_and_digit_class() {
+        const D: usize = 64;
+        let flat = flat_zeros::<Prime32Offset99, D>(2);
+        let cache = prepare_ntt_cache(
+            flat.ring_view::<D>(1, 2).expect("matrix view"),
+            NttCacheMode::ExactNegacyclic {
+                width: 2,
+                log_basis: 10,
+            },
+        )
+        .expect("cache");
+        assert!(cache
+            .mat_vec_i16::<Prime32Offset99>(10, 1, &[[511; D], [-512; D]])
+            .is_ok());
+        assert!(matches!(
+            cache.mat_vec_i16::<Prime32Offset99>(10, 1, &[[512; D], [0; D]]),
+            Err(AkitaError::InvalidProof)
+        ));
+        assert!(cache
+            .mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D]])
+            .is_ok());
+
+        let short = prepare_ntt_cache(
+            flat.ring_view::<D>(1, 1).expect("matrix view"),
+            NttCacheMode::ExactNegacyclic {
+                width: 1,
+                log_basis: 10,
+            },
+        )
+        .expect("short cache");
+        assert!(matches!(
+            short.mat_vec_i16::<Prime32Offset99>(10, 1, &[[0; D], [0; D]]),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+    }
+
+    #[test]
+    fn erased_cache_mismatches_return_errors_without_panicking() {
+        const D: usize = 64;
+        let flat = flat_zeros::<Prime32Offset99, D>(1);
+        let cache = Arc::new(
+            prepare_ntt_cache(
+                flat.ring_view::<D>(1, 1).expect("matrix view"),
+                NttCacheMode::ExactNegacyclic {
+                    width: 1,
+                    log_basis: 8,
+                },
+            )
+            .expect("cache"),
         );
-        assert_eq!(
-            max_safe_crt_accumulation_width::<Prime128Offset275, _, Q128_NUM_PRIMES, D>(
-                &params, 1510,
-            ),
-            Some(43)
-        );
+        let bytes = cache.cache_bytes();
+        let wrong_degree = Arc::new(ErasedVerifierNttCache {
+            ring_d: D,
+            base_prefix_len: 1,
+            tail_prefix_len: 0,
+            cache_bytes: bytes,
+            cache: Arc::clone(&cache) as Arc<dyn Any + Send + Sync>,
+        });
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            downcast_verifier_cache::<32>(wrong_degree)
+        }));
+        assert!(matches!(result, Ok(Err(AkitaError::InvalidSetup(_)))));
+
+        let wrong_type = Arc::new(ErasedVerifierNttCache {
+            ring_d: D,
+            base_prefix_len: 1,
+            tail_prefix_len: 0,
+            cache_bytes: 0,
+            cache: Arc::new(17usize),
+        });
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            downcast_verifier_cache::<D>(wrong_type)
+        }));
+        assert!(matches!(result, Ok(Err(AkitaError::InvalidSetup(_)))));
     }
 }

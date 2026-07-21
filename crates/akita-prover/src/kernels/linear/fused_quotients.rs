@@ -527,7 +527,7 @@ fn accumulate_centered_quotient_rows_field<
         .collect()
 }
 
-/// Fused split-eq quotient kernel dispatching over [`PreparedNttSlot`] variants.
+/// Fused split-eq quotient kernel dispatching over [`PreparedNttCache`] variants.
 ///
 /// Computes three NTT-cached mat-vec products in a single tiled pass:
 /// - D-cyclic: `cyc[0..n_d] · e_hat` (cyclic domain)
@@ -543,7 +543,7 @@ pub(crate) fn fused_split_eq_quotients<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -578,7 +578,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -617,7 +617,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -639,10 +639,11 @@ fn fused_split_eq_quotients_with_digit_bound<
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
     match slot {
-        PreparedNttSlot::Q32 {
+        PreparedNttCache::Q32 {
             neg,
             cyc,
             params: p,
+            ..
         } => {
             let cyc = cyc
                 .as_deref()
@@ -676,10 +677,11 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        PreparedNttSlot::Q64 {
+        PreparedNttCache::Q64 {
             neg,
             cyc,
             params: p,
+            ..
         } => {
             let cyc = cyc
                 .as_deref()
@@ -713,10 +715,11 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        PreparedNttSlot::Q128 {
+        PreparedNttCache::Q128 {
             neg,
             cyc,
             params: p,
+            ..
         } => {
             let cyc = cyc
                 .as_deref()

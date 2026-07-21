@@ -12,11 +12,28 @@ use akita_algebra::ntt::{
 };
 use akita_algebra::{CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing};
 use akita_field::{CanonicalField, FieldCore, Fp64, Prime128Offset275, Prime64Offset59};
-use akita_types::layout::FlatMatrix;
+use akita_types::layout::{FlatMatrix, RingMatrixView};
 use akita_types::{
-    build_negacyclic_and_cyclic_ntt_slot, build_negacyclic_ntt_slot, select_crt_ntt_params,
-    ProtocolCrtNttParams,
+    prepare_ntt_cache, select_crt_ntt_params, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
+
+fn prepare_both_transforms<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+    prepare_ntt_cache(matrix, NttCacheMode::BothTransforms)
+}
+
+fn build_negacyclic_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+) -> Result<PreparedNttCache<D>, akita_field::AkitaError> {
+    prepare_ntt_cache(
+        matrix,
+        NttCacheMode::ExactNegacyclic {
+            width: 1,
+            log_basis: 8,
+        },
+    )
+}
 
 fn centered_i32_ring<F: akita_field::CanonicalField, const D: usize>(
     coeffs: &[i32; D],

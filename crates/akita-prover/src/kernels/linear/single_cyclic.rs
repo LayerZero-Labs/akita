@@ -9,7 +9,7 @@ use super::*;
 /// Tile width is auto-computed from ring parameters and target L2 cache size.
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8")]
 pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     vec: &[[i8; D]],
@@ -23,19 +23,19 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
         "for single predecomposed digit mat-vec",
     )?;
     Ok(match slot {
-        PreparedNttSlot::Q32 { neg, params: p, .. } => {
+        PreparedNttCache::Q32 { neg, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();
             mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttSlot::Q64 { neg, params: p, .. } => {
+        PreparedNttCache::Q64 { neg, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();
             mat_vec_mul_single_i8_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttSlot::Q128 { neg, params: p, .. } => {
+        PreparedNttCache::Q128 { neg, params: p, .. } => {
             let rows: Vec<&[_]> = (0..num_rows)
                 .map(|i| &neg[i * num_cols..(i + 1) * num_cols])
                 .collect();
@@ -47,7 +47,7 @@ pub fn mat_vec_mul_ntt_single_i8<F: FieldCore + CanonicalField, const D: usize>(
 /// Cyclic-domain variant of [`mat_vec_mul_ntt_single_i8`].
 #[tracing::instrument(skip_all, name = "mat_vec_mul_ntt_single_i8_cyclic")]
 pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: usize>(
-    slot: &PreparedNttSlot<D>,
+    slot: &PreparedNttCache<D>,
     num_rows: usize,
     num_cols: usize,
     vec: &[[i8; D]],
@@ -61,7 +61,7 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
         "for cyclic single predecomposed digit mat-vec",
     )?;
     Ok(match slot {
-        PreparedNttSlot::Q32 { cyc, params: p, .. } => {
+        PreparedNttCache::Q32 { cyc, params: p, .. } => {
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
@@ -70,7 +70,7 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
                 .collect();
             mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttSlot::Q64 { cyc, params: p, .. } => {
+        PreparedNttCache::Q64 { cyc, params: p, .. } => {
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
@@ -79,7 +79,7 @@ pub fn mat_vec_mul_ntt_single_i8_cyclic<F: FieldCore + CanonicalField, const D: 
                 .collect();
             mat_vec_mul_single_i8_cyclic_with_params(&rows, vec, log_basis, p)
         }
-        PreparedNttSlot::Q128 { cyc, params: p, .. } => {
+        PreparedNttCache::Q128 { cyc, params: p, .. } => {
             let cyc = cyc
                 .as_deref()
                 .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;

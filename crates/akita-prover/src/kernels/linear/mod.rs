@@ -15,7 +15,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use std::array::from_fn;
 use std::mem::size_of;
 
-use akita_types::PreparedNttSlot;
+use akita_types::PreparedNttCache;
 #[cfg(test)]
 use akita_types::{select_crt_ntt_params, ProtocolCrtNttParams};
 
