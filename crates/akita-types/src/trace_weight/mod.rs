@@ -4,10 +4,16 @@
 //! column index `col` runs over `col_bits` variables and `ring` over `ring_bits`
 //! ring coefficients. Tables are laid out as `idx = col · 2^{ring_bits} + ring`.
 
+#[cfg(test)]
 mod build;
+#[cfg(test)]
 mod eval;
+mod evaluation_trace;
+#[cfg(test)]
 mod layout;
+#[cfg(test)]
 mod stage2;
+#[cfg(test)]
 mod trace_table;
 
 #[cfg(test)]
@@ -15,22 +21,32 @@ mod stage2_compact;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
 pub use build::{
     build_trace_weight_table_field_live_block_weights, build_trace_weight_table_field_terms,
     build_trace_weight_table_ring_live_block_weights, build_trace_weight_table_ring_terms,
 };
+#[cfg(test)]
 pub use eval::{
     eval_trace_terms_closed, eval_trace_weight_at_point, TraceFieldBlockOpening,
     TraceOpeningAtPoint, TraceRingBlockOpening, TraceTerm,
 };
+pub use evaluation_trace::{
+    ensure_trace_stage2_supported, prepare_evaluation_trace_group_parameters,
+    scale_evaluation_trace_claim_coefficients, EvaluationTraceGroupParameters,
+    EvaluationTraceInputs,
+};
+#[cfg(test)]
 pub use layout::TraceWeightLayout;
+#[cfg(test)]
 pub use stage2::{
     build_multi_group_root_stage2_trace_table, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, ensure_trace_stage2_supported,
-    eval_dense_trace_table, root_trace_block_opening, trace_public_weights_recursive,
-    trace_public_weights_root_terms, trace_terms_recursive, trace_terms_root,
-    trace_weight_layout_from_segment, TraceClaim, TracePublicWeights, TraceTermBatch,
+    build_trace_claim_root, build_trace_table_scaled, eval_dense_trace_table,
+    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
+    trace_terms_root, trace_weight_layout_from_segment, TraceClaim, TracePublicWeights,
+    TraceTermBatch,
 };
+#[cfg(test)]
 pub use trace_table::{TraceSparseColumn, TraceTable};
 
 #[cfg(test)]
@@ -41,7 +57,7 @@ mod test_only {
     use akita_algebra::poly::multilinear_eval;
     use akita_field::{AkitaError, FieldCore};
 
-    use super::TraceWeightLayout;
+    use super::layout::TraceWeightLayout;
 
     pub(crate) fn trace_weight_mle_eval<E: FieldCore>(
         layout: &TraceWeightLayout,

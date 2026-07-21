@@ -8,7 +8,6 @@ use crate::{
     RecursiveWitnessFlat,
 };
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
-use akita_algebra::ring::scalar_powers;
 use akita_algebra::CyclotomicRing;
 use akita_config::CommitmentConfig;
 use akita_field::{
@@ -27,6 +26,7 @@ mod coeffs;
 mod commit;
 mod evals;
 mod finalize;
+mod relation_weights;
 #[cfg(test)]
 mod tests;
 
@@ -34,10 +34,13 @@ pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
-pub use evals::{
-    build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
-};
+pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
+pub use relation_weights::{
+    build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization,
+};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.
@@ -46,12 +49,14 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub w_evals_compact: std::sync::Arc<[i8]>,
     /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
     pub live_x_cols: usize,
-    /// Tau1-weighted relation table over the full Boolean coefficient domain.
-    pub relation_weight_evals: Vec<E>,
+    /// Exact common-alpha factorization of the tau1-weighted relation table.
+    pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
     /// Number of upper variable bits.
     pub col_bits: usize,
     /// Number of lower variable bits.
     pub ring_bits: usize,
+    /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
+    pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.
     pub tau0: Vec<E>,
     /// Challenge tau1 for F_alpha sumcheck.

@@ -26,25 +26,33 @@ use akita_types::{
 use std::any::Any;
 use std::array::from_fn;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CpuBackend;
 
+type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
+
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
 /// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
 /// registers the minimum envelope slot on the setup contract; additional slots may
-/// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`].
+/// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`]. Every full-envelope
+/// slot serves all matrix prefixes at its ring dimension, and its cell makes concurrent
+/// first use single-flight.
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
-    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<ErasedCpuNttCache>>>,
+    shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
     setup_contract_ntt_keys: Mutex<HashSet<NttCacheKey>>,
+    #[cfg(test)]
+    ntt_slot_build_count: AtomicUsize,
 }
 
 struct ErasedCpuNttCache {
@@ -106,18 +114,21 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
-        let slot = {
+        let entry = {
             let cache = self
                 .shared_ntt
                 .lock()
                 .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            Arc::clone(cache.get(&key).ok_or_else(|| {
+            cache.get(&key).cloned().ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
                     "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
                     key.ring_d, key.num_ring_elements
                 ))
-            })?)
+            })?
         };
+        // A registered cell may still be under construction by another thread.
+        // Join that single-flight build instead of reporting a false cache miss.
+        let slot = entry.wait().as_ref().map_err(Clone::clone)?.clone();
         if slot.ring_d != D {
             return Err(AkitaError::InvalidSetup(format!(
                 "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
@@ -137,6 +148,8 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .values()
+            .filter_map(|entry| entry.get())
+            .filter_map(|result| result.as_ref().ok())
             .map(|slot| slot.cache_bytes)
             .sum()
     }
@@ -195,25 +208,25 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
         selected_crt_i8_capacity_profile::<F, RING_D>()
     })?;
-    if prepared
-        .shared_ntt
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .contains_key(&key)
-    {
-        return record_ntt_profile_on_prepared(prepared, key, profile);
-    }
-    let slot = build_ntt_slot_for_key(prepared.expanded.as_ref(), key)?;
-    let mut cache = prepared
-        .shared_ntt
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-    if cache.contains_key(&key) {
-        drop(cache);
-        return record_ntt_profile_on_prepared(prepared, key, profile);
-    }
-    cache.insert(key, Arc::new(slot));
-    drop(cache);
+    let entry = {
+        let mut cache = prepared
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        Arc::clone(
+            cache
+                .entry(key)
+                .or_insert_with(|| Arc::new(OnceLock::new())),
+        )
+    };
+    let build_result = entry.get_or_init(|| {
+        #[cfg(test)]
+        prepared
+            .ntt_slot_build_count
+            .fetch_add(1, Ordering::Relaxed);
+        build_ntt_slot_for_key(prepared.expanded.as_ref(), key).map(Arc::new)
+    });
+    build_result.as_ref().map_err(Clone::clone)?;
     record_ntt_profile_on_prepared(prepared, key, profile)
 }
 
@@ -221,14 +234,7 @@ fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    if !prepared
-        .shared_ntt
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .contains_key(&key)
-    {
-        insert_ntt_slot_on_prepared(prepared, key)?;
-    }
+    insert_ntt_slot_on_prepared(prepared, key)?;
     prepared
         .setup_contract_ntt_keys
         .lock()
@@ -241,12 +247,13 @@ fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    if prepared
+    let initialized = prepared
         .shared_ntt
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .contains_key(&key)
-    {
+        .get(&key)
+        .is_some_and(|entry| entry.get().is_some_and(Result::is_ok));
+    if initialized {
         return Ok(());
     }
     if !prepared
@@ -309,6 +316,8 @@ where
             shared_ntt: Mutex::new(HashMap::new()),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             setup_contract_ntt_keys: Mutex::new(HashSet::new()),
+            #[cfg(test)]
+            ntt_slot_build_count: AtomicUsize::new(0),
         })
     }
 
@@ -772,6 +781,33 @@ mod tests {
             num_ring_elements: 99_999,
         };
         assert!(!prepared.shared_ntt.lock().unwrap().contains_key(&miss));
+    }
+
+    #[test]
+    fn concurrent_same_key_ntt_warm_builds_once() {
+        let setup =
+            AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
+        let prepared = CpuBackend
+            .prepare_expanded::<D>(setup.expanded.clone())
+            .expect("empty prepared setup");
+        let key = NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                let prepared = &prepared;
+                scope.spawn(move || {
+                    CpuBackend
+                        .ensure_ntt_slot(prepared, key)
+                        .expect("warm shared NTT slot");
+                });
+            }
+        });
+        CpuBackend
+            .ensure_ntt_slot(&prepared, key)
+            .expect("repeated warm is a no-op");
+
+        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 1);
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
     }
 
     #[test]

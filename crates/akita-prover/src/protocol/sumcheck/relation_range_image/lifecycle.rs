@@ -1,51 +1,52 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
+    #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
     pub(crate) fn new(
         batching_coeff: E,
         w_evals_compact: impl Into<std::sync::Arc<[i8]>>,
         stage1_point: &[E],
         range_image_evaluation: E,
         b: usize,
-        alpha_evals_y: Vec<E>,
-        relation_matrix_col_evals: Vec<E>,
-        live_x_cols: usize,
-        col_bits: usize,
-        ring_bits: usize,
+        common_alpha_factor: Vec<E>,
+        relation_lane_weights: Vec<E>,
+        live_lane_count: usize,
+        lane_bits: usize,
+        coefficient_bits: usize,
         relation_claim: E,
-        trace_table: Option<TraceTable<E>>,
+        evaluation_trace: PreparedProverEvaluationTrace<E>,
         trace_opening_claim: E,
     ) -> Result<Self, AkitaError> {
         let w_evals_compact = w_evals_compact.into();
-        let num_vars = col_bits.checked_add(ring_bits).ok_or_else(|| {
+        let num_vars = lane_bits.checked_add(coefficient_bits).ok_or_else(|| {
             AkitaError::InvalidInput("stage-2 challenge width overflow".to_string())
         })?;
-        if live_x_cols == 0 {
+        if live_lane_count == 0 {
             return Err(AkitaError::InvalidInput(
-                "live_x_cols must be at least 1".to_string(),
+                "live_lane_count must be at least 1".to_string(),
             ));
         }
-        let col_bits_u32 = u32::try_from(col_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        let ring_bits_u32 = u32::try_from(ring_bits)
-            .map_err(|_| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let x_len = 1usize
-            .checked_shl(col_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 column width overflow".to_string()))?;
-        if live_x_cols > x_len {
+        let lane_bits_u32 = u32::try_from(lane_bits)
+            .map_err(|_| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+        let coefficient_bits_u32 = u32::try_from(coefficient_bits).map_err(|_| {
+            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+        })?;
+        let lane_capacity = 1usize
+            .checked_shl(lane_bits_u32)
+            .ok_or_else(|| AkitaError::InvalidInput("stage-2 lane width overflow".to_string()))?;
+        if live_lane_count > lane_capacity {
             return Err(AkitaError::InvalidSize {
-                expected: x_len,
-                actual: live_x_cols,
+                expected: lane_capacity,
+                actual: live_lane_count,
             });
         }
-        let y_len = 1usize
-            .checked_shl(ring_bits_u32)
-            .ok_or_else(|| AkitaError::InvalidInput("stage-2 ring width overflow".to_string()))?;
-        let witness_len = live_x_cols
-            .checked_mul(y_len)
+        let coeff_count = 1usize.checked_shl(coefficient_bits_u32).ok_or_else(|| {
+            AkitaError::InvalidInput("stage-2 coefficient width overflow".to_string())
+        })?;
+        let witness_len = live_lane_count
+            .checked_mul(coeff_count)
             .ok_or_else(|| AkitaError::InvalidInput("stage-2 witness size overflow".to_string()))?;
         if w_evals_compact.len() != witness_len {
             return Err(AkitaError::InvalidSize {
@@ -59,37 +60,36 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 actual: stage1_point.len(),
             });
         }
-        if alpha_evals_y.len() != y_len {
+        if common_alpha_factor.len() != coeff_count {
             return Err(AkitaError::InvalidSize {
-                expected: y_len,
-                actual: alpha_evals_y.len(),
+                expected: coeff_count,
+                actual: common_alpha_factor.len(),
             });
         }
-        if relation_matrix_col_evals.len() != x_len {
+        if relation_lane_weights.len() != lane_capacity {
             return Err(AkitaError::InvalidSize {
-                expected: x_len,
-                actual: relation_matrix_col_evals.len(),
+                expected: lane_capacity,
+                actual: relation_lane_weights.len(),
             });
         }
-        if let Some(trace) = &trace_table {
-            trace.validate_len(witness_len)?;
-        }
+        evaluation_trace.validate_len(witness_len)?;
 
         // Self-consistency check: the materialized relation-weight table must
         // reproduce `relation_claim` (which is established independently by
         // `relation_claim_from_layout_extension` and bound into the sumcheck
-        // input claim). This is a full-domain `O(x_len * y_len)` pass, so it is
-        // gated to debug/test builds and never runs in release proving.
+        // input claim). This is a full-domain
+        // `O(lane_capacity * coeff_count)` pass, so it is gated to
+        // debug/test builds and never runs in release proving.
         #[cfg(debug_assertions)]
         {
             let relation_boolean_sum = w_evals_compact
-                .chunks_exact(y_len)
-                .zip(&relation_matrix_col_evals)
-                .fold(E::zero(), |acc, (column, &weight)| {
-                    acc + column.iter().zip(&alpha_evals_y).fold(
+                .chunks_exact(coeff_count)
+                .zip(&relation_lane_weights)
+                .fold(E::zero(), |acc, (lane_values, &lane_weight)| {
+                    acc + lane_values.iter().zip(&common_alpha_factor).fold(
                         E::zero(),
-                        |column_acc, (&w, &alpha)| {
-                            column_acc + weight * alpha * E::from_i64(i64::from(w))
+                        |lane_acc, (&w, &alpha)| {
+                            lane_acc + lane_weight * alpha * E::from_i64(i64::from(w))
                         },
                     )
                 });
@@ -104,24 +104,24 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let input_claim = batching_coeff * range_image_evaluation + relation_trace_claim;
 
         Ok(Self {
-            w_table: WTable::Compact(w_evals_compact),
+            witness_state: WitnessState::CompactPrefix(w_evals_compact),
             b,
             batching_coeff,
             range_image_evaluation,
             input_claim,
             split_eq: GruenSplitEq::with_initial_scalar(stage1_point, batching_coeff)?,
-            alpha_compact: alpha_evals_y,
-            relation_matrix_col_evals_compact: relation_matrix_col_evals,
-            trace_table,
-            live_x_cols,
-            col_bits,
+            common_alpha_factor,
+            relation_lane_weights,
+            evaluation_trace,
+            live_lane_count,
+            lane_bits,
             num_vars,
             relation_trace_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(ring_bits, b)
+            compact_prefix_stage1_point: can_use_stage2_two_round_prefix(coefficient_bits, b)
                 .then(|| stage1_point.to_vec()),
-            two_round_prefix: None,
+            deferred_compact_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
@@ -133,80 +133,83 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     ///
     /// # Panics
     ///
-    /// Panics if called before the witness table has been fully folded to a
-    /// single field element.
+    /// Panics if called before the folded suffix contains one field element.
     pub fn final_w_eval(&self) -> E {
-        match &self.w_table {
-            WTable::Full(w_full) => {
-                assert_eq!(w_full.len(), 1, "w_table not fully folded");
-                w_full[0]
+        match &self.witness_state {
+            WitnessState::FoldedSuffix(folded_witness) => {
+                assert_eq!(folded_witness.len(), 1, "witness suffix not fully folded");
+                folded_witness[0]
             }
-            WTable::Compact(_) => panic!("w_table remained compact after final fold"),
+            WitnessState::CompactPrefix(_) => {
+                panic!("witness remained in compact-prefix state after final fold")
+            }
         }
     }
 
     #[inline]
-    pub(super) fn ring_bits(&self) -> usize {
-        self.num_vars - self.col_bits
+    pub(super) fn coefficient_bits(&self) -> usize {
+        self.num_vars - self.lane_bits
     }
 
     #[inline]
-    pub(super) fn y_rounds_completed(&self) -> usize {
-        self.rounds_completed.min(self.ring_bits())
+    pub(super) fn coefficient_rounds_completed(&self) -> usize {
+        self.rounds_completed.min(self.coefficient_bits())
     }
 
     #[inline]
-    pub(super) fn x_rounds_completed(&self) -> usize {
-        self.rounds_completed.saturating_sub(self.ring_bits())
+    pub(super) fn lane_rounds_completed(&self) -> usize {
+        self.rounds_completed
+            .saturating_sub(self.coefficient_bits())
     }
 
     #[inline]
-    pub(super) fn in_y_round(&self) -> bool {
-        self.rounds_completed < self.ring_bits()
+    pub(super) fn in_coefficient_round(&self) -> bool {
+        self.rounds_completed < self.coefficient_bits()
     }
 
     #[inline]
-    pub(super) fn current_y_width(&self) -> usize {
-        self.ring_bits().saturating_sub(self.y_rounds_completed())
+    pub(super) fn current_coefficient_width(&self) -> usize {
+        self.coefficient_bits()
+            .saturating_sub(self.coefficient_rounds_completed())
     }
 
     #[inline]
-    pub(super) fn current_x_width(&self) -> usize {
-        self.col_bits.saturating_sub(self.x_rounds_completed())
+    pub(super) fn current_lane_width(&self) -> usize {
+        self.lane_bits.saturating_sub(self.lane_rounds_completed())
     }
 
     #[inline]
-    pub(super) fn current_x_len(&self) -> usize {
-        1usize << self.current_x_width()
+    pub(super) fn current_lane_capacity(&self) -> usize {
+        1usize << self.current_lane_width()
     }
 
     #[inline]
-    pub(super) fn use_prefix_y_round(&self) -> bool {
-        self.in_y_round() && self.live_x_cols < self.current_x_len()
+    pub(super) fn use_partial_lane_coefficient_round(&self) -> bool {
+        self.in_coefficient_round() && self.live_lane_count < self.current_lane_capacity()
     }
 
     #[inline]
-    pub(super) fn use_prefix_x_round(&self) -> bool {
-        self.rounds_completed >= self.ring_bits()
-            && self.x_rounds_completed() < self.col_bits
-            && self.live_x_cols < self.current_x_len()
+    pub(super) fn use_partial_lane_round(&self) -> bool {
+        self.rounds_completed >= self.coefficient_bits()
+            && self.lane_rounds_completed() < self.lane_bits
+            && self.live_lane_count < self.current_lane_capacity()
     }
 
     #[inline]
-    pub(super) fn next_use_prefix_x_round_after_current(&self) -> bool {
-        self.rounds_completed >= self.ring_bits()
-            && self.x_rounds_completed() + 1 < self.col_bits
-            && self.live_x_cols.div_ceil(2) < (self.current_x_len() / 2)
+    pub(super) fn next_uses_partial_lane_round(&self) -> bool {
+        self.rounds_completed >= self.coefficient_bits()
+            && self.lane_rounds_completed() + 1 < self.lane_bits
+            && self.live_lane_count.div_ceil(2) < (self.current_lane_capacity() / 2)
     }
 
     #[inline]
-    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
-        self.prefix_r_stage1.is_some()
+    pub(crate) fn can_use_deferred_compact_prefix(&self) -> bool {
+        self.compact_prefix_stage1_point.is_some()
     }
 
     #[inline]
-    pub(super) fn using_two_round_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_two_round_prefix()
+    pub(super) fn using_deferred_compact_prefix(&self) -> bool {
+        self.rounds_completed < 2 && self.can_use_deferred_compact_prefix()
     }
 
     #[inline]
@@ -267,27 +270,29 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         combined
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage2TwoRoundPrefix<E> {
-        if self.two_round_prefix.is_none() {
+    pub(super) fn ensure_deferred_compact_prefix(&mut self) -> &mut TwoRoundCompactPrefix<E> {
+        if self.deferred_compact_prefix.is_none() {
             let stage1_point = self
-                .prefix_r_stage1
+                .compact_prefix_stage1_point
                 .clone()
                 .expect("two-round prefix requested without cached stage-1 challenges");
-            let ring_bits = self.num_vars - self.col_bits;
-            let w_compact = match &self.w_table {
-                WTable::Compact(w_compact) => w_compact,
-                WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
+            let coefficient_bits = self.num_vars - self.lane_bits;
+            let compact_witness = match &self.witness_state {
+                WitnessState::CompactPrefix(compact_witness) => compact_witness,
+                WitnessState::FoldedSuffix(_) => {
+                    panic!("two-round prefix can only build from compact witness")
+                }
             };
             let proof = build_stage2_bivariate_skip_proof_from_m_compact(
-                w_compact,
-                &self.alpha_compact,
-                &self.relation_matrix_col_evals_compact,
-                self.trace_table.as_ref(),
+                compact_witness,
+                &self.common_alpha_factor,
+                &self.relation_lane_weights,
+                &self.evaluation_trace,
                 &stage1_point,
                 self.b,
-                self.live_x_cols,
-                self.col_bits,
-                ring_bits,
+                self.live_lane_count,
+                self.lane_bits,
+                coefficient_bits,
             )
             .expect("two-round prefix should be available");
             let skip_state = Stage2BivariateSkipState::new(
@@ -298,12 +303,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(Stage2TwoRoundPrefix {
+            self.deferred_compact_prefix = Some(TwoRoundCompactPrefix {
                 skip_state,
                 first_challenge: None,
             });
         }
-        self.two_round_prefix
+        self.deferred_compact_prefix
             .as_mut()
             .expect("two-round prefix should be initialized")
     }

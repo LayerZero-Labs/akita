@@ -17,4 +17,8 @@ pub use core::{
 pub use fold_grind::ProverTranscriptGrind;
 pub use ring_relation::RingRelationProver;
 pub use ring_relation_witness::RingRelationWitness;
-pub use ring_switch::{commit_w, RingSwitchOutput};
+pub use ring_switch::{
+    build_relation_weight_events, commit_w, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization, RingSwitchOutput,
+};

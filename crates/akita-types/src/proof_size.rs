@@ -81,7 +81,7 @@ pub fn level_proof_bytes(
             let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
             let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
             let v_bytes =
-                proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+                proof_ring_vec_bytes(lp.d_key.row_len(), lp.role_dims().d_d(), base_elem_bytes);
             let next_commit_bytes = match next_witness_binding {
                 Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
                     let next_lp = next_lp.ok_or_else(|| {
@@ -91,7 +91,7 @@ pub fn level_proof_bytes(
                     })?;
                     proof_ring_vec_bytes(
                         next_lp.b_key.row_len(),
-                        next_lp.ring_dimension,
+                        next_lp.role_dims().d_b(),
                         base_elem_bytes,
                     )
                 }
@@ -280,14 +280,14 @@ mod tests {
         let current_coeffs = lp
             .d_key
             .row_len()
-            .checked_mul(lp.ring_dimension)
+            .checked_mul(lp.role_dims().d_d())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let next_commit_coeffs = next_lp
             .b_key
             .row_len()
-            .checked_mul(next_lp.ring_dimension)
+            .checked_mul(next_lp.role_dims().d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
@@ -370,6 +370,96 @@ mod tests {
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn planned_level_bytes_use_native_d_and_successor_b_dimensions() {
+        const D_A: usize = 128;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let mut lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D_A,
+            4,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        lp.b_key = crate::AjtaiKeyParams::new_unchecked(
+            lp.b_key.security_policy(),
+            lp.b_key.sis_table_key().table_digest,
+            lp.b_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::B,
+            lp.b_key.row_len(),
+            lp.b_key.col_len() * 2,
+            lp.b_key.coeff_linf_bound(),
+            64,
+        );
+        lp.d_key = crate::AjtaiKeyParams::new_unchecked(
+            lp.d_key.security_policy(),
+            lp.d_key.sis_table_key().table_digest,
+            lp.d_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::D,
+            lp.d_key.row_len(),
+            lp.d_key.col_len() * 4,
+            lp.d_key.coeff_linf_bound(),
+            32,
+        );
+        lp.stamp_role_dims_from_keys();
+
+        let mut next_lp = LevelParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D_A,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        next_lp.b_key = crate::AjtaiKeyParams::new_unchecked(
+            next_lp.b_key.security_policy(),
+            next_lp.b_key.sis_table_key().table_digest,
+            next_lp.b_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::B,
+            next_lp.b_key.row_len(),
+            next_lp.b_key.col_len() * 2,
+            next_lp.b_key.coeff_linf_bound(),
+            64,
+        );
+        next_lp.d_key = crate::AjtaiKeyParams::new_unchecked(
+            next_lp.d_key.security_policy(),
+            next_lp.d_key.sis_table_key().table_digest,
+            next_lp.d_key.sis_modulus_profile(),
+            crate::sis::SisMatrixRole::D,
+            next_lp.d_key.row_len(),
+            next_lp.d_key.col_len() * 2,
+            next_lp.d_key.coeff_linf_bound(),
+            64,
+        );
+        next_lp.stamp_role_dims_from_keys();
+
+        let next_w_len = D_A * 8;
+        let planned = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            next_w_len,
+            RelationMatrixRowLayout::WithDBlock,
+            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+        )
+        .unwrap();
+        let serialized = exact_level_proof_bytes::<F>(
+            &lp,
+            &next_lp,
+            next_w_len,
+            None,
+            crate::NextWitnessBindingPolicy::OuterCommitment,
+        )
+        .unwrap();
+        assert_eq!(planned, serialized);
     }
 
     #[test]

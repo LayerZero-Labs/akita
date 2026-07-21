@@ -368,7 +368,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::core::fold_kernels::compute_trace_target;
+    use crate::protocol::core::fold_kernels::prepare_evaluation_trace_claim;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
     use akita_types::RingOpeningPoint;
@@ -404,7 +404,7 @@ mod tests {
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
-        let err = match compute_trace_target::<TestF, TestF, _, D>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _, D>(
             &reduction,
             &folded_rings,
             std::slice::from_ref(&prepared_point),

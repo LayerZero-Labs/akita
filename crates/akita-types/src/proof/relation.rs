@@ -494,7 +494,7 @@ where
 ///
 /// Fold paths combine this with `relation_claim_from_layout_extension` as
 /// `relation_claim + weight * trace_eval_target` (and reuse `weight` for
-/// Stage-2 `TraceClaim::trace_coeff`).
+/// Stage-2 evaluation-trace row weight).
 pub fn evaluation_trace_row_weight<E: FieldCore>(
     evaluation_trace_row: usize,
     tau1: &[E],
