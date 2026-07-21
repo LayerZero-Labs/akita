@@ -64,7 +64,7 @@ pub(crate) fn accumulate_matrix_envelope_for_level(
         let mut envelope = SetupMatrixEnvelope {
             max_setup_len: *max_setup_len,
         };
-        inflate_envelope_for_setup_prefix_slot(&mut envelope, slot)?;
+        inflate_envelope_for_setup_prefix_slot(&mut envelope, slot, lp.d_a())?;
         *max_setup_len = envelope.max_setup_len;
     }
     Ok(())
@@ -92,19 +92,6 @@ fn include_matrix_len(
     Ok(())
 }
 
-fn include_matrix(
-    envelope: &mut SetupMatrixEnvelope,
-    rows: usize,
-    columns: usize,
-    role: &'static str,
-) -> Result<(), AkitaError> {
-    let len = rows
-        .checked_mul(columns)
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} setup envelope overflow")))?;
-    envelope.max_setup_len = envelope.max_setup_len.max(len);
-    Ok(())
-}
-
 /// Include the padded prefix storage and A/B footprints for one setup-prefix slot.
 ///
 /// The D footprint is not slot-local: it uses the consuming fold's shared
@@ -118,6 +105,7 @@ fn include_matrix(
 pub(crate) fn inflate_envelope_for_setup_prefix_slot(
     envelope: &mut SetupMatrixEnvelope,
     slot: &SetupPrefixSlotId,
+    envelope_ring_dim: usize,
 ) -> Result<(), AkitaError> {
     let n_prefix = slot.n_prefix()?;
     if slot.d_setup == 0 || !n_prefix.is_multiple_of(slot.d_setup) {
@@ -125,19 +113,28 @@ pub(crate) fn inflate_envelope_for_setup_prefix_slot(
             "setup-prefix slot has invalid setup dimension".to_string(),
         ));
     }
-    let prefix_ring_len = n_prefix / slot.d_setup;
+    if envelope_ring_dim == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix envelope ring dimension is zero".to_string(),
+        ));
+    }
     let params = &slot.commitment_params;
+    let prefix_ring_len = n_prefix.div_ceil(envelope_ring_dim);
     envelope.max_setup_len = envelope.max_setup_len.max(prefix_ring_len);
-    include_matrix(
-        envelope,
+    include_matrix_len(
+        &mut envelope.max_setup_len,
         params.a_key.row_len(),
         params.inner_width(),
+        params.a_key.sis_table_key().ring_dimension as usize,
+        envelope_ring_dim,
         "setup-prefix A",
     )?;
-    include_matrix(
-        envelope,
+    include_matrix_len(
+        &mut envelope.max_setup_len,
         params.b_key.row_len(),
         params.outer_width(),
+        params.b_key.sis_table_key().ring_dimension as usize,
+        envelope_ring_dim,
         "setup-prefix B",
     )
 }

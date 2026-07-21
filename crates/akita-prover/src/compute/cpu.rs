@@ -114,23 +114,21 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = self.envelope_ntt_key::<D>()?;
-        let slot = {
+        let entry = {
             let cache = self
                 .shared_ntt
                 .lock()
                 .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            cache
-                .get(&key)
-                .and_then(|entry| entry.get())
-                .and_then(|result| result.as_ref().ok())
-                .cloned()
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(format!(
-                        "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                        key.ring_d, key.num_ring_elements
-                    ))
-                })?
+            cache.get(&key).cloned().ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
+                    key.ring_d, key.num_ring_elements
+                ))
+            })?
         };
+        // A registered cell may still be under construction by another thread.
+        // Join that single-flight build instead of reporting a false cache miss.
+        let slot = entry.wait().as_ref().map_err(Clone::clone)?.clone();
         if slot.ring_d != D {
             return Err(AkitaError::InvalidSetup(format!(
                 "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
