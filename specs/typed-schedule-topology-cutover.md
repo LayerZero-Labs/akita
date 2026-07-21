@@ -863,13 +863,34 @@ pub struct FoldScheduleEstimate {
 
 `FoldScheduleEstimate::estimated_direct_proof_payload_bytes()` is a checked
 derived accessor, not a stored aggregate. It returns the header-stripped
-direct-mode payload estimate used for candidate ordering. It includes the
+direct-mode payload estimate for the materialized schedule. It includes the
 modeled terminal response payload and excludes recursive setup-product payloads
 and outer serialization framing. It is the checked sum of the three per-step
 fields. `estimated_terminal_response_payload_bytes` is the terminal component
-reported separately, not an additional summand. None of these estimates is
-transcript-bound or serialized in the instance descriptor. Profiles report
-measured serialized proof bytes separately.
+reported separately, not an additional summand. With the planner recursion cap
+of 12, this accessor performs at most 14 checked additions and is used only for
+retained/final schedule reporting and consistency checks, not inside candidate
+search. None of these estimates is transcript-bound or serialized in the
+instance descriptor. Profiles report measured serialized proof bytes
+separately.
+
+The hot planner path keeps a separate planner-private scalar score:
+
+```rust
+struct CandidateCost {
+    estimated_direct_proof_payload_bytes: usize,
+    // The other active Pareto coordinates.
+}
+```
+
+Suffix DP and Pareto search update this scalar incrementally with checked
+addition when extending a candidate. Candidate comparison is therefore O(1)
+and does not walk a partially built schedule. `CandidateCost` is search state,
+not a public estimate or protocol parameter. When a retained or winning
+candidate is materialized, `FoldScheduleEstimate::derive` constructs the full
+component breakdown and requires its recomputed aggregate to equal the cached
+candidate score. This equality check makes the cache auditable without storing
+duplicate mutable state in `FoldScheduleEstimate`.
 
 The proof wire uses an equally direct type:
 
@@ -1422,6 +1443,9 @@ reviewable.
 - Remove `level_bytes`, `terminal_bytes`, and `total_bytes` from protocol
   schedule structs and descriptor hashing. Planner estimates move to the
   non-protocol `FoldScheduleEstimate` with accurate estimate names.
+- Preserve O(1) hot-path scoring through planner-private `CandidateCost` values
+  updated incrementally by suffix DP and Pareto search. Materialization
+  recomputes the component sum and rejects disagreement with the cached score.
 - Move root standalone precommitted groups into `GeneratedRootFold`; move setup
   prefix metadata onto recursive consumers; emit exact final-root-group tensor
   factorization; and make partitioning explicit on every eligible fold.
@@ -1513,6 +1537,9 @@ and SIS contract exist. The schedule topology does not change again.
       digit depths, collision bounds, SIS buckets, widths, and bytes.
 - [ ] `FoldSchedule` contains no planner byte estimate. Estimates live in
       `FoldScheduleEstimate` and are absent from the instance descriptor.
+- [ ] Candidate comparison reads an incrementally maintained planner-private
+      aggregate in O(1); final estimate derivation equality-checks that cache
+      against the per-fold component sum.
 - [ ] Current-main generated catalogs retain non-terminal selected parameters
       and costs; terminal deltas match the reviewed direct-response fixture.
 - [ ] The exact nine-fold migration fixture in this spec has a regression test.
@@ -1551,6 +1578,15 @@ For every current catalog family:
 
 The old Rust types are not compiled as a compatibility module. Expected
 fixtures are neutral snapshots containing semantic fields.
+
+#### Planner-score cache tests
+
+- Extending a suffix updates every cached byte coordinate with checked
+  arithmetic and rejects overflow.
+- Every retained frontier point and selected schedule has a materialized
+  `FoldScheduleEstimate` whose recomputed aggregate equals its `CandidateCost`.
+- Mutating any estimate fixture component changes the recomputed aggregate and
+  makes the cache-consistency check reject.
 
 #### Final-root-group tensor tests
 
