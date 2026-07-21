@@ -102,7 +102,6 @@ dependencies = [
  "akita-transcript",
  "akita-types",
  "akita-verifier",
- "akita-verifier-legacy",
  "ark-bn254",
  "ark-ff",
  "criterion",
@@ -233,21 +232,6 @@ dependencies = [
 
 [[package]]
 name = "akita-verifier"
-version = "0.1.0"
-dependencies = [
- "akita-algebra",
- "akita-challenges",
- "akita-config",
- "akita-field",
- "akita-serialization",
- "akita-sumcheck",
- "akita-transcript",
- "akita-types",
- "tracing",
-]
-
-[[package]]
-name = "akita-verifier-legacy"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",

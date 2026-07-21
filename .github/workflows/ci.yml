@@ -71,28 +71,6 @@ jobs:
           scripts/check-crate-deps.sh akita-planner
           scripts/check-crate-deps.sh akita-setup
 
-  verifier-differential:
-    # Phase-0 safety net for the akita-verifier refactor: replays every proof
-    # shape through the frozen pre-refactor verifier (akita-verifier-legacy) and
-    # the live one, asserting identical verdicts and byte-identical recorded
-    # transcripts. Guards behavior preservation on every verifier change.
-    # Remove this job together with akita-verifier-legacy at the end of Phase 3.
-    name: Verifier differential
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
-      - name: Cache Rust build artifacts
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          shared-key: ci-verifier-differential
-          cache-on-failure: true
-      - name: Legacy-vs-live verifier byte-for-byte differential
-        run: |
-          cargo test --release -p akita-pcs \
-            --no-default-features --features logging-transcript,parallel,schedules-default \
-            --test verifier_differential
-
   machete:
     name: Unused dependencies
     runs-on: ubuntu-latest

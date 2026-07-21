@@ -11,9 +11,6 @@ members = [
   "crates/akita-transcript",
   "crates/akita-types",
   "crates/akita-verifier",
-  # TEMPORARY: frozen pre-refactor snapshot; differential-harness oracle only.
-  # Removed at the end of the akita-verifier refactor (Phase 3).
-  "crates/akita-verifier-legacy",
   "crates/akita-prover",
   "crates/akita-planner",
   "crates/akita-schedules",
