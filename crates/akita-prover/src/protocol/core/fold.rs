@@ -453,29 +453,36 @@ where
 /// fold. The terminal variant exposes only its inner commitment.
 #[derive(Clone, Copy)]
 pub(in crate::protocol::core) enum FoldSuccessorParams<'a> {
-    Recursive(&'a CommittedGroupParams),
+    Recursive(&'a RecursiveFoldParams),
     Terminal(&'a TerminalCommittedGroupParams),
 }
 
 impl<'a> FoldSuccessorParams<'a> {
     fn inner_ring_dimension(self) -> usize {
         match self {
-            Self::Recursive(params) => params.d_a(),
+            Self::Recursive(params) => params.witness.d_a(),
             Self::Terminal(params) => params.d_a(),
         }
     }
 
     fn log_basis_inner(self) -> u32 {
         match self {
-            Self::Recursive(params) => params.log_basis_open,
+            Self::Recursive(params) => params.witness.log_basis_open,
             Self::Terminal(params) => params.log_basis_inner,
         }
     }
 
-    fn recursive(self) -> Option<&'a CommittedGroupParams> {
+    fn recursive(self) -> Option<&'a RecursiveFoldParams> {
         match self {
             Self::Recursive(params) => Some(params),
             Self::Terminal(_) => None,
+        }
+    }
+
+    fn setup_contribution_mode(self) -> SetupContributionMode {
+        match self {
+            Self::Recursive(params) => params.predecessor_setup_contribution_mode(),
+            Self::Terminal(_) => SetupContributionMode::Direct,
         }
     }
 }
@@ -559,7 +566,7 @@ where
                     "recursive successor requires outer-commitment binding".into(),
                 ));
             }
-            crate::commit_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
+            crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?
         }
         FoldSuccessorParams::Terminal(params) => {
             if next_witness_binding
@@ -740,13 +747,13 @@ where
     let proof_w_eval = w_eval;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
     let stage3_sumcheck_proof = match next_params.recursive() {
-        Some(next_level_params) => prove_stage3::<F, E, T>(
+        Some(next_fold_params) => prove_stage3::<F, E, T>(
             level,
-            lp.setup_contribution_mode,
+            next_params.setup_contribution_mode(),
             expanded.as_ref(),
             prefix_slots,
             lp,
-            next_level_params,
+            &next_fold_params.witness,
             &prepared_fold.instance,
             &tau1,
             alpha,
@@ -758,14 +765,7 @@ where
             ring_bits,
             transcript,
         )?,
-        None => {
-            if lp.setup_contribution_mode != SetupContributionMode::Direct {
-                return Err(AkitaError::InvalidSetup(
-                    "terminal successor cannot carry a recursive setup contribution".into(),
-                ));
-            }
-            None
-        }
+        None => None,
     };
     let (stage3_sumcheck_proof, next_opening_point, next_opening, setup_prefix_opening) =
         if let Some(stage3) = stage3_sumcheck_proof {

@@ -7,8 +7,9 @@
 //!
 //! ## Descriptor version policy
 //!
-//! The version changes when the transcript schedule changes. Version 2 removes
-//! terminal ring-switch and stage-2 challenges after the revealed tail.
+//! The version changes when the transcript schedule changes. Version 3 binds
+//! the typed root/recursive/terminal schedule topology and the direct terminal
+//! response protocol.
 
 mod fold_linf_binding;
 #[cfg(test)]
@@ -33,8 +34,8 @@ use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 
-/// Descriptor schema version for the in-development transcript preamble.
-pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 2;
+/// Descriptor schema version for the current transcript protocol epoch.
+pub const AKITA_INSTANCE_DESCRIPTOR_VERSION: u32 = 3;
 
 /// Fixed-size Blake2b digest used inside the descriptor.
 pub type DescriptorDigest = [u8; 32];

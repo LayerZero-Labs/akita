@@ -13,10 +13,9 @@ fn sample_schedule() -> FoldSchedule {
         CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 2, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
-    let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(committed.clone());
-    let (honest_cap, _) = terminal_witness
-        .response_linf_bounds(&sparse)
-        .expect("terminal response bounds");
+    let (terminal_witness, honest_cap) =
+        TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
+            .expect("terminal response bounds");
     let response_shape =
         TerminalResponseShape::derive(&terminal_witness, honest_cap).expect("terminal shape");
     FoldSchedule {
@@ -96,10 +95,37 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
 }
 
 #[test]
+fn rejects_pre_topology_descriptor_epoch() {
+    let mut descriptor = sample_descriptor();
+    descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;
+    assert!(matches!(
+        descriptor.check(),
+        Err(SerializationError::InvalidData(_))
+    ));
+
+    let bytes = descriptor.canonical_bytes().expect("serialize old epoch");
+    assert!(matches!(
+        AkitaInstanceDescriptor::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
 fn terminal_topology_changes_plan_binding() {
     let first = sample_schedule();
     let mut second = first.clone();
     second.terminal.input_witness_len += 1;
+    assert_ne!(
+        PlanSection::from_schedule(&first),
+        PlanSection::from_schedule(&second)
+    );
+}
+
+#[test]
+fn terminal_sparse_sampler_changes_plan_binding() {
+    let first = sample_schedule();
+    let mut second = first.clone();
+    second.terminal.params.sparse_challenge_config = SparseChallengeConfig::pm1_only(4);
     assert_ne!(
         PlanSection::from_schedule(&first),
         PlanSection::from_schedule(&second)

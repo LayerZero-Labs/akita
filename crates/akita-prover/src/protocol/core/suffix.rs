@@ -128,7 +128,7 @@ where
             ),
             |next| {
                 (
-                    super::fold::FoldSuccessorParams::Recursive(&next.params.witness),
+                    super::fold::FoldSuccessorParams::Recursive(&next.params),
                     akita_types::NextWitnessBindingPolicy::OuterCommitment,
                 )
             },

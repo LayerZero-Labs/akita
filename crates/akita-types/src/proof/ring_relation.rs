@@ -567,9 +567,10 @@ mod tests {
         .expect("test params")
     }
 
-    /// Build a minimal `WithDBlock` relation instance whose layout-relevant
-    /// shape is `opening_batch.num_total_polynomials() = num_claims` and `y.len() =
-    /// num_rows` (the only fields [`RingRelationInstance::segment_layout`] reads).
+    /// Build a minimal non-terminal relation instance whose layout-relevant
+    /// shape is `opening_batch.num_total_polynomials() = num_claims` and
+    /// `y.len() = num_rows` (the only fields
+    /// [`RingRelationInstance::segment_layout`] reads).
     fn build_instance(
         lp: &CommittedGroupParams,
         num_claims: usize,

@@ -5,7 +5,7 @@ use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::sis::FoldWitnessLinfCapConfig;
 use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    TerminalResponseShape,
+    SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -479,6 +479,18 @@ pub struct RecursiveFoldParams {
     pub witness_partition: WitnessPartition,
 }
 
+impl RecursiveFoldParams {
+    /// Setup-contribution mode of the fold that produces this recursive
+    /// witness. Presence of this consumer-owned prefix is the sole authority.
+    pub fn predecessor_setup_contribution_mode(&self) -> SetupContributionMode {
+        if self.incoming_setup_prefix.is_some() {
+            SetupContributionMode::Recursive
+        } else {
+            SetupContributionMode::Direct
+        }
+    }
+}
+
 /// Exact terminal committed-witness parameters.
 ///
 /// The terminal relation binds only the source decomposition through the
@@ -806,6 +818,10 @@ impl FoldSchedule {
         }
         bytes.push(3);
         self.terminal.params.witness.append_descriptor_bytes(bytes);
+        append_schedule_sparse_challenge_descriptor_bytes(
+            bytes,
+            &self.terminal.params.sparse_challenge_config,
+        );
         self.terminal
             .params
             .response_shape

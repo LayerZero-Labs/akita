@@ -50,10 +50,13 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
             params.witness_chunk.num_activated_levels, 2,
             "level {level} must carry num_activated_levels == 2 (W8R2)"
         );
+    }
+
+    for (producer_level, consumer) in schedule.recursive_folds[..2].iter().enumerate() {
         assert_eq!(
-            params.setup_contribution_mode,
+            consumer.params.predecessor_setup_contribution_mode(),
             SetupContributionMode::Recursive,
-            "level {level} must run the recursive setup-offload path"
+            "level {producer_level} must run the recursive setup-offload path"
         );
     }
 
@@ -73,8 +76,14 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
         level2.witness.witness_chunk.num_chunks, 1,
         "level 2 must be single-chunk (chunking activates only levels 0 and 1)"
     );
+    let level2_mode = schedule
+        .recursive_folds
+        .get(2)
+        .map_or(SetupContributionMode::Direct, |consumer| {
+            consumer.params.predecessor_setup_contribution_mode()
+        });
     assert_eq!(
-        level2.witness.setup_contribution_mode,
+        level2_mode,
         SetupContributionMode::Direct,
         "level 2 must be Direct (no Stage-3 sum-check after the activated window)"
     );

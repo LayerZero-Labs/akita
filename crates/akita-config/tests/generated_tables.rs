@@ -47,7 +47,8 @@ use akita_config::policy_of;
 use akita_planner::generated::table_entry;
 #[cfg(feature = "all-schedules")]
 use akita_planner::{
-    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_generated_schedule_table,
+    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
+    validate_generated_schedule_table,
 };
 
 #[test]
@@ -132,6 +133,21 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
     );
     assert_table_hit(module_name, &catalog, keys);
     catalog
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_rejects_pre_topology_protocol_epoch() {
+    let mut catalog = fp128::D64Full::schedule_catalog().expect("shipped catalog");
+    catalog.identity.protocol_epoch -= 1;
+    let error = validate_catalog_identity(
+        &catalog,
+        &policy_of::<fp128::D64Full>(),
+        fp128::D64Full::ring_challenge_config,
+        fp128::D64Full::fold_challenge_shape_at_level,
+    )
+    .expect_err("old protocol epoch must not validate");
+    assert!(error.to_string().contains("catalog identity mismatch"));
 }
 
 #[cfg(feature = "all-schedules")]

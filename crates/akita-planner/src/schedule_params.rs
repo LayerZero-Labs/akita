@@ -23,8 +23,8 @@ use akita_types::{
     PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
     PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
     RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
-    SetupContributionMode, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessLayout, WitnessPartition, SETUP_OFFLOAD_D_SETUP,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;

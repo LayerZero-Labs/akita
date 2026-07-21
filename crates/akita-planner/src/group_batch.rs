@@ -13,7 +13,7 @@ use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
     padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams,
     DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, SetupContributionMode, WitnessLayout,
+    PrecommittedGroupDescriptor, PrecommittedLevelParams, WitnessLayout,
     SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
@@ -453,7 +453,6 @@ fn multi_group_root_main_level_params_candidate(
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),
         setup_prefix: None,
-        setup_contribution_mode: SetupContributionMode::Direct,
     }
     .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
 
@@ -622,8 +621,8 @@ pub fn find_group_batch_schedule(
 
             for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
                 let child_is_terminal = suffix_fold.folds.is_empty();
-                let (fold_mode, suffix_fold) = if child_is_terminal {
-                    (SetupContributionMode::Direct, suffix_fold.clone())
+                let suffix_fold = if child_is_terminal {
+                    suffix_fold.clone()
                 } else if recursion_threshold_met {
                     let prefixed_child_suffix = derive_optimal_suffix_schedule(
                         &suffix_ctx,
@@ -653,16 +652,12 @@ pub fn find_group_batch_schedule(
                     if prefixed_suffix_fold.folds.is_empty() {
                         continue;
                     }
-                    (
-                        SetupContributionMode::Recursive,
-                        prefixed_suffix_fold.clone(),
-                    )
+                    prefixed_suffix_fold.clone()
                 } else {
-                    (SetupContributionMode::Direct, suffix_fold.clone())
+                    suffix_fold.clone()
                 };
 
-                let mut fold_candidate_params = candidate_params.clone();
-                fold_candidate_params.setup_contribution_mode = fold_mode;
+                let fold_candidate_params = candidate_params.clone();
                 let root_proof_size = level_proof_bytes(
                     field_bits,
                     challenge_field_bits,

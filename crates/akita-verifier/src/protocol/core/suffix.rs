@@ -242,7 +242,10 @@ where
             (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
             _ => return Err(AkitaError::InvalidProof),
         };
-        let stage3 = fold.stage3_for_mode(current_lp.setup_contribution_mode, next_params)?;
+        let setup_contribution_mode = next_step.map_or(SetupContributionMode::Direct, |step| {
+            step.params.predecessor_setup_contribution_mode()
+        });
+        let stage3 = fold.stage3_for_mode(setup_contribution_mode, next_params)?;
         let prepared = prepare_fold_replay::<F, E, T>(
             FoldReplayPayload {
                 extension_opening_reduction: fold.extension_opening_reduction(),

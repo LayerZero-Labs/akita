@@ -169,7 +169,7 @@ where
         &claims,
         basis,
         &root_step.params.final_group.commitment,
-        first_recursive_params.map(|step| &step.params.witness),
+        first_recursive_params.map(|step| &step.params),
         first_recursive_params.map_or(schedule.terminal.params.witness.d_a(), |step| {
             step.params.witness.d_a()
         }),

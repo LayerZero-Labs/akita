@@ -11,7 +11,7 @@ use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, SetupContributionMode, TerminalResponseShape,
+    PrecommittedLevelParams, TerminalResponseShape,
 };
 
 use crate::generated::{
@@ -75,15 +75,6 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated root challenge does not match the catalog family".to_string(),
         ));
     }
-    let root_setup_mode = if entry
-        .recursive_folds
-        .first()
-        .is_some_and(|fold| fold.incoming_setup_prefix.is_some())
-    {
-        SetupContributionMode::Recursive
-    } else {
-        SetupContributionMode::Direct
-    };
     let mut root_params = if is_multi_group {
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
@@ -105,7 +96,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
-                root_setup_mode,
             )?
     } else {
         entry
@@ -121,7 +111,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 key.final_group.num_polynomials(),
                 entry.root.open_commit_matrix,
                 None,
-                root_setup_mode,
             )?
     };
     let distributed_levels = distributed_activation_depth(
@@ -147,15 +136,6 @@ pub(crate) fn walk_generated_schedule_entry(
     let mut expanded = vec![(root_params, expected_root_w_len, root_output_len)];
     let mut input_witness_len = root_output_len;
     for (index, fold) in entry.recursive_folds.iter().enumerate() {
-        let setup_mode = if entry
-            .recursive_folds
-            .get(index + 1)
-            .is_some_and(|next| next.incoming_setup_prefix.is_some())
-        {
-            SetupContributionMode::Recursive
-        } else {
-            SetupContributionMode::Direct
-        };
         let mut params = fold.witness.expand_to_level_params_with_setup(
             policy,
             ring_challenge_config,
@@ -165,7 +145,6 @@ pub(crate) fn walk_generated_schedule_entry(
             1,
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
-            setup_mode,
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len =

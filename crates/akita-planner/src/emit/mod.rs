@@ -403,6 +403,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = ",
             "GeneratedScheduleCatalogIdentity {{\n",
             "    family_name: \"{family_name}\",\n",
+            "    protocol_epoch: {protocol_epoch},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
@@ -424,6 +425,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         ),
         ring_dims = ring_dims,
         family_name = identity.family_name,
+        protocol_epoch = identity.protocol_epoch,
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
@@ -506,7 +508,6 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
 
     let mut memory_entries: Vec<GeneratedFoldScheduleEntry> = Vec::new();
 
-    writeln!(out, "#[rustfmt::skip]").map_err(|e| e.to_string())?;
     writeln!(
         out,
         "pub(crate) static {const_name}: &[GeneratedFoldScheduleEntry] = &["

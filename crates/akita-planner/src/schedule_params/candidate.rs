@@ -146,7 +146,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-        setup_contribution_mode: SetupContributionMode::Direct,
     }
     .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1)?;
     Ok(Some(params))
@@ -552,7 +551,6 @@ pub(crate) fn derive_candidate_level_params(
         };
         let mut candidate_params = candidate_params;
         candidate_params.setup_prefix = setup_prefix.clone();
-        candidate_params.setup_contribution_mode = SetupContributionMode::Direct;
         if let Some(prefix) = &candidate_params.setup_prefix {
             let prefix_d_width = prefix.commitment_params.d_segment_width()?;
             let total_d_width = candidate_params
@@ -743,7 +741,6 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-        setup_contribution_mode: SetupContributionMode::Direct,
     })
     .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
     Ok(Some(params))

@@ -28,8 +28,7 @@ use akita_types::sis::{
 use akita_types::{
     shared_d_digit_log_basis, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
     OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, SetupContributionMode,
-    TerminalCommittedGroupParams,
+    PrecommittedGroupDescriptor, PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -292,7 +291,6 @@ impl GeneratedCommittedGroup {
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let ring_d = self.inner_commit_matrix.ring_dimension as usize;
         if ring_d == 0 || ring_d != policy.ring_dimension {
@@ -550,7 +548,6 @@ impl GeneratedCommittedGroup {
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix,
-            setup_contribution_mode,
         };
         let params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
@@ -573,7 +570,6 @@ impl GeneratedCommittedGroup {
         precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let ring_d = self.inner_commit_matrix.ring_dimension as usize;
         if ring_d == 0 || ring_d != policy.ring_dimension {
@@ -773,7 +769,6 @@ impl GeneratedCommittedGroup {
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix: None,
-            setup_contribution_mode,
         };
         let params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;

@@ -11,6 +11,7 @@ use std::sync::{LazyLock, Mutex};
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
 use akita_types::{AkitaScheduleInputs, PolynomialGroupLayout, PrecommittedGroupDescriptor};
 
 use crate::generated::{
@@ -66,6 +67,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     let mut out = [0u8; 32];
     let mut h = Fnv64::new();
     h.write_bytes(identity.family_name.as_bytes());
+    h.write_u64(u64::from(identity.protocol_epoch));
     h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
@@ -117,6 +119,7 @@ fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CatalogIdentityExpectation {
     family_name: &'static str,
+    protocol_epoch: u32,
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
@@ -142,6 +145,7 @@ impl CatalogIdentityExpectation {
     fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
         Self {
             family_name: identity.family_name,
+            protocol_epoch: identity.protocol_epoch,
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
@@ -181,6 +185,7 @@ fn catalog_identity_expectation(
         ring_challenge_config_digest(&ring_dimensions, &ring_challenge_config)?;
     Ok(CatalogIdentityExpectation {
         family_name,
+        protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
@@ -220,6 +225,7 @@ pub fn expected_catalog_identity(
     )?;
     Ok(GeneratedScheduleCatalogIdentity {
         family_name: expected.family_name,
+        protocol_epoch: expected.protocol_epoch,
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,

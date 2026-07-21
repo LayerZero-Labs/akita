@@ -21,7 +21,7 @@ pub(super) fn verify_root<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
-    next_fold_level_params: Option<&CommittedGroupParams>,
+    next_fold_params: Option<&RecursiveFoldParams>,
     next_witness_ring_dim: usize,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
@@ -35,9 +35,14 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
+    let setup_contribution_mode = next_fold_params
+        .map_or(SetupContributionMode::Direct, |params| {
+            params.predecessor_setup_contribution_mode()
+        });
+    let next_fold_level_params = next_fold_params.map(|params| &params.witness);
     let extension_opening_reduction = proof.extension_opening_reduction();
     let stage3_sumcheck_proof = proof
-        .stage3_for_mode(root_lp.setup_contribution_mode, next_fold_level_params)?
+        .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
         .map(|(proof, _)| proof);
     let next_witness = match (proof.next_w_commitment(), next_t_state) {
         (Some(commitment), None) => PreparedNextWitness::Commitment {

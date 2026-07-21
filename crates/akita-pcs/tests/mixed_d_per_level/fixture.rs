@@ -200,7 +200,6 @@ fn retarget_recursive_params<Cfg: CommitmentConfig>(
         witness_chunk: akita_types::ChunkedWitnessCfg::default_non_chunked(),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-        setup_contribution_mode: akita_types::SetupContributionMode::Direct,
     };
     params = params.with_fold_linf_cap_config(policy.decomposition.field_bits(), 1)?;
     Ok(params)
@@ -223,7 +222,7 @@ where
             "mixed-D fixture requires a singleton and a non-root switch".into(),
         ));
     }
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, 1));
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
     let envelope = EnvelopeCfg::runtime_schedule(key)?;
     let total_levels = envelope.num_fold_levels();
     if switch_at_fold >= total_levels {

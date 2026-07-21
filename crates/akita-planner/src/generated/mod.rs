@@ -122,6 +122,7 @@ impl GeneratedFoldScheduleEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
+    pub protocol_epoch: u32,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,

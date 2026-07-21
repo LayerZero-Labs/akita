@@ -271,7 +271,7 @@ where
         ),
         |step| {
             (
-                super::fold::FoldSuccessorParams::Recursive(&step.params.witness),
+                super::fold::FoldSuccessorParams::Recursive(&step.params),
                 akita_types::NextWitnessBindingPolicy::OuterCommitment,
             )
         },

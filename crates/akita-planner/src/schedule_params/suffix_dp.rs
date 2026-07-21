@@ -4,8 +4,7 @@ use akita_field::AkitaError;
 use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
     padded_setup_prefix_len, terminal_response_bytes, CommittedGroupParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupContributionMode, TerminalResponseShape,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    PolynomialGroupLayout, TerminalResponseShape, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::PlannerPolicy;
@@ -330,8 +329,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
         // exists.
         for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
             let child_is_terminal = suffix_fold.folds.is_empty();
-            let (fold_mode, suffix_fold) = if child_is_terminal {
-                (SetupContributionMode::Direct, suffix_fold.clone())
+            let suffix_fold = if child_is_terminal {
+                suffix_fold.clone()
             } else if recursion_threshold_met {
                 let prefixed_child_suffix = derive_optimal_suffix_schedule(
                     ctx,
@@ -359,16 +358,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 if prefixed_suffix_fold.folds.len() == 1 {
                     continue;
                 }
-                (
-                    SetupContributionMode::Recursive,
-                    prefixed_suffix_fold.clone(),
-                )
+                prefixed_suffix_fold.clone()
             } else {
-                (SetupContributionMode::Direct, suffix_fold.clone())
+                suffix_fold.clone()
             };
 
-            let mut fold_candidate_params = candidate_params.clone();
-            fold_candidate_params.setup_contribution_mode = fold_mode;
+            let fold_candidate_params = candidate_params.clone();
             let level_proof_size = level_proof_bytes(
                 policy.decomposition.field_bits(),
                 policy.decomposition.field_bits() * policy.chal_ext_degree as u32,

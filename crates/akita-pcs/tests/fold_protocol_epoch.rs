@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire-preservation epoch captured from baseline commit
-//! `bc959ef34572aee143ba0114094b0b4212b4e111`.
+//! Complete-fold wire epoch for instance-descriptor protocol version 3: typed
+//! fold topology plus the direct terminal response.
 
 mod common;
 
@@ -41,16 +41,16 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 12,
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
-        proof_len: 57_250,
-        proof_digest: "3a155ec04047e9942f2eb1685e778e50",
-        event_count: 164,
-        event_digest: "57046ae9d1a2a2b0a63e1ecd34bc6dea",
-        terminal_len: 54_286,
-        terminal_digest: "5a26d324461406760daa77a6e3009858",
+        proof_len: 54_176,
+        proof_digest: "4b5e389c71fed604890cdec773b49131",
+        event_count: 165,
+        event_digest: "efa5119658a633fc78da6167104bcb1e",
+        terminal_len: 51_212,
+        terminal_digest: "4c8349d0dc77d13c9251ec3a54fc82e0",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "b7886ed83f5fb59999120c97cc9cd7db",
+            payload_digest: "ce44352dd12a3a29164ebeb134ca0197",
         }],
     },
     FoldProtocolEpoch {
@@ -58,27 +58,32 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 74_231,
-        proof_digest: "7caa4641e201f1be5a6437f5fa3e7535",
-        event_count: 677,
-        event_digest: "6fa3d54d166f79a4c4fe7054c5d4ed84",
-        terminal_len: 57_707,
-        terminal_digest: "dd68f68783534944dad6c7a213866d45",
+        proof_len: 80_844,
+        proof_digest: "6d83326842b4c92e88cd7ce95f8e59be",
+        event_count: 876,
+        event_digest: "039d7b353449b56fe364bd1a0a21b836",
+        terminal_len: 58_540,
+        terminal_digest: "a998907e41a67fa0bee511d3118ff82b",
         digit_range_levels: &[
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "5995ceb94140360728b8f7c494d22199",
+                payload_digest: "1833ba4c4e57a4f7d2bea850cc837c4f",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "0802c2c4dfa4b51a5208dc136b768a54",
+                payload_digest: "5fa3e4a264d821afe7b48a67c08c43b8",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "98996e2c69f54673049516b58df8f384",
+                payload_digest: "f56da8a45a12a62b73884a8b1cea116a",
+            },
+            DigitRangeLevelEpoch {
+                basis: 64,
+                payload_len: 2_896,
+                payload_digest: "29db6ae00a78afd762c7672ad1285083",
             },
         ],
     },
@@ -194,7 +199,6 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         .serialize_compressed(&mut terminal_bytes)
         .expect("serialize terminal proof");
     let event_bytes = serialize_transcript_events(&prover_events);
-
     assert_eq!(
         proof_bytes.len(),
         expected.proof_len,

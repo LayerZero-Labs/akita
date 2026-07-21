@@ -48,7 +48,7 @@ use akita_types::{
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
     AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, ExtensionOpeningReductionProof,
     FoldLevelProof, FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    RecursiveFoldParams, RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
     TerminalFoldParams, TerminalLevelProof, TraceTable,
 };

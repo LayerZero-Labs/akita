@@ -41,10 +41,10 @@ use akita_types::{
     trace_weight_layout_from_segment, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
     BasisMode, CommittedGroupParams, ExtensionOpeningReductionProof, FoldLevelProof,
     FoldLinfProtocolBinding, FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint,
+    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
-    SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof, TerminalResponse,
-    TerminalResponseShape, TerminalWitnessTranscriptParts, TraceClaim,
+    SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts, TraceClaim,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

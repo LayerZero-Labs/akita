@@ -7,7 +7,6 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::config::SetupContributionMode;
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
@@ -77,11 +76,11 @@ pub struct CommittedGroupParams {
     pub log_basis_outer: u32,
     /// Base-2 logarithm of the D/`e_hat` gadget decomposition base.
     pub log_basis_open: u32,
-    /// Inner Ajtai matrix (A): `row_len = n_a`, `col_len = inner_width`.
+    /// Inner Ajtai matrix (A): output rank `n_a`, input width `inner_width`.
     pub inner_commit_matrix: InnerCommitMatrixParams,
-    /// Outer commitment matrix (B): `row_len = n_b`, `col_len = outer_width`.
+    /// Outer commitment matrix (B): output rank `n_b`, input width `outer_width`.
     pub outer_commit_matrix: OuterCommitMatrixParams,
-    /// Prover matrix (D): `row_len = n_d`, `col_len = d_matrix_width`.
+    /// Opening matrix (D): output rank `n_d`, input width `d_matrix_width`.
     pub open_commit_matrix: OpenCommitMatrixParams,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
@@ -134,8 +133,6 @@ pub struct CommittedGroupParams {
     pub precommitted_groups: Vec<PrecommittedLevelParams>,
     /// Optional setup-prefix commitment consumed by this fold.
     pub setup_prefix: Option<SetupPrefixSlotId>,
-    /// Authoritative per-level setup contribution strategy.
-    pub setup_contribution_mode: SetupContributionMode,
 }
 
 impl CommittedGroupParams {
@@ -224,7 +221,6 @@ impl CommittedGroupParams {
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
             setup_prefix: None,
-            setup_contribution_mode: SetupContributionMode::Direct,
         }
     }
 
@@ -815,7 +811,6 @@ impl CommittedGroupParams {
         } else {
             bytes.push(0);
         }
-        append_setup_contribution_mode_descriptor_bytes(bytes, self.setup_contribution_mode);
     }
 
     /// Width of outer matrix B (column count of the B-key).
@@ -1274,7 +1269,6 @@ impl CommittedGroupParams {
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             setup_prefix: self.setup_prefix.clone(),
-            setup_contribution_mode: self.setup_contribution_mode,
         };
         let field_bits = self.field_bits_for_cache();
         rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_block_claims)
@@ -1349,20 +1343,9 @@ impl CommittedGroupParams {
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             setup_prefix: self.setup_prefix.clone(),
-            setup_contribution_mode: other.setup_contribution_mode,
         }
         .with_fold_linf_cap_config(field_bits, 0)
     }
-}
-
-fn append_setup_contribution_mode_descriptor_bytes(
-    bytes: &mut Vec<u8>,
-    mode: SetupContributionMode,
-) {
-    bytes.push(match mode {
-        SetupContributionMode::Direct => 0,
-        SetupContributionMode::Recursive => 1,
-    });
 }
 
 #[cfg(test)]
