@@ -1,5 +1,6 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
+use akita_challenges::Challenges;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
     HalvingField, MulBaseUnreduced, RandomSampling,
@@ -25,7 +26,7 @@ use akita_types::{
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, DigitRangeEqualityPoint,
     DigitRangePlan, ExtensionOpeningReductionProof, FoldLinfProtocolBinding, FpExtEncoding,
     LevelParams, OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
+    RelationRhsLayout, RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
     SegmentTypedWitness, SetupSumcheckProof, TerminalWitnessTranscriptParts, TraceClaim,
     EXTENSION_OPENING_REDUCTION_DEGREE,
 };
@@ -1031,6 +1032,62 @@ where
     Ok((Vec::new(), None))
 }
 
+/// Assemble the `RingRelationInstance` for one fold from its
+/// [`RelationReplayInputs`] and the already-derived per-group stage-1
+/// challenges, returning the RHS block layout alongside it (the caller reuses
+/// the layout for the extension relation claim). Transcript-free: challenge
+/// derivation and every absorb happen in `verify_fold`, so this cannot perturb
+/// replay bytes. Consumes `v` and the per-group point vectors; the caller keeps
+/// `commitment_rows` / `row_coefficients` for the relation claim and later
+/// stages.
+#[allow(clippy::too_many_arguments)]
+fn build_relation_instance<F, E>(
+    lp: &LevelParams,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    opening_shape: &OpeningClaimsLayout,
+    row_coefficients: &[E],
+    commitment_rows: &RingVec<F>,
+    group_challenges: Vec<Challenges>,
+    v: RingVec<F>,
+    group_ring_opening_points: Vec<RingOpeningPoint<F>>,
+    group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
+) -> Result<(RelationRhsLayout, RingRelationInstance<F>), AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+{
+    let _span = tracing::info_span!("fold_prepare_relation").entered();
+    let role_dims = lp.role_dims();
+    let (gamma, row_coefficient_rings) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        role_dims.d_a(),
+        |D| {
+            RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
+                row_coefficients,
+            )
+        }
+    )?;
+    let relation_rhs_layout =
+        relation_rhs_layout_for(lp, opening_shape, relation_matrix_row_layout)?;
+    let relation_rhs =
+        assemble_relation_rhs::<F>(role_dims, &relation_rhs_layout, &v, commitment_rows)?;
+    let relation_instance = RingRelationInstance::new(
+        relation_matrix_row_layout,
+        group_challenges,
+        group_ring_opening_points,
+        group_ring_multiplier_points,
+        opening_shape.clone(),
+        gamma,
+        row_coefficient_rings,
+        relation_rhs,
+        v,
+        role_dims,
+    )?;
+    relation_instance.check_v_shape_for_level(lp)?;
+    Ok((relation_rhs_layout, relation_instance))
+}
+
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
 pub(in crate::protocol::core) fn verify_fold<F, E, T>(
@@ -1070,44 +1127,17 @@ where
             prepared.fold_grind_nonce,
         )?
     };
-    let (relation_rhs_layout, relation_instance) = {
-        let _span = tracing::info_span!("fold_prepare_relation").entered();
-        let (gamma, row_coefficient_rings) = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            role_dims.d_a(),
-            |D| {
-                RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
-                    &prepared.relation.row_coefficients,
-                )
-            }
-        )?;
-        let relation_rhs_layout = relation_rhs_layout_for(
-            prepared.lp,
-            &opening_shape,
-            prepared.relation.relation_matrix_row_layout,
-        )?;
-        let relation_rhs = assemble_relation_rhs::<F>(
-            role_dims,
-            &relation_rhs_layout,
-            &prepared.relation.v,
-            commitment_rows,
-        )?;
-        let relation_instance = RingRelationInstance::new(
-            prepared.relation.relation_matrix_row_layout,
-            group_challenges,
-            prepared.relation.group_ring_opening_points,
-            prepared.relation.group_ring_multiplier_points,
-            opening_shape.clone(),
-            gamma,
-            row_coefficient_rings,
-            relation_rhs,
-            prepared.relation.v,
-            role_dims,
-        )?;
-        relation_instance.check_v_shape_for_level(prepared.lp)?;
-        (relation_rhs_layout, relation_instance)
-    };
+    let (relation_rhs_layout, relation_instance) = build_relation_instance::<F, E>(
+        prepared.lp,
+        prepared.relation.relation_matrix_row_layout,
+        &opening_shape,
+        &prepared.relation.row_coefficients,
+        commitment_rows,
+        group_challenges,
+        prepared.relation.v,
+        prepared.relation.group_ring_opening_points,
+        prepared.relation.group_ring_multiplier_points,
+    )?;
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         match prepared.payload {
             PreparedFoldPayload::Terminal {
