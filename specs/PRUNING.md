@@ -179,6 +179,7 @@ for a stacked follow-up.
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
+`large-digit-ntt-infrastructure.md`,
 `transcript-immediate-fixes.md`, `eor-sumcheck-prover-acceleration.md`,
 `cross-repo-field-microbench.md`,
 `sis-quantum128-scalar-n-table.md`, plus `TEMPLATE.md`,
