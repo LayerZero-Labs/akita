@@ -368,12 +368,15 @@ claim coefficients, opening points, group/chunk ownership, basis, and source dim
 Each descriptor retains compact chunk geometry shared by every claim in the group, not
 one copy of the prover physical segments per claim. It contracts the rank-one block,
 digit, and inner-coordinate factors in closed form. It must not scan or materialize the
-prover physical trace segments. The current Stage 2
-prover temporarily materializes `EvaluationTraceWeights` into its pre-existing foldable
-`TraceTable` storage. Scalar same-dimension claims retain sparse columns; extension or
-mixed-dimension claims write one exact-live flat dense table. That table disappears with
-the fused prover cutover in Step 6. Deleted historical trace implementations may remain
-only under `cfg(test)` as differential oracles.
+prover physical trace segments. The current Stage 2 prover compiles
+`EvaluationTraceWeights` into the prover-owned `PreparedProverEvaluationTrace`: one
+scaled factor per exact live opening block/digit, one shared source-inner vector per
+claim, and common-coordinate column ranges. A temporary bridge then preserves the
+pre-existing foldable `TraceTable` policy: scalar same-dimension claims use sparse
+columns, while extension or mixed-dimension claims use one exact-live flat dense table.
+The prepared support survives the fused prover cutover; the bridge and `TraceTable`
+disappear in Step 6. Deleted historical trace implementations may remain only under
+`cfg(test)` as differential oracles.
 
 The implementation differential-tests the current coordinate algebra against the direct
 E-linear formula. Where the packing map admits the expected adjoint, each inner vector is
@@ -703,10 +706,13 @@ stage.
    common, but the verifier receives a minimal closed-form claim evaluator rather than
    prover segments or materialized trace storage. The existing prover `TraceTable` remains
    solely as temporary fold storage consumed by the old Stage 2 state machine until Step 6.
-5. Implement and measure structured, opening-only, and contraction-first trace
-   preparation.
-6. Cut the prover to one compact-prefix/folded-suffix state machine, initially with the
-   simplest correct fused pair kernel.
+5. Land the one prover-owned prepared opening-support state and gate its construction
+   cost against the previous direct table preparation. Do not add an unused second
+   prover or a production selector.
+6. Implement and measure all three consumers—structured main scan, opening-support side
+   scan, and contraction-first—inside the compact-prefix/folded-suffix state-machine
+   cutover. Keep the complete-stage winner for each actual geometry class and delete the
+   losing candidate code and every selection switch before landing.
 7. Implement every per-basis candidate, select on complete-stage/end-to-end measurements,
    and delete losers.
 8. Adapt the current setup boundary only as required by mixed/group/chunk geometry.

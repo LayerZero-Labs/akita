@@ -235,11 +235,14 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 }
 
 mod dense_terms;
+mod evaluation_trace;
 mod lifecycle;
 mod round2_prefix;
 mod round_flow;
 mod x_prefix;
 mod y_prefix;
+
+pub(crate) use evaluation_trace::PreparedProverEvaluationTrace;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     // Fused relation (`alpha * m`) + trace-weight addend for one witness

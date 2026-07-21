@@ -4,6 +4,7 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
+use crate::protocol::sumcheck::akita_stage2::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -673,17 +674,23 @@ where
         F,
         ring_d,
         |D| {
-            build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
-                digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
-                witness_layout: relation_range_image_plan.witness_layout(),
-                role_dims: relation_range_image_plan.role_dims(),
-                level_params: lp,
-                opening_batch,
-                prepared_points: evaluation_trace_points,
-                claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
-                basis: prepared_fold.evaluation_trace_basis,
-            })?
-            .materialize_prover_table::<F>(1usize << rs.ring_bits, evaluation_trace_weight)
+            let semantic_trace =
+                build_evaluation_trace_weights::<F, E, D>(EvaluationTraceWeightInputs {
+                    digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
+                    witness_layout: relation_range_image_plan.witness_layout(),
+                    role_dims: relation_range_image_plan.role_dims(),
+                    level_params: lp,
+                    opening_batch,
+                    prepared_points: evaluation_trace_points,
+                    claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
+                    basis: prepared_fold.evaluation_trace_basis,
+                })?;
+            PreparedProverEvaluationTrace::new(
+                &semantic_trace,
+                1usize << rs.ring_bits,
+                evaluation_trace_weight,
+            )?
+            .into_temporary_fold_table::<F>()
         }
     )?;
     drop(trace_preparation_span);

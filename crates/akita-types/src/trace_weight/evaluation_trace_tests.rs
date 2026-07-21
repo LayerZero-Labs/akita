@@ -117,7 +117,6 @@ fn assert_extension_terms_match_flat_oracle<E: FieldCore + RandomSampling>(seed:
 #[test]
 fn terms_match_flat_oracle_across_bases_chunks_and_ring_dimensions() {
     const PHYSICAL_FIELD_LEN: usize = 256;
-    let output_scale = TestField::from_u64(29);
     let point: Vec<TestField> = (0..8)
         .map(|index| TestField::from_u64(31 + 2 * index as u64))
         .collect();
@@ -142,22 +141,6 @@ fn terms_match_flat_oracle_across_bases_chunks_and_ring_dimensions() {
                 weights.evaluate_at_point(&point).unwrap(),
                 multilinear_eval(&expected, &point).unwrap()
             );
-            for destination_ring_dimension in [2, 4, 8] {
-                let materialized = weights
-                    .materialize_prover_table::<TestField>(destination_ring_dimension, output_scale)
-                    .unwrap()
-                    .materialize_dense(
-                        PHYSICAL_FIELD_LEN / destination_ring_dimension,
-                        destination_ring_dimension,
-                    );
-                assert_eq!(
-                    materialized,
-                    expected
-                        .iter()
-                        .map(|&weight| output_scale * weight)
-                        .collect::<Vec<_>>()
-                );
-            }
         }
     }
 }
