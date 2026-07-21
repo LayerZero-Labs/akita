@@ -11,7 +11,7 @@ pub struct AkitaStage1StageProof<F: FieldCore> {
     /// Claimed child-node evaluations at this stage's output point.
     ///
     /// Non-leaf stages populate these so the verifier can seed the next stage;
-    /// the leaf stage leaves this empty and instead carries `s_claim` below.
+    /// the leaf stage leaves this empty and instead carries `range_image_evaluation` below.
     pub child_claims: Vec<F>,
 }
 
@@ -21,7 +21,7 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     /// Root-to-leaf range-check stages.
     pub stages: Vec<AkitaStage1StageProof<F>>,
     /// Claimed evaluation of `S` at the final stage-1 output point.
-    pub s_claim: F,
+    pub range_image_evaluation: F,
 }
 
 /// Schedule-shaped outgoing witness binding for an intermediate fold.

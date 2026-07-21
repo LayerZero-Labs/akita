@@ -81,10 +81,7 @@ pub use shapes::{
     SETUP_SUMCHECK_DEGREE,
 };
 pub use stage1::{
-    absorb_interstage_claims, combine_polys, eval_poly, linear_combination,
-    range_check_eval_from_s, reorder_stage1_coords, stage1_interstage_batch_weights,
-    stage1_leaf_coeffs, stage1_stage_count, stage1_tree_product_stage_arities,
-    stage1_tree_stage_shapes, validate_stage1_tree_basis,
+    append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
     build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,

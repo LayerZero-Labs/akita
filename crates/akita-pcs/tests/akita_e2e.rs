@@ -1053,7 +1053,7 @@ fn batched_onehot_same_point_round_trip() {
 }
 
 #[test]
-fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
+fn batched_onehot_same_point_rejects_tampered_root_stage1_range_image_evaluation() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
@@ -1121,7 +1121,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         .unwrap();
 
         let mut malformed = proof.clone();
-        malformed.root.stage1.s_claim += F::from_canonical_u128_reduced(1);
+        malformed.root.stage1.range_image_evaluation += F::from_canonical_u128_reduced(1);
 
         let mut verifier_transcript =
             AkitaTranscript::<F>::new(b"akita_e2e/batched-onehot-s-claim-tamper");
@@ -1135,7 +1135,7 @@ fn batched_onehot_same_point_rejects_tampered_root_stage1_s_claim() {
         );
         assert!(
             result.is_err(),
-            "tampered batched root stage1 s_claim must be rejected"
+            "tampered batched root stage1 range_image_evaluation must be rejected"
         );
     });
 }

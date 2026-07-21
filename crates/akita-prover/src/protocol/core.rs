@@ -8,8 +8,8 @@ use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
     RingSwitchBuildOutput, RingSwitchOutput,
 };
+use crate::protocol::sumcheck::AkitaStage2Prover;
 use crate::protocol::sumcheck::AkitaStage3Prover;
-use crate::protocol::sumcheck::{AkitaStage1Prover, AkitaStage2Prover};
 use crate::protocol::RingRelationProver;
 use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
@@ -28,7 +28,7 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_SUMCHECK_S_CLAIM, ABSORB_TERMINAL_W_REMAINDER,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_W_REMAINDER,
     CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
@@ -39,8 +39,8 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::evaluation_trace_row_weight,
     recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, reorder_stage1_coords, ring_subfield_packed_extension_opening_point,
-    root_current_w_len, root_tensor_projection_enabled, sample_public_row_coefficients,
+    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_current_w_len,
+    root_tensor_projection_enabled, sample_public_row_coefficients,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,

@@ -8,7 +8,7 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{stage1_tree_stage_shapes, LevelParams, RelationMatrixRowLayout};
+use crate::{DigitRangePlan, LevelParams, RelationMatrixRowLayout};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -23,7 +23,9 @@ fn sumcheck_bytes(rounds: usize, degree: usize, elem_bytes: usize) -> usize {
 }
 
 fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
-    stage1_tree_stage_shapes(rounds, b)
+    DigitRangePlan::new(b)
+        .expect("scheduled range basis must be certified")
+        .stage_shapes(rounds)
         .into_iter()
         .map(|stage| {
             ({ sumcheck_bytes(rounds, stage.sumcheck_proof.1, elem_bytes) })
@@ -229,14 +231,16 @@ mod tests {
 
     fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
         AkitaStage1Proof {
-            stages: stage1_tree_stage_shapes(rounds, b)
+            stages: DigitRangePlan::new(b)
+                .expect("test range basis")
+                .stage_shapes(rounds)
                 .into_iter()
                 .map(|shape| AkitaStage1StageProof {
                     sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
                     child_claims: vec![F::zero(); shape.child_claims],
                 })
                 .collect(),
-            s_claim: F::zero(),
+            range_image_evaluation: F::zero(),
         }
     }
 

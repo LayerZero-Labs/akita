@@ -42,13 +42,15 @@
 //!
 //! Stage 1 supplies the carried virtual claim
 //!
-//! `s_claim = w(stage1_point) * (w(stage1_point) + 1)`
-//! `        = sum_z eq(stage1_point, z) * w(z) * (w(z) + 1)`
+//! `range_image_evaluation`
+//! `  = sum_z eq(stage1_point, z) * [w(z) * (w(z) + 1)]`
 //!
-//! for the same multilinear witness table. With `gamma = batching_coeff`, the
+//! for the multilinear extension of the pointwise Boolean range-image table. Away from
+//! Boolean points this is not generally `w(stage1_point) * (w(stage1_point) + 1)`.
+//! With `gamma = batching_coeff`, the
 //! exact identity established by this sumcheck is
 //!
-//! `gamma * s_claim + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
+//! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
 //! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
 //! `           + w(x, y) * a(y) * m_tau1(x)`
 //! `           + eq(tau1, EvaluationTrace_row_index) * w(x, y) * TraceWeight(x, y) ]`.
@@ -210,7 +212,7 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     w_table: WTable<E>,
     b: usize,
     batching_coeff: E,
-    s_claim: E,
+    range_image_evaluation: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 

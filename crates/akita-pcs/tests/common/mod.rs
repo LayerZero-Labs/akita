@@ -2,12 +2,13 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-pub(super) use akita_field::{CanonicalField, FieldCore};
+pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::CpuBackend;
 pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::ProverOpeningData;
+use akita_serialization::{AkitaSerialize, Compress};
 pub(super) use akita_types::LevelParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
@@ -16,6 +17,10 @@ pub(super) use akita_types::{
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
+
+#[cfg(feature = "logging-transcript")]
+use akita_transcript::TranscriptEvent;
+use akita_transcript::{labels, AkitaTranscript, Transcript};
 
 pub(super) type F = fp128::Field;
 pub(super) const STACK_SIZE: usize = 256 * 1024 * 1024;
@@ -59,6 +64,92 @@ pub(super) fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("failed to spawn thread")
         .join()
         .expect("test thread panicked");
+}
+
+/// Canonical byte encoding of an ordered logging-transcript event stream.
+#[cfg(feature = "logging-transcript")]
+pub(super) fn serialize_transcript_events(events: &[TranscriptEvent]) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for event in events {
+        match event {
+            TranscriptEvent::Preamble {
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(0);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Absorb {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(1);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Squeeze { label, len } => {
+                bytes.push(2);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(&u64::try_from(*len).unwrap().to_le_bytes());
+            }
+            TranscriptEvent::Wire {
+                label,
+                bytes_digest,
+                bytes_len,
+            } => {
+                bytes.push(3);
+                bytes.extend_from_slice(&u64::try_from(label.len()).unwrap().to_le_bytes());
+                bytes.extend_from_slice(label);
+                bytes.extend_from_slice(bytes_digest);
+                bytes.extend_from_slice(&u64::try_from(*bytes_len).unwrap().to_le_bytes());
+            }
+        }
+    }
+    bytes
+}
+
+/// Canonical Stage 1 payload bytes in fold-wire order.
+pub(super) fn serialize_stage1_payload<FF>(proof: &akita_types::AkitaStage1Proof<FF>) -> Vec<u8>
+where
+    FF: FieldCore + AkitaSerialize,
+{
+    let mut bytes = Vec::new();
+    for stage in &proof.stages {
+        stage
+            .sumcheck_proof
+            .serialize_with_mode(&mut bytes, Compress::Yes)
+            .expect("serialize Stage 1 sumcheck");
+        for claim in &stage.child_claims {
+            claim
+                .serialize_with_mode(&mut bytes, Compress::Yes)
+                .expect("serialize Stage 1 child claim");
+        }
+    }
+    proof
+        .range_image_evaluation
+        .serialize_with_mode(&mut bytes, Compress::Yes)
+        .expect("serialize Stage 1 range-image claim");
+    bytes
+}
+
+/// Stable digest used by versioned protocol epochs.
+pub(super) fn protocol_epoch_digest<FF>(payload: &[u8]) -> String
+where
+    FF: FieldCore + CanonicalField + CanonicalBytes + TranscriptChallenge + 'static,
+{
+    let mut transcript = AkitaTranscript::<FF>::new(b"akita/protocol-epoch/digest");
+    transcript.append_bytes(labels::ABSORB_PROVER_V, payload);
+    transcript
+        .challenge_scalar(labels::CHALLENGE_SUMCHECK_BATCH)
+        .to_bytes_le_vec()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(

@@ -4,11 +4,18 @@
 |-------------|--------------------------------|
 | Author(s)   | Quang Dao (spec) → hand-off for implementation |
 | Created     | 2026-06-02                     |
-| Status      | ready for implementation       |
+| Status      | ready for implementation (EOR only; Stage 1/2 blocked) |
 | Pilot       | extension-opening reduction (EOR), then stage1 / stage2 |
-| Related     | [`specs/eor-streamed-prover.md`](eor-streamed-prover.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
+| Related     | [`eor-streamed-prover.md`](eor-streamed-prover.md), [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), PR [#142](https://github.com/LayerZero-Labs/akita/pull/142) (`specs/cross-repo-field-microbench.md`) |
 
 ## Summary
+
+> **Coordination gate.** EOR packing may proceed. Stage 1 packing must target the canonical
+> scalar implementation in PR #312. Stage 2 packing is blocked until the stacked
+> relation/range-image rewrite in
+> [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md) lands. Packing must
+> target the resulting flat, address-major scalar buffers and may not preserve or extend
+> the current x/y/prefix architecture.
 
 Akita's sum-check and extension-opening-reduction (EOR) prover hot loops run on
 **scalar extension-field arithmetic** today: `Vec<E>` with `E = RingSubfieldFp4<Fp32>`,
@@ -118,7 +125,7 @@ Both converge on the same five moves; copy them.
 | EOR sparse accumulate / factor query | `sparse.rs:322-346` (`accumulate_entries_with_factor_using`), `:749-783` (`factor_pair`) | scalar over support + scalar `ProductAccum` dot |
 | EOR partials | `akita-types/src/extension_opening_reduction.rs:260-279` (`tensor_column_partials_split_fold`) | scalar base×ext via `SplitEqEvals` |
 | eq table | `akita-algebra/src/eq_poly.rs:232-252` (`SplitEqEvals`), `EqPolynomial::evals` | scalar `Vec<E>` |
-| stage1 round + fold | `akita_stage1/mod.rs:392-448`, `round_flow.rs:200-201` | scalar |
+| digit-range round + fold | `digit_range/direct_range_leaf/`, `digit_range/class_indexed_product.rs`, `digit_range/class_indexed_range_leaf.rs` | basis-specialized compact and class-indexed kernels |
 | stage2 round + fold | `akita_stage2/dense_terms.rs:189-216`, `round_flow.rs:234` | scalar |
 | generic fold | `akita-algebra/src/poly.rs:225-228` (`fold_evals_in_place`) | scalar `E::fold_one` |
 | driver (unchanged) | `drivers/standard.rs:112-148` | trait-driven; packing lives in the instance |

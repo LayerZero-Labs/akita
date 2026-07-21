@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
     batching_coeff: E,
-    s_claim: E,
+    range_image_evaluation: E,
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
@@ -42,7 +42,7 @@ where
     #[tracing::instrument(skip_all, name = "AkitaStage2Verifier::new")]
     pub(crate) fn new(
         batching_coeff: E,
-        s_claim: E,
+        range_image_evaluation: E,
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
@@ -66,7 +66,7 @@ where
         }
         Ok(Self {
             batching_coeff,
-            s_claim,
+            range_image_evaluation,
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
@@ -97,7 +97,7 @@ where
     }
 
     fn input_claim(&self) -> E {
-        let mut claim = self.batching_coeff * self.s_claim + self.relation_claim;
+        let mut claim = self.batching_coeff * self.range_image_evaluation + self.relation_claim;
         if let Some(trace) = &self.trace {
             claim += trace.trace_opening_claim;
         }

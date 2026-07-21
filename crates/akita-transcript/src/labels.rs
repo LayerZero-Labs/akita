@@ -35,8 +35,8 @@ pub const ABSORB_SETUP_PREFIX_SLOT: &[u8] = b"ak/a/sps";
 pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 /// Challenge sampled per sumcheck round (paper §4.3).
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
-/// Absorb the stage-1 final `s_claim` before the batching challenge.
-pub const ABSORB_SUMCHECK_S_CLAIM: &[u8] = b"ak/a/scs";
+/// Absorb the stage-1 final `range_image_evaluation` before the batching challenge.
+pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 /// Absorb the stage-3 carried next-witness evaluation before recursion continues.
@@ -119,7 +119,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SETUP_PREFIX_SLOT,
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
-    ABSORB_SUMCHECK_S_CLAIM,
+    ABSORB_RANGE_IMAGE_EVALUATION,
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_STAGE3_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,

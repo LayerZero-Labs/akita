@@ -4,16 +4,17 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
+use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
-use akita_types::build_segment_typed_witness_from_groups;
-use akita_types::dispatch_for_field;
-use akita_types::OpeningClaimsLayout;
-use akita_types::SegmentTypedWitnessGroupParts;
-use akita_types::SegmentTypedWitnessShape;
+use akita_types::{
+    build_segment_typed_witness_from_groups, dispatch_for_field, DigitRangeEqualityPoint,
+    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, SegmentTypedWitnessGroupParts,
+    SegmentTypedWitnessShape,
+};
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
     lp: &LevelParams,
@@ -662,8 +663,12 @@ where
         prepared_fold.instance.v(),
         &prepared_fold.commitment,
     )?;
-    let (stage1_proof, stage1_point, s_claim) = prove_stage1::<F, E, T>(transcript, &mut rs)?;
-    transcript.append_serde(ABSORB_SUMCHECK_S_CLAIM, &stage1_proof.s_claim);
+    let (stage1_proof, stage1_point, range_image_evaluation) =
+        prove_stage1::<F, E, T>(transcript, &mut rs)?;
+    transcript.append_serde(
+        ABSORB_RANGE_IMAGE_EVALUATION,
+        &stage1_proof.range_image_evaluation,
+    );
     let stage1_proof = Some(stage1_proof);
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
@@ -778,7 +783,7 @@ where
         batching_coeff,
         rs,
         &stage1_point,
-        s_claim,
+        range_image_evaluation,
         relation_claim,
         trace_compact,
         trace_opening_claim,
@@ -942,20 +947,32 @@ where
     T: Transcript<F>,
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
-    let tau0_reordered = reorder_stage1_coords(&rs.tau0, rs.col_bits, rs.ring_bits);
-    let stage1_prover = AkitaStage1Prover::new_owned(
-        std::mem::take(&mut rs.w_evals_compact),
-        &tau0_reordered,
-        rs.b,
-        rs.live_x_cols,
+    let num_vars = rs
+        .col_bits
+        .checked_add(rs.ring_bits)
+        .ok_or_else(|| AkitaError::InvalidInput("digit-range domain width overflow".to_string()))?;
+    let domain = FlatBooleanDomain::new(rs.w_evals_compact.len(), num_vars)?;
+    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
+    if derived_live_x_cols != rs.live_x_cols {
+        return Err(AkitaError::InvalidSize {
+            expected: derived_live_x_cols,
+            actual: rs.live_x_cols,
+        });
+    }
+    let equality_point = DigitRangeEqualityPoint::from_column_then_ring_challenges(
+        &rs.tau0,
         rs.col_bits,
         rs.ring_bits,
     )?;
-    let ((stage1_proof, stage1_point), w_evals_compact) =
-        stage1_prover.prove_recover_w::<F, T>(transcript)?;
-    rs.w_evals_compact = w_evals_compact;
-    let s_claim = stage1_proof.s_claim;
-    Ok((stage1_proof, stage1_point, s_claim))
+    let stage1_prover = DigitRangeProver::new(
+        std::sync::Arc::clone(&rs.w_evals_compact),
+        DigitRangePlan::new(rs.b)?,
+        domain,
+        equality_point,
+    )?;
+    let (stage1_proof, stage1_point) = stage1_prover.prove::<F, T>(transcript)?;
+    let range_image_evaluation = stage1_proof.range_image_evaluation;
+    Ok((stage1_proof, stage1_point, range_image_evaluation))
 }
 
 fn remap_trace_table<E: FieldCore>(
@@ -1015,7 +1032,7 @@ fn prove_stage2<F, E, T>(
     batching_coeff: E,
     rs: RingSwitchOutput<E>,
     stage1_point: &[E],
-    s_claim: E,
+    range_image_evaluation: E,
     relation_claim: E,
     trace_compact: Option<TraceTable<E>>,
     trace_opening_claim: E,
@@ -1035,7 +1052,7 @@ where
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,
-        s_claim,
+        range_image_evaluation,
         rs.b,
         alpha_evals_y,
         rs.relation_weight_evals,

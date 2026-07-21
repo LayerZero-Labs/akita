@@ -3,10 +3,10 @@ use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, segment_typed_witness_bytes,
-    stage1_tree_stage_shapes, sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof,
-    AkitaStage2Proof, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding,
-    RelationMatrixRowLayout, RingVec, SegmentTypedWitness, SegmentTypedWitnessShape,
-    SisModulusProfileId, TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
+    sumcheck_rounds, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RelationMatrixRowLayout,
+    RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SisModulusProfileId,
+    TerminalLevelProof, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -145,14 +145,16 @@ fn dummy_eq_factored_sumcheck<F: FieldCore>(
 
 fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof<F> {
     AkitaStage1Proof {
-        stages: stage1_tree_stage_shapes(rounds, b)
+        stages: DigitRangePlan::new(b)
+            .expect("test range basis")
+            .stage_shapes(rounds)
             .into_iter()
             .map(|shape| AkitaStage1StageProof {
                 sumcheck_proof: dummy_eq_factored_sumcheck(rounds, shape.sumcheck_proof.1),
                 child_claims: vec![F::zero(); shape.child_claims],
             })
             .collect(),
-        s_claim: F::zero(),
+        range_image_evaluation: F::zero(),
     }
 }
 
