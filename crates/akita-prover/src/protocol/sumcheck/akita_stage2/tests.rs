@@ -638,7 +638,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
-    expected.evaluation_trace.fold_y2(r0, r1);
+    expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();
@@ -731,7 +731,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     expected.split_eq.bind(r1);
     expected.w_table = WTable::Full(expected_w_full.clone());
     expected.alpha_compact = expected_alpha_round2.clone();
-    expected.evaluation_trace.fold_y2(r0, r1);
+    expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
     expected.relation_matrix_col_evals_compact = expected_relation_matrix_col_evals_compact.clone();
     let expected_round2 = expected.compute_current_round_poly_from_state();

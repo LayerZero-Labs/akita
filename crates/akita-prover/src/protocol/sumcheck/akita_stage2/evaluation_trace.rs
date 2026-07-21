@@ -464,7 +464,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         Ok(())
     }
 
-    pub(crate) fn fold_y(&mut self, challenge: E) {
+    pub(crate) fn fold_coefficients(&mut self, challenge: E) {
         let next_coeff_count = self.coeff_count / 2;
         for source in &mut self.sources {
             let mut folded = Vec::with_capacity(source.lane_count * next_coeff_count);
@@ -481,12 +481,12 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         self.coeff_count = next_coeff_count;
     }
 
-    pub(crate) fn fold_y2(&mut self, r0: E, r1: E) {
-        self.fold_y(r0);
-        self.fold_y(r1);
+    pub(crate) fn fold_two_coefficients(&mut self, r0: E, r1: E) {
+        self.fold_coefficients(r0);
+        self.fold_coefficients(r1);
     }
 
-    pub(crate) fn fold_x(&mut self, challenge: E) {
+    pub(crate) fn fold_lanes(&mut self, challenge: E) {
         let next_live_column_count = self.live_column_count.div_ceil(2);
         let mut folded = vec![Vec::new(); next_live_column_count];
         for (column, terms) in self.column_terms.drain(..).enumerate() {
@@ -503,14 +503,6 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         }
         self.column_terms = folded;
         self.live_column_count = next_live_column_count;
-    }
-
-    pub(crate) fn fold_for_w_update(&mut self, challenge: E, folding_x_round: bool) {
-        if folding_x_round {
-            self.fold_x(challenge);
-        } else {
-            self.fold_y(challenge);
-        }
     }
 
     #[cfg(test)]

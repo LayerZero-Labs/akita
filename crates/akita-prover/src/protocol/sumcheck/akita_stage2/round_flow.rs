@@ -137,8 +137,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                 };
                 let y_len = self.alpha_compact.len();
                 let alpha_round2 = Self::fold_alpha_to_round2(&self.alpha_compact, r0, r);
-                self.evaluation_trace.fold_y2(r0, r);
-                // fold_y2 is the two-round handoff; not routed through fold_trace_for_round.
+                self.evaluation_trace.fold_two_coefficients(r0, r);
+                // This is the two-round coefficient handoff, so the ordinary one-round
+                // trace transition below is deliberately bypassed.
                 let mut round2_terms = None;
                 self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
                     WTable::Compact(w_compact) => {
@@ -194,7 +195,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         }
 
         self.split_eq.bind(r);
-        let folding_x_round = !self.in_y_round();
+        let folding_lane_round = !self.in_y_round();
         let use_prefix_x_round = self.use_prefix_x_round();
         let use_prefix_y_round = self.use_prefix_y_round();
         let in_y_round = self.in_y_round();
@@ -207,20 +208,20 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
             WTable::Compact(w_compact) => {
                 let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
-                let w_full = if folding_x_round && use_prefix_x_round {
+                let w_full = if folding_lane_round && use_prefix_x_round {
                     Self::fold_compact_prefix_x(&w_compact, live_x_cols, y_len, &fold_lut)
                 } else {
                     Self::fold_compact_to_full(&w_compact, &fold_lut)
                 };
-                self.fold_trace_for_round(r, folding_x_round);
+                self.fold_evaluation_trace_for_current_round(r);
                 WTable::Full(w_full)
             }
             WTable::Full(w_full) => {
-                if folding_x_round && use_prefix_x_round {
+                if folding_lane_round && use_prefix_x_round {
                     if fuse_next_full_prefix_x {
                         // Fold trace before the fused kernel so relation terms use the same
                         // post-fold table as `compute_round_full_prefix_x_terms`.
-                        self.fold_trace_for_round(r, folding_x_round);
+                        self.fold_evaluation_trace_for_current_round(r);
                         let (
                             next_w_full,
                             next_relation_matrix_col_evals_compact,
@@ -234,22 +235,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                         WTable::Full(next_w_full)
                     } else {
                         let next_w_full = Self::fold_full_prefix_x(&w_full, live_x_cols, y_len, r);
-                        self.fold_trace_for_round(r, folding_x_round);
+                        self.fold_evaluation_trace_for_current_round(r);
                         WTable::Full(next_w_full)
                     }
                 } else if in_y_round && use_prefix_y_round {
-                    self.fold_trace_for_round(r, folding_x_round);
+                    self.fold_evaluation_trace_for_current_round(r);
                     WTable::Full(Self::fold_full_prefix_y(&w_full, live_x_cols, y_len, r))
                 } else {
                     let mut w_full = w_full;
                     fold_evals_in_place(&mut w_full, r);
-                    self.fold_trace_for_round(r, folding_x_round);
+                    self.fold_evaluation_trace_for_current_round(r);
                     WTable::Full(w_full)
                 }
             }
         };
 
-        if folding_x_round {
+        if folding_lane_round {
             if use_prefix_x_round {
                 if !fused_full_prefix_x {
                     self.relation_matrix_col_evals_compact =

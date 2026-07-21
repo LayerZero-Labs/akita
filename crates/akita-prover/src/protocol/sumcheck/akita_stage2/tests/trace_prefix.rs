@@ -201,7 +201,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         AkitaStage2Prover::<F>::fold_alpha_to_round2(&alpha_evals_y, r0, r1);
     let mut expected_trace =
         PreparedProverEvaluationTrace::from_dense(trace_compact.clone(), live_x_cols, y_len);
-    expected_trace.fold_y2(r0, r1);
+    expected_trace.fold_two_coefficients(r0, r1);
     let expected_relation_matrix_col_evals_compact =
         prover.relation_matrix_col_evals_compact.clone();
 

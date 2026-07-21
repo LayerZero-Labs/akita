@@ -301,8 +301,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
-        self.evaluation_trace.fold_for_w_update(r, folding_x_round);
+    pub(super) fn fold_evaluation_trace_for_current_round(&mut self, challenge: E) {
+        if self.in_y_round() {
+            self.evaluation_trace.fold_coefficients(challenge);
+        } else {
+            self.evaluation_trace.fold_lanes(challenge);
+        }
     }
 }
 
