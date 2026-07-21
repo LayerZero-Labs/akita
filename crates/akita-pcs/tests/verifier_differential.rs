@@ -31,7 +31,7 @@ mod common;
 
 use std::sync::Mutex;
 
-use akita_config::proof_optimized::{fp128, fp64};
+use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -39,7 +39,7 @@ use akita_field::{
     FromPrimitiveInt, HalvingField, PseudoMersenneField, RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, UniformProverStack};
+use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, UniformProverStack};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::{AkitaTranscript, LoggingTranscript, TranscriptEvent};
 use akita_types::{
@@ -362,6 +362,67 @@ fn fp128_onehot_fixture(nv: usize, domain: &'static [u8]) -> Fixture<Fp128, Fp12
     (verifier_setup, commitment, proof, point, opening)
 }
 
+/// fp32 one-hot fixture (degree-4 extension, `E != F`): closes the differential
+/// matrix's fp32 cell. fp32 ships no *dense* schedule, so this drives
+/// `fp32::D128OneHot` (which ships `schedules-fp32-d128-onehot`). Every
+/// `OpeningFoldKernel` is base-field-only, so the `E`-valued opening is the sum
+/// of the extension-field Lagrange weights at the poly's hot positions — exactly
+/// `dense_lagrange_opening` over the one-hot poly's densified evals
+/// (`evals[chunk·K + hot] = 1`), the same way `dense_fixture` computes its
+/// `E`-opening. This exercises the fp32 root extension-opening-reduction path.
+fn fp32_onehot_fixture(
+    nv: usize,
+    domain: &'static [u8],
+) -> Fixture<fp32::Field, fp32::ExtensionField> {
+    type Cfg = fp32::D128OneHot;
+    const D: usize = <fp32::D128OneHot as CommitmentConfig>::D;
+
+    use rand::rngs::StdRng;
+    use rand::{Rng, SeedableRng};
+
+    let onehot_k = Cfg::onehot_chunk_size();
+    assert!(onehot_k <= 1usize << u8::BITS, "onehot_k must fit u8");
+    let num_chunks = (1usize << nv) / onehot_k;
+    let mut rng = StdRng::seed_from_u64(0x0123_4567_89ab_cdef);
+    let indices: Vec<Option<u8>> = (0..num_chunks)
+        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
+        .collect();
+    let poly = OneHotPoly::<fp32::Field, u8>::new(onehot_k, D, indices).expect("fp32 one-hot poly");
+
+    // E-valued opening point (degree-4 extension) and the multilinear opening as
+    // the sum of Lagrange weights over the one-hot poly's hot positions.
+    let point = random_claim_point::<fp32::Field, fp32::ExtensionField>(nv);
+    let weights = lagrange_weights(&point).expect("fp32 extension Lagrange weights");
+    let opening = poly
+        .indices()
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk, hot)| hot.map(|idx| weights[chunk * onehot_k + usize::from(idx)]))
+        .fold(fp32::ExtensionField::zero(), |sum, w| sum + w);
+
+    let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
+    let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    let stack = UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+        .expect("stack");
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).unwrap();
+    let (commitment, hint) =
+        AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)
+            .unwrap();
+
+    let poly_refs = [&poly];
+    let mut prover_transcript = AkitaTranscript::<fp32::Field>::new(domain);
+    let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
+        &setup,
+        prove_input(&point[..], &poly_refs[..], &commitment, hint),
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .unwrap();
+
+    (verifier_setup, commitment, proof, point, opening)
+}
+
 // ---------------------------------------------------------------------------
 // Accept-case shapes.
 // ---------------------------------------------------------------------------
@@ -446,12 +507,10 @@ fn fp128_onehot_multifold() {
 }
 
 // Extension-field (`E != F`) coverage — the code path the Phase-1 F->E generic
-// rename touches — is exercised by the fp64 dense case below (degree-2
-// extension). The spec matrix's Fp32 cell (degree-4 extension) is deferred: no
-// fp32 *dense* schedule table ships in `schedules-default` (only one-hot), so a
-// dense fp32 fixture cannot size its setup, and a fp32 one-hot fixture needs a
-// bespoke extension-field one-hot opening. Follow-up: add fp32 one-hot coverage
-// (or a generated fp32 dense schedule) to close the matrix.
+// rename touches — is exercised by the fp64 dense case (degree-2 extension) and
+// the fp32 one-hot case (degree-4 extension). fp32 ships no *dense* schedule
+// table (only one-hot), so the fp32 cell is closed via `fp32::D128OneHot` with
+// an extension-field one-hot opening (see `fp32_onehot_fixture`).
 
 #[test]
 fn fp64_dense_extension_field() {
@@ -474,6 +533,33 @@ fn fp64_dense_extension_field() {
             &[opening],
             BasisMode::Lagrange,
             b"diff/fp64/dense",
+            true,
+        );
+    });
+}
+
+#[test]
+fn fp32_onehot_extension_field() {
+    let _guard = DIFFERENTIAL_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let (setup, commitment, proof, point, opening) =
+            fp32_onehot_fixture(16, b"diff/fp32/onehot");
+        assert!(
+            proof.num_fold_levels() >= 2,
+            "fp32 one-hot proof must exercise the folded root/suffix topology"
+        );
+        assert_parity::<fp32::D128OneHot>(
+            "fp32 one-hot (extension field, degree-4)",
+            &proof,
+            &setup,
+            &commitment,
+            &point,
+            &[opening],
+            BasisMode::Lagrange,
+            b"diff/fp32/onehot",
             true,
         );
     });
