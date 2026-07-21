@@ -1,6 +1,6 @@
-//! Stage-2 fused sumcheck prover/verifier for the Akita PCS.
+//! Fused relation, evaluation-trace, and range-image sumcheck prover.
 //!
-//! This stage views the committed witness as one flat LSB-first Boolean table.
+//! This sumcheck views the committed witness as one flat LSB-first Boolean table.
 //! The current state machine splits its point after
 //! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
 //! index the largest coefficient block aligned for both every relation role and
@@ -212,14 +212,14 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
     accum_small_signed::<E>(rel, 4, dp, dw);
 }
 
-/// Stage-2 fused virtual-claim + relation sumcheck prover.
+/// Fused relation, evaluation-trace, and range-image sumcheck prover.
 ///
 /// Holds one witness state shared by the range-image, relation, and evaluation-trace
 /// terms. The compact prefix is materialized once into the folded field suffix.
 /// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
 /// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub struct AkitaStage2Prover<E: FieldCore> {
+pub struct RelationRangeImageProver<E: FieldCore> {
     witness_state: WitnessState<E>,
     b: usize,
     batching_coeff: E,
@@ -255,7 +255,7 @@ mod round_flow;
 
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     // Fused relation (`alpha * m`) + trace-weight addend for one witness
     // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
     // (`lane * coeff_count + coefficient`). Coefficient-round kernels

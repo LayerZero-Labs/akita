@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
         let use_deferred_compact_prefix = self.using_deferred_compact_prefix();
@@ -98,7 +98,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> SumcheckInstanceProver<E>
-    for AkitaStage2Prover<E>
+    for RelationRangeImageProver<E>
 {
     fn num_rounds(&self) -> usize {
         self.num_vars
@@ -122,7 +122,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
 
     fn ingest_challenge(&mut self, _round: usize, r: E) {
         let t_fold = Instant::now();
-        let _span = tracing::info_span!("AkitaStage2Prover::fold_round").entered();
+        let _span = tracing::info_span!("RelationRangeImageProver::fold_round").entered();
         if let Some(prev_norm_poly) = self.prev_norm_poly.take() {
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }

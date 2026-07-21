@@ -78,7 +78,7 @@ fn new_stage2_test_prover(
     common_alpha_factor: Vec<F>,
     relation_lane_weights: Vec<F>,
     params: Stage2Params<'_>,
-) -> AkitaStage2Prover<F> {
+) -> RelationRangeImageProver<F> {
     let zero_trace_weights = vec![F::zero(); compact_witness.len()];
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
@@ -88,7 +88,7 @@ fn new_stage2_test_prover(
         &zero_trace_weights,
         &params,
     );
-    AkitaStage2Prover::new(
+    RelationRangeImageProver::new(
         batching_coeff,
         compact_witness,
         params.stage1_point,
@@ -117,7 +117,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
     relation_lane_weights: Vec<F>,
     trace_compact: Vec<F>,
     params: Stage2Params<'_>,
-) -> AkitaStage2Prover<F> {
+) -> RelationRangeImageProver<F> {
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
         &compact_witness,
@@ -126,7 +126,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
         &trace_compact,
         &params,
     );
-    AkitaStage2Prover::new(
+    RelationRangeImageProver::new(
         batching_coeff,
         compact_witness,
         params.stage1_point,
@@ -389,16 +389,16 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let r = F::from_u64(53);
 
     let w_prefix = vec![1, 2, 3, 1, 2, 3, 1, 2, 3, 1];
-    let fold_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_prefix, r);
+    let fold_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(&w_prefix, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_compact_partial_lanes(&w_prefix, 5, 2, &fold_lut),
+        RelationRangeImageProver::<F>::fold_compact_partial_lanes(&w_prefix, 5, 2, &fold_lut),
         fold_compact_partial_lanes_reference(&w_prefix, 5, 2, r)
     );
 
     let w_dense = vec![1, 2, 3, 1, 2, 3];
-    let dense_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
+    let dense_lut = RelationRangeImageProver::<F>::build_compact_w_fold_lut(&w_dense, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::materialize_compact_witness(&w_dense, &dense_lut),
+        RelationRangeImageProver::<F>::materialize_compact_witness(&w_dense, &dense_lut),
         materialize_compact_witness_reference(&w_dense, r)
     );
 }
@@ -613,7 +613,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(97);
 
-    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
+    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -621,7 +621,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
+        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
@@ -707,7 +707,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(127);
 
-    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
+    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -715,7 +715,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
+        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
@@ -822,14 +822,17 @@ fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
     };
     let current_relation_lane_weights = expected.relation_lane_weights.clone();
     let current_coeff_count = expected.common_alpha_factor.len();
-    let expected_next_folded_witness = AkitaStage2Prover::<F>::fold_folded_partial_lanes(
+    let expected_next_folded_witness = RelationRangeImageProver::<F>::fold_folded_partial_lanes(
         &current_w_full,
         expected.live_lane_count,
         current_coeff_count,
         r2,
     );
     let expected_next_relation_lane_weights =
-        AkitaStage2Prover::<F>::fold_relation_lane_weights(&current_relation_lane_weights, r2);
+        RelationRangeImageProver::<F>::fold_relation_lane_weights(
+            &current_relation_lane_weights,
+            r2,
+        );
     expected.prev_norm_claim = expected
         .prev_norm_poly
         .as_ref()

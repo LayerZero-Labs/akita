@@ -57,10 +57,10 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
     accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_folded_partial_lane_and_compute_next_round"
+        name = "RelationRangeImageProver::fuse_folded_partial_lane_and_compute_next_round"
     )]
     pub(super) fn fuse_folded_partial_lane_and_compute_next_round(
         &self,
@@ -416,7 +416,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_compact_partial_lane_round_terms"
+        name = "RelationRangeImageProver::compute_compact_partial_lane_round_terms"
     )]
     pub(super) fn compute_compact_partial_lane_round_terms(
         &self,
@@ -625,7 +625,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_folded_partial_lane_round_terms"
+        name = "RelationRangeImageProver::compute_folded_partial_lane_round_terms"
     )]
     pub(super) fn compute_folded_partial_lane_round_terms(
         &self,

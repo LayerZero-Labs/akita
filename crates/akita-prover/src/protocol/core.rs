@@ -8,9 +8,9 @@ use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
     RingSwitchBuildOutput, RingSwitchOutput,
 };
-use crate::protocol::sumcheck::akita_stage2::build_evaluation_trace_weights;
-use crate::protocol::sumcheck::AkitaStage2Prover;
+use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weights;
 use crate::protocol::sumcheck::AkitaStage3Prover;
+use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
     ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
@@ -97,8 +97,8 @@ pub struct RecursiveSuffixOutcome<F: FieldCore, E: FieldCore> {
     pub num_levels: usize,
 }
 
-pub(in crate::protocol::core) type Stage2ProveResult<E> =
-    (SumcheckProof<E>, Vec<E>, AkitaStage2Prover<E>);
+pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
+    (SumcheckProof<E>, Vec<E>, RelationRangeImageProver<E>);
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,

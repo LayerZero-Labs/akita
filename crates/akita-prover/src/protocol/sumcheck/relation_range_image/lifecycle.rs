@@ -1,9 +1,9 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     /// Create a fused stage-2 virtual-claim + relation sumcheck prover.
     #[allow(clippy::too_many_arguments)]
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::new")]
+    #[tracing::instrument(skip_all, name = "RelationRangeImageProver::new")]
     pub(crate) fn new(
         batching_coeff: E,
         w_evals_compact: impl Into<std::sync::Arc<[i8]>>,

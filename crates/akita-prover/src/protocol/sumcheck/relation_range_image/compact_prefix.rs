@@ -1,6 +1,6 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     #[inline]
     pub(super) fn direct_fold_w_quad_two_rounds(
         w00: i8,
@@ -92,7 +92,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::materialize_two_round_compact_prefix"
+        name = "RelationRangeImageProver::materialize_two_round_compact_prefix"
     )]
     pub(super) fn materialize_two_round_compact_prefix(
         compact_witness: &[i8],
@@ -127,7 +127,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_alpha_two_rounds")]
+    #[tracing::instrument(skip_all, name = "RelationRangeImageProver::fold_alpha_two_rounds")]
     pub(super) fn fold_alpha_two_rounds(common_alpha_factor: &[E], r0: E, r1: E) -> Vec<E> {
         debug_assert!(common_alpha_factor.len().is_power_of_two());
         debug_assert!(common_alpha_factor.len() >= 4);
@@ -162,7 +162,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::materialize_two_round_compact_prefix_and_compute_next_round"
+        name = "RelationRangeImageProver::materialize_two_round_compact_prefix_and_compute_next_round"
     )]
     pub(super) fn materialize_two_round_compact_prefix_and_compute_next_round(
         &self,

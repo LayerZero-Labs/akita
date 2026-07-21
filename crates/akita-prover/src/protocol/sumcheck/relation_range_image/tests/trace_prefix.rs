@@ -196,7 +196,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
+    let expected_w_full = RelationRangeImageProver::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -204,7 +204,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
+        RelationRangeImageProver::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let mut expected_trace = PreparedProverEvaluationTrace::from_dense(
         trace_compact.clone(),
         live_lane_count,
@@ -251,7 +251,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let expected_trace_round2 = trace_compact
         .chunks_exact(4)
         .map(|quad| {
-            AkitaStage2Prover::<F>::direct_fold_e_quad_two_rounds(
+            RelationRangeImageProver::<F>::direct_fold_e_quad_two_rounds(
                 quad[0], quad[1], quad[2], quad[3], r0, r1,
             )
         })

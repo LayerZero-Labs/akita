@@ -4,7 +4,7 @@ use crate::compute::{
     ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
     RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
-use crate::protocol::sumcheck::akita_stage2::PreparedProverEvaluationTrace;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -916,7 +916,7 @@ fn prove_stage2<F, E, T>(
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
-) -> Result<Stage2ProveResult<E>, AkitaError>
+) -> Result<RelationRangeImageProveResult<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + FromPrimitiveInt + AkitaSerialize,
@@ -948,7 +948,7 @@ where
             common_alpha_factor.len(),
         )));
     }
-    let mut stage2_prover = AkitaStage2Prover::new(
+    let mut stage2_prover = RelationRangeImageProver::new(
         batching_coeff,
         rs.w_evals_compact,
         stage1_point,

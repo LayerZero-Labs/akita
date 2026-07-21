@@ -1,9 +1,9 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_round_compact_dense_terms"
+        name = "RelationRangeImageProver::compute_round_compact_dense_terms"
     )]
     pub(super) fn compute_round_compact_dense_terms(
         &self,
@@ -177,7 +177,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::compute_folded_dense_round_terms")]
+    #[tracing::instrument(
+        skip_all,
+        name = "RelationRangeImageProver::compute_folded_dense_round_terms"
+    )]
     pub(super) fn compute_folded_dense_round_terms(
         &self,
         folded_witness: &[E],

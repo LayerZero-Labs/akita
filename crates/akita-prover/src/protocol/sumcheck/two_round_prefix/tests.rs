@@ -1,8 +1,8 @@
 use super::common::*;
 use super::stage1::*;
 use super::stage2::*;
-use crate::protocol::sumcheck::akita_stage2::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::digit_range::direct_range_leaf::LowBasisRangeCheckProver;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::{FieldCore, Prime128Offset275};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};

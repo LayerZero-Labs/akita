@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::protocol::sumcheck::akita_stage2::PreparedProverEvaluationTrace;
+use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::parallel::*;
 use akita_field::unreduced::HasUnreducedOps;

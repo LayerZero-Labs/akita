@@ -1,9 +1,9 @@
 use super::*;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_compact_partial_lane_coefficient_round_terms"
+        name = "RelationRangeImageProver::compute_compact_partial_lane_coefficient_round_terms"
     )]
     pub(super) fn compute_compact_partial_lane_coefficient_round_terms(
         &self,
@@ -192,7 +192,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_folded_partial_lane_coefficient_round_terms"
+        name = "RelationRangeImageProver::compute_folded_partial_lane_coefficient_round_terms"
     )]
     pub(super) fn compute_folded_partial_lane_coefficient_round_terms(
         &self,
