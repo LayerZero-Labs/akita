@@ -661,7 +661,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let coefficient_eval =
                 akita_sumcheck::multilinear_eval(&alpha_evals, coefficient_point)?;
             return Ok(coefficient_eval
-                * self.eval_at_point::<F, D>(column_point, setup, alpha, setup_claim)?);
+                * self.eval_at_point_with_alpha_pows::<F, D>(
+                    column_point,
+                    setup,
+                    alpha,
+                    setup_claim,
+                    &alpha_evals,
+                )?);
         }
         if setup_claim.is_some() {
             return Err(AkitaError::InvalidProof);
@@ -792,22 +798,47 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
+        let alpha_pows_a = scalar_powers(alpha, D);
+        self.eval_at_point_with_alpha_pows::<F, D>(
+            x_challenges,
+            setup,
+            alpha,
+            setup_claim,
+            &alpha_pows_a,
+        )
+    }
+
+    #[inline]
+    fn eval_at_point_with_alpha_pows<F, const D: usize>(
+        &self,
+        x_challenges: &[E],
+        setup: &AkitaExpandedSetup<F>,
+        alpha: E,
+        setup_claim: Option<E>,
+        alpha_pows_a: &[E],
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
+    {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
+        if alpha_pows_a.len() != D {
+            return Err(AkitaError::InvalidProof);
+        }
         let d_b = self.role_dims.d_b();
         let d_d = self.role_dims.d_d();
-        let alpha_pows_a = scalar_powers(alpha, D);
         let alpha_pows_b_storage;
         let alpha_pows_b: &[E] = if d_b == D {
-            &alpha_pows_a
+            alpha_pows_a
         } else {
             alpha_pows_b_storage = scalar_powers(alpha, d_b);
             &alpha_pows_b_storage
         };
         let alpha_pows_d_storage;
         let alpha_pows_d: &[E] = if d_d == D {
-            &alpha_pows_a
+            alpha_pows_a
         } else if d_d == d_b {
             alpha_pows_b
         } else {
@@ -821,11 +852,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let shared_open_log_basis = self.log_basis_open;
         validate_log_basis(shared_open_log_basis)?;
         let r_depth = r_decomp_levels::<F>(shared_open_log_basis);
-        let (max_depth_open, max_depth_fold) =
-            self.groups
-                .iter()
-                .try_fold((0usize, 0usize), |(max_open, max_fold), group| {
+        let (max_depth_open, max_depth_fold, max_shared_depth_commit, max_shared_depth_witness) =
+            self.groups.iter().try_fold(
+                (0usize, 0usize, 0usize, 0usize),
+                |(max_open, max_fold, max_commit, max_witness), group| {
                     validate_log_basis(group.log_basis_open)?;
+                    validate_log_basis(group.log_basis_inner)?;
+                    validate_log_basis(group.log_basis_outer)?;
                     if group.log_basis_open != shared_open_log_basis {
                         return Err(AkitaError::InvalidSetup(
                             "relation matrix group opening basis does not match root basis".into(),
@@ -834,9 +867,24 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     Ok((
                         max_open.max(group.depth_open),
                         max_fold.max(group.depth_fold),
+                        if group.log_basis_outer == shared_open_log_basis {
+                            max_commit.max(group.depth_commit)
+                        } else {
+                            max_commit
+                        },
+                        if group.log_basis_inner == shared_open_log_basis {
+                            max_witness.max(group.depth_witness)
+                        } else {
+                            max_witness
+                        },
                     ))
-                })?;
-        let shared_gadget_depth = max_depth_open.max(max_depth_fold).max(r_depth);
+                },
+            )?;
+        let shared_gadget_depth = max_depth_open
+            .max(max_depth_fold)
+            .max(max_shared_depth_commit)
+            .max(max_shared_depth_witness)
+            .max(r_depth);
         let shared_gadget = gadget_row_scalars::<F>(shared_gadget_depth, shared_open_log_basis);
         let shared_gadget_ext = shared_gadget
             .iter()
@@ -872,19 +920,43 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 .transpose()?;
             for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(context, group)?;
-                validate_log_basis(group.log_basis_inner)?;
-                validate_log_basis(group.log_basis_outer)?;
 
                 let group_g_open_ext = shared_gadget_ext
                     .get(..group.depth_open)
                     .ok_or(AkitaError::InvalidProof)?;
-                let g_t_commit = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
-                let g_t_commit_ext = g_t_commit
-                    .iter()
-                    .copied()
-                    .map(E::lift_base)
-                    .collect::<Vec<_>>();
-                let g_witness = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+                let g_t_commit_storage;
+                let g_t_commit = if group.log_basis_outer == shared_open_log_basis {
+                    shared_gadget
+                        .get(..group.depth_commit)
+                        .ok_or(AkitaError::InvalidProof)?
+                } else {
+                    g_t_commit_storage =
+                        gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
+                    &g_t_commit_storage
+                };
+                let g_t_commit_ext_storage;
+                let g_t_commit_ext = if group.log_basis_outer == shared_open_log_basis {
+                    shared_gadget_ext
+                        .get(..group.depth_commit)
+                        .ok_or(AkitaError::InvalidProof)?
+                } else {
+                    g_t_commit_ext_storage = g_t_commit
+                        .iter()
+                        .copied()
+                        .map(E::lift_base)
+                        .collect::<Vec<_>>();
+                    &g_t_commit_ext_storage
+                };
+                let g_witness_storage;
+                let g_witness = if group.log_basis_inner == shared_open_log_basis {
+                    shared_gadget
+                        .get(..group.depth_witness)
+                        .ok_or(AkitaError::InvalidProof)?
+                } else {
+                    g_witness_storage =
+                        gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+                    &g_witness_storage
+                };
 
                 let consistency_weight = self.eq_tau1[0];
                 let a_row_end = group
@@ -904,7 +976,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         consistency_weight,
                         a_row_weights,
                         group_g_open_ext,
-                        &g_t_commit_ext,
+                        g_t_commit_ext,
                         e_eq_slice,
                         t_eq_slice,
                     )?
@@ -917,7 +989,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         consistency_weight,
                         a_row_weights,
                         group_g_open_ext,
-                        &g_t_commit_ext,
+                        g_t_commit_ext,
                     )?
                 };
                 e_structured_contribution += e_contribution;
@@ -992,7 +1064,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             )
             .entered();
             let plan = setup_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
-            plan.evaluate_direct::<F>(setup, &alpha_pows_a, alpha_pows_b, alpha_pows_d)?
+            plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)?
         };
 
         let r_contribution = {
