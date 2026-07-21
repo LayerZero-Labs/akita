@@ -149,5 +149,9 @@ harness = false
 name = "setup_index_weight"
 harness = false
 
+[[bench]]
+name = "relation_matrix_eval"
+harness = false
+
 [lints]
 workspace = true
