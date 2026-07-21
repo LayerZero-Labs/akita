@@ -80,31 +80,31 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 /// Everything else is passed by reference at evaluation time to avoid
 /// duplicating setup matrix views, opening points, and gadget vectors.
 #[derive(Clone)]
-pub struct RelationMatrixEvaluator<F: FieldCore> {
+pub struct RelationMatrixEvaluator<E: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
-    pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
+    pub(crate) groups: Vec<RelationMatrixGroupEvaluator<E>>,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis_open: u32,
-    pub(crate) eq_tau1: Arc<[F]>,
-    pub(crate) flat_context: Option<FlatRelationContext<F>>,
+    pub(crate) eq_tau1: Arc<[E]>,
+    pub(crate) flat_context: Option<FlatRelationContext<E>>,
 }
 
 #[derive(Clone)]
-pub(crate) struct FlatRelationContext<F: FieldCore> {
+pub(crate) struct FlatRelationContext<E: FieldCore> {
     pub(crate) level_params: LevelParams,
     pub(crate) opening_batch: OpeningClaimsLayout,
     pub(crate) witness_layout: Arc<WitnessLayout>,
     pub(crate) opening_source_len: usize,
-    pub(crate) row_coefficients: Vec<F>,
-    pub(crate) tau1: Vec<F>,
+    pub(crate) row_coefficients: Vec<E>,
+    pub(crate) tau1: Vec<E>,
     pub(crate) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(crate) opening_ring_dim: usize,
 }
 
 #[derive(Clone)]
-pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
-    pub(crate) c_alphas: PreparedChallengeEvals<F>,
-    pub(crate) opening_a_evals: Vec<F>,
+pub(crate) struct RelationMatrixGroupEvaluator<E: FieldCore> {
+    pub(crate) c_alphas: PreparedChallengeEvals<E>,
+    pub(crate) opening_a_evals: Vec<E>,
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
@@ -620,8 +620,8 @@ fn reject_mixed_d_multi_chunk<const D: usize>(
     Ok(())
 }
 
-pub(crate) fn setup_contribution_group_inputs<F: FieldCore>(
-    groups: &[RelationMatrixGroupEvaluator<F>],
+pub(crate) fn setup_contribution_group_inputs<E: FieldCore>(
+    groups: &[RelationMatrixGroupEvaluator<E>],
 ) -> Vec<SetupContributionGroupInputs> {
     groups
         .iter()
