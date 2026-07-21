@@ -274,12 +274,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         p0: E,
         p1: E,
     ) {
-        accumulate_relation_coeffs(rel, w0, dw, p0, p1);
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
             .pair_flat(witness_idx0, witness_idx1, coeff_count);
-        accumulate_relation_coeffs(rel, w0, dw, t0, t1);
+        accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]
@@ -294,12 +293,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         p0: E,
         p1: E,
     ) {
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
             .pair_flat(witness_idx0, witness_idx1, coeff_count);
-        accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
+        accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]

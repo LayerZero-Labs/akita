@@ -14,7 +14,6 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
     next_left_lane: usize,
     next_live_lane_count: usize,
 ) {
-    accumulate_relation_coeffs(rel, w0, dw, p0, p1);
     let (t0, t1) = if next_left_lane + 1 < next_live_lane_count {
         evaluation_trace.pair_at_lanes(
             next_left_lane,
@@ -28,7 +27,7 @@ fn accumulate_fused_partial_lane_relation<E: FieldCore>(
             E::zero(),
         )
     };
-    accumulate_relation_coeffs(rel, w0, dw, t0, t1);
+    accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
 }
 
 #[inline]
@@ -45,7 +44,6 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
     left: usize,
     live_lane_count: usize,
 ) {
-    accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
     let (t0, t1) = if left + 1 < live_lane_count {
         evaluation_trace.pair_at_lanes(left, left + 1, coefficient, trace_coeff_count)
     } else {
@@ -54,7 +52,7 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
             E::zero(),
         )
     };
-    accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
+    accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
 }
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
