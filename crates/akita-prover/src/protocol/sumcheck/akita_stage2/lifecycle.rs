@@ -104,7 +104,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let input_claim = batching_coeff * range_image_evaluation + relation_trace_claim;
 
         Ok(Self {
-            w_table: WTable::Compact(w_evals_compact),
+            witness_state: WitnessState::CompactPrefix(w_evals_compact),
             b,
             batching_coeff,
             range_image_evaluation,
@@ -119,9 +119,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             relation_trace_claim,
             prev_norm_claim: batching_coeff * range_image_evaluation,
             prev_norm_poly: None,
-            prefix_r_stage1: can_use_stage2_two_round_prefix(coefficient_bits, b)
+            compact_prefix_stage1_point: can_use_stage2_two_round_prefix(coefficient_bits, b)
                 .then(|| stage1_point.to_vec()),
-            two_round_prefix: None,
+            deferred_compact_prefix: None,
             cached_round_poly: None,
             scan_time_total: 0.0,
             fold_time_total: 0.0,
@@ -133,15 +133,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     ///
     /// # Panics
     ///
-    /// Panics if called before the witness table has been fully folded to a
-    /// single field element.
+    /// Panics if called before the folded suffix contains one field element.
     pub fn final_w_eval(&self) -> E {
-        match &self.w_table {
-            WTable::Full(w_full) => {
-                assert_eq!(w_full.len(), 1, "w_table not fully folded");
-                w_full[0]
+        match &self.witness_state {
+            WitnessState::FoldedSuffix(folded_witness) => {
+                assert_eq!(folded_witness.len(), 1, "witness suffix not fully folded");
+                folded_witness[0]
             }
-            WTable::Compact(_) => panic!("w_table remained compact after final fold"),
+            WitnessState::CompactPrefix(_) => {
+                panic!("witness remained in compact-prefix state after final fold")
+            }
         }
     }
 
@@ -202,13 +203,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(crate) fn can_use_two_round_prefix(&self) -> bool {
-        self.prefix_r_stage1.is_some()
+    pub(crate) fn can_use_deferred_compact_prefix(&self) -> bool {
+        self.compact_prefix_stage1_point.is_some()
     }
 
     #[inline]
-    pub(super) fn using_two_round_prefix(&self) -> bool {
-        self.rounds_completed < 2 && self.can_use_two_round_prefix()
+    pub(super) fn using_deferred_compact_prefix(&self) -> bool {
+        self.rounds_completed < 2 && self.can_use_deferred_compact_prefix()
     }
 
     #[inline]
@@ -269,19 +270,21 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         combined
     }
 
-    pub(super) fn ensure_two_round_prefix(&mut self) -> &mut Stage2TwoRoundPrefix<E> {
-        if self.two_round_prefix.is_none() {
+    pub(super) fn ensure_deferred_compact_prefix(&mut self) -> &mut TwoRoundCompactPrefix<E> {
+        if self.deferred_compact_prefix.is_none() {
             let stage1_point = self
-                .prefix_r_stage1
+                .compact_prefix_stage1_point
                 .clone()
                 .expect("two-round prefix requested without cached stage-1 challenges");
             let coefficient_bits = self.num_vars - self.lane_bits;
-            let w_compact = match &self.w_table {
-                WTable::Compact(w_compact) => w_compact,
-                WTable::Full(_) => panic!("two-round prefix can only build from compact witness"),
+            let compact_witness = match &self.witness_state {
+                WitnessState::CompactPrefix(compact_witness) => compact_witness,
+                WitnessState::FoldedSuffix(_) => {
+                    panic!("two-round prefix can only build from compact witness")
+                }
             };
             let proof = build_stage2_bivariate_skip_proof_from_m_compact(
-                w_compact,
+                compact_witness,
                 &self.common_alpha_factor,
                 &self.relation_lane_weights,
                 &self.evaluation_trace,
@@ -300,12 +303,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 self.batching_coeff,
             )
             .expect("valid bivariate-skip state");
-            self.two_round_prefix = Some(Stage2TwoRoundPrefix {
+            self.deferred_compact_prefix = Some(TwoRoundCompactPrefix {
                 skip_state,
                 first_challenge: None,
             });
         }
-        self.two_round_prefix
+        self.deferred_compact_prefix
             .as_mut()
             .expect("two-round prefix should be initialized")
     }

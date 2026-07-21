@@ -7,7 +7,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     )]
     pub(super) fn compute_round_compact_dense_terms(
         &self,
-        w_compact: &[i8],
+        compact_witness: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -19,7 +19,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
         let common_alpha_factor = &self.common_alpha_factor;
         let relation_lane_weights = &self.relation_lane_weights;
-        debug_assert_eq!(w_compact.len() / 2, num_first * num_second);
+        debug_assert_eq!(compact_witness.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_accum) = cfg_fold_reduce!(
@@ -31,8 +31,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = w_compact[2 * j] as i32;
-                        let w1 = w_compact[2 * j + 1] as i32;
+                        let w0 = compact_witness[2 * j] as i32;
+                        let w1 = compact_witness[2 * j + 1] as i32;
                         let dw = w1 - w0;
                         let w0_i64 = w0 as i64;
                         let dw_i64 = dw as i64;
@@ -106,8 +106,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = w_compact[2 * j] as i32;
-                        let w1 = w_compact[2 * j + 1] as i32;
+                        let w0 = compact_witness[2 * j] as i32;
+                        let w1 = compact_witness[2 * j + 1] as i32;
                         let dw = w1 - w0;
                         let w0_i64 = w0 as i64;
                         let dw_i64 = dw as i64;
@@ -177,10 +177,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::compute_round_full_dense_terms")]
-    pub(super) fn compute_round_full_dense_terms(
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::compute_folded_dense_round_terms")]
+    pub(super) fn compute_folded_dense_round_terms(
         &self,
-        w_full: &[E],
+        folded_witness: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();
         let num_first = e_first.len();
@@ -192,7 +192,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         let current_coefficient_mask = (1usize << current_coefficient_width).wrapping_sub(1);
         let common_alpha_factor = &self.common_alpha_factor;
         let relation_lane_weights = &self.relation_lane_weights;
-        debug_assert_eq!(w_full.len() / 2, num_first * num_second);
+        debug_assert_eq!(folded_witness.len() / 2, num_first * num_second);
 
         if self.can_skip_norm_linear_coeff() {
             let (virt_coeffs, rel_coeffs) = cfg_fold_reduce!(
@@ -204,8 +204,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = w_full[2 * j];
-                        let w1 = w_full[2 * j + 1];
+                        let w0 = folded_witness[2 * j];
+                        let w1 = folded_witness[2 * j + 1];
                         let dw = w1 - w0;
 
                         inner_virt[0] += e_in * (w0 * (w0 + E::one()));
@@ -266,8 +266,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
                     for (j_low, &e_in) in e_first.iter().enumerate() {
                         let j = base + j_low;
-                        let w0 = w_full[2 * j];
-                        let w1 = w_full[2 * j + 1];
+                        let w0 = folded_witness[2 * j];
+                        let w1 = folded_witness[2 * j + 1];
                         let dw = w1 - w0;
                         let two_w0_plus_one = w0 + w0 + E::one();
 
@@ -327,9 +327,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[cfg(test)]
     pub(super) fn compute_round_compact_dense_polys(
         &self,
-        w_compact: &[i8],
+        compact_witness: &[i8],
     ) -> (UniPoly<E>, UniPoly<E>) {
-        let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_dense_terms(w_compact);
+        let (virt_q_coeffs, rel_coeffs) = self.compute_round_compact_dense_terms(compact_witness);
         self.polys_from_terms(virt_q_coeffs, rel_coeffs)
     }
 }

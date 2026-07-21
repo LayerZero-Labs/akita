@@ -60,11 +60,11 @@ fn accumulate_fused_partial_lane_relation_signed<E: FieldCore + HasUnreducedOps>
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_full_partial_lane_fold_and_next_round"
+        name = "AkitaStage2Prover::fuse_folded_partial_lane_and_compute_next_round"
     )]
-    pub(super) fn fuse_full_partial_lane_fold_and_next_round(
+    pub(super) fn fuse_folded_partial_lane_and_compute_next_round(
         &self,
-        w_full: &[E],
+        folded_witness: &[E],
         r: E,
     ) -> (Vec<E>, Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.next_uses_partial_lane_round());
@@ -91,7 +91,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .par_chunks_mut(next_live_lane_count)
                 .enumerate()
                 .map(|(coefficient, coefficient_out)| {
-                    let coefficient_values = &w_full[coefficient * old_live_lane_count
+                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
                         ..(coefficient + 1) * old_live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
@@ -113,11 +113,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_full_prefix_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
                                 let w1 =
-                                    fold_full_prefix_pair(coefficient_values, old_left_lane + 2, r);
+                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -176,7 +176,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
-                    let coefficient_values = &w_full[coefficient * old_live_lane_count
+                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
                         ..(coefficient + 1) * old_live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
@@ -195,11 +195,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_full_prefix_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
                                 let w1 =
-                                    fold_full_prefix_pair(coefficient_values, old_left_lane + 2, r);
+                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -251,7 +251,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .par_chunks_mut(next_live_lane_count)
                 .enumerate()
                 .map(|(coefficient, coefficient_out)| {
-                    let coefficient_values = &w_full[coefficient * old_live_lane_count
+                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
                         ..(coefficient + 1) * old_live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
@@ -273,11 +273,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_full_prefix_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
                                 let w1 =
-                                    fold_full_prefix_pair(coefficient_values, old_left_lane + 2, r);
+                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -339,7 +339,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 for (coefficient, coefficient_out) in
                     out.chunks_mut(next_live_lane_count).enumerate()
                 {
-                    let coefficient_values = &w_full[coefficient * old_live_lane_count
+                    let coefficient_values = &folded_witness[coefficient * old_live_lane_count
                         ..(coefficient + 1) * old_live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * next_current_lane_half;
@@ -358,11 +358,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                         for lane_pair in blk..blk_end {
                             let next_left_lane = 2 * lane_pair;
                             let old_left_lane = 4 * lane_pair;
-                            let w0 = fold_full_prefix_pair(coefficient_values, old_left_lane, r);
+                            let w0 = fold_folded_lane_pair(coefficient_values, old_left_lane, r);
                             coefficient_out[next_left_lane] = w0;
                             let w1 = if next_left_lane + 1 < next_live_lane_count {
                                 let w1 =
-                                    fold_full_prefix_pair(coefficient_values, old_left_lane + 2, r);
+                                    fold_folded_lane_pair(coefficient_values, old_left_lane + 2, r);
                                 coefficient_out[next_left_lane + 1] = w1;
                                 w1
                             } else {
@@ -420,12 +420,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     )]
     pub(super) fn compute_compact_partial_lane_round_terms(
         &self,
-        w_compact: &[i8],
+        compact_witness: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.coefficient_bits());
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
         debug_assert_eq!(
-            w_compact.len(),
+            compact_witness.len(),
             self.live_lane_count * self.common_alpha_factor.len()
         );
 
@@ -447,8 +447,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 2], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values =
-                        &w_compact[coefficient_start..coefficient_start + self.live_lane_count];
+                    let coefficient_values = &compact_witness
+                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -535,8 +535,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 3], [E::MulU64Accum::zero(); 6]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values =
-                        &w_compact[coefficient_start..coefficient_start + self.live_lane_count];
+                    let coefficient_values = &compact_witness
+                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -625,16 +625,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_full_partial_lane_round_terms"
+        name = "AkitaStage2Prover::compute_folded_partial_lane_round_terms"
     )]
-    pub(super) fn compute_full_partial_lane_round_terms(
+    pub(super) fn compute_folded_partial_lane_round_terms(
         &self,
-        w_full: &[E],
+        folded_witness: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.rounds_completed >= self.coefficient_bits());
         debug_assert!(self.lane_rounds_completed() < self.lane_bits);
         debug_assert_eq!(
-            w_full.len(),
+            folded_witness.len(),
             self.live_lane_count * self.common_alpha_factor.len()
         );
 
@@ -656,8 +656,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values =
-                        &w_full[coefficient_start..coefficient_start + self.live_lane_count];
+                    let coefficient_values = &folded_witness
+                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -731,8 +731,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), coefficient| {
                     let coefficient_start = coefficient * self.live_lane_count;
-                    let coefficient_values =
-                        &w_full[coefficient_start..coefficient_start + self.live_lane_count];
+                    let coefficient_values = &folded_witness
+                        [coefficient_start..coefficient_start + self.live_lane_count];
                     let alpha_factor = common_alpha_factor[coefficient];
                     let equality_address_base = coefficient * current_lane_half;
 
@@ -807,7 +807,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     pub(super) fn fold_compact_partial_lanes(
-        w_compact: &[i8],
+        compact_witness: &[i8],
         live_lane_count: usize,
         coeff_count: usize,
         fold_lut: &CompactPairFoldLut<E>,
@@ -820,7 +820,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .for_each(|(coefficient, coefficient_out)| {
                 let coefficient_start = coefficient * live_lane_count;
                 let coefficient_values =
-                    &w_compact[coefficient_start..coefficient_start + live_lane_count];
+                    &compact_witness[coefficient_start..coefficient_start + live_lane_count];
                 for (lane_pair, dst) in coefficient_out.iter_mut().enumerate() {
                     let left = 2 * lane_pair;
                     let w_1 = if left + 1 < live_lane_count {
@@ -835,8 +835,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    pub(super) fn fold_full_partial_lanes(
-        w_full: &[E],
+    pub(super) fn fold_folded_partial_lanes(
+        folded_witness: &[E],
         live_lane_count: usize,
         coeff_count: usize,
         r: E,
@@ -849,7 +849,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .for_each(|(coefficient, coefficient_out)| {
                 let coefficient_start = coefficient * live_lane_count;
                 let coefficient_values =
-                    &w_full[coefficient_start..coefficient_start + live_lane_count];
+                    &folded_witness[coefficient_start..coefficient_start + live_lane_count];
                 for (lane_pair, dst) in coefficient_out.iter_mut().enumerate() {
                     let left = 2 * lane_pair;
                     let w_0 = coefficient_values[left];

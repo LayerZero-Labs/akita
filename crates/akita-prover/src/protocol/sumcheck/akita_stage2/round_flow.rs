@@ -3,14 +3,14 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     pub(super) fn compute_current_round_poly_from_state(&mut self) -> UniPoly<E> {
         let t_scan = Instant::now();
-        let use_two_round_prefix = self.using_two_round_prefix();
+        let use_deferred_compact_prefix = self.using_deferred_compact_prefix();
         let use_partial_lane_coefficient_round =
-            !use_two_round_prefix && self.use_partial_lane_coefficient_round();
-        let use_partial_lane_round = !use_two_round_prefix && self.use_partial_lane_round();
+            !use_deferred_compact_prefix && self.use_partial_lane_coefficient_round();
+        let use_partial_lane_round = !use_deferred_compact_prefix && self.use_partial_lane_round();
         let rounds_completed = self.rounds_completed;
-        let poly = if use_two_round_prefix {
+        let poly = if use_deferred_compact_prefix {
             let (virt_poly, rel_poly) = {
-                let prefix = self.ensure_two_round_prefix();
+                let prefix = self.ensure_deferred_compact_prefix();
                 if rounds_completed == 0 {
                     let (virt_poly, rel_poly) = prefix.skip_state.reconstruct_round0_polys();
                     (virt_poly, rel_poly)
@@ -26,34 +26,34 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             self.prev_norm_poly = Some(virt_poly);
             combined
         } else {
-            match &self.w_table {
-                WTable::Compact(w_compact) => {
+            match &self.witness_state {
+                WitnessState::CompactPrefix(compact_witness) => {
                     if use_partial_lane_coefficient_round {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_compact_partial_lane_coefficient_round_terms(w_compact);
+                        let (virt_q_coeffs, rel_coeffs) = self
+                            .compute_compact_partial_lane_coefficient_round_terms(compact_witness);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else if use_partial_lane_round {
                         let (virt_terms, rel_coeffs) =
-                            self.compute_compact_partial_lane_round_terms(w_compact);
+                            self.compute_compact_partial_lane_round_terms(compact_witness);
                         self.combine_terms(virt_terms, rel_coeffs)
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_compact_dense_terms(w_compact);
+                            self.compute_round_compact_dense_terms(compact_witness);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
-                WTable::Full(w_full) => {
+                WitnessState::FoldedSuffix(folded_witness) => {
                     if use_partial_lane_coefficient_round {
-                        let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_full_partial_lane_coefficient_round_terms(w_full);
+                        let (virt_q_coeffs, rel_coeffs) = self
+                            .compute_folded_partial_lane_coefficient_round_terms(folded_witness);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else if use_partial_lane_round {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_full_partial_lane_round_terms(w_full);
+                            self.compute_folded_partial_lane_round_terms(folded_witness);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     } else {
                         let (virt_q_coeffs, rel_coeffs) =
-                            self.compute_round_full_dense_terms(w_full);
+                            self.compute_folded_dense_round_terms(folded_witness);
                         self.combine_terms(virt_q_coeffs, rel_coeffs)
                     }
                 }
@@ -64,15 +64,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn build_compact_w_fold_lut(w_compact: &[i8], r: E) -> CompactPairFoldLut<E> {
-        let min_w = w_compact
+    pub(super) fn build_compact_w_fold_lut(compact_witness: &[i8], r: E) -> CompactPairFoldLut<E> {
+        let min_w = compact_witness
             .iter()
             .copied()
             .map(i32::from)
             .min()
             .unwrap_or(0)
             .min(0);
-        let max_w = w_compact
+        let max_w = compact_witness
             .iter()
             .copied()
             .map(i32::from)
@@ -82,12 +82,17 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         CompactPairFoldLut::from_contiguous_range(min_w as i16, max_w as i16, r)
     }
 
-    pub(super) fn fold_compact_to_full(
-        w_compact: &[i8],
+    pub(super) fn materialize_compact_witness(
+        compact_witness: &[i8],
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
-        cfg_into_iter!(0..w_compact.len() / 2)
-            .map(|j| fold_lut.fold(i16::from(w_compact[2 * j]), i16::from(w_compact[2 * j + 1])))
+        cfg_into_iter!(0..compact_witness.len() / 2)
+            .map(|j| {
+                fold_lut.fold(
+                    i16::from(compact_witness[2 * j]),
+                    i16::from(compact_witness[2 * j + 1]),
+                )
+            })
             .collect()
     }
 }
@@ -122,40 +127,43 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
             self.prev_norm_claim = prev_norm_poly.evaluate(&r);
         }
 
-        if self.using_two_round_prefix() {
+        if self.using_deferred_compact_prefix() {
             let rounds_completed = self.rounds_completed;
             self.split_eq.bind(r);
             if rounds_completed == 0 {
-                self.ensure_two_round_prefix().first_challenge = Some(r);
+                self.ensure_deferred_compact_prefix().first_challenge = Some(r);
             } else {
                 let r0 = {
-                    let prefix = self.ensure_two_round_prefix();
+                    let prefix = self.ensure_deferred_compact_prefix();
                     prefix
                         .first_challenge
                         .expect("round 1 ingest requires the round 0 challenge")
                 };
                 let coeff_count = self.common_alpha_factor.len();
-                let alpha_round2 = Self::fold_alpha_to_round2(&self.common_alpha_factor, r0, r);
+                let alpha_round2 = Self::fold_alpha_two_rounds(&self.common_alpha_factor, r0, r);
                 self.evaluation_trace.fold_two_coefficients(r0, r);
                 // This is the two-round coefficient handoff, so the ordinary one-round
                 // trace transition below is deliberately bypassed.
                 let mut round2_terms = None;
-                self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-                    WTable::Compact(w_compact) => {
+                self.witness_state = match mem::replace(
+                    &mut self.witness_state,
+                    WitnessState::FoldedSuffix(Vec::new()),
+                ) {
+                    WitnessState::CompactPrefix(compact_witness) => {
                         if self.coefficient_bits() > 2 {
-                            let (w_full, virt_terms, rel_coeffs) = self
-                                .fuse_compact_to_round2_and_compute_round(
-                                    &w_compact,
+                            let (folded_witness, virt_terms, rel_coeffs) = self
+                                .materialize_two_round_compact_prefix_and_compute_next_round(
+                                    &compact_witness,
                                     &alpha_round2,
                                     &self.evaluation_trace,
                                     r0,
                                     r,
                                 );
                             round2_terms = Some((virt_terms, rel_coeffs));
-                            WTable::Full(w_full)
+                            WitnessState::FoldedSuffix(folded_witness)
                         } else {
-                            WTable::Full(Self::fold_compact_to_round2(
-                                &w_compact,
+                            WitnessState::FoldedSuffix(Self::materialize_two_round_compact_prefix(
+                                &compact_witness,
                                 self.live_lane_count,
                                 coeff_count,
                                 r0,
@@ -163,11 +171,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
                             ))
                         }
                     }
-                    WTable::Full(_) => unreachable!("two-round prefix should hold compact witness"),
+                    WitnessState::FoldedSuffix(_) => {
+                        unreachable!("two-round prefix should hold compact witness")
+                    }
                 };
                 self.common_alpha_factor = alpha_round2;
-                self.two_round_prefix = None;
-                self.prefix_r_stage1 = None;
+                self.deferred_compact_prefix = None;
+                self.compact_prefix_stage1_point = None;
                 if let Some((virt_terms, rel_coeffs)) = round2_terms {
                     self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
                 }
@@ -198,66 +208,78 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         let use_partial_lane_round = self.use_partial_lane_round();
         let use_partial_lane_coefficient_round = self.use_partial_lane_coefficient_round();
         let in_coefficient_round = self.in_coefficient_round();
-        let fuse_next_full_partial_lane =
+        let fuse_next_folded_partial_lane =
             use_partial_lane_round && self.next_uses_partial_lane_round();
         let coeff_count = self.common_alpha_factor.len();
         let live_lane_count = self.live_lane_count;
-        let mut fused_full_partial_lane = false;
+        let mut fused_folded_partial_lane = false;
 
-        self.w_table = match mem::replace(&mut self.w_table, WTable::Full(Vec::new())) {
-            WTable::Compact(w_compact) => {
-                let fold_lut = Self::build_compact_w_fold_lut(&w_compact, r);
-                let w_full = if folding_lane_round && use_partial_lane_round {
+        self.witness_state = match mem::replace(
+            &mut self.witness_state,
+            WitnessState::FoldedSuffix(Vec::new()),
+        ) {
+            WitnessState::CompactPrefix(compact_witness) => {
+                let fold_lut = Self::build_compact_w_fold_lut(&compact_witness, r);
+                let folded_witness = if folding_lane_round && use_partial_lane_round {
                     Self::fold_compact_partial_lanes(
-                        &w_compact,
+                        &compact_witness,
                         live_lane_count,
                         coeff_count,
                         &fold_lut,
                     )
                 } else {
-                    Self::fold_compact_to_full(&w_compact, &fold_lut)
+                    Self::materialize_compact_witness(&compact_witness, &fold_lut)
                 };
                 self.fold_evaluation_trace_for_current_round(r);
-                WTable::Full(w_full)
+                WitnessState::FoldedSuffix(folded_witness)
             }
-            WTable::Full(w_full) => {
+            WitnessState::FoldedSuffix(folded_witness) => {
                 if folding_lane_round && use_partial_lane_round {
-                    if fuse_next_full_partial_lane {
+                    if fuse_next_folded_partial_lane {
                         // Fold trace before the fused kernel so relation terms use the same
-                        // post-fold table as `compute_full_partial_lane_round_terms`.
+                        // post-fold table as `compute_folded_partial_lane_round_terms`.
                         self.fold_evaluation_trace_for_current_round(r);
-                        let (next_w_full, next_relation_lane_weights, virt_terms, rel_coeffs) =
-                            self.fuse_full_partial_lane_fold_and_next_round(&w_full, r);
+                        let (
+                            next_folded_witness,
+                            next_relation_lane_weights,
+                            virt_terms,
+                            rel_coeffs,
+                        ) = self
+                            .fuse_folded_partial_lane_and_compute_next_round(&folded_witness, r);
                         self.relation_lane_weights = next_relation_lane_weights;
                         self.cached_round_poly = Some(self.combine_terms(virt_terms, rel_coeffs));
-                        fused_full_partial_lane = true;
-                        WTable::Full(next_w_full)
+                        fused_folded_partial_lane = true;
+                        WitnessState::FoldedSuffix(next_folded_witness)
                     } else {
-                        let next_w_full =
-                            Self::fold_full_partial_lanes(&w_full, live_lane_count, coeff_count, r);
+                        let next_folded_witness = Self::fold_folded_partial_lanes(
+                            &folded_witness,
+                            live_lane_count,
+                            coeff_count,
+                            r,
+                        );
                         self.fold_evaluation_trace_for_current_round(r);
-                        WTable::Full(next_w_full)
+                        WitnessState::FoldedSuffix(next_folded_witness)
                     }
                 } else if in_coefficient_round && use_partial_lane_coefficient_round {
                     self.fold_evaluation_trace_for_current_round(r);
-                    WTable::Full(Self::fold_full_coefficients(
-                        &w_full,
+                    WitnessState::FoldedSuffix(Self::fold_folded_coefficients(
+                        &folded_witness,
                         live_lane_count,
                         coeff_count,
                         r,
                     ))
                 } else {
-                    let mut w_full = w_full;
-                    fold_evals_in_place(&mut w_full, r);
+                    let mut folded_witness = folded_witness;
+                    fold_evals_in_place(&mut folded_witness, r);
                     self.fold_evaluation_trace_for_current_round(r);
-                    WTable::Full(w_full)
+                    WitnessState::FoldedSuffix(folded_witness)
                 }
             }
         };
 
         if folding_lane_round {
             if use_partial_lane_round {
-                if !fused_full_partial_lane {
+                if !fused_folded_partial_lane {
                     self.relation_lane_weights =
                         Self::fold_relation_lane_weights(&self.relation_lane_weights, r);
                 }

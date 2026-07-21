@@ -7,11 +7,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     )]
     pub(super) fn compute_compact_partial_lane_coefficient_round_terms(
         &self,
-        w_compact: &[i8],
+        compact_witness: &[i8],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
-            w_compact.len(),
+            compact_witness.len(),
             self.live_lane_count * self.common_alpha_factor.len()
         );
 
@@ -31,7 +31,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
-                        &w_compact[lane_start..lane_start + common_alpha_factor.len()];
+                        &compact_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -111,7 +111,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
                     let lane_values =
-                        &w_compact[lane_start..lane_start + common_alpha_factor.len()];
+                        &compact_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -192,15 +192,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::compute_full_partial_lane_coefficient_round_terms"
+        name = "AkitaStage2Prover::compute_folded_partial_lane_coefficient_round_terms"
     )]
-    pub(super) fn compute_full_partial_lane_coefficient_round_terms(
+    pub(super) fn compute_folded_partial_lane_coefficient_round_terms(
         &self,
-        w_full: &[E],
+        folded_witness: &[E],
     ) -> (NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.in_coefficient_round());
         debug_assert_eq!(
-            w_full.len(),
+            folded_witness.len(),
             self.live_lane_count * self.common_alpha_factor.len()
         );
 
@@ -219,7 +219,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 2], [E::zero(); 3]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
-                    let lane_values = &w_full[lane_start..lane_start + common_alpha_factor.len()];
+                    let lane_values =
+                        &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -285,7 +286,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 || ([E::zero(); 3], [E::zero(); 3]),
                 |(mut virt, mut rel), lane| {
                     let lane_start = lane * common_alpha_factor.len();
-                    let lane_values = &w_full[lane_start..lane_start + common_alpha_factor.len()];
+                    let lane_values =
+                        &folded_witness[lane_start..lane_start + common_alpha_factor.len()];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -351,8 +353,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         }
     }
 
-    pub(super) fn fold_full_coefficients(
-        w_full: &[E],
+    pub(super) fn fold_folded_coefficients(
+        folded_witness: &[E],
         live_lane_count: usize,
         coeff_count: usize,
         r: E,
@@ -366,7 +368,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .enumerate()
             .for_each(|(lane, lane_out)| {
                 let lane_start = lane * coeff_count;
-                let lane_values = &w_full[lane_start..lane_start + coeff_count];
+                let lane_values = &folded_witness[lane_start..lane_start + coeff_count];
                 for (coefficient_pair, dst) in lane_out.iter_mut().enumerate() {
                     let left = 2 * coefficient_pair;
                     let w0 = lane_values[left];

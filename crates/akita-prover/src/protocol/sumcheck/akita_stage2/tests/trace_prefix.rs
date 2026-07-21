@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn stage2_trace_two_round_prefix_matches_direct_path() {
+fn stage2_trace_deferred_compact_prefix_matches_direct_path() {
     let lane_bits = 5usize;
     let coefficient_bits = 4usize;
     let live_lane_count = 19usize;
@@ -39,7 +39,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    assert!(prover.can_use_two_round_prefix());
+    assert!(prover.can_use_deferred_compact_prefix());
     let mut direct = new_stage2_test_prover_with_trace(
         F::from_u64(43),
         w_prefix,
@@ -48,8 +48,8 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
         trace_compact.clone(),
         params,
     );
-    direct.prefix_r_stage1 = None;
-    assert!(!direct.can_use_two_round_prefix());
+    direct.compact_prefix_stage1_point = None;
+    assert!(!direct.can_use_deferred_compact_prefix());
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -74,7 +74,7 @@ fn stage2_trace_two_round_prefix_matches_direct_path() {
 }
 
 #[test]
-fn stage2_trace_two_round_prefix_matches_padded_reference() {
+fn stage2_trace_deferred_compact_prefix_matches_padded_reference() {
     let lane_bits = 5usize;
     let coefficient_bits = 4usize;
     let live_lane_count = 19usize;
@@ -196,7 +196,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(107);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_to_round2(
+    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -204,7 +204,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&common_alpha_factor, r0, r1);
+        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let mut expected_trace = PreparedProverEvaluationTrace::from_dense(
         trace_compact.clone(),
         live_lane_count,
@@ -232,7 +232,7 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
     expected.evaluation_trace = expected_trace;
     expected.rounds_completed = 2;
@@ -241,17 +241,17 @@ fn stage2_trace_round2_cached_poly_matches_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
-            panic!("expected fused trace stage2 transition to materialize full table")
+    match &prover.witness_state {
+        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
+        WitnessState::CompactPrefix(_) => {
+            panic!("expected fused trace transition to enter the folded suffix")
         }
     }
     assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
     let expected_trace_round2 = trace_compact
         .chunks_exact(4)
         .map(|quad| {
-            AkitaStage2Prover::<F>::direct_fold_e_quad_to_round2(
+            AkitaStage2Prover::<F>::direct_fold_e_quad_two_rounds(
                 quad[0], quad[1], quad[2], quad[3], r0, r1,
             )
         })

@@ -26,7 +26,7 @@ struct DirectRelationRangeImageEvaluation {
 
 fn direct_relation_range_image_evaluation(
     batching_coeff: F,
-    w_compact: &[i8],
+    compact_witness: &[i8],
     common_alpha_factor: &[F],
     relation_lane_weights: &[F],
     evaluation_trace_weights: &[F],
@@ -34,15 +34,15 @@ fn direct_relation_range_image_evaluation(
 ) -> DirectRelationRangeImageEvaluation {
     let lane_capacity = 1usize << params.lane_bits;
     let coeff_count = 1usize << params.coefficient_bits;
-    assert_eq!(w_compact.len(), params.live_lane_count * coeff_count);
+    assert_eq!(compact_witness.len(), params.live_lane_count * coeff_count);
     assert_eq!(common_alpha_factor.len(), coeff_count);
     assert_eq!(relation_lane_weights.len(), lane_capacity);
-    assert_eq!(evaluation_trace_weights.len(), w_compact.len());
+    assert_eq!(evaluation_trace_weights.len(), compact_witness.len());
     let padded = if params.live_lane_count == (1usize << params.lane_bits) {
-        w_compact.to_vec()
+        compact_witness.to_vec()
     } else {
         pad_compact_witness(
-            w_compact,
+            compact_witness,
             params.live_lane_count,
             params.lane_bits,
             params.coefficient_bits,
@@ -74,15 +74,15 @@ fn direct_relation_range_image_evaluation(
 
 fn new_stage2_test_prover(
     batching_coeff: F,
-    w_compact: Vec<i8>,
+    compact_witness: Vec<i8>,
     common_alpha_factor: Vec<F>,
     relation_lane_weights: Vec<F>,
     params: Stage2Params<'_>,
 ) -> AkitaStage2Prover<F> {
-    let zero_trace_weights = vec![F::zero(); w_compact.len()];
+    let zero_trace_weights = vec![F::zero(); compact_witness.len()];
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
-        &w_compact,
+        &compact_witness,
         &common_alpha_factor,
         &relation_lane_weights,
         &zero_trace_weights,
@@ -90,7 +90,7 @@ fn new_stage2_test_prover(
     );
     AkitaStage2Prover::new(
         batching_coeff,
-        w_compact,
+        compact_witness,
         params.stage1_point,
         direct.range_image,
         params.b,
@@ -112,7 +112,7 @@ fn new_stage2_test_prover(
 
 pub(super) fn new_stage2_test_prover_with_trace(
     batching_coeff: F,
-    w_compact: Vec<i8>,
+    compact_witness: Vec<i8>,
     common_alpha_factor: Vec<F>,
     relation_lane_weights: Vec<F>,
     trace_compact: Vec<F>,
@@ -120,7 +120,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
 ) -> AkitaStage2Prover<F> {
     let direct = direct_relation_range_image_evaluation(
         batching_coeff,
-        &w_compact,
+        &compact_witness,
         &common_alpha_factor,
         &relation_lane_weights,
         &trace_compact,
@@ -128,7 +128,7 @@ pub(super) fn new_stage2_test_prover_with_trace(
     );
     AkitaStage2Prover::new(
         batching_coeff,
-        w_compact,
+        compact_witness,
         params.stage1_point,
         direct.range_image,
         params.b,
@@ -303,17 +303,17 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
 }
 
 fn relation_round_reference(
-    w_compact: &[i8],
+    compact_witness: &[i8],
     common_alpha_factor: &[F],
     relation_lane_weights: &[F],
     coefficient_bits: usize,
 ) -> UniPoly<F> {
-    let half = w_compact.len() / 2;
+    let half = compact_witness.len() / 2;
     let current_coefficient_mask = (1usize << coefficient_bits).wrapping_sub(1);
     let mut evals = [F::zero(); 3];
     for j in 0..half {
-        let w_0 = F::from_i64(w_compact[2 * j] as i64);
-        let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
+        let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+        let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
         let a_0 = common_alpha_factor[(2 * j) & current_coefficient_mask];
         let a_1 = common_alpha_factor[(2 * j + 1) & current_coefficient_mask];
         let m_0 = relation_lane_weights[(2 * j) >> coefficient_bits];
@@ -328,8 +328,8 @@ fn relation_round_reference(
     UniPoly::from_evals(&evals)
 }
 
-fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniPoly<F> {
-    let half = w_compact.len() / 2;
+fn virtual_round_reference(split_eq: &GruenSplitEq<F>, compact_witness: &[i8]) -> UniPoly<F> {
+    let half = compact_witness.len() / 2;
     let (e_first, e_second) = split_eq.remaining_eq_tables();
     let num_first = e_first.len();
     let first_bits = num_first.trailing_zeros();
@@ -338,8 +338,8 @@ fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniP
         let j_low = j & (num_first - 1);
         let j_high = j >> first_bits;
         let eq_rem = e_first[j_low] * e_second[j_high];
-        let w_0 = F::from_i64(w_compact[2 * j] as i64);
-        let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
+        let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+        let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
         let w_2 = w_1 + w_1 - w_0;
         evals[0] += eq_rem * w_0 * (w_0 + F::one());
         evals[1] += eq_rem * w_1 * (w_1 + F::one());
@@ -349,7 +349,7 @@ fn virtual_round_reference(split_eq: &GruenSplitEq<F>, w_compact: &[i8]) -> UniP
 }
 
 fn fold_compact_partial_lanes_reference(
-    w_compact: &[i8],
+    compact_witness: &[i8],
     live_lane_count: usize,
     coeff_count: usize,
     r: F,
@@ -358,7 +358,8 @@ fn fold_compact_partial_lanes_reference(
     let mut out = vec![F::zero(); coeff_count * next_live_lane_count];
     for (coefficient, row_out) in out.chunks_mut(next_live_lane_count).enumerate() {
         let coefficient_start = coefficient * live_lane_count;
-        let coefficient_values = &w_compact[coefficient_start..coefficient_start + live_lane_count];
+        let coefficient_values =
+            &compact_witness[coefficient_start..coefficient_start + live_lane_count];
         for (lane_pair, dst) in row_out.iter_mut().enumerate() {
             let left = 2 * lane_pair;
             let w_0 = F::from_i64(coefficient_values[left] as i64);
@@ -373,11 +374,11 @@ fn fold_compact_partial_lanes_reference(
     out
 }
 
-fn fold_compact_to_full_reference(w_compact: &[i8], r: F) -> Vec<F> {
-    (0..w_compact.len() / 2)
+fn materialize_compact_witness_reference(compact_witness: &[i8], r: F) -> Vec<F> {
+    (0..compact_witness.len() / 2)
         .map(|j| {
-            let w_0 = F::from_i64(w_compact[2 * j] as i64);
-            let w_1 = F::from_i64(w_compact[2 * j + 1] as i64);
+            let w_0 = F::from_i64(compact_witness[2 * j] as i64);
+            let w_1 = F::from_i64(compact_witness[2 * j + 1] as i64);
             w_0 + r * (w_1 - w_0)
         })
         .collect()
@@ -397,8 +398,8 @@ fn stage2_compact_fold_lookup_matches_direct_formula() {
     let w_dense = vec![1, 2, 3, 1, 2, 3];
     let dense_lut = AkitaStage2Prover::<F>::build_compact_w_fold_lut(&w_dense, r);
     assert_eq!(
-        AkitaStage2Prover::<F>::fold_compact_to_full(&w_dense, &dense_lut),
-        fold_compact_to_full_reference(&w_dense, r)
+        AkitaStage2Prover::<F>::materialize_compact_witness(&w_dense, &dense_lut),
+        materialize_compact_witness_reference(&w_dense, r)
     );
 }
 
@@ -419,10 +420,10 @@ fn stage2_compact_round0_matches_unfused_reference() {
 
     for b in [4usize, 8, 16, 32] {
         let half = (b / 2) as i8;
-        let w_compact: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
+        let compact_witness: Vec<i8> = (0..n).map(|i| ((i * 5 + 3) % b) as i8 - half).collect();
         let prover = new_stage2_test_prover(
             F::from_u64(13),
-            w_compact.clone(),
+            compact_witness.clone(),
             common_alpha_factor.clone(),
             relation_lane_weights.clone(),
             Stage2Params {
@@ -433,10 +434,10 @@ fn stage2_compact_round0_matches_unfused_reference() {
                 coefficient_bits,
             },
         );
-        let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
-        let virt_ref = virtual_round_reference(&prover.split_eq, &w_compact);
+        let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&compact_witness);
+        let virt_ref = virtual_round_reference(&prover.split_eq, &compact_witness);
         let relation_ref = relation_round_reference(
-            &w_compact,
+            &compact_witness,
             &common_alpha_factor,
             &relation_lane_weights,
             coefficient_bits,
@@ -454,7 +455,7 @@ fn stage2_compact_round0_matches_unfused_reference() {
 }
 
 #[test]
-fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
+fn stage2_prefix_aware_rounds_match_explicit_relation_lane_table() {
     let coefficient_bits = 2usize;
     for b in [4usize, 8, 16, 32] {
         let half = (b / 2) as i8;
@@ -531,7 +532,7 @@ fn stage2_prefix_aware_rounds_match_explicit_full_m_table() {
 fn stage2_zero_gated_round0_matches_reference() {
     let lane_bits = 3usize;
     let coefficient_bits = 1usize;
-    let w_compact = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
+    let compact_witness = vec![-1, 0, -1, 0, 0, -1, 0, -1, -1, 0, -1, 0, 0, -1, 0, -1];
     let stage1_point: Vec<F> = (0..(lane_bits + coefficient_bits))
         .map(|i| F::from_u64((i as u64) + 41))
         .collect();
@@ -544,7 +545,7 @@ fn stage2_zero_gated_round0_matches_reference() {
 
     let prover = new_stage2_test_prover(
         F::from_u64(19),
-        w_compact.clone(),
+        compact_witness.clone(),
         common_alpha_factor.clone(),
         relation_lane_weights.clone(),
         Stage2Params {
@@ -555,15 +556,15 @@ fn stage2_zero_gated_round0_matches_reference() {
             coefficient_bits,
         },
     );
-    let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&w_compact);
+    let (virt_poly, relation_poly) = prover.compute_round_compact_dense_polys(&compact_witness);
     assert_eq!(
         virt_poly,
-        virtual_round_reference(&prover.split_eq, &w_compact)
+        virtual_round_reference(&prover.split_eq, &compact_witness)
     );
     assert_eq!(
         relation_poly,
         relation_round_reference(
-            &w_compact,
+            &compact_witness,
             &common_alpha_factor,
             &relation_lane_weights,
             coefficient_bits
@@ -612,7 +613,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(97);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_to_round2(
+    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -620,7 +621,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&common_alpha_factor, r0, r1);
+        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
@@ -641,7 +642,7 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
     expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
@@ -650,18 +651,18 @@ fn stage2_fused_round2_transition_matches_two_pass_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
-            panic!("expected fused stage2 transition to materialize full table")
+    match &prover.witness_state {
+        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
+        WitnessState::CompactPrefix(_) => {
+            panic!("expected fused stage2 transition to enter the folded suffix")
         }
     }
     assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
     assert_eq!(prover.relation_lane_weights, expected_relation_lane_weights);
-    assert!(!prover.can_use_two_round_prefix());
-    assert!(!prover.using_two_round_prefix());
-    assert!(prover.prefix_r_stage1.is_none());
-    assert!(prover.two_round_prefix.is_none());
+    assert!(!prover.can_use_deferred_compact_prefix());
+    assert!(!prover.using_deferred_compact_prefix());
+    assert!(prover.compact_prefix_stage1_point.is_none());
+    assert!(prover.deferred_compact_prefix.is_none());
     assert_eq!(prover.cached_round_poly.as_ref(), Some(&expected_round2));
 }
 
@@ -706,7 +707,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
     let round1 = prover.compute_round_univariate(1, round0.evaluate(&r0));
     let r1 = F::from_u64(127);
 
-    let expected_w_full = AkitaStage2Prover::<F>::fold_compact_to_round2(
+    let expected_w_full = AkitaStage2Prover::<F>::materialize_two_round_compact_prefix(
         &w_prefix,
         live_lane_count,
         coeff_count,
@@ -714,7 +715,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         r1,
     );
     let expected_alpha_round2 =
-        AkitaStage2Prover::<F>::fold_alpha_to_round2(&common_alpha_factor, r0, r1);
+        AkitaStage2Prover::<F>::fold_alpha_two_rounds(&common_alpha_factor, r0, r1);
     let expected_relation_lane_weights = prover.relation_lane_weights.clone();
 
     let mut expected = new_stage2_test_prover(
@@ -735,7 +736,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
         .expect("round1 norm poly should be cached")
         .evaluate(&r1);
     expected.split_eq.bind(r1);
-    expected.w_table = WTable::Full(expected_w_full.clone());
+    expected.witness_state = WitnessState::FoldedSuffix(expected_w_full.clone());
     expected.common_alpha_factor = expected_alpha_round2.clone();
     expected.evaluation_trace.fold_two_coefficients(r0, r1);
     expected.rounds_completed = 2;
@@ -744,10 +745,10 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 
     prover.ingest_challenge(1, r1);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_w_full),
-        WTable::Compact(_) => {
-            panic!("expected fused stage2 transition to materialize full table")
+    match &prover.witness_state {
+        WitnessState::FoldedSuffix(folded_witness) => assert_eq!(folded_witness, &expected_w_full),
+        WitnessState::CompactPrefix(_) => {
+            panic!("expected fused stage2 transition to enter the folded suffix")
         }
     }
     assert_eq!(prover.common_alpha_factor, expected_alpha_round2);
@@ -756,7 +757,7 @@ fn stage2_fused_round2_y_round_transition_matches_two_pass_reference() {
 }
 
 #[test]
-fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
+fn stage2_later_folded_suffix_fusion_matches_two_pass_reference() {
     let lane_bits = 5usize;
     let coefficient_bits = 2usize;
     let live_lane_count = 12usize;
@@ -815,13 +816,13 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     let expected_round2 = expected.compute_round_univariate(2, expected_round1.evaluate(&r0));
     assert_eq!(expected_round2, round2);
 
-    let current_w_full = match &expected.w_table {
-        WTable::Full(w_full) => w_full.clone(),
-        WTable::Compact(_) => panic!("expected later prefix state to be full"),
+    let current_w_full = match &expected.witness_state {
+        WitnessState::FoldedSuffix(folded_witness) => folded_witness.clone(),
+        WitnessState::CompactPrefix(_) => panic!("expected later prefix state to be full"),
     };
     let current_relation_lane_weights = expected.relation_lane_weights.clone();
     let current_coeff_count = expected.common_alpha_factor.len();
-    let expected_next_w_full = AkitaStage2Prover::<F>::fold_full_partial_lanes(
+    let expected_next_folded_witness = AkitaStage2Prover::<F>::fold_folded_partial_lanes(
         &current_w_full,
         expected.live_lane_count,
         current_coeff_count,
@@ -839,14 +840,16 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
     expected.rounds_completed += 1;
     expected.relation_lane_weights = expected_next_relation_lane_weights.clone();
     let (virt_terms, rel_coeffs) =
-        expected.compute_full_partial_lane_round_terms(&expected_next_w_full);
+        expected.compute_folded_partial_lane_round_terms(&expected_next_folded_witness);
     let expected_round3 = expected.combine_terms(virt_terms, rel_coeffs);
 
     prover.ingest_challenge(2, r2);
 
-    match &prover.w_table {
-        WTable::Full(w_full) => assert_eq!(w_full, &expected_next_w_full),
-        WTable::Compact(_) => panic!("expected fused later prefix stage to stay full"),
+    match &prover.witness_state {
+        WitnessState::FoldedSuffix(folded_witness) => {
+            assert_eq!(folded_witness, &expected_next_folded_witness)
+        }
+        WitnessState::CompactPrefix(_) => panic!("expected fused later prefix stage to stay full"),
     }
     assert_eq!(
         prover.relation_lane_weights,
@@ -856,7 +859,7 @@ fn stage2_later_full_prefix_fusion_matches_two_pass_reference() {
 }
 
 #[test]
-fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
+fn stage2_large_odd_sparse_boolean_deferred_compact_prefix_matches_direct_path() {
     let lane_bits = 16usize;
     let coefficient_bits = 6usize;
     let live_lane_count = 34_519usize;
@@ -896,7 +899,7 @@ fn stage2_large_odd_sparse_boolean_two_round_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
-    direct.prefix_r_stage1 = None;
+    direct.compact_prefix_stage1_point = None;
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();
@@ -991,7 +994,7 @@ fn stage2_large_odd_sparse_boolean_prefix_matches_padded_reference() {
 }
 
 #[test]
-fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
+fn stage2_large_odd_dense_deferred_compact_prefix_matches_direct_path() {
     let lane_bits = 16usize;
     let coefficient_bits = 6usize;
     let live_lane_count = 34_519usize;
@@ -1032,7 +1035,7 @@ fn stage2_large_odd_dense_two_round_prefix_matches_direct_path() {
         relation_lane_weights,
         params,
     );
-    direct.prefix_r_stage1 = None;
+    direct.compact_prefix_stage1_point = None;
 
     let mut prover_claim = prover.input_claim();
     let mut direct_claim = direct.input_claim();

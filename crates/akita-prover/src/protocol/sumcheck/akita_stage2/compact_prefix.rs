@@ -2,7 +2,7 @@ use super::*;
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     #[inline]
-    pub(super) fn direct_fold_w_quad_to_round2(
+    pub(super) fn direct_fold_w_quad_two_rounds(
         w00: i8,
         w10: i8,
         w01: i8,
@@ -20,7 +20,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     }
 
     #[inline]
-    pub(super) fn direct_fold_e_quad_to_round2(e00: E, e10: E, e01: E, e11: E, r0: E, r1: E) -> E {
+    pub(super) fn direct_fold_e_quad_two_rounds(e00: E, e10: E, e01: E, e11: E, r0: E, r1: E) -> E {
         let x0 = e00 + r0 * (e10 - e00);
         let x1 = e01 + r0 * (e11 - e01);
         x0 + r1 * (x1 - x0)
@@ -46,7 +46,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 let d1 = (idx >> 2) & 0b11;
                 let d2 = (idx >> 4) & 0b11;
                 let d3 = (idx >> 6) & 0b11;
-                Self::direct_fold_w_quad_to_round2(
+                Self::direct_fold_w_quad_two_rounds(
                     W_VALUES[d0],
                     W_VALUES[d1],
                     W_VALUES[d2],
@@ -78,7 +78,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 let d1 = (idx >> 3) & 0b111;
                 let d2 = (idx >> 6) & 0b111;
                 let d3 = (idx >> 9) & 0b111;
-                Self::direct_fold_w_quad_to_round2(
+                Self::direct_fold_w_quad_two_rounds(
                     W_VALUES[d0],
                     W_VALUES[d1],
                     W_VALUES[d2],
@@ -90,9 +90,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
             .collect()
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_compact_to_round2")]
-    pub(super) fn fold_compact_to_round2(
-        w_compact: &[i8],
+    #[tracing::instrument(
+        skip_all,
+        name = "AkitaStage2Prover::materialize_two_round_compact_prefix"
+    )]
+    pub(super) fn materialize_two_round_compact_prefix(
+        compact_witness: &[i8],
         live_lane_count: usize,
         coeff_count: usize,
         r0: E,
@@ -105,13 +108,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         for lane in 0..live_lane_count {
             let src_start = lane * coeff_count;
             let dst_start = lane * next_coeff_count;
-            let lane_values = &w_compact[src_start..src_start + coeff_count];
+            let lane_values = &compact_witness[src_start..src_start + coeff_count];
             for (quad_y, dst) in out[dst_start..dst_start + next_coeff_count]
                 .iter_mut()
                 .enumerate()
             {
                 let base = 4 * quad_y;
-                *dst = Self::direct_fold_w_quad_to_round2(
+                *dst = Self::direct_fold_w_quad_two_rounds(
                     lane_values[base],
                     lane_values[base + 1],
                     lane_values[base + 2],
@@ -124,15 +127,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         out
     }
 
-    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_alpha_to_round2")]
-    pub(super) fn fold_alpha_to_round2(common_alpha_factor: &[E], r0: E, r1: E) -> Vec<E> {
+    #[tracing::instrument(skip_all, name = "AkitaStage2Prover::fold_alpha_two_rounds")]
+    pub(super) fn fold_alpha_two_rounds(common_alpha_factor: &[E], r0: E, r1: E) -> Vec<E> {
         debug_assert!(common_alpha_factor.len().is_power_of_two());
         debug_assert!(common_alpha_factor.len() >= 4);
         let next_coeff_count = common_alpha_factor.len() >> 2;
         let mut out = vec![E::zero(); next_coeff_count];
         for (quad_y, dst) in out.iter_mut().enumerate() {
             let base = 4 * quad_y;
-            *dst = Self::direct_fold_e_quad_to_round2(
+            *dst = Self::direct_fold_e_quad_two_rounds(
                 common_alpha_factor[base],
                 common_alpha_factor[base + 1],
                 common_alpha_factor[base + 2],
@@ -159,11 +162,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
 
     #[tracing::instrument(
         skip_all,
-        name = "AkitaStage2Prover::fuse_compact_to_round2_and_compute_round"
+        name = "AkitaStage2Prover::materialize_two_round_compact_prefix_and_compute_next_round"
     )]
-    pub(super) fn fuse_compact_to_round2_and_compute_round(
+    pub(super) fn materialize_two_round_compact_prefix_and_compute_next_round(
         &self,
-        w_compact: &[i8],
+        compact_witness: &[i8],
         alpha_round2: &[E],
         trace_round2: &PreparedProverEvaluationTrace<E>,
         r0: E,
@@ -171,7 +174,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
     ) -> (Vec<E>, NormRoundTerms<E>, [E; 3]) {
         debug_assert!(self.coefficient_bits() > 2);
         let coeff_count = self.common_alpha_factor.len();
-        debug_assert_eq!(w_compact.len(), self.live_lane_count * coeff_count);
+        debug_assert_eq!(compact_witness.len(), self.live_lane_count * coeff_count);
         debug_assert_eq!(alpha_round2.len(), coeff_count >> 2);
 
         let next_coeff_count = coeff_count >> 2;
@@ -200,7 +203,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .enumerate()
                 .map(|(lane, lane_out)| {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 2];
@@ -273,7 +276,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 let mut rel = [E::zero(); 3];
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;
@@ -334,7 +337,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 .enumerate()
                 .map(|(lane, lane_out)| {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut virt = [E::zero(); 3];
@@ -410,7 +413,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
                 let mut rel = [E::zero(); 3];
                 for (lane, lane_out) in out.chunks_mut(next_coeff_count).enumerate() {
                     let lane_start = lane * coeff_count;
-                    let lane_values = &w_compact[lane_start..lane_start + coeff_count];
+                    let lane_values = &compact_witness[lane_start..lane_start + coeff_count];
                     let lane_weight = relation_lane_weights[lane];
                     let equality_address_base = lane * current_coefficient_half;
                     let mut blk = 0usize;

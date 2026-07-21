@@ -76,7 +76,7 @@
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use super::fold_full_prefix_pair;
+use super::fold_full_prefix_pair as fold_folded_lane_pair;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
@@ -93,12 +93,12 @@ use akita_sumcheck::{
 use std::mem;
 use std::time::Instant;
 
-enum WTable<E: FieldCore> {
-    Compact(std::sync::Arc<[i8]>),
-    Full(Vec<E>),
+enum WitnessState<E: FieldCore> {
+    CompactPrefix(std::sync::Arc<[i8]>),
+    FoldedSuffix(Vec<E>),
 }
 
-struct Stage2TwoRoundPrefix<E: FieldCore> {
+struct TwoRoundCompactPrefix<E: FieldCore> {
     skip_state: Stage2BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
@@ -214,12 +214,13 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
 
 /// Stage-2 fused virtual-claim + relation sumcheck prover.
 ///
-/// Holds a single `w_table` shared by both halves of stage 2. The virtual half
-/// is pre-weighted by `batching_coeff` through `split_eq`, so the round
-/// polynomial is:
+/// Holds one witness state shared by the range-image, relation, and evaluation-trace
+/// terms. The compact prefix is materialized once into the folded field suffix.
+/// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
+/// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
 pub struct AkitaStage2Prover<E: FieldCore> {
-    w_table: WTable<E>,
+    witness_state: WitnessState<E>,
     b: usize,
     batching_coeff: E,
     range_image_evaluation: E,
@@ -235,8 +236,8 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     relation_trace_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
-    prefix_r_stage1: Option<Vec<E>>,
-    two_round_prefix: Option<Stage2TwoRoundPrefix<E>>,
+    compact_prefix_stage1_point: Option<Vec<E>>,
+    deferred_compact_prefix: Option<TwoRoundCompactPrefix<E>>,
     cached_round_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
@@ -245,11 +246,11 @@ pub struct AkitaStage2Prover<E: FieldCore> {
 }
 
 mod coefficient_prefix;
+mod compact_prefix;
 mod dense_terms;
 mod evaluation_trace;
 mod lane_prefix;
 mod lifecycle;
-mod round2_prefix;
 mod round_flow;
 
 pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
