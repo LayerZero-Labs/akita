@@ -549,10 +549,11 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
-                    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole,
-                    SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+                    setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks,
+                    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+                    PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
+                    SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
+                    SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -574,21 +575,19 @@ mod tests {
                         n_b: 1,
                         b_coeff_linf_bound: 1,
                     },
-                    a_key: AjtaiKeyParams::new_unchecked(
+                    inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
                         DEFAULT_SIS_SECURITY_POLICY,
                         SisTableDigest::CURRENT,
                         SisModulusProfileId::Q128OffsetA7F7,
-                        SisMatrixRole::A,
                         1,
                         1,
                         1,
                         TEST_D,
                     ),
-                    b_key: AjtaiKeyParams::new_unchecked(
+                    outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                         DEFAULT_SIS_SECURITY_POLICY,
                         SisTableDigest::CURRENT,
                         SisModulusProfileId::Q128OffsetA7F7,
-                        SisMatrixRole::B,
                         1,
                         1,
                         1,
@@ -765,7 +764,7 @@ mod tests {
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
-                            lp.b_key.row_len(),
+                            lp.outer_commit_matrix.output_rank(),
                             typed_digits.typed_planes::<TEST_D>().unwrap(),
                             lp.log_basis_outer,
                         )

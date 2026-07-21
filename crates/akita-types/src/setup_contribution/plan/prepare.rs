@@ -38,7 +38,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
             let d_rows = match relation_matrix_row_layout {
-                crate::RelationMatrixRowLayout::WithDBlock => level_params.d_key.row_len(),
+                crate::RelationMatrixRowLayout::WithDBlock => {
+                    level_params.open_commit_matrix.output_rank()
+                }
                 crate::RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
             };
             let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {

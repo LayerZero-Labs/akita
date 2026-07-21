@@ -305,13 +305,13 @@ pub(crate) fn emit_runtime_schedule_summary(
         tracing::info!(
             label,
             level = level_idx,
-            d = lp.ring_dimension,
+            d = lp.d_a(),
             d_a = role_dims.d_a(),
             d_b = role_dims.d_b(),
             d_d = role_dims.d_d(),
-            n_a = lp.a_key.row_len(),
-            n_b = lp.b_key.row_len(),
-            n_d = lp.d_key.row_len(),
+            n_a = lp.inner_commit_matrix.output_rank(),
+            n_b = lp.outer_commit_matrix.output_rank(),
+            n_d = lp.open_commit_matrix.output_rank(),
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
@@ -326,8 +326,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
-            current_w_len = level.current_w_len,
-            next_w_len = level.next_w_len,
+            input_witness_len = level.input_witness_len,
+            output_witness_len = level.output_witness_len,
             level_bytes = level.level_bytes,
             "planned fold level"
         );
@@ -335,7 +335,7 @@ pub(crate) fn emit_runtime_schedule_summary(
 
     tracing::info!(
         label,
-        final_w_len = schedule.terminal.current_w_len,
+        terminal_response_len = schedule.terminal.input_witness_len,
         final_log_basis = schedule.terminal.log_basis(),
         "planned terminal state"
     );

@@ -610,7 +610,7 @@ where
     let next_params = scheduled.next_params.as_ref().ok_or_else(|| {
         AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
     })?;
-    scheduled.validate_next_w_len(logical_w.len())?;
+    scheduled.validate_output_witness_len(logical_w.len())?;
     let _span = tracing::info_span!("commit_w_level", level).entered();
     let next_commitment = crate::commit_w::<Cfg, C>(
         next_params,
@@ -906,7 +906,7 @@ where
             let (num_w_vectors, num_t_vectors, num_z_segments) =
                 akita_types::tail_segment_multiplicities_from_layout_for_params(
                     params,
-                    lp.ring_dimension,
+                    lp.d_a(),
                     &scheduled_shape.layout,
                     layout_index,
                 )?;

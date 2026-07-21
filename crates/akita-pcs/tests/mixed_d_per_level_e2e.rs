@@ -140,7 +140,16 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         // Corrupt the first suffix fold level: 96 does not divide the
         // setup's gen_ring_dim (128) and is not a power of two.
         if let Some(fold) = schedule.folds.get_mut(MIXED_D_SWITCH_FOLD) {
-            fold.params.ring_dimension = 96;
+            let matrix = &fold.params.inner_commit_matrix;
+            fold.params.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+                matrix.security_policy(),
+                matrix.sis_table_key().table_digest,
+                matrix.sis_modulus_profile(),
+                matrix.output_rank(),
+                matrix.input_width(),
+                matrix.coeff_linf_bound(),
+                96,
+            );
         }
         Ok(schedule)
     }
@@ -171,7 +180,8 @@ fn assert_mixed_d_fixture_schedule(schedule: &Schedule) {
             SUFFIX_D
         };
         assert_eq!(
-            fold.params.ring_dimension, expected_d,
+            fold.params.d_a(),
+            expected_d,
             "fold level {level} ring_dimension"
         );
     }
@@ -293,7 +303,7 @@ fn mixed_d_schedule_shape_and_ring_dim_validation() {
         let mut unique = std::collections::BTreeSet::new();
         for level in 0..schedule.num_fold_levels() {
             let step = &schedule.folds[level];
-            let dims = step.params.role_dims;
+            let dims = step.params.role_dims();
             unique.insert(dims.inner);
             unique.insert(dims.outer);
             unique.insert(dims.opening);

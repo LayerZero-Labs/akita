@@ -538,7 +538,7 @@ where
             let levels = r_decomp_levels::<F>(lp.log_basis_open);
             emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
             let expected =
-                lp.next_w_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
+                lp.output_witness_len::<F>(opening_batch, instance.relation_matrix_row_layout())?;
             if out.len() != expected {
                 return Err(AkitaError::InvalidSize {
                     expected,

@@ -3,11 +3,11 @@ use super::*;
 #[test]
 fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
-    let n_a_final = lp.a_key.row_len();
-    let n_b_final = lp.b_key.row_len();
-    let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
-    let n_b_pre = lp.precommitted_groups[0].b_key.row_len();
-    let n_d = lp.d_key.row_len();
+    let n_a_final = lp.inner_commit_matrix.output_rank();
+    let n_b_final = lp.outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
         lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
@@ -25,8 +25,8 @@ fn multi_group_m_row_count_matches_canonical_layout() {
 fn terminal_t_state_layout_has_only_consistency_and_a_rows() {
     let (lp, batch) = sample_multi_group_root_params();
     let final_group = batch.root_final_group_index().expect("final group");
-    let n_a_final = lp.a_key.row_len();
-    let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
+    let n_a_final = lp.inner_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
     let layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
 
     assert_eq!(
@@ -51,10 +51,10 @@ fn terminal_t_state_layout_has_only_consistency_and_a_rows() {
 #[test]
 fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
-    let n_a_final = lp.a_key.row_len();
-    let n_b_final = lp.b_key.row_len();
-    let n_a_pre = lp.precommitted_groups[0].a_key.row_len();
-    let n_b_pre = lp.precommitted_groups[0].b_key.row_len();
+    let n_a_final = lp.inner_commit_matrix.output_rank();
+    let n_b_final = lp.outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
+    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
     let layout = RelationMatrixRowLayout::WithDBlock;
     let final_group = batch.root_final_group_index().expect("final group");
 

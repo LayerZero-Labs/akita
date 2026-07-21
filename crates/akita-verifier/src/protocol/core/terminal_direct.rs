@@ -648,7 +648,7 @@ mod tests {
             outer: 32,
             opening: 16,
         };
-        let base_params = LevelParams::params_only(
+        let mut base_params = LevelParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             1,
@@ -659,14 +659,30 @@ mod tests {
                 .expect("supported A-role challenge dimension"),
         )
         .with_decomp(1, 1, 1, 1, 1)
-        .expect("terminal fixture layout")
-        .with_role_dims(dims)
-        .expect("nested role dimensions");
+        .expect("terminal fixture layout");
+        base_params.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+            base_params.outer_commit_matrix.security_policy(),
+            base_params.outer_commit_matrix.sis_table_key().table_digest,
+            base_params.outer_commit_matrix.sis_modulus_profile(),
+            base_params.outer_commit_matrix.output_rank(),
+            base_params.outer_commit_matrix.input_width(),
+            base_params.outer_commit_matrix.coeff_linf_bound(),
+            dims.outer,
+        );
+        base_params.open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+            base_params.open_commit_matrix.security_policy(),
+            base_params.open_commit_matrix.sis_table_key().table_digest,
+            base_params.open_commit_matrix.sis_modulus_profile(),
+            base_params.open_commit_matrix.output_rank(),
+            base_params.open_commit_matrix.input_width(),
+            base_params.open_commit_matrix.coeff_linf_bound(),
+            dims.opening,
+        );
         let precommitted_layout = PolynomialGroupLayout::new(0, 1);
         let mut precommitted_params =
             PrecommittedGroupParams::from_params(precommitted_layout, &base_params);
-        precommitted_params.n_a = base_params.a_key.row_len();
-        precommitted_params.n_b = base_params.b_key.row_len();
+        precommitted_params.n_a = base_params.inner_commit_matrix.output_rank();
+        precommitted_params.n_b = base_params.outer_commit_matrix.output_rank();
         precommitted_params.a_coeff_linf_bound = 1;
         precommitted_params.b_coeff_linf_bound = 1;
         let precommitted_a_width = precommitted_params
@@ -679,21 +695,19 @@ mod tests {
             .and_then(|width| width.checked_mul(precommitted_params.num_live_blocks))
             .and_then(|width| width.checked_mul(precommitted_layout.num_polynomials()))
             .expect("precommitted B width");
-        let precommitted_a_key = akita_types::sis::AjtaiKeyParams::new_unchecked(
+        let precommitted_a_key = akita_types::sis::InnerCommitMatrixParams::new_unchecked(
             akita_types::DEFAULT_SIS_SECURITY_POLICY,
             akita_types::SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
-            akita_types::SisMatrixRole::A,
             precommitted_params.n_a,
             precommitted_a_width,
             precommitted_params.a_coeff_linf_bound,
             D,
         );
-        let precommitted_b_key = akita_types::sis::AjtaiKeyParams::new_unchecked(
+        let precommitted_b_key = akita_types::sis::OuterCommitMatrixParams::new_unchecked(
             akita_types::DEFAULT_SIS_SECURITY_POLICY,
             akita_types::SisTableDigest::CURRENT,
             SisModulusProfileId::Q128OffsetA7F7,
-            akita_types::SisMatrixRole::B,
             precommitted_params.n_b,
             precommitted_b_width,
             precommitted_params.b_coeff_linf_bound,
@@ -701,8 +715,8 @@ mod tests {
         );
         let precommitted = PrecommittedLevelParams {
             layout: precommitted_params,
-            a_key: precommitted_a_key,
-            b_key: precommitted_b_key,
+            inner_commit_matrix: precommitted_a_key,
+            outer_commit_matrix: precommitted_b_key,
             log_basis_open: base_params.log_basis_open,
             num_digits_inner: base_params.num_digits_inner,
             num_digits_outer: base_params.num_digits_outer,

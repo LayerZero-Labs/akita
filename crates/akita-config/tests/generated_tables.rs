@@ -25,7 +25,7 @@
 //! which the compact 7-tuple drops), step kinds / witness shapes, and total
 //! proof bytes. This is strictly stronger than diffing the compact
 //! generated fold tuples: it catches any drift where the table-hit
-//! expansion would carry a different `a_key.coeff_linf_bound()` (or width, or
+//! expansion would carry a different `inner_commit_matrix.coeff_linf_bound()` (or width, or
 //! rank) than the DP used, not just a different stored tuple.
 //!
 //! When this test fails the panic message lists per-family mismatch counts,
@@ -336,14 +336,14 @@ fn render_schedule(schedule: &Schedule) -> String {
 }
 
 fn fold_steps_equal(left: &FoldStep, right: &FoldStep) -> bool {
-    left.current_w_len == right.current_w_len
-        && left.next_w_len == right.next_w_len
+    left.input_witness_len == right.input_witness_len
+        && left.output_witness_len == right.output_witness_len
         && left.level_bytes == right.level_bytes
         && left.params == right.params
 }
 
 fn direct_steps_equal(left: &TerminalWitnessPlan, right: &TerminalWitnessPlan) -> bool {
-    left.current_w_len == right.current_w_len
+    left.input_witness_len == right.input_witness_len
         && left.witness_shape == right.witness_shape
         && left.terminal_bytes == right.terminal_bytes
 }

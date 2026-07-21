@@ -411,7 +411,7 @@ mod tests {
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
-                lp.a_key.row_len(),
+                lp.inner_commit_matrix.output_rank(),
                 instance.v_trusted::<D>().expect("v"),
                 &commitment
                     .rows()
@@ -560,7 +560,7 @@ mod tests {
             let expected = relation_claim_from_rows::<F, D>(
                 &tau1,
                 alpha,
-                lp.a_key.row_len(),
+                lp.inner_commit_matrix.output_rank(),
                 instance.v_trusted::<D>().expect("v"),
                 &commitment
                     .rows()

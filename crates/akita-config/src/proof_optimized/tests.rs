@@ -48,12 +48,12 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     let schedule = Schedule {
         folds: vec![FoldStep {
             params: fold_lp.clone(),
-            current_w_len: 1 << 8,
-            next_w_len: 1 << 4,
+            input_witness_len: 1 << 8,
+            output_witness_len: 1 << 4,
             level_bytes: 0,
         }],
         terminal: TerminalWitnessPlan {
-            current_w_len: 1 << 4,
+            input_witness_len: 1 << 4,
             witness_shape,
             terminal_bytes: 0,
         },
@@ -131,14 +131,14 @@ fn expected_runtime_root_setup_len(lp: &LevelParams, opening_batch: &OpeningClai
     }
 
     let (a_len, b_len, d_width) = expected_group_setup_footprint(
-        lp.a_key.row_len(),
-        lp.a_key.col_len(),
-        lp.b_key.row_len(),
+        lp.inner_commit_matrix.output_rank(),
+        lp.inner_commit_matrix.input_width(),
+        lp.outer_commit_matrix.output_rank(),
         opening_batch.num_total_polynomials(),
         lp.num_live_blocks,
         lp.num_digits_open,
     );
-    expected_root_setup_len(lp.d_key.row_len(), d_width, a_len, b_len)
+    expected_root_setup_len(lp.open_commit_matrix.output_rank(), d_width, a_len, b_len)
 }
 
 fn expected_group_setup_footprint(
@@ -176,9 +176,9 @@ fn expected_multi_group_runtime_root_setup_len(
         .group_layout(final_group_index)
         .expect("final group");
     let (mut max_a_len, mut max_b_len, mut d_width) = expected_group_setup_footprint(
-        lp.a_key.row_len(),
-        lp.a_key.col_len(),
-        lp.b_key.row_len(),
+        lp.inner_commit_matrix.output_rank(),
+        lp.inner_commit_matrix.input_width(),
+        lp.outer_commit_matrix.output_rank(),
         final_group.num_polynomials(),
         lp.num_live_blocks,
         lp.num_digits_open,
@@ -186,9 +186,9 @@ fn expected_multi_group_runtime_root_setup_len(
 
     for group in &lp.precommitted_groups {
         let (a_len, b_len, group_d_width) = expected_group_setup_footprint(
-            group.a_key.row_len(),
-            group.a_key.col_len(),
-            group.b_key.row_len(),
+            group.inner_commit_matrix.output_rank(),
+            group.inner_commit_matrix.input_width(),
+            group.outer_commit_matrix.output_rank(),
             group.layout.group.num_polynomials(),
             group.layout.num_live_blocks,
             group.num_digits_open,
@@ -198,7 +198,12 @@ fn expected_multi_group_runtime_root_setup_len(
         d_width += group_d_width;
     }
 
-    expected_root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
+    expected_root_setup_len(
+        lp.open_commit_matrix.output_rank(),
+        d_width,
+        max_a_len,
+        max_b_len,
+    )
 }
 
 #[test]
@@ -352,7 +357,7 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
         final_group.num_polynomials() * root_params.num_live_blocks * root_params.num_digits_open
             + precommitted_d_width;
     assert_eq!(
-        root_params.d_key.col_len(),
+        root_params.open_commit_matrix.input_width(),
         expected_d_width,
         "multi-group root D columns are final plus all precommitted segments"
     );
@@ -362,8 +367,8 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
         padded_setup_prefix_len, setup_prefix_precommitted_params, setup_prefix_slot_id,
-        AjtaiKeyParams, DecompositionParams, FoldStep, LevelParamsLike, SetupContributionMode,
-        TerminalResponseShape, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
+        DecompositionParams, FoldStep, LevelParamsLike, OpenCommitMatrixParams,
+        SetupContributionMode, TerminalResponseShape, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
@@ -389,7 +394,7 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         )
         .expect("terminal response shape");
         TerminalWitnessPlan {
-            current_w_len: witness_shape.layout.logical_num_elems,
+            input_witness_len: witness_shape.layout.logical_num_elems,
             witness_shape,
             terminal_bytes: 0,
         }
@@ -404,19 +409,18 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             .d_segment_width()
             .expect("setup-prefix D width");
         let d_width = params
-            .d_key
-            .col_len()
+            .open_commit_matrix
+            .input_width()
             .checked_add(prefix_d_width)
             .expect("D width");
-        params.d_key = AjtaiKeyParams::new_unchecked(
-            params.d_key.security_policy(),
-            params.d_key.sis_table_key().table_digest,
-            params.d_key.sis_modulus_profile(),
-            params.d_key.sis_table_key().role,
-            params.d_key.row_len(),
+        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+            params.open_commit_matrix.security_policy(),
+            params.open_commit_matrix.sis_table_key().table_digest,
+            params.open_commit_matrix.sis_modulus_profile(),
+            params.open_commit_matrix.output_rank(),
             d_width,
-            params.d_key.coeff_linf_bound(),
-            params.ring_dimension,
+            params.open_commit_matrix.coeff_linf_bound(),
+            params.d_a(),
         );
     }
 
@@ -441,20 +445,20 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             folds: vec![
                 FoldStep {
                     params: root,
-                    current_w_len: 256,
-                    next_w_len: 128,
+                    input_witness_len: 256,
+                    output_witness_len: 128,
                     level_bytes: 0,
                 },
                 FoldStep {
                     params: successor,
-                    current_w_len: 128,
-                    next_w_len: terminal_current_w_len,
+                    input_witness_len: 128,
+                    output_witness_len: terminal_current_w_len,
                     level_bytes: 0,
                 },
                 FoldStep {
                     params: terminal_params,
-                    current_w_len: terminal_current_w_len,
-                    next_w_len: direct.current_w_len,
+                    input_witness_len: terminal_current_w_len,
+                    output_witness_len: direct.input_witness_len,
                     level_bytes: 0,
                 },
             ],
@@ -530,7 +534,8 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
             fold.params.d_matrix_width() >= prefix_d_width,
             "consuming fold D width must include setup-prefix e_hat columns"
         );
-        let fold_d_len = fold.params.d_key.row_len() * fold.params.d_matrix_width();
+        let fold_d_len =
+            fold.params.open_commit_matrix.output_rank() * fold.params.d_matrix_width();
         assert!(
             envelope.max_setup_len >= fold_d_len,
             "matrix envelope must cover the consuming fold's shared D matrix"
@@ -596,11 +601,11 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
                 num_public_rows,
             )
             .expect("valid planned witness")
-                * fold.params.ring_dimension
+                * fold.params.d_a()
         };
         assert_eq!(
-            runtime_next_w_len, fold.next_w_len,
-            "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
+            runtime_next_w_len, fold.output_witness_len,
+            "planner/runtime output_witness_len mismatch at level {idx} for key={key:?}",
         );
     }
 }
@@ -681,12 +686,11 @@ fn assert_level_has_crt_i8_capacity<Cfg: CommitmentConfig>(
         ("max balanced i8 digit", 1u64 << (MAX_I8_LOG_BASIS - 1)),
         ("raw signed-i8", RAW_I8_RHS_MAX_ABS),
     ] {
-        let safe_width =
-            small_field_single_term_safe_width::<Cfg>(level.ring_dimension, rhs_abs_bound);
+        let safe_width = small_field_single_term_safe_width::<Cfg>(level.d_a(), rhs_abs_bound);
         assert!(
             matches!(safe_width, Some(width) if width > 0),
             "{profile_id} has no single-term CRT capacity for {role} at D={} rhs_abs_bound={} in {} key={key:?}",
-            level.ring_dimension,
+            level.d_a(),
             rhs_abs_bound,
             std::any::type_name::<Cfg>()
         );
@@ -747,8 +751,9 @@ fn assert_generated_batched_roots_are_scaled<Cfg: CommitmentConfig>(table: Gener
         };
         checked_folded_entry = true;
         let root_lp = &root.params;
-        let singleton_outer_width =
-            root_lp.a_key.row_len() * root_lp.num_digits_open * root_lp.num_live_blocks;
+        let singleton_outer_width = root_lp.inner_commit_matrix.output_rank()
+            * root_lp.num_digits_open
+            * root_lp.num_live_blocks;
         let singleton_d_width = root_lp.num_digits_open * root_lp.num_live_blocks;
         assert_eq!(
             root_lp.outer_width(),
@@ -900,7 +905,7 @@ fn power_of_two_positions_cover_exact_source() {
                 pow2_block,
             );
             if level_idx > 0 {
-                let num_ring = fold.current_w_len / lp.ring_dimension;
+                let num_ring = fold.input_witness_len / lp.d_a();
                 let expected_position_count =
                     num_ring.div_ceil(lp.num_live_blocks).next_power_of_two();
                 assert_eq!(

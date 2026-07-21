@@ -153,11 +153,7 @@ fn fold_grind_probe_order_absorb_buf(
 
     let mut buf = Vec::with_capacity(24 + 72 * groups.len());
     buf.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
-    push_usize(
-        &mut buf,
-        root_lp.ring_dimension,
-        "fold grind ring dimension",
-    )?;
+    push_usize(&mut buf, root_lp.d_a(), "fold grind ring dimension")?;
     push_usize(&mut buf, groups.len(), "fold grind group count")?;
     for (group_index, (params, num_claims)) in groups.iter().copied().enumerate() {
         push_usize(&mut buf, group_index, "fold grind group index")?;

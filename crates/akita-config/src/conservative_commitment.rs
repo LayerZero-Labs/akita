@@ -9,7 +9,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_t_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    AjtaiKeyParams, SisMatrixRole, SisTableKey,
+    InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
@@ -168,7 +168,7 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         log_basis: params.log_basis_inner,
         ..policy.decomposition
     };
-    let inner_width = params.a_key.col_len();
+    let inner_width = params.inner_commit_matrix.input_width();
     let mut conservative_a_rows = 0usize;
     let mut conservative_a_bound = 0u128;
     let mut conservative_b_bound = 0u128;
@@ -190,24 +190,24 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
             inner_width as u64,
         )
         .ok_or_else(|| AkitaError::InvalidSetup("no conservative A-role norm".to_string()))?;
-        let a_key = AjtaiKeyParams::try_new_with_min_rank(
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: policy.sis_security_policy,
                 table_digest: policy.sis_table_digest,
                 modulus_profile: policy.sis_modulus_profile,
-                role: SisMatrixRole::A,
+                role: SisMatrixRole::Inner,
                 ring_dimension: policy.ring_dimension as u32,
                 coeff_linf_bound: a_bound,
             },
             inner_width,
         )?;
-        conservative_a_rows = conservative_a_rows.max(a_key.row_len());
+        conservative_a_rows = conservative_a_rows.max(inner_commit_matrix.output_rank());
         conservative_a_bound = conservative_a_bound.max(a_bound);
 
         let b_bound = rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             policy.sis_modulus_profile,
-            SisMatrixRole::B,
+            SisMatrixRole::Outer,
             policy.ring_dimension,
             log_basis_open,
         )
@@ -215,11 +215,10 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         conservative_b_bound = conservative_b_bound.max(b_bound);
     }
 
-    params.a_key = AjtaiKeyParams::try_new(
+    params.inner_commit_matrix = InnerCommitMatrixParams::try_new(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
-        SisMatrixRole::A,
         conservative_a_rows,
         inner_width,
         conservative_a_bound,
@@ -232,17 +231,16 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
         1,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("conservative B width overflow".to_string()))?;
-    params.b_key = AjtaiKeyParams::try_new_with_min_rank(
+    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
             policy: policy.sis_security_policy,
             table_digest: policy.sis_table_digest,
             modulus_profile: policy.sis_modulus_profile,
-            role: SisMatrixRole::B,
+            role: SisMatrixRole::Outer,
             ring_dimension: policy.ring_dimension as u32,
             coeff_linf_bound: conservative_b_bound,
         },
         outer_width,
     )?;
-    params.stamp_role_dims_from_keys();
     Ok(params)
 }

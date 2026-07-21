@@ -287,10 +287,10 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
-            PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
-            SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole, SisModulusProfileId,
-            SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+            setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks, InnerCommitMatrixParams,
+            OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupParams,
+            PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+            SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -316,21 +316,19 @@ mod tests {
                 n_b: 1,
                 b_coeff_linf_bound: 1,
             },
-            a_key: AjtaiKeyParams::new_unchecked(
+            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q128OffsetA7F7,
-                SisMatrixRole::A,
                 1,
                 1,
                 1,
                 64,
             ),
-            b_key: AjtaiKeyParams::new_unchecked(
+            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q128OffsetA7F7,
-                SisMatrixRole::B,
                 1,
                 1,
                 1,

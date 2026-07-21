@@ -499,10 +499,10 @@ mod sis_schedule_width_audit {
     ) {
         for (level_idx, fold) in schedule.fold_steps().enumerate() {
             let lp = &fold.params;
-            let d = u32::try_from(lp.ring_dimension).expect("ring dimension fits in u32");
+            let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
             let a_rank = min_secure_rank(
-                lp.a_key.sis_table_key(),
+                lp.inner_commit_matrix.sis_table_key(),
                 u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -513,15 +513,15 @@ mod sis_schedule_width_audit {
                 )
             });
             assert!(
-                a_rank <= lp.a_key.row_len(),
+                a_rank <= lp.inner_commit_matrix.output_rank(),
                 "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
                 lp.log_basis_inner,
                 lp.inner_width(),
-                lp.a_key.row_len(),
+                lp.inner_commit_matrix.output_rank(),
             );
 
             let b_rank = min_secure_rank(
-                lp.b_key.sis_table_key(),
+                lp.outer_commit_matrix.sis_table_key(),
                 u64::try_from(lp.outer_width()).expect("outer width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -532,15 +532,15 @@ mod sis_schedule_width_audit {
                 )
             });
             assert!(
-                b_rank <= lp.b_key.row_len(),
+                b_rank <= lp.outer_commit_matrix.output_rank(),
                 "B-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={b_rank}, actual_rank={}",
                 lp.log_basis_outer,
                 lp.outer_width(),
-                lp.b_key.row_len(),
+                lp.outer_commit_matrix.output_rank(),
             );
 
             let d_rank = min_secure_rank(
-                lp.d_key.sis_table_key(),
+                lp.open_commit_matrix.sis_table_key(),
                 u64::try_from(lp.d_matrix_width()).expect("d-matrix width should fit in u64"),
             )
             .unwrap_or_else(|| {
@@ -551,11 +551,11 @@ mod sis_schedule_width_audit {
                 )
             });
             assert!(
-                d_rank <= lp.d_key.row_len(),
+                d_rank <= lp.open_commit_matrix.output_rank(),
                 "D-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={d_rank}, actual_rank={}",
                 lp.log_basis_open,
                 lp.d_matrix_width(),
-                lp.d_key.row_len(),
+                lp.open_commit_matrix.output_rank(),
             );
         }
     }
@@ -629,7 +629,8 @@ mod fp128_policy_tests {
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
         let root_params = &schedule.root_fold().expect("small-field root fold").params;
         assert!(
-            root_params.a_key.coeff_linf_bound() >= root_params.b_key.coeff_linf_bound() * 2,
+            root_params.inner_commit_matrix.coeff_linf_bound()
+                >= root_params.outer_commit_matrix.coeff_linf_bound() * 2,
             "A-role L-infinity bound should include the psi norm bound"
         );
     }
@@ -646,7 +647,7 @@ mod fp128_policy_tests {
             .expect("selector should find a generated onehot schedule");
 
         for selection in [&full, &onehot] {
-            assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 32));
+            assert_eq!(selection.schedule.initial_witness_len(), Some(1usize << 32));
         }
         assert!(!full.preset.is_onehot());
         assert!(onehot.preset.is_onehot());
@@ -661,7 +662,7 @@ mod fp128_policy_tests {
             .expect("selector should find a generated batched onehot schedule");
 
         assert!(selection.preset.is_onehot());
-        assert_eq!(selection.schedule.initial_w_len(), Some(1usize << 30));
+        assert_eq!(selection.schedule.initial_witness_len(), Some(1usize << 30));
     }
 }
 

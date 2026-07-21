@@ -192,27 +192,25 @@ fn lift_scale<E: FieldCore + FromPrimitiveInt>(extra_rounds: usize) -> Result<E,
 mod tests {
     use super::*;
     use crate::{
-        AjtaiKeyParams, PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-        SisModulusProfileId,
+        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+        PrecommittedGroupParams, PrecommittedLevelParams, SisModulusProfileId,
     };
     use akita_field::Prime32Offset99 as F;
 
     fn test_prefix_id() -> SetupPrefixSlotId {
-        let a_key = AjtaiKeyParams::new_unchecked(
+        let inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
-            crate::sis::SisMatrixRole::A,
             1,
             1,
             1,
             32,
         );
-        let b_key = AjtaiKeyParams::new_unchecked(
+        let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
-            crate::sis::SisMatrixRole::B,
             1,
             1,
             1,
@@ -231,12 +229,12 @@ mod tests {
                     log_basis_inner: 1,
                     log_basis_outer: 3,
                     n_a: 1,
-                    a_coeff_linf_bound: a_key.coeff_linf_bound(),
+                    a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
                     n_b: 1,
-                    b_coeff_linf_bound: b_key.coeff_linf_bound(),
+                    b_coeff_linf_bound: outer_commit_matrix.coeff_linf_bound(),
                 },
-                a_key,
-                b_key,
+                inner_commit_matrix,
+                outer_commit_matrix,
                 log_basis_open: 3,
                 num_digits_inner: 1,
                 num_digits_outer: 1,

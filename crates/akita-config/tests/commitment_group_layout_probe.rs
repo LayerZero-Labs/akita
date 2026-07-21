@@ -42,7 +42,7 @@ fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSumma
     let params = root_params(&schedule)?;
     let t_hat_g = params
         .num_live_blocks
-        .checked_mul(params.a_key.row_len())
+        .checked_mul(params.inner_commit_matrix.output_rank())
         .and_then(|n| n.checked_mul(params.num_digits_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("t_hat_g overflow".to_string()))?;
 
@@ -52,8 +52,8 @@ fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSumma
         log_basis_inner: params.log_basis_inner,
         log_basis_outer: params.log_basis_outer,
         log_basis_open: params.log_basis_open,
-        n_a: params.a_key.row_len(),
-        n_b: params.b_key.row_len(),
+        n_a: params.inner_commit_matrix.output_rank(),
+        n_b: params.outer_commit_matrix.output_rank(),
         t_hat_g,
     })
 }

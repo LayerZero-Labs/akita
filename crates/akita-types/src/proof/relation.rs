@@ -76,8 +76,8 @@ pub fn relation_rhs_layout_for(
     if !lp.has_precommitted_groups() {
         return Ok(RelationRhsLayout::uniform(
             n_d,
-            lp.a_key.row_len(),
-            commitment_rows(lp.b_key.row_len()),
+            lp.inner_commit_matrix.output_rank(),
+            commitment_rows(lp.outer_commit_matrix.output_rank()),
             0,
             opening_batch.num_groups(),
         ));
@@ -85,14 +85,14 @@ pub fn relation_rhs_layout_for(
     lp.validate_opening_batch(opening_batch)?;
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
-        n_a: lp.a_key.row_len(),
-        commit_rows: commitment_rows(lp.b_key.row_len()),
+        n_a: lp.inner_commit_matrix.output_rank(),
+        commit_rows: commitment_rows(lp.outer_commit_matrix.output_rank()),
         b_inner_rows: 0,
     });
     for group in lp.precommitted_group_iter() {
         groups.push(RelationGroupRows {
-            n_a: group.a_key.row_len(),
-            commit_rows: commitment_rows(group.b_key.row_len()),
+            n_a: group.inner_commit_matrix.output_rank(),
+            commit_rows: commitment_rows(group.outer_commit_matrix.output_rank()),
             b_inner_rows: 0,
         });
     }
@@ -178,7 +178,7 @@ fn ring_row_count_at<F: FieldCore>(vec: &RingVec<F>, d: usize) -> Result<usize, 
 /// Public-output rows bind through the fused trace term, not `y`.
 ///
 /// `commit_rows_per_group` is the B row count per commitment bundle
-/// (`b_key.row_len()`). The number of commitment bundles is inferred from
+/// (`outer_commit_matrix.output_rank()`). The number of commitment bundles is inferred from
 /// `commitment_rows.len() / commit_rows_per_group`.
 ///
 /// # Errors

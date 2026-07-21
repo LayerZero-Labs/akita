@@ -36,7 +36,7 @@ fn assert_schedule_eq(label: &str, lhs: &akita_types::Schedule, rhs: &akita_type
         "{label}: fold sequences diverge"
     );
     assert_eq!(
-        lhs.terminal.current_w_len, rhs.terminal.current_w_len,
+        lhs.terminal.input_witness_len, rhs.terminal.input_witness_len,
         "{label}: terminal witness lengths diverge"
     );
     assert_eq!(

@@ -230,7 +230,7 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     pub(in crate::protocol::core) group_ring_opening_points: Vec<RingOpeningPoint<F>>,
     /// Per-group ring multiplier points in `OpeningClaims` order.
     pub(in crate::protocol::core) group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
-    pub(in crate::protocol::core) w_len: usize,
+    pub(in crate::protocol::core) witness_len: usize,
     pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
     /// Per-group prepared opening points in `OpeningClaims` order (one element
     /// for scalar/suffix folds). Reused for the fused trace term.
@@ -318,7 +318,7 @@ fn verify_stage2<F, E, T>(
     setup: &AkitaVerifierSetup<F>,
     relation_instance: &RingRelationInstance<F>,
     stage2: &AkitaStage2Proof<F, E>,
-    physical_w_len: usize,
+    physical_witness_len: usize,
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
@@ -338,7 +338,11 @@ where
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         let trace_claim = trace
             .map(|wire| {
-                wire.into_claim::<D>(destination_source_len, destination_ring_dim, physical_w_len)
+                wire.into_claim::<D>(
+                    destination_source_len,
+                    destination_ring_dim,
+                    physical_witness_len,
+                )
             })
             .transpose()
             .map_err(|_| AkitaError::InvalidProof)?;
@@ -904,7 +908,7 @@ where
     let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         ring_switch_verifier::<F, E, T, D>(
             &ring_switch_replay,
-            prepared.w_len,
+            prepared.witness_len,
             transcript,
             RelationMatrixRowLayout::WithDBlock,
         )
@@ -1040,7 +1044,7 @@ where
         setup,
         &relation_instance,
         stage2,
-        prepared.w_len,
+        prepared.witness_len,
         stage1_replay,
         &rs,
         relation_claim,

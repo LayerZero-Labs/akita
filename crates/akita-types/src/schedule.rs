@@ -13,7 +13,7 @@ pub struct AkitaScheduleInputs {
     /// Fold level, where `0` is the original polynomial.
     pub level: usize,
     /// Current witness length in field elements before this level runs.
-    pub current_w_len: usize,
+    pub input_witness_len: usize,
 }
 
 /// Transcript binding used for one fold's outgoing witness state.
@@ -36,7 +36,7 @@ pub struct ExecutionSchedule {
     /// Fold level, where `0` is the root.
     pub level: usize,
     /// Witness length expected before this fold runs.
-    pub current_w_len: usize,
+    pub input_witness_len: usize,
     /// Active level parameters for this fold.
     pub params: LevelParams,
     /// Successor parameters when another committed fold follows.
@@ -45,7 +45,7 @@ pub struct ExecutionSchedule {
     pub next_log_basis: u32,
     /// Witness length expected after this fold's ring-switch relation builds
     /// the next `w`.
-    pub next_w_len: usize,
+    pub output_witness_len: usize,
     /// Whether this fold hands off to the terminal direct witness.
     pub is_terminal: bool,
     /// Transcript/wire policy for the witness state leaving this fold.
@@ -72,12 +72,15 @@ impl ExecutionSchedule {
     ///
     /// Returns an error if the runtime witness length does not match the
     /// planner schedule.
-    pub fn validate_current_w_len(&self, actual_current_w_len: usize) -> Result<(), AkitaError> {
-        if actual_current_w_len != self.current_w_len {
+    pub fn validate_input_witness_len(
+        &self,
+        actual_current_w_len: usize,
+    ) -> Result<(), AkitaError> {
+        if actual_current_w_len != self.input_witness_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "scheduled fold level {} did not match runtime state: \
-                 expected_w_len={}, actual_w_len={}",
-                self.level, self.current_w_len, actual_current_w_len
+                 expected_witness_len={}, actual_witness_len={}",
+                self.level, self.input_witness_len, actual_current_w_len
             )));
         }
         Ok(())
@@ -89,11 +92,11 @@ impl ExecutionSchedule {
     ///
     /// Returns an error if the post-ring-switch witness length does not match
     /// the planner schedule.
-    pub fn validate_next_w_len(&self, actual_next_w_len: usize) -> Result<(), AkitaError> {
-        if actual_next_w_len != self.next_w_len {
+    pub fn validate_output_witness_len(&self, actual_next_w_len: usize) -> Result<(), AkitaError> {
+        if actual_next_w_len != self.output_witness_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "scheduled fold level {} produced unexpected next-w length: expected={}, actual={actual_next_w_len}",
-                self.level, self.next_w_len
+                self.level, self.output_witness_len
             )));
         }
         Ok(())
@@ -138,10 +141,10 @@ impl PrecommittedGroupParams {
             fold_challenge_shape: params.fold_challenge_shape,
             log_basis_inner: params.log_basis_inner,
             log_basis_outer: params.log_basis_outer,
-            n_a: params.a_key.row_len(),
-            a_coeff_linf_bound: params.a_key.coeff_linf_bound(),
-            n_b: params.b_key.row_len(),
-            b_coeff_linf_bound: params.b_key.coeff_linf_bound(),
+            n_a: params.inner_commit_matrix.output_rank(),
+            a_coeff_linf_bound: params.inner_commit_matrix.coeff_linf_bound(),
+            n_b: params.outer_commit_matrix.output_rank(),
+            b_coeff_linf_bound: params.outer_commit_matrix.coeff_linf_bound(),
         }
     }
 
@@ -405,7 +408,7 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness W width overflow".to_string()))?;
     let t_hat_count = num_polynomials
         .checked_mul(lp.num_live_blocks)
-        .and_then(|n| n.checked_mul(lp.a_key.row_len()))
+        .and_then(|n| n.checked_mul(lp.inner_commit_matrix.output_rank()))
         .and_then(|n| n.checked_mul(lp.num_digits_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T width overflow".to_string()))?;
     let num_digits_fold = lp.num_digits_fold(num_polynomials, field_bits)?;
@@ -507,9 +510,9 @@ pub struct FoldStep {
     /// digit depths, challenge config).
     pub params: LevelParams,
     /// Witness length entering this level.
-    pub current_w_len: usize,
+    pub input_witness_len: usize,
     /// Witness length leaving this level.
-    pub next_w_len: usize,
+    pub output_witness_len: usize,
     /// Proof bytes for this level.
     pub level_bytes: usize,
 }
@@ -518,7 +521,7 @@ pub struct FoldStep {
 #[derive(Clone, Debug)]
 pub struct TerminalWitnessPlan {
     /// Witness length entering the direct step.
-    pub current_w_len: usize,
+    pub input_witness_len: usize,
     /// Serialized terminal witness payload shape.
     pub witness_shape: TerminalResponseShape,
     /// Direct witness bytes.
@@ -584,16 +587,18 @@ impl Schedule {
         }
 
         for (index, fold) in self.folds.iter().enumerate() {
-            if fold.current_w_len == 0 || fold.next_w_len == 0 {
+            if fold.input_witness_len == 0 || fold.output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(
                     "fold witness lengths must be nonzero".to_string(),
                 ));
             }
 
             let successor_fold = self.folds.get(index + 1);
-            let successor_w_len =
-                successor_fold.map_or(self.terminal.current_w_len, |next| next.current_w_len);
-            if fold.next_w_len != successor_w_len {
+            let successor_witness_len = successor_fold
+                .map_or(self.terminal.input_witness_len, |next| {
+                    next.input_witness_len
+                });
+            if fold.output_witness_len != successor_witness_len {
                 return Err(AkitaError::InvalidSetup(format!(
                     "schedule witness length mismatch between steps {index} and {}",
                     index + 1
@@ -665,12 +670,12 @@ impl Schedule {
                 }
             }
         }
-        if self.terminal.current_w_len == 0 {
+        if self.terminal.input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "direct witness length must be nonzero".to_string(),
             ));
         }
-        if self.terminal.witness_shape.layout.logical_num_elems != self.terminal.current_w_len {
+        if self.terminal.witness_shape.layout.logical_num_elems != self.terminal.input_witness_len {
             return Err(AkitaError::InvalidSetup(
                 "terminal direct witness shape does not match current witness length".to_string(),
             ));
@@ -704,11 +709,11 @@ impl Schedule {
             .map_or_else(|| self.terminal.log_basis(), |params| params.log_basis_open);
         Ok(ExecutionSchedule {
             level,
-            current_w_len: step.current_w_len,
+            input_witness_len: step.input_witness_len,
             params: step.params.clone(),
             next_params,
             next_log_basis,
-            next_w_len: step.next_w_len,
+            output_witness_len: step.output_witness_len,
             is_terminal,
             next_witness_binding,
         })
@@ -717,8 +722,8 @@ impl Schedule {
     /// Witness length (field elements) entering the root fold.
     ///
     /// Returns `None` only for an unvalidated, unsupported empty schedule.
-    pub fn initial_w_len(&self) -> Option<usize> {
-        self.folds.first().map(|fold| fold.current_w_len)
+    pub fn initial_witness_len(&self) -> Option<usize> {
+        self.folds.first().map(|fold| fold.input_witness_len)
     }
 
     /// Append the descriptor digest encoding for this effective schedule.
@@ -729,11 +734,11 @@ impl Schedule {
         push_usize(bytes, self.folds.len());
         for fold in &self.folds {
             fold.params.append_descriptor_bytes(bytes);
-            push_usize(bytes, fold.current_w_len);
-            push_usize(bytes, fold.next_w_len);
+            push_usize(bytes, fold.input_witness_len);
+            push_usize(bytes, fold.output_witness_len);
             push_usize(bytes, fold.level_bytes);
         }
-        push_usize(bytes, self.terminal.current_w_len);
+        push_usize(bytes, self.terminal.input_witness_len);
         self.terminal.witness_shape.append_descriptor_bytes(bytes);
         push_usize(bytes, self.terminal.terminal_bytes);
         push_usize(bytes, self.total_bytes);
@@ -741,10 +746,10 @@ impl Schedule {
 }
 
 /// Witness length entering the root fold, in field elements.
-pub fn root_current_w_len(lp: &LevelParams) -> usize {
+pub fn root_input_witness_len(lp: &LevelParams) -> usize {
     lp.num_live_blocks
         .checked_mul(lp.num_positions_per_block)
-        .and_then(|len| len.checked_mul(lp.ring_dimension))
+        .and_then(|len| len.checked_mul(lp.d_a()))
         .unwrap_or(0)
 }
 #[cfg(test)]

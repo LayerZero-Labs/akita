@@ -257,8 +257,8 @@ where
         }
     }
 
-    let root_packed_w_len = root_current_w_len(&root_scheduled.params);
-    root_scheduled.validate_current_w_len(root_packed_w_len)?;
+    let root_packed_w_len = root_input_witness_len(&root_scheduled.params);
+    root_scheduled.validate_input_witness_len(root_packed_w_len)?;
 
     let root = prove_root::<Cfg::Field, Cfg::ExtField, T, P, C, O, TS, R, Cfg>(
         expanded,

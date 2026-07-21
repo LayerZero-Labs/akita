@@ -67,7 +67,7 @@ pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, planned_next_w_len,
+    packed_digits_bytes, padded_boolean_opening_vars, planned_output_witness_len,
     planned_w_ring_element_count, proof_ring_vec_bytes, reduce_inner_opening_to_ring_element,
     ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds,
     terminal_response_bytes, validate_role_dims, validate_schedule_ring_dims, BasisMode,
@@ -124,7 +124,7 @@ pub use proof_size::{level_proof_bytes, FOLD_GRIND_NONCE_BYTES};
 pub use schedule::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
     intermediate_w_ring_element_count_with_counts,
-    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_current_w_len,
+    intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
     AkitaScheduleInputs, AkitaScheduleLookupKey, ExecutionSchedule, FoldStep,
     NextWitnessBindingPolicy, PrecommittedGroupParams, Schedule, ScheduleKeyPrecommitSource,
     TerminalWitnessPlan,
@@ -134,8 +134,9 @@ pub use setup_contribution::{
     SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,
 };
 pub use sis::{
-    AjtaiKeyParams, ScalarCutoff, SisMatrixRole, SisModulusProfileId, SisRoleCell,
-    SisSecurityPolicyId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,
+    SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
+    SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use stage3_geometry::BatchedStage3Geometry;
 pub use tail_golomb_rice_low_bits::{

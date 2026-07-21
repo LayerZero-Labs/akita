@@ -105,7 +105,7 @@ where
             validate_commit_inner_shape::<Cfg::Field, D_A>(
                 &inner,
                 commit_params.num_live_blocks,
-                commit_params.a_key.row_len(),
+                commit_params.inner_commit_matrix.output_rank(),
                 commit_params.num_digits_outer,
                 commit_params.log_basis_outer,
             )?;
@@ -158,11 +158,11 @@ where
                 }
                 let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
                     prepared,
-                    commit_params.b_key.row_len(),
+                    commit_params.outer_commit_matrix.output_rank(),
                     outer_input,
                     commit_params.log_basis_outer,
                 )?;
-                if u.len() != commit_params.b_key.row_len() {
+                if u.len() != commit_params.outer_commit_matrix.output_rank() {
                     return Err(AkitaError::InvalidProof);
                 }
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))

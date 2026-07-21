@@ -47,16 +47,16 @@ const MOD_WIRING_END: &str = "// @generated schedule module wiring end";
 
 fn fold_step_from_params(p: &LevelParams) -> GeneratedFoldStep {
     GeneratedFoldStep {
-        ring_d: p.ring_dimension as u32,
+        ring_d: p.d_a() as u32,
         log_basis_inner: p.log_basis_inner,
         log_basis_outer: p.log_basis_outer,
         log_basis_open: p.log_basis_open,
         position_index_bits: p.position_index_bits() as u32,
         block_index_bits: p.block_index_bits() as u32,
         num_live_blocks: p.num_live_blocks as u32,
-        n_a: p.a_key.row_len() as u32,
-        n_b: p.b_key.row_len() as u32,
-        n_d: p.d_key.row_len() as u32,
+        n_a: p.inner_commit_matrix.output_rank() as u32,
+        n_b: p.outer_commit_matrix.output_rank() as u32,
+        n_d: p.open_commit_matrix.output_rank() as u32,
     }
 }
 
@@ -79,8 +79,8 @@ fn setup_prefix_group_from_params(
                 log_basis_inner: group.layout.log_basis_inner,
                 log_basis_outer: group.layout.log_basis_outer,
                 log_basis_open: group.log_basis_open,
-                n_a: group.a_key.row_len() as u32,
-                n_b: group.b_key.row_len() as u32,
+                n_a: group.inner_commit_matrix.output_rank() as u32,
+                n_b: group.outer_commit_matrix.output_rank() as u32,
             }
         })
 }

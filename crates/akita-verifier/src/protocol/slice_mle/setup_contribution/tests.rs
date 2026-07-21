@@ -3,9 +3,9 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AjtaiKeyParams, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SisModulusProfileId,
-    WitnessLayout,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
+    LevelParams, OpeningClaimsLayout, OuterCommitMatrixParams, RelationMatrixRowLayout,
+    SisModulusProfileId, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -159,15 +159,14 @@ impl SetupContributionFixture {
             .and_then(|width| width.checked_mul(shape.depth_open))
             .and_then(|width| width.checked_mul(shape.num_live_blocks))
             .expect("setup contribution fixture B width");
-        if lp.b_key.col_len() < expected_b_width {
-            lp.b_key = AjtaiKeyParams::new_unchecked(
-                lp.b_key.security_policy(),
-                lp.b_key.sis_table_key().table_digest,
-                lp.b_key.sis_modulus_profile(),
-                lp.b_key.sis_table_key().role,
-                lp.b_key.row_len(),
+        if lp.outer_commit_matrix.input_width() < expected_b_width {
+            lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+                lp.outer_commit_matrix.security_policy(),
+                lp.outer_commit_matrix.sis_table_key().table_digest,
+                lp.outer_commit_matrix.sis_modulus_profile(),
+                lp.outer_commit_matrix.output_rank(),
                 expected_b_width,
-                lp.b_key.coeff_linf_bound(),
+                lp.outer_commit_matrix.coeff_linf_bound(),
                 TEST_RING_DIM,
             );
         }
@@ -234,8 +233,8 @@ impl SetupContributionFixture {
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
         let relation_matrix_evaluator = RelationMatrixEvaluator {
-            role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             groups,
+            role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
             log_basis_open: shape.log_basis,
             eq_tau1,
             flat_context: Some(FlatRelationContext {

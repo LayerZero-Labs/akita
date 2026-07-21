@@ -33,7 +33,7 @@ pub(crate) struct FoldSuffix {
 /// committed `LevelParams`.
 #[derive(Clone, Copy)]
 pub(crate) struct DirectSuffix {
-    pub(crate) current_w_len: usize,
+    pub(crate) input_witness_len: usize,
 }
 
 /// Result of the suffix DP at one state. Both shape options are reported
@@ -59,7 +59,7 @@ impl SuffixResult {
 }
 
 fn make_terminal_direct_step(
-    current_w_len: usize,
+    input_witness_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
     num_polynomials: usize,
@@ -90,7 +90,7 @@ fn make_terminal_direct_step(
     };
     let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
     Ok(TerminalWitnessPlan {
-        current_w_len,
+        input_witness_len,
         witness_shape,
         terminal_bytes,
     })
@@ -100,7 +100,7 @@ fn make_terminal_direct_step(
 /// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
 /// fold-then-direct branch without aborting fold-then-fold exploration.
 pub(super) fn try_terminal_direct_suffix_cost(
-    current_w_len: usize,
+    input_witness_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
     key: PolynomialGroupLayout,
@@ -111,7 +111,7 @@ pub(super) fn try_terminal_direct_suffix_cost(
         return Ok(None);
     }
     let (direct, terminal_bytes) = terminal_direct_suffix_cost(
-        current_w_len,
+        input_witness_len,
         terminal_lp,
         field_bits,
         key,
@@ -122,7 +122,7 @@ pub(super) fn try_terminal_direct_suffix_cost(
 }
 
 pub(crate) fn terminal_direct_suffix_cost(
-    current_w_len: usize,
+    input_witness_len: usize,
     terminal_lp: &LevelParams,
     field_bits: u32,
     key: PolynomialGroupLayout,
@@ -136,7 +136,7 @@ pub(crate) fn terminal_direct_suffix_cost(
         1
     };
     let direct = make_terminal_direct_step(
-        current_w_len,
+        input_witness_len,
         terminal_lp,
         field_bits,
         num_polynomials,
@@ -225,7 +225,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
         num_vars,
         level,
-        current_w_len: current_witness_len,
+        input_witness_len: current_witness_len,
     });
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
@@ -247,7 +247,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     .is_some()
     {
         Some(DirectSuffix {
-            current_w_len: current_witness_len_terminal,
+            input_witness_len: current_witness_len_terminal,
         })
     } else {
         None
@@ -340,7 +340,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     .map(|_| suffix_opening_layout(current_witness_len, incoming_setup_prefix))
                     .transpose()?;
                 if let Some((direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
-                    direct_suffix.current_w_len,
+                    direct_suffix.input_witness_len,
                     &candidate_params,
                     field_bits,
                     key,
@@ -359,8 +359,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     let total = level_proof_size + suffix_cost;
                     let folds = vec![FoldStep {
                         params: candidate_params.clone(),
-                        current_w_len: current_witness_len,
-                        next_w_len: next_witness_len_terminal,
+                        input_witness_len: current_witness_len,
+                        output_witness_len: next_witness_len_terminal,
                         level_bytes: level_proof_size,
                     }];
                     try_update(total, folds, direct_step, &mut best_for_this_lb);
@@ -425,8 +425,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
             let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
             folds.push(FoldStep {
                 params: fold_candidate_params,
-                current_w_len: current_witness_len,
-                next_w_len: next_witness_len,
+                input_witness_len: current_witness_len,
+                output_witness_len: next_witness_len,
                 level_bytes: level_proof_size,
             });
             folds.extend(suffix_fold.folds.iter().cloned());

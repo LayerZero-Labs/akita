@@ -86,7 +86,7 @@ where
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.a_key.row_len(),
+            n_a: level_params.inner_commit_matrix.output_rank(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
                 num_digits_inner: level_params.num_digits_inner,
@@ -99,7 +99,7 @@ where
         .iter()
         .map(|_| {
             commit_inner_block_digit_count(
-                level_params.a_key.row_len(),
+                level_params.inner_commit_matrix.output_rank(),
                 level_params.num_digits_outer,
             )
         })
@@ -134,7 +134,7 @@ where
 
     let b_input_len = commit_inner_flat_digit_count(
         level_params.layout.num_live_blocks,
-        level_params.a_key.row_len(),
+        level_params.inner_commit_matrix.output_rank(),
         level_params.num_digits_outer,
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
@@ -143,15 +143,15 @@ where
     b_input_digits.copy_from_slice(planes);
     let u = backend.digit_rows::<D>(
         prepared,
-        level_params.b_key.row_len(),
+        level_params.outer_commit_matrix.output_rank(),
         &b_input_digits,
         level_params.layout.log_basis_outer,
     )?;
-    if u.len() != level_params.b_key.row_len() {
+    if u.len() != level_params.outer_commit_matrix.output_rank() {
         return Err(AkitaError::InvalidSetup(format!(
             "setup prefix commit returned {} B rows, expected {}",
             u.len(),
-            level_params.b_key.row_len()
+            level_params.outer_commit_matrix.output_rank()
         )));
     }
 
@@ -253,12 +253,12 @@ mod tests {
     fn setup_capacity_for(level_params: &LevelParams, n_prefix: usize) -> usize {
         n_prefix.max(
             level_params
-                .b_key
-                .row_len()
+                .outer_commit_matrix
+                .output_rank()
                 .checked_mul(
                     level_params
                         .num_live_blocks
-                        .checked_mul(level_params.a_key.row_len())
+                        .checked_mul(level_params.inner_commit_matrix.output_rank())
                         .and_then(|n| n.checked_mul(level_params.num_digits_open))
                         .expect("b input shape"),
                 )

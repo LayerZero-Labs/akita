@@ -136,7 +136,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
+    witness_len: usize,
     transcript: &mut T,
     relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
@@ -183,16 +183,16 @@ where
         .opening_source_len
         .checked_mul(replay.opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
-    if w_len == 0
-        || !w_len.is_multiple_of(D)
+    if witness_len == 0
+        || !witness_len.is_multiple_of(D)
         || replay.opening_ring_dim == 0
         || !replay.opening_ring_dim.is_power_of_two()
-        || !w_len.is_multiple_of(replay.opening_ring_dim)
-        || w_len > opening_capacity
+        || !witness_len.is_multiple_of(replay.opening_ring_dim)
+        || witness_len > opening_capacity
     {
         return Err(AkitaError::InvalidProof);
     }
-    let num_ring_elems = w_len / D;
+    let num_ring_elems = witness_len / D;
     let opening_ring_dim = replay.opening_ring_dim;
     let x_capacity = akita_types::opening_domain_len(replay.opening_source_len)?;
     // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`):
@@ -528,10 +528,10 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
-    validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
+    validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)?;
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
-    reject_mixed_d_multi_chunk::<D>(lp.role_dims, &layout, "prepare_relation_matrix_evaluator")?;
+    reject_mixed_d_multi_chunk::<D>(lp.role_dims(), &layout, "prepare_relation_matrix_evaluator")?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
@@ -555,7 +555,7 @@ where
         });
     }
     let num_positions_per_block = lp.num_positions_per_block;
-    let n_a = lp.a_key.row_len();
+    let n_a = lp.inner_commit_matrix.output_rank();
 
     let c_alphas = prepare_challenge_evals::<F, E, D>(
         challenges,
@@ -589,7 +589,7 @@ where
     let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     Ok(RelationMatrixEvaluator {
-        role_dims: lp.role_dims,
+        role_dims: lp.role_dims(),
         groups,
         log_basis_open: log_basis,
         eq_tau1,

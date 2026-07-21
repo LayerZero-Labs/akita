@@ -3,7 +3,7 @@ use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::PrecommittedGroupParams;
-use crate::sis::AjtaiKeyParams;
+use crate::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
 
 use super::LevelParams;
 
@@ -16,9 +16,9 @@ pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into the multi-group root key.
     pub layout: PrecommittedGroupParams,
     /// Inner Ajtai matrix (A) used by this group.
-    pub a_key: AjtaiKeyParams,
+    pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Outer commitment matrix (B) used by this group.
-    pub b_key: AjtaiKeyParams,
+    pub outer_commit_matrix: OuterCommitMatrixParams,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
     pub log_basis_open: u32,
     /// Gadget decomposition depth for A/source coefficients.
@@ -58,20 +58,20 @@ impl PrecommittedLevelParams {
             .checked_mul(self.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
         let expected_b_width = self
-            .a_key
-            .row_len()
+            .inner_commit_matrix
+            .output_rank()
             .checked_mul(self.num_digits_outer)
             .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
-        if self.layout.n_a != self.a_key.row_len()
-            || self.layout.a_coeff_linf_bound != self.a_key.coeff_linf_bound()
-            || self.layout.n_b != self.b_key.row_len()
-            || self.layout.b_coeff_linf_bound != self.b_key.coeff_linf_bound()
-            || self.a_key.sis_table_key().role != crate::sis::SisMatrixRole::A
-            || self.a_key.col_len() != expected_a_width
-            || self.b_key.sis_table_key().role != crate::sis::SisMatrixRole::B
-            || self.b_key.col_len() != expected_b_width
+        if self.layout.n_a != self.inner_commit_matrix.output_rank()
+            || self.layout.a_coeff_linf_bound != self.inner_commit_matrix.coeff_linf_bound()
+            || self.layout.n_b != self.outer_commit_matrix.output_rank()
+            || self.layout.b_coeff_linf_bound != self.outer_commit_matrix.coeff_linf_bound()
+            || self.inner_commit_matrix.sis_table_key().role != crate::sis::SisMatrixRole::Inner
+            || self.inner_commit_matrix.input_width() != expected_a_width
+            || self.outer_commit_matrix.sis_table_key().role != crate::sis::SisMatrixRole::Outer
+            || self.outer_commit_matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted A/B keys do not match frozen ranks, bounds, or digit depths"
@@ -84,13 +84,13 @@ impl PrecommittedLevelParams {
     /// Width of this group's A matrix.
     #[inline]
     pub fn inner_width(&self) -> usize {
-        self.a_key.col_len()
+        self.inner_commit_matrix.input_width()
     }
 
     /// Width of this group's B matrix.
     #[inline]
     pub fn outer_width(&self) -> usize {
-        self.b_key.col_len()
+        self.outer_commit_matrix.input_width()
     }
 
     /// Width contribution to the shared D matrix (`w_hat_g` segment).
@@ -110,8 +110,8 @@ impl PrecommittedLevelParams {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         self.layout.append_descriptor_bytes(bytes);
-        self.a_key.append_descriptor_bytes(bytes);
-        self.b_key.append_descriptor_bytes(bytes);
+        self.inner_commit_matrix.append_descriptor_bytes(bytes);
+        self.outer_commit_matrix.append_descriptor_bytes(bytes);
         crate::descriptor_bytes::push_u32(bytes, self.log_basis_open);
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
@@ -125,7 +125,7 @@ impl PrecommittedLevelParams {
 /// Use this trait when code only needs the shared commitment geometry carried
 /// by both [`LevelParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
-    fn a_key_params(&self) -> &AjtaiKeyParams;
+    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
     fn b_rows_len(&self) -> usize;
@@ -146,24 +146,24 @@ pub trait LevelParamsLike {
 }
 
 impl LevelParamsLike for LevelParams {
-    fn a_key_params(&self) -> &AjtaiKeyParams {
-        &self.a_key
+    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
+        &self.inner_commit_matrix
     }
 
     fn a_rows_len(&self) -> usize {
-        self.a_key.row_len()
+        self.inner_commit_matrix.output_rank()
     }
 
     fn a_col_len(&self) -> usize {
-        self.a_key.col_len()
+        self.inner_commit_matrix.input_width()
     }
 
     fn b_rows_len(&self) -> usize {
-        self.b_key.row_len()
+        self.outer_commit_matrix.output_rank()
     }
 
     fn b_col_len(&self) -> usize {
-        self.b_key.col_len()
+        self.outer_commit_matrix.input_width()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {
@@ -220,24 +220,24 @@ impl LevelParamsLike for LevelParams {
 }
 
 impl LevelParamsLike for PrecommittedLevelParams {
-    fn a_key_params(&self) -> &AjtaiKeyParams {
-        &self.a_key
+    fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
+        &self.inner_commit_matrix
     }
 
     fn a_rows_len(&self) -> usize {
-        self.a_key.row_len()
+        self.inner_commit_matrix.output_rank()
     }
 
     fn a_col_len(&self) -> usize {
-        self.a_key.col_len()
+        self.inner_commit_matrix.input_width()
     }
 
     fn b_rows_len(&self) -> usize {
-        self.b_key.row_len()
+        self.outer_commit_matrix.output_rank()
     }
 
     fn b_col_len(&self) -> usize {
-        self.b_key.col_len()
+        self.outer_commit_matrix.input_width()
     }
 
     fn num_live_ring_elements_per_claim(&self) -> usize {

@@ -109,7 +109,7 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight block count must be non-zero".to_string(),
         ));
     }
-    if ring_bits != lp.ring_dimension.trailing_zeros() as usize {
+    if ring_bits != lp.d_a().trailing_zeros() as usize {
         return Err(AkitaError::InvalidInput(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));

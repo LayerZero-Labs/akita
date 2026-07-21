@@ -161,19 +161,19 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
 fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
     lp: &LevelParams,
     next_lp: &LevelParams,
-    next_w_len: usize,
+    output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let current_coeffs = lp
-        .d_key
-        .row_len()
-        .checked_mul(lp.ring_dimension)
+        .open_commit_matrix
+        .output_rank()
+        .checked_mul(lp.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
     let next_commit_coeffs = next_lp
-        .b_key
-        .row_len()
-        .checked_mul(next_lp.ring_dimension)
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(next_lp.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("recursive proof sizing overflow".to_string()))?;
-    let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+    let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let b = 1usize << lp.log_basis_open;
 
     let proof = FoldLevelProof {
@@ -207,7 +207,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         2,
         fold_challenge_config,
     );
-    let next_w_len = D * 8;
+    let output_witness_len = D * 8;
 
     for log_basis in 2..=6 {
         let lp = LevelParams::params_only(
@@ -227,12 +227,12 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
                 .unwrap(),
-                exact_level_proof_bytes::<F>(&lp, &next_lp, next_w_len).unwrap(),
+                exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
     }
@@ -242,7 +242,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
 fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let next_w_len = D * 8;
+    let output_witness_len = D * 8;
     let num_claims = 3;
 
     for log_basis in 2..=6 {
@@ -279,7 +279,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
                 128,
                 &lp,
                 None,
-                next_w_len,
+                output_witness_len,
                 RelationMatrixRowLayout::WithoutCommitmentBlocks,
                 None,
             )
@@ -311,7 +311,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
         2,
         fold_challenge_config,
     );
-    let next_w_len = D * 8;
+    let output_witness_len = D * 8;
 
     for log_basis in 2..=6 {
         let lp = LevelParams::params_only(
@@ -325,15 +325,16 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
-        let rounds = sumcheck_rounds(D, next_w_len);
+        let rounds = sumcheck_rounds(D, output_witness_len);
         let b = 1usize << log_basis;
-        let next_commitment = RingVec::from_ring_elems(&vec![
-            CyclotomicRing::<F, D>::zero();
-            next_lp.b_key.row_len()
-        ])
-        .into_compact();
+        let next_commitment =
+            RingVec::from_ring_elems(&vec![
+                CyclotomicRing::<F, D>::zero();
+                next_lp.outer_commit_matrix.output_rank()
+            ])
+            .into_compact();
         let level_proof = FoldLevelProof::new::<D>(
-            vec![CyclotomicRing::<F, D>::zero(); lp.d_key.row_len()],
+            vec![CyclotomicRing::<F, D>::zero(); lp.open_commit_matrix.output_rank()],
             dummy_stage1_proof(rounds, b),
             AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -347,7 +348,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )

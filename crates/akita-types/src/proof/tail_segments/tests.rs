@@ -19,17 +19,20 @@ fn test_lp() -> LevelParams {
     .with_decomp(8, 32, 2, 3, 3)
     .expect("tail segment test params");
     let key = crate::sis::SisTableKey {
-        policy: params.a_key.security_policy(),
-        table_digest: params.a_key.sis_table_key().table_digest,
-        modulus_profile: params.a_key.sis_modulus_profile(),
-        role: crate::sis::SisMatrixRole::A,
+        policy: params.inner_commit_matrix.security_policy(),
+        table_digest: params.inner_commit_matrix.sis_table_key().table_digest,
+        modulus_profile: params.inner_commit_matrix.sis_modulus_profile(),
+        role: crate::sis::SisMatrixRole::Inner,
         ring_dimension: 64,
         coeff_linf_bound: *crate::sis::COEFF_LINF_BUCKETS
             .last()
             .expect("nonempty SIS buckets"),
     };
-    params.a_key = crate::sis::AjtaiKeyParams::try_new_with_min_rank(key, params.a_key.col_len())
-        .expect("secure terminal test matrix");
+    params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
+        key,
+        params.inner_commit_matrix.input_width(),
+    )
+    .expect("secure terminal test matrix");
     params
 }
 
@@ -117,7 +120,7 @@ fn direct_terminal_layout_contains_only_z_e_t_planes() {
     .expect("direct terminal layout")
     .layout;
     assert_eq!(layout.groups.len(), 1);
-    assert_eq!(layout.logical_num_elems % lp.ring_dimension, 0);
+    assert_eq!(layout.logical_num_elems % lp.d_a(), 0);
 }
 
 #[test]
@@ -147,7 +150,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
         recomposed_inner_rows: &recomposed_inner_rows,
         z_folded_centered_flat: &z_folded_centered_flat,
     };
-    let witness = build_terminal_response_from_groups(lp.ring_dimension, &[group], &lp)
+    let witness = build_terminal_response_from_groups(lp.d_a(), &[group], &lp)
         .expect("direct terminal witness");
 
     assert_eq!(witness.layout, layout);

@@ -52,7 +52,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
             is_first_fold = false;
             root_layout.clone()
         } else {
-            suffix_opening_layout(fold.current_w_len, incoming_setup_prefix)?
+            suffix_opening_layout(fold.input_witness_len, incoming_setup_prefix)?
         };
 
         match fold.params.setup_contribution_mode {

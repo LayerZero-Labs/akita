@@ -723,7 +723,7 @@ fn tail_segment_layout_from_groups<'a>(
     _num_commitment_groups: usize,
     field_bits: u32,
 ) -> Result<TailSegmentLayout, AkitaError> {
-    let d = lp.ring_dimension;
+    let d = lp.d_a();
     if d == 0 {
         return Err(AkitaError::InvalidSetup(
             "tail segment layout has zero ring dimension".to_string(),
@@ -838,7 +838,7 @@ pub fn tail_segment_multiplicities_from_layout(
     layout: &TailSegmentLayout,
     group_index: usize,
 ) -> Result<(usize, usize, usize), AkitaError> {
-    tail_segment_multiplicities_from_layout_for_params(lp, lp.ring_dimension, layout, group_index)
+    tail_segment_multiplicities_from_layout_for_params(lp, lp.d_a(), layout, group_index)
 }
 
 pub fn tail_segment_multiplicities_from_layout_for_params(
@@ -927,7 +927,7 @@ pub fn build_terminal_response_from_groups<F>(
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
 {
-    if ring_d == 0 || lp.ring_dimension != ring_d {
+    if ring_d == 0 || lp.d_a() != ring_d {
         return Err(AkitaError::InvalidInput(
             "terminal response ring dimension mismatch".to_string(),
         ));

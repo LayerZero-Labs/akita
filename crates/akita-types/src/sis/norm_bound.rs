@@ -162,7 +162,7 @@ pub fn rounded_up_role_a_inf_norm(
         policy,
         SisTableDigest::CURRENT,
         sis_modulus_profile,
-        SisMatrixRole::A,
+        SisMatrixRole::Inner,
         d as u32,
         collision_linf,
     )
@@ -501,7 +501,7 @@ mod tests {
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
-            SisMatrixRole::A,
+            SisMatrixRole::Inner,
             d as u32,
             collision_linf,
         )
@@ -597,7 +597,7 @@ mod tests {
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q64Offset59,
-            SisMatrixRole::A,
+            SisMatrixRole::Inner,
             d as u32,
             8u128
                 .checked_mul(challenge.l1_norm)
@@ -740,7 +740,7 @@ mod tests {
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
-                SisMatrixRole::A,
+                SisMatrixRole::Inner,
                 d as u32,
                 8 * challenge.l1_norm * z_bound
             )

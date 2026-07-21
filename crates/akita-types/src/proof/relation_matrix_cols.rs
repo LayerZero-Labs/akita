@@ -411,10 +411,11 @@ where
         Ok(())
     };
 
-    let d_view = setup
-        .shared_matrix
-        .ring_view_dyn(lp.d_key.row_len(), e_total, d_d)?;
-    let d_rows: Vec<&[F]> = (0..lp.d_key.row_len())
+    let d_view =
+        setup
+            .shared_matrix
+            .ring_view_dyn(lp.open_commit_matrix.output_rank(), e_total, d_d)?;
+    let d_rows: Vec<&[F]> = (0..lp.open_commit_matrix.output_rank())
         .map(|r| d_view.row_flat(r))
         .collect::<Result<_, _>>()?;
     let d_start = rows

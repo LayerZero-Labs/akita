@@ -36,8 +36,8 @@ fn conservative_config_commit_returns_frozen_layout() {
         frozen_layout.log_basis_outer,
         ConservativeOneHotCfg::basis_range().0
     );
-    assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
-    assert_eq!(frozen_layout.n_b, layout.b_key.row_len());
+    assert_eq!(frozen_layout.n_a, layout.inner_commit_matrix.output_rank());
+    assert_eq!(frozen_layout.n_b, layout.outer_commit_matrix.output_rank());
     assert_eq!(commitment.rows().count(), frozen_layout.n_b);
 }
 
@@ -206,7 +206,10 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
 
         assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
         assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
-        assert_eq!(final_commitment.rows().count(), main_params.b_key.row_len());
+        assert_eq!(
+            final_commitment.rows().count(),
+            main_params.outer_commit_matrix.output_rank()
+        );
         assert_eq!(final_hint.decomposed_inner_rows.len(), GROUP_SIZE);
         assert_eq!(
             akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
@@ -250,8 +253,8 @@ fn commit_group_returns_frozen_conservative_layout() {
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
     assert_eq!(frozen_layout.log_basis_outer, layout.log_basis_outer);
-    assert_eq!(frozen_layout.n_a, layout.a_key.row_len());
-    assert_eq!(frozen_layout.n_b, layout.b_key.row_len());
+    assert_eq!(frozen_layout.n_a, layout.inner_commit_matrix.output_rank());
+    assert_eq!(frozen_layout.n_b, layout.outer_commit_matrix.output_rank());
     assert_eq!(commitment.rows().count(), frozen_layout.n_b);
 }
 

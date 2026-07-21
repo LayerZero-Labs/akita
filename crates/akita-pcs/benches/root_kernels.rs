@@ -69,7 +69,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         })
         .collect();
 
-    let n_a = layout.a_key.row_len();
+    let n_a = layout.inner_commit_matrix.output_rank();
     let inner_width = layout.inner_width();
 
     let mut group = c.benchmark_group("root_kernels");

@@ -158,41 +158,41 @@ where
         .num_positions_per_block
         .checked_mul(params.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
-    if params.a_key.col_len() != expected_a_width {
+    if params.inner_commit_matrix.input_width() != expected_a_width {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
-            params.a_key.col_len()
+            params.inner_commit_matrix.input_width()
         )));
     }
-    if params.b_key.col_len() == 0 {
+    if params.outer_commit_matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero B width, got B={}",
-            params.b_key.col_len()
+            params.outer_commit_matrix.input_width()
         )));
     }
-    if params.d_key.col_len() == 0 {
+    if params.open_commit_matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
-            params.d_key.col_len()
+            params.open_commit_matrix.input_width()
         )));
     }
     let setup_len = setup
         .shared_matrix
-        .total_ring_elements_at_dyn(params.ring_dimension)?;
+        .total_ring_elements_at_dyn(params.d_a())?;
     let a_required = params
-        .a_key
-        .row_len()
-        .checked_mul(params.a_key.col_len())
+        .inner_commit_matrix
+        .output_rank()
+        .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
     let b_required = params
-        .b_key
-        .row_len()
-        .checked_mul(params.b_key.col_len())
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(params.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
     let d_required = params
-        .d_key
-        .row_len()
-        .checked_mul(params.d_key.col_len())
+        .open_commit_matrix
+        .output_rank()
+        .checked_mul(params.open_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
     let required = a_required.max(b_required).max(d_required);
     if required > setup_len {
@@ -371,12 +371,12 @@ where
     let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_live_blocks,
-        params.a_key.row_len(),
+        params.inner_commit_matrix.output_rank(),
         params.num_digits_outer,
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let num_live_blocks = params.num_live_blocks;
-    let n_a = params.a_key.row_len();
+    let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     // A-role operation: per-poly inner commit + digit decomposition. The digit
@@ -421,7 +421,7 @@ where
         }
     )?;
     validate_commit_outer_input_nonempty(b_input_flat.len())?;
-    let n_b = params.b_key.row_len();
+    let n_b = params.outer_commit_matrix.output_rank();
     // B-role operation: the sent commitment rows `u = B·t̂`.
     let commitment = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Outer),

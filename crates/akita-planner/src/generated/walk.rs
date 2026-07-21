@@ -55,7 +55,7 @@ pub(crate) fn walk_generated_schedule_entry(
     let root_eor_key =
         PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
     let mut folds = Vec::with_capacity(entry.folds.len());
-    let mut current_w_len = expected_root_w_len;
+    let mut input_witness_len = expected_root_w_len;
     let mut terminal_witness_shape = None;
     let mut total_bytes = 0usize;
 
@@ -70,7 +70,7 @@ pub(crate) fn walk_generated_schedule_entry(
         let fold_inputs = AkitaScheduleInputs {
             num_vars: key.final_group.num_vars(),
             level: fold_level,
-            current_w_len,
+            input_witness_len,
         };
         let fold_shape = fold_challenge_shape_at_level(fold_inputs);
         let mut lp = if is_multi_group && fold_level == 0 {
@@ -79,7 +79,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 key.final_group,
                 policy,
                 fold_level,
-                current_w_len,
+                input_witness_len,
             )?;
             validate_step_bases(fold.fold_step(), policy)?;
             let (precommitted_groups, precommitted_d_width) =
@@ -108,7 +108,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 ring_challenge_config,
                 fold_challenge_shape_at_level,
                 fold_level,
-                current_w_len,
+                input_witness_len,
                 num_claims,
             )?
         };
@@ -119,9 +119,9 @@ pub(crate) fn walk_generated_schedule_entry(
             ));
         }
 
-        let (next_w_len, next_lp, layout) = if let Some(next) = next {
+        let (output_witness_len, next_lp, layout) = if let Some(next) = next {
             let len = if is_multi_group && fold_level == 0 {
-                lp.next_w_len::<Prime128OffsetA7F7>(
+                lp.output_witness_len::<Prime128OffsetA7F7>(
                     &key.opening_layout()?,
                     RelationMatrixRowLayout::WithDBlock,
                 )?
@@ -161,7 +161,7 @@ pub(crate) fn walk_generated_schedule_entry(
             challenge_field_bits,
             &lp,
             next_lp.as_ref(),
-            next_w_len,
+            output_witness_len,
             layout,
             if is_terminal {
                 None
@@ -176,7 +176,7 @@ pub(crate) fn walk_generated_schedule_entry(
             policy.claim_ext_degree,
             fold_level,
             root_eor_key,
-            current_w_len,
+            input_witness_len,
         )?)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("generated level byte count overflow".to_string())
@@ -186,17 +186,17 @@ pub(crate) fn walk_generated_schedule_entry(
         })?;
         folds.push(FoldStep {
             params: lp,
-            current_w_len,
-            next_w_len,
+            input_witness_len,
+            output_witness_len,
             level_bytes,
         });
-        current_w_len = next_w_len;
+        input_witness_len = output_witness_len;
     }
 
     let witness_shape = terminal_witness_shape.ok_or_else(|| {
         AkitaError::InvalidSetup("terminal witness missing predecessor fold".to_string())
     })?;
-    if current_w_len == 0 {
+    if input_witness_len == 0 {
         return Err(AkitaError::InvalidSetup(
             "generated terminal witness has zero length".to_string(),
         ));
@@ -213,7 +213,7 @@ pub(crate) fn walk_generated_schedule_entry(
     let schedule = Schedule {
         folds,
         terminal: TerminalWitnessPlan {
-            current_w_len,
+            input_witness_len,
             witness_shape,
             terminal_bytes,
         },
@@ -277,23 +277,23 @@ fn expand_validated_fold_level(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     fold_level: usize,
-    current_w_len: usize,
+    input_witness_len: usize,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
     let fold = step.fold_step();
-    validate_block_geometry(fold, key, policy, fold_level, current_w_len)?;
+    validate_block_geometry(fold, key, policy, fold_level, input_witness_len)?;
     validate_step_bases(fold, policy)?;
     let inputs = AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: fold_level,
-        current_w_len,
+        input_witness_len,
     };
     let lp = expand_fold_step(
         step,
         policy,
         ring_challenge_config,
         fold_level,
-        current_w_len,
+        input_witness_len,
         fold_challenge_shape_at_level(inputs),
         num_claims,
     )?;
@@ -306,7 +306,7 @@ fn expand_fold_step(
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_level: usize,
-    current_w_len: usize,
+    input_witness_len: usize,
     fold_shape: TensorChallengeShape,
     num_claims: usize,
 ) -> Result<LevelParams, AkitaError> {
@@ -315,7 +315,7 @@ fn expand_fold_step(
             policy,
             ring_challenge_config,
             fold_level,
-            current_w_len,
+            input_witness_len,
             fold_shape,
             num_claims,
         ),
@@ -323,7 +323,7 @@ fn expand_fold_step(
             policy,
             ring_challenge_config,
             fold_level,
-            current_w_len,
+            input_witness_len,
             fold_shape,
             num_claims,
         ),
@@ -374,7 +374,7 @@ fn validate_block_geometry(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     fold_level: usize,
-    current_w_len: usize,
+    input_witness_len: usize,
 ) -> Result<(), AkitaError> {
     if step.ring_d as usize != policy.ring_dimension || step.ring_d == 0 {
         return Err(AkitaError::InvalidSetup(format!(
@@ -418,7 +418,7 @@ fn validate_block_geometry(
         // A small root polynomial may occupy only a prefix of its first ring.
         // Count that padded ring as live source storage; recursive witnesses
         // remain exactly ring-aligned below.
-        let num_live_ring_elements_per_claim = current_w_len.div_ceil(policy.ring_dimension);
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(policy.ring_dimension);
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
         if num_live_blocks != derived_num_live_blocks {
@@ -440,12 +440,12 @@ fn validate_block_geometry(
         return Ok(());
     }
 
-    if current_w_len == 0 || !current_w_len.is_multiple_of(policy.ring_dimension) {
+    if input_witness_len == 0 || !input_witness_len.is_multiple_of(policy.ring_dimension) {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated recursive fold level {fold_level} has invalid current_w_len={current_w_len}"
+            "generated recursive fold level {fold_level} has invalid input_witness_len={input_witness_len}"
         )));
     }
-    let num_ring_elems = current_w_len / policy.ring_dimension;
+    let num_ring_elems = input_witness_len / policy.ring_dimension;
     let reduced_vars = num_ring_elems
         .checked_next_power_of_two()
         .ok_or_else(|| {

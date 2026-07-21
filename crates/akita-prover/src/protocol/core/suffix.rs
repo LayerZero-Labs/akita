@@ -130,7 +130,7 @@ where
     };
     let terminal_result = loop {
         let scheduled = schedule.get_execution_schedule(level)?;
-        scheduled.validate_current_w_len(current_state.w.len())?;
+        scheduled.validate_input_witness_len(current_state.w.len())?;
         let level_params = &scheduled.params;
         let role_dims = level_params.role_dims();
         let is_terminal_level = scheduled.is_terminal;

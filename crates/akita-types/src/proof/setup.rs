@@ -593,21 +593,19 @@ mod tests {
                 n_b: 1,
                 b_coeff_linf_bound: 1,
             },
-            a_key: crate::AjtaiKeyParams::new_unchecked(
+            inner_commit_matrix: crate::InnerCommitMatrixParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
                 crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::A,
                 1,
                 1,
                 1,
                 d_setup,
             ),
-            b_key: crate::AjtaiKeyParams::new_unchecked(
+            outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
                 crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::B,
                 1,
                 1,
                 1,

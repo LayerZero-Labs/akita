@@ -11,7 +11,7 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Basis used to interpret the current opening point.
     pub basis: BasisMode,
     /// Current suffix witness length in field elements.
-    pub w_len: usize,
+    pub witness_len: usize,
     /// Optional setup-prefix opening carried from the previous stage-3 proof.
     pub setup_prefix_opening: Option<SetupPrefixOpening<E>>,
 }
@@ -188,7 +188,7 @@ where
         if scheduled.is_terminal {
             return Err(AkitaError::InvalidProof);
         }
-        scheduled.validate_current_w_len(current_state.w_len)?;
+        scheduled.validate_input_witness_len(current_state.witness_len)?;
         let current_lp = &scheduled.params;
         let next_params = scheduled
             .next_params
@@ -205,7 +205,7 @@ where
             return Err(AkitaError::InvalidProof);
         }
         let commitment_view = RingView::new(current_commitment.coeffs(), role_dims.d_b())?;
-        if commitment_view.num_rings() != current_lp.b_key.row_len() {
+        if commitment_view.num_rings() != current_lp.outer_commit_matrix.output_rank() {
             return Err(AkitaError::InvalidProof);
         }
 
@@ -269,7 +269,7 @@ where
                 .map_or_else(|| fold.next_w_eval(), |proof| proof.next_w_eval),
             witness: next_witness,
             basis: BasisMode::Lagrange,
-            w_len: scheduled.next_w_len,
+            witness_len: scheduled.output_witness_len,
             setup_prefix_opening,
         };
     }
@@ -279,11 +279,11 @@ where
     if !scheduled.is_terminal {
         return Err(AkitaError::InvalidProof);
     }
-    scheduled.validate_current_w_len(current_state.w_len)?;
+    scheduled.validate_input_witness_len(current_state.witness_len)?;
     if !matches!(&current_state.witness, SuffixWitnessState::TerminalT(_)) {
         return Err(AkitaError::InvalidProof);
     }
-    if terminal.terminal_response().num_elems() != scheduled.next_w_len {
+    if terminal.terminal_response().num_elems() != scheduled.output_witness_len {
         return Err(AkitaError::InvalidProof);
     }
     let prepared = prepare_fold_replay::<F, E, T>(
@@ -448,7 +448,7 @@ where
         }
     }
 
-    let w_len = scheduled.next_w_len;
+    let witness_len = scheduled.output_witness_len;
     let (trace_eval_target, trace_eval_scale) = match eor_trace_final.as_ref() {
         Some((final_claim, factors_by_point)) => (
             *final_claim,
@@ -470,7 +470,7 @@ where
             next_witness_ring_dim,
             stage3,
         } => {
-            if next_witness_ring_dim == 0 || !w_len.is_multiple_of(next_witness_ring_dim) {
+            if next_witness_ring_dim == 0 || !witness_len.is_multiple_of(next_witness_ring_dim) {
                 return Err(AkitaError::InvalidProof);
             }
             (
@@ -480,7 +480,7 @@ where
                     stage2,
                     next_witness,
                     next_witness_ring_dim,
-                    next_opening_source_len: w_len / next_witness_ring_dim,
+                    next_opening_source_len: witness_len / next_witness_ring_dim,
                     stage3,
                 },
                 next_witness_ring_dim,
@@ -493,7 +493,7 @@ where
                 transcript: prepare_terminal_witness_replay::<F, T>(
                     transcript,
                     terminal_response,
-                    w_len,
+                    witness_len,
                 )?,
             },
             lp.role_dims().d_a(),
@@ -508,7 +508,7 @@ where
     } else {
         RingVec::from_coeffs(Vec::new())
     };
-    if !w_len.is_multiple_of(next_opening_ring_dim) {
+    if !witness_len.is_multiple_of(next_opening_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     Ok(PreparedFoldReplay {
@@ -527,7 +527,7 @@ where
             .iter()
             .map(|point| point.ring_multiplier_point.clone())
             .collect(),
-        w_len,
+        witness_len,
         payload,
         trace_prepared_points: Some(prepared_points),
         trace_block_opening: None,

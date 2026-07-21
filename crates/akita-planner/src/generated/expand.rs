@@ -29,8 +29,9 @@ use akita_types::sis::{
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, AjtaiKeyParams, CommitmentRingDims, DecompositionParams, LevelParams,
-    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams, SetupContributionMode,
+    shared_d_digit_log_basis, DecompositionParams, InnerCommitMatrixParams, LevelParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, SetupContributionMode,
 };
 
 fn sis_key(
@@ -166,14 +167,19 @@ impl GeneratedSetupPrefixGroup {
         .ok_or_else(|| no_layout("A"))?;
         require_exact_rank(
             "setup-prefix a",
-            sis_key(policy, akita_types::SisMatrixRole::A, d as u32, a_bucket),
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::Inner,
+                d as u32,
+                a_bucket,
+            ),
             inner_width,
             self.n_a as usize,
         )?;
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::B,
+            akita_types::SisMatrixRole::Outer,
             d,
             self.log_basis_open,
         )
@@ -183,25 +189,28 @@ impl GeneratedSetupPrefixGroup {
                 .ok_or_else(|| no_layout("B"))?;
         require_exact_rank(
             "setup-prefix b",
-            sis_key(policy, akita_types::SisMatrixRole::B, d as u32, b_bucket),
+            sis_key(
+                policy,
+                akita_types::SisMatrixRole::Outer,
+                d as u32,
+                b_bucket,
+            ),
             outer_width,
             self.n_b as usize,
         )?;
-        let a_key = AjtaiKeyParams::try_new(
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::A,
             self.n_a as usize,
             inner_width,
             a_bucket,
             d,
         )?;
-        let b_key = AjtaiKeyParams::try_new(
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::B,
             self.n_b as usize,
             outer_width,
             b_bucket,
@@ -230,8 +239,8 @@ impl GeneratedSetupPrefixGroup {
         )?;
         Ok(PrecommittedLevelParams {
             layout,
-            a_key,
-            b_key,
+            inner_commit_matrix,
+            outer_commit_matrix,
             log_basis_open: self.log_basis_open,
             num_digits_inner,
             num_digits_outer,
@@ -248,7 +257,7 @@ impl GeneratedFoldStep {
     /// `fold_level` is `0` at the root and `>0` at recursive levels; it
     /// selects the level-local decomposition (root inherits the config
     /// decomposition; recursive levels collapse `log_commit_bound` to the
-    /// level's own `log_basis`). `current_w_len` is the witness length in
+    /// level's own `log_basis`). `input_witness_len` is the witness length in
     /// field elements entering this level, used to size `num_positions_per_block`.
     ///
     /// `num_claims` is the batch factor folded directly into the outer (B)
@@ -266,7 +275,7 @@ impl GeneratedFoldStep {
     /// here. The only difference is the rank source: the DP computes the tight
     /// SIS-secure minimum, while expansion replays the stored rank and audits
     /// it against the same width + bucket via the fallible
-    /// [`AjtaiKeyParams::try_new`].
+    /// the role-specific commit-matrix parameter constructor.
     ///
     /// # Errors
     ///
@@ -278,7 +287,7 @@ impl GeneratedFoldStep {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
-        current_w_len: usize,
+        input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
     ) -> Result<LevelParams, AkitaError> {
@@ -286,7 +295,7 @@ impl GeneratedFoldStep {
             policy,
             ring_challenge_config,
             fold_level,
-            current_w_len,
+            input_witness_len,
             fold_shape,
             num_claims,
             None,
@@ -300,7 +309,7 @@ impl GeneratedFoldStep {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
-        current_w_len: usize,
+        input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
         setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
@@ -344,7 +353,7 @@ impl GeneratedFoldStep {
                     .to_string(),
             ));
         }
-        if current_w_len == 0 || (!is_root && !current_w_len.is_multiple_of(ring_d)) {
+        if input_witness_len == 0 || (!is_root && !input_witness_len.is_multiple_of(ring_d)) {
             return Err(AkitaError::InvalidSetup(
                 "witness length is not divisible by the ring dimension".to_string(),
             ));
@@ -352,9 +361,9 @@ impl GeneratedFoldStep {
         // Root inputs may be shorter than one ring and are zero-padded inside
         // that ring. Recursive witnesses are ring-aligned by contract.
         let num_live_ring_elements_per_claim = if is_root {
-            current_w_len.div_ceil(ring_d)
+            input_witness_len.div_ceil(ring_d)
         } else {
-            current_w_len / ring_d
+            input_witness_len / ring_d
         };
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
@@ -416,7 +425,7 @@ impl GeneratedFoldStep {
             "a",
             sis_key(
                 policy,
-                akita_types::SisMatrixRole::A,
+                akita_types::SisMatrixRole::Inner,
                 ring_d as u32,
                 a_bucket,
             ),
@@ -427,7 +436,7 @@ impl GeneratedFoldStep {
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::B,
+            akita_types::SisMatrixRole::Outer,
             ring_d,
             log_basis_outer,
         )
@@ -443,7 +452,7 @@ impl GeneratedFoldStep {
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::D,
+            akita_types::SisMatrixRole::Open,
             ring_d,
             log_basis_open,
         )
@@ -497,7 +506,7 @@ impl GeneratedFoldStep {
             "b",
             sis_key(
                 policy,
-                akita_types::SisMatrixRole::B,
+                akita_types::SisMatrixRole::Outer,
                 ring_d as u32,
                 b_bucket,
             ),
@@ -508,7 +517,7 @@ impl GeneratedFoldStep {
             "d",
             sis_key(
                 policy,
-                akita_types::SisMatrixRole::D,
+                akita_types::SisMatrixRole::Open,
                 ring_d as u32,
                 d_bucket,
             ),
@@ -520,35 +529,31 @@ impl GeneratedFoldStep {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = LevelParams {
-            ring_dimension: ring_d,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            a_key: AjtaiKeyParams::try_new(
+            inner_commit_matrix: InnerCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::A,
                 self.n_a as usize,
                 inner_width,
                 a_bucket,
                 ring_d,
             )?,
-            b_key: AjtaiKeyParams::try_new(
+            outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::B,
                 self.n_b as usize,
                 outer_width,
                 b_bucket,
                 ring_d,
             )?,
-            d_key: AjtaiKeyParams::try_new(
+            open_commit_matrix: OpenCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::D,
                 self.n_d as usize,
                 d_matrix_width,
                 d_bucket,
@@ -574,12 +579,10 @@ impl GeneratedFoldStep {
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix,
-            role_dims: CommitmentRingDims::uniform(ring_d),
             setup_contribution_mode,
         };
-        let mut params =
+        let params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
-        params.stamp_role_dims_from_keys();
         Ok(params)
     }
 
@@ -708,7 +711,7 @@ impl GeneratedFoldStep {
             "a",
             sis_key(
                 policy,
-                akita_types::SisMatrixRole::A,
+                akita_types::SisMatrixRole::Inner,
                 ring_d as u32,
                 a_bucket,
             ),
@@ -719,7 +722,7 @@ impl GeneratedFoldStep {
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::B,
+            akita_types::SisMatrixRole::Outer,
             ring_d,
             log_basis_outer,
         )
@@ -744,7 +747,7 @@ impl GeneratedFoldStep {
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
-            akita_types::SisMatrixRole::D,
+            akita_types::SisMatrixRole::Open,
             ring_d,
             d_log_basis,
         )
@@ -757,35 +760,31 @@ impl GeneratedFoldStep {
         };
 
         let params = LevelParams {
-            ring_dimension: ring_d,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            a_key: AjtaiKeyParams::try_new(
+            inner_commit_matrix: InnerCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::A,
                 self.n_a as usize,
                 inner_width,
                 a_bucket,
                 ring_d,
             )?,
-            b_key: AjtaiKeyParams::try_new(
+            outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::B,
                 self.n_b as usize,
                 outer_width,
                 b_bucket,
                 ring_d,
             )?,
-            d_key: AjtaiKeyParams::try_new(
+            open_commit_matrix: OpenCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,
                 sis_modulus_profile,
-                akita_types::SisMatrixRole::D,
                 self.n_d as usize,
                 d_matrix_width,
                 d_bucket,
@@ -813,12 +812,10 @@ impl GeneratedFoldStep {
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix: None,
-            role_dims: CommitmentRingDims::uniform(ring_d),
             setup_contribution_mode,
         };
-        let mut params =
+        let params =
             params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;
-        params.stamp_role_dims_from_keys();
         Ok(params)
     }
 }
@@ -830,7 +827,7 @@ impl GeneratedFoldStepWithSetupMetadata {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
-        current_w_len: usize,
+        input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
     ) -> Result<LevelParams, AkitaError> {
@@ -838,7 +835,7 @@ impl GeneratedFoldStepWithSetupMetadata {
             policy,
             ring_challenge_config,
             fold_level,
-            current_w_len,
+            input_witness_len,
             fold_shape,
             num_claims,
             self.setup_prefix_group,

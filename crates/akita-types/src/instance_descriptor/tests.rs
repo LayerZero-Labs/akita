@@ -22,7 +22,7 @@ fn sample_level_params() -> LevelParams {
 
 fn sample_direct_step(logical_num_elems: usize) -> TerminalWitnessPlan {
     TerminalWitnessPlan {
-        current_w_len: logical_num_elems,
+        input_witness_len: logical_num_elems,
         witness_shape: TerminalResponseShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
@@ -45,8 +45,8 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
     let schedule = Schedule {
         folds: vec![FoldStep {
             params: sample_level_params(),
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -112,9 +112,9 @@ fn fold_linf_descriptor_canonical_digest_pinned() {
         (
             229,
             [
-                0x9b, 0x2e, 0xae, 0x6b, 0xee, 0x18, 0x9d, 0xbf, 0x1f, 0xa4, 0xc9, 0x96, 0x21, 0x60,
-                0x95, 0xf6, 0xcb, 0xc4, 0xea, 0xf6, 0x06, 0x24, 0x8e, 0x73, 0x47, 0x54, 0x6c, 0xbf,
-                0xb1, 0x4a, 0x11, 0xf7,
+                0x3c, 0xdf, 0x14, 0x54, 0x2e, 0xcd, 0xc5, 0x7a, 0x5a, 0x24, 0x60, 0xe8, 0xe0, 0xaa,
+                0xd9, 0x63, 0x7c, 0xad, 0xd8, 0xa4, 0x13, 0xb9, 0x9d, 0xef, 0x9b, 0x0e, 0xdf, 0x16,
+                0x1c, 0x7f, 0x1a, 0xf0,
             ]
         ),
         "update pinned digest when descriptor setup-section bindings change"
@@ -142,8 +142,8 @@ fn effective_schedule_digest_binds_all_semantic_bases() {
     let schedule = |params| Schedule {
         folds: vec![FoldStep {
             params,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -203,8 +203,8 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let schedule_certified = Schedule {
         folds: vec![FoldStep {
             params: certified,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -213,8 +213,8 @@ fn effective_schedule_digest_binds_tail_bound_with_grind_policy() {
     let schedule_worst_case = Schedule {
         folds: vec![FoldStep {
             params: worst_case_only,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -237,8 +237,8 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
     let schedule_flat = Schedule {
         folds: vec![FoldStep {
             params: flat,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -247,8 +247,8 @@ fn effective_schedule_digest_binds_shape_aware_challenge_l2_sq_max() {
     let schedule_tensor = Schedule {
         folds: vec![FoldStep {
             params: tensor,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -269,8 +269,8 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
     let schedule_flat = Schedule {
         folds: vec![FoldStep {
             params: sample_level_params(),
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),
@@ -279,8 +279,8 @@ fn effective_schedule_digest_binds_fold_linf_policy() {
     let schedule_tensor = Schedule {
         folds: vec![FoldStep {
             params: tensor_params,
-            current_w_len: 256,
-            next_w_len: 256,
+            input_witness_len: 256,
+            output_witness_len: 256,
             level_bytes: 123,
         }],
         terminal: sample_direct_step(256),

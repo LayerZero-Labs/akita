@@ -50,16 +50,16 @@ mod layout;
 mod onehot;
 mod single;
 
-fn batched_shape_rounds(level_d: usize, next_w_len: usize) -> usize {
-    let num_ring_elems = next_w_len / level_d;
+fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
+    let num_ring_elems = output_witness_len / level_d;
     num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
 }
 
 /// Batched recursion already consults the byte planner before folding
 /// again. The runtime safety guard here only needs to catch tiny tails and
 /// fixed points, not enforce the single-proof shrink-ratio heuristic.
-fn should_stop_batched_folding(w_len: usize, prev_w_len: usize) -> bool {
-    w_len <= MIN_W_LEN_FOR_FOLDING || w_len >= prev_w_len
+fn should_stop_batched_folding(witness_len: usize, prev_w_len: usize) -> bool {
+    witness_len <= MIN_W_LEN_FOR_FOLDING || witness_len >= prev_w_len
 }
 
 /// Derive the structural proof shape from the schedule. The terminal carries
@@ -75,7 +75,7 @@ fn expected_same_point_batched_shape(
         OneHotCfg::get_params_for_prove(&opening_batch).expect("batched root runtime plan");
     let root_step = schedule.root_fold().expect("batched root fold");
     let num_fold_levels = schedule.num_fold_levels();
-    let root_rounds = batched_shape_rounds(root_step.params.ring_dimension, root_step.next_w_len);
+    let root_rounds = batched_shape_rounds(root_step.params.d_a(), root_step.output_witness_len);
 
     assert!(
         num_fold_levels >= 2,
@@ -86,7 +86,8 @@ fn expected_same_point_batched_shape(
     let root_scheduled = schedule.get_execution_schedule(0).unwrap();
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
-        v_coeffs: root_step.params.d_key.row_len() * root_step.params.ring_dimension,
+        v_coeffs: root_step.params.open_commit_matrix.output_rank()
+            * root_step.params.open_commit_matrix.ring_dimension(),
         stage1_stages: DigitRangePlan::new(1usize << root_step.params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
@@ -95,7 +96,8 @@ fn expected_same_point_batched_shape(
         next_witness_binding: match root_scheduled.next_witness_binding {
             Some(NextWitnessBindingPolicy::OuterCommitment) => {
                 NextWitnessBindingShape::OuterCommitment {
-                    coeffs: next_level_params.b_key.row_len() * next_level_params.ring_dimension,
+                    coeffs: next_level_params.outer_commit_matrix.output_rank()
+                        * next_level_params.outer_commit_matrix.ring_dimension(),
                 }
             }
             Some(NextWitnessBindingPolicy::TerminalInnerState) => {
@@ -111,28 +113,27 @@ fn expected_same_point_batched_shape(
     // terminal step. (We've already consumed the root.)
     let num_intermediate_after_root = num_fold_levels.saturating_sub(2);
     let mut recursive_folds = Vec::with_capacity(num_intermediate_after_root);
-    let mut current_w_len = root_step.next_w_len;
+    let mut input_witness_len = root_step.output_witness_len;
     let mut current_level = 1usize;
     for _ in 0..num_intermediate_after_root {
         let scheduled = schedule
             .get_execution_schedule(current_level)
             .expect("scheduled recursive fold");
         scheduled
-            .validate_current_w_len(current_w_len)
+            .validate_input_witness_len(input_witness_len)
             .expect("scheduled recursive fold current witness length");
         let level_params = scheduled.params;
         let next_level_params = scheduled.next_params;
-        let next_w_len = akita_types::intermediate_w_ring_element_count_with_counts::<OneHotF>(
-            &level_params,
-            1,
-            1,
-        )
+        let output_witness_len = akita_types::intermediate_w_ring_element_count_with_counts::<
+            OneHotF,
+        >(&level_params, 1, 1)
         .unwrap()
-            * level_params.ring_dimension;
-        let rounds = batched_shape_rounds(level_params.ring_dimension, next_w_len);
+            * level_params.d_a();
+        let rounds = batched_shape_rounds(level_params.d_a(), output_witness_len);
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
-            v_coeffs: level_params.d_key.row_len() * level_params.ring_dimension,
+            v_coeffs: level_params.open_commit_matrix.output_rank()
+                * level_params.open_commit_matrix.ring_dimension(),
             stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),
@@ -144,8 +145,8 @@ fn expected_same_point_batched_shape(
                         .as_ref()
                         .expect("outer commitment requires successor fold params");
                     NextWitnessBindingShape::OuterCommitment {
-                        coeffs: next_level_params.b_key.row_len()
-                            * next_level_params.ring_dimension,
+                        coeffs: next_level_params.outer_commit_matrix.output_rank()
+                            * next_level_params.outer_commit_matrix.ring_dimension(),
                     }
                 }
                 Some(NextWitnessBindingPolicy::TerminalInnerState) => {
@@ -156,7 +157,7 @@ fn expected_same_point_batched_shape(
                 }
             },
         });
-        current_w_len = next_w_len;
+        input_witness_len = output_witness_len;
         current_level += 1;
     }
 
@@ -166,7 +167,7 @@ fn expected_same_point_batched_shape(
         .get_execution_schedule(current_level)
         .expect("scheduled terminal fold");
     terminal_scheduled
-        .validate_current_w_len(current_w_len)
+        .validate_input_witness_len(input_witness_len)
         .expect("scheduled terminal fold current witness length");
     let terminal = TerminalLevelProofShape {
         extension_opening_reduction: None,

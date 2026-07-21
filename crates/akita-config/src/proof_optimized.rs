@@ -273,24 +273,16 @@ where
         accumulate_matrix_envelope_for_level(&params, &mut required_setup_len)?;
         let available_setup_len = setup
             .shared_matrix
-            .total_ring_elements_at_dyn(params.ring_dimension)?;
-        ensure_required_setup_len(
-            required_setup_len,
-            available_setup_len,
-            params.ring_dimension,
-        )?;
+            .total_ring_elements_at_dyn(params.d_a())?;
+        ensure_required_setup_len(required_setup_len, available_setup_len, params.d_a())?;
     }
 
     let root_params = &schedule.root_fold()?.params;
     let required_setup_len = root_runtime_matrix_len_for_opening_batch(root_params, layout)?;
     let available_setup_len = setup
         .shared_matrix
-        .total_ring_elements_at_dyn(root_params.ring_dimension)?;
-    ensure_required_setup_len(
-        required_setup_len,
-        available_setup_len,
-        root_params.ring_dimension,
-    )?;
+        .total_ring_elements_at_dyn(root_params.d_a())?;
+    ensure_required_setup_len(required_setup_len, available_setup_len, root_params.d_a())?;
     Ok(())
 }
 
@@ -315,9 +307,9 @@ fn root_runtime_matrix_len_for_opening_batch(
     let final_group_index = lp.validate_opening_batch(layout)?;
     let final_group = layout.group_layout(final_group_index)?;
     let (mut max_a_len, mut max_b_len, mut d_width) = group_setup_footprint(
-        lp.a_key.row_len(),
-        lp.a_key.col_len(),
-        lp.b_key.row_len(),
+        lp.inner_commit_matrix.output_rank(),
+        lp.inner_commit_matrix.input_width(),
+        lp.outer_commit_matrix.output_rank(),
         final_group.num_polynomials(),
         lp.num_live_blocks,
         lp.num_digits_open,
@@ -325,9 +317,9 @@ fn root_runtime_matrix_len_for_opening_batch(
 
     for group in &lp.precommitted_groups {
         let (a_len, b_len, group_d_width) = group_setup_footprint(
-            group.a_key.row_len(),
-            group.a_key.col_len(),
-            group.b_key.row_len(),
+            group.inner_commit_matrix.output_rank(),
+            group.inner_commit_matrix.input_width(),
+            group.outer_commit_matrix.output_rank(),
             group.layout.group.num_polynomials(),
             group.layout.num_live_blocks,
             group.num_digits_open,
@@ -339,7 +331,12 @@ fn root_runtime_matrix_len_for_opening_batch(
         })?;
     }
 
-    root_setup_len(lp.d_key.row_len(), d_width, max_a_len, max_b_len)
+    root_setup_len(
+        lp.open_commit_matrix.output_rank(),
+        d_width,
+        max_a_len,
+        max_b_len,
+    )
 }
 
 fn group_setup_footprint(

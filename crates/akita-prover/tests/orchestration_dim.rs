@@ -37,8 +37,8 @@ fn test_level_params(ring_dimension: usize) -> LevelParams {
 fn make_fold_step(ring_dimension: usize) -> FoldStep {
     FoldStep {
         params: test_level_params(ring_dimension),
-        current_w_len: 256,
-        next_w_len: 128,
+        input_witness_len: 256,
+        output_witness_len: 128,
         level_bytes: 0,
     }
 }
@@ -59,7 +59,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
     let schedule = Schedule {
         folds: vec![make_fold_step(128)],
         terminal: TerminalWitnessPlan {
-            current_w_len: 64,
+            input_witness_len: 64,
             witness_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,
@@ -85,7 +85,7 @@ fn ring_dim_plan_rejects_level_dim_larger_than_gen_ring_dim() {
 #[test]
 fn validate_role_dispatch_rejects_stack_d_mismatch() {
     let params = test_level_params(128);
-    let err = validate_role_dispatch::<64>(params.role_dims, RingRole::Inner)
+    let err = validate_role_dispatch::<64>(params.role_dims(), RingRole::Inner)
         .expect_err("stack D=64 vs level 128");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

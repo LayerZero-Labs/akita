@@ -12,16 +12,16 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
     extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommitmentRingDims,
-    DecompositionParams, FoldStep, LevelParams, LevelParamsLike, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, Schedule, SetupContributionMode, TerminalResponseShape, WitnessLayout,
-    SETUP_OFFLOAD_D_SETUP,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, DecompositionParams, FoldStep,
+    LevelParams, LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
+    SetupContributionMode, TerminalResponseShape, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -212,7 +212,7 @@ fn find_schedule_inner(
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
-        current_w_len: witness_len,
+        input_witness_len: witness_len,
     });
     let mut memo = ScheduleMemo::new();
 
@@ -255,7 +255,7 @@ fn find_schedule_inner(
                 continue;
             };
 
-            let next_w_len = intermediate_w_ring_element_count_for_chunks(
+            let output_witness_len = intermediate_w_ring_element_count_for_chunks(
                 field_bits,
                 &candidate_params,
                 key.num_polynomials(),
@@ -279,7 +279,7 @@ fn find_schedule_inner(
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("root witness bit length overflow".into())
                 })?;
-            if next_w_len
+            if output_witness_len
                 .checked_mul(candidate_log_basis as usize)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("root next witness bit length overflow".into())
@@ -294,7 +294,7 @@ fn find_schedule_inner(
                 &mut memo,
                 SuffixState {
                     level: 1,
-                    current_witness_len: next_w_len,
+                    current_witness_len: output_witness_len,
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
@@ -326,7 +326,7 @@ fn find_schedule_inner(
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
                     Some(&suffix_fold.first_fold_params),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(next_witness_binding),
                 )? + eor_bytes;
@@ -338,8 +338,8 @@ fn find_schedule_inner(
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(FoldStep {
                         params: candidate_params.clone(),
-                        current_w_len: witness_len,
-                        next_w_len,
+                        input_witness_len: witness_len,
+                        output_witness_len,
                         level_bytes: root_proof_size,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());

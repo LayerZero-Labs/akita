@@ -191,16 +191,16 @@ mod tests {
 
     fn generated_fold_step(lp: &LevelParams) -> GeneratedFoldStep {
         GeneratedFoldStep {
-            ring_d: lp.ring_dimension as u32,
+            ring_d: lp.d_a() as u32,
             log_basis_inner: lp.log_basis_inner,
             log_basis_outer: lp.log_basis_outer,
             log_basis_open: lp.log_basis_open,
             position_index_bits: lp.position_index_bits() as u32,
             block_index_bits: lp.block_index_bits() as u32,
             num_live_blocks: lp.num_live_blocks as u32,
-            n_a: lp.a_key.row_len() as u32,
-            n_b: lp.b_key.row_len() as u32,
-            n_d: lp.d_key.row_len() as u32,
+            n_a: lp.inner_commit_matrix.output_rank() as u32,
+            n_b: lp.outer_commit_matrix.output_rank() as u32,
+            n_d: lp.open_commit_matrix.output_rank() as u32,
         }
     }
 

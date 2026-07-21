@@ -29,11 +29,11 @@ where
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
     schedule.validate_structure()?;
     let root_step = schedule.root_fold()?;
-    let alpha_bits = root_step.params.ring_dimension.trailing_zeros() as usize;
+    let alpha_bits = root_step.params.d_a().trailing_zeros() as usize;
     let supports_opening_shape = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
-        root_step.params.ring_dimension,
+        root_step.params.d_a(),
         |D| Ok(folded_root_supports_opening_shape::<
             Cfg::Field,
             Cfg::ExtField,
@@ -45,7 +45,7 @@ where
         ))
     )?;
     let tensor_projection_enabled = root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
-        root_step.params.ring_dimension,
+        root_step.params.d_a(),
         num_vars,
     );
 
@@ -139,12 +139,12 @@ mod tests {
             Ok(Schedule {
                 folds: vec![FoldStep {
                     params,
-                    current_w_len: 1 << 8,
-                    next_w_len: terminal_w_len,
+                    input_witness_len: 1 << 8,
+                    output_witness_len: terminal_w_len,
                     level_bytes: 0,
                 }],
                 terminal: TerminalWitnessPlan {
-                    current_w_len: terminal_w_len,
+                    input_witness_len: terminal_w_len,
                     witness_shape,
                     terminal_bytes: 0,
                 },
@@ -230,7 +230,7 @@ mod tests {
             Ok(Schedule {
                 folds: vec![],
                 terminal: TerminalWitnessPlan {
-                    current_w_len: witness_shape.logical_num_elems(),
+                    input_witness_len: witness_shape.logical_num_elems(),
                     witness_shape,
                     terminal_bytes: 0,
                 },

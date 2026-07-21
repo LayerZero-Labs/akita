@@ -22,12 +22,13 @@ pub use opening_point::{
     ring_opening_point_from_field, BasisMode, RingOpeningPoint,
 };
 pub use params::{
-    shared_d_digit_log_basis, AjtaiKeyParams, LevelParams, LevelParamsLike,
-    PrecommittedLevelParams, RelationMatrixRowLayout, SisModulusProfileId,
+    shared_d_digit_log_basis, InnerCommitMatrixParams, LevelParams, LevelParamsLike,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams,
+    RelationMatrixRowLayout, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    packed_digits_bytes, padded_boolean_opening_vars, planned_next_w_len,
+    packed_digits_bytes, padded_boolean_opening_vars, planned_output_witness_len,
     planned_w_ring_element_count, proof_ring_vec_bytes, sumcheck_rounds, terminal_response_bytes,
 };
 pub use ring_dims::{

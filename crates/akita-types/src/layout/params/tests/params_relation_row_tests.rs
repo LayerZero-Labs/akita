@@ -1,39 +1,35 @@
 use super::*;
 use crate::proof::relation::{relation_rhs_layout_for, relation_rhs_row_count};
-use crate::sis::SisMatrixRole;
 
 #[test]
 fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
     let mut lp = laid_out_sample_lp();
-    lp.a_key = AjtaiKeyParams::new_unchecked(
-        lp.a_key.security_policy(),
-        lp.a_key.sis_table_key().table_digest,
-        lp.a_key.sis_modulus_profile(),
-        SisMatrixRole::A,
+    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner_commit_matrix.security_policy(),
+        lp.inner_commit_matrix.sis_table_key().table_digest,
+        lp.inner_commit_matrix.sis_modulus_profile(),
         2,
-        lp.a_key.col_len(),
-        lp.a_key.coeff_linf_bound(),
-        lp.ring_dimension,
+        lp.inner_commit_matrix.input_width(),
+        lp.inner_commit_matrix.coeff_linf_bound(),
+        lp.d_a(),
     );
-    lp.b_key = AjtaiKeyParams::new_unchecked(
-        lp.b_key.security_policy(),
-        lp.b_key.sis_table_key().table_digest,
-        lp.b_key.sis_modulus_profile(),
-        SisMatrixRole::B,
+    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer_commit_matrix.security_policy(),
+        lp.outer_commit_matrix.sis_table_key().table_digest,
+        lp.outer_commit_matrix.sis_modulus_profile(),
         3,
-        lp.b_key.col_len(),
-        lp.b_key.coeff_linf_bound(),
-        lp.ring_dimension,
+        lp.outer_commit_matrix.input_width(),
+        lp.outer_commit_matrix.coeff_linf_bound(),
+        lp.d_a(),
     );
-    lp.d_key = AjtaiKeyParams::new_unchecked(
-        lp.d_key.security_policy(),
-        lp.d_key.sis_table_key().table_digest,
-        lp.d_key.sis_modulus_profile(),
-        SisMatrixRole::D,
+    lp.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        lp.open_commit_matrix.security_policy(),
+        lp.open_commit_matrix.sis_table_key().table_digest,
+        lp.open_commit_matrix.sis_modulus_profile(),
         2,
-        lp.d_key.col_len(),
-        lp.d_key.coeff_linf_bound(),
-        lp.ring_dimension,
+        lp.open_commit_matrix.input_width(),
+        lp.open_commit_matrix.coeff_linf_bound(),
+        lp.d_a(),
     );
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
     let quotient = lp

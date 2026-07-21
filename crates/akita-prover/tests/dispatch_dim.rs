@@ -63,24 +63,22 @@ fn make_fold_step(
         1,
         fold_challenge_config,
     );
-    params.role_dims = akita_types::CommitmentRingDims::uniform(ring_dimension);
     params.num_live_ring_elements_per_claim = num_live_blocks * num_positions_per_block;
     params.num_live_blocks = num_live_blocks;
     params.num_positions_per_block = num_positions_per_block;
     params.num_digits_inner = 2;
     params.num_digits_open = 2;
-    params.stamp_role_dims_from_keys();
     FoldStep {
         params,
-        current_w_len: 0,
-        next_w_len: 0,
+        input_witness_len: 0,
+        output_witness_len: 0,
         level_bytes: 0,
     }
 }
 
 fn make_direct_step() -> TerminalWitnessPlan {
     TerminalWitnessPlan {
-        current_w_len: 0,
+        input_witness_len: 0,
         witness_shape: TerminalResponseShape {
             layout: TailSegmentLayout {
                 ring_dimension: 64,
@@ -216,44 +214,42 @@ fn ring_dim_plan_accepts_mixed_d_schedule_all_divide_gen_ring_dim() {
 #[test]
 fn ring_dim_plan_accepts_nested_opening_d32() {
     use akita_types::sis::DEFAULT_SIS_SECURITY_POLICY;
-    use akita_types::{AjtaiKeyParams, SisMatrixRole, SisModulusProfileId, SisTableDigest};
+    use akita_types::{
+        InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+        SisModulusProfileId, SisTableDigest,
+    };
 
     let mut step = make_fold_step(128, 4, 8);
-    step.params.ring_dimension = 128;
-    step.params.a_key = AjtaiKeyParams::new_unchecked(
+    step.params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
         SisModulusProfileId::Q128OffsetA7F7,
-        SisMatrixRole::A,
         1,
         16,
         0,
         128,
     );
-    step.params.b_key = AjtaiKeyParams::new_unchecked(
+    step.params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
         SisModulusProfileId::Q128OffsetA7F7,
-        SisMatrixRole::B,
         1,
         16,
         0,
         64,
     );
-    step.params.d_key = AjtaiKeyParams::new_unchecked(
+    step.params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
         DEFAULT_SIS_SECURITY_POLICY,
         SisTableDigest::CURRENT,
         SisModulusProfileId::Q128OffsetA7F7,
-        SisMatrixRole::D,
         1,
         16,
         0,
         32,
     );
-    step.params.stamp_role_dims_from_keys();
     step.params.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(step.params.d_a()).expect("d_a ladder");
-    step.current_w_len = 128;
+    step.input_witness_len = 128;
     let sched = Schedule {
         folds: vec![step],
         terminal: make_direct_step(),
@@ -261,7 +257,7 @@ fn ring_dim_plan_accepts_nested_opening_d32() {
     };
     validate_schedule_ring_dims(&sched, &test_seed(128)).expect("128|64|32");
     let step = &sched.folds[0];
-    let dims = step.params.role_dims;
+    let dims = step.params.role_dims();
     assert_eq!(dims.d_a(), 128);
     assert_eq!(dims.d_b(), 64);
     assert_eq!(dims.d_d(), 32);

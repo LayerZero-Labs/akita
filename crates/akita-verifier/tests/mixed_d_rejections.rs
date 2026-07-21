@@ -68,12 +68,12 @@ fn ring_dim_plan_rejects_fold_dim_above_gen_ring_dim() {
     let schedule = Schedule {
         folds: vec![FoldStep {
             params: test_level_params(128),
-            current_w_len: 256,
-            next_w_len: 128,
+            input_witness_len: 256,
+            output_witness_len: 128,
             level_bytes: 0,
         }],
         terminal: TerminalWitnessPlan {
-            current_w_len: 64,
+            input_witness_len: 64,
             witness_shape: TerminalResponseShape {
                 layout: TailSegmentLayout {
                     ring_dimension: 64,

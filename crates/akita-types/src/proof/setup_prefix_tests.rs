@@ -37,17 +37,27 @@ fn active_setup_field_len_matches_packed_role_maximum() {
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
     let w_a = lp.num_positions_per_block * lp.num_digits_inner;
     let w_b = opening_batch.num_total_polynomials()
-        * lp.a_key.row_len()
+        * lp.inner_commit_matrix.output_rank()
         * lp.num_live_blocks
         * lp.num_digits_open;
     let w_d = opening_batch.num_total_polynomials() * lp.num_live_blocks * lp.num_digits_open;
     let expected_ring_slots = lp
-        .a_key
-        .row_len()
+        .inner_commit_matrix
+        .output_rank()
         .checked_mul(w_a)
         .unwrap()
-        .max(lp.b_key.row_len().checked_mul(w_b).unwrap())
-        .max(lp.d_key.row_len().checked_mul(w_d).unwrap());
+        .max(
+            lp.outer_commit_matrix
+                .output_rank()
+                .checked_mul(w_b)
+                .unwrap(),
+        )
+        .max(
+            lp.open_commit_matrix
+                .output_rank()
+                .checked_mul(w_d)
+                .unwrap(),
+        );
     let geometry =
         active_setup_projection_geometry(&lp, &opening_batch).expect("projection geometry");
     assert_eq!(geometry.required(), expected_ring_slots);

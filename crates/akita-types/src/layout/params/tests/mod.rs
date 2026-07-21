@@ -27,13 +27,21 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
         .with_decomp(8, 17, 5, 4, 3)
         .expect("distinct semantic decomposition");
     let blocks = 17usize.div_ceil(8);
-    assert_eq!(params.a_key.col_len(), 8 * 5, "A uses inner depth");
     assert_eq!(
-        params.b_key.col_len(),
-        params.a_key.row_len() * 4 * blocks,
+        params.inner_commit_matrix.input_width(),
+        8 * 5,
+        "A uses inner depth"
+    );
+    assert_eq!(
+        params.outer_commit_matrix.input_width(),
+        params.inner_commit_matrix.output_rank() * 4 * blocks,
         "B uses outer depth"
     );
-    assert_eq!(params.d_key.col_len(), 3 * blocks, "D uses open depth");
+    assert_eq!(
+        params.open_commit_matrix.input_width(),
+        3 * blocks,
+        "D uses open depth"
+    );
     assert_eq!(
         (
             params.log_basis_inner,
@@ -52,25 +60,23 @@ fn laid_out_sample_lp() -> LevelParams {
 
 fn certify_test_sis_bounds(lp: &mut LevelParams) {
     const BOUND: u128 = 1;
-    lp.a_key = AjtaiKeyParams::new_unchecked(
-        lp.a_key.security_policy(),
-        lp.a_key.sis_table_key().table_digest,
-        lp.a_key.sis_modulus_profile(),
-        crate::sis::SisMatrixRole::A,
-        lp.a_key.row_len(),
-        lp.a_key.col_len(),
+    lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        lp.inner_commit_matrix.security_policy(),
+        lp.inner_commit_matrix.sis_table_key().table_digest,
+        lp.inner_commit_matrix.sis_modulus_profile(),
+        lp.inner_commit_matrix.output_rank(),
+        lp.inner_commit_matrix.input_width(),
         BOUND,
-        lp.ring_dimension,
+        lp.d_a(),
     );
-    lp.b_key = AjtaiKeyParams::new_unchecked(
-        lp.b_key.security_policy(),
-        lp.b_key.sis_table_key().table_digest,
-        lp.b_key.sis_modulus_profile(),
-        crate::sis::SisMatrixRole::B,
-        lp.b_key.row_len(),
-        lp.b_key.col_len(),
+    lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        lp.outer_commit_matrix.security_policy(),
+        lp.outer_commit_matrix.sis_table_key().table_digest,
+        lp.outer_commit_matrix.sis_modulus_profile(),
+        lp.outer_commit_matrix.output_rank(),
+        lp.outer_commit_matrix.input_width(),
         BOUND,
-        lp.ring_dimension,
+        lp.d_a(),
     );
 }
 
@@ -83,25 +89,27 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
     certify_test_sis_bounds(&mut precommit_lp);
-    let a_key = precommit_lp.a_key.clone();
-    let b_key = AjtaiKeyParams::new_unchecked(
-        precommit_lp.b_key.security_policy(),
-        precommit_lp.b_key.sis_table_key().table_digest,
-        precommit_lp.b_key.sis_modulus_profile(),
-        precommit_lp.b_key.sis_table_key().role,
+    let inner_commit_matrix = precommit_lp.inner_commit_matrix.clone();
+    let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        precommit_lp.outer_commit_matrix.security_policy(),
+        precommit_lp
+            .outer_commit_matrix
+            .sis_table_key()
+            .table_digest,
+        precommit_lp.outer_commit_matrix.sis_modulus_profile(),
         5,
-        precommit_lp.b_key.col_len(),
-        precommit_lp.b_key.coeff_linf_bound(),
-        precommit_lp.ring_dimension,
+        precommit_lp.outer_commit_matrix.input_width(),
+        precommit_lp.outer_commit_matrix.coeff_linf_bound(),
+        precommit_lp.d_a(),
     );
     let mut layout =
         PrecommittedGroupParams::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
-    layout.n_b = b_key.row_len();
-    layout.b_coeff_linf_bound = b_key.coeff_linf_bound();
+    layout.n_b = outer_commit_matrix.output_rank();
+    layout.b_coeff_linf_bound = outer_commit_matrix.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
         layout,
-        a_key,
-        b_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
         log_basis_open: precommit_lp.log_basis_open,
         num_digits_inner: precommit_lp.num_digits_inner,
         num_digits_outer: precommit_lp.num_digits_outer,
@@ -165,13 +173,13 @@ fn with_layout_keeps_self_ranks() {
 
     let lp = params.with_layout(&layout_lp, 128).unwrap();
 
-    assert_eq!(lp.ring_dimension, 64);
+    assert_eq!(lp.d_a(), 64);
     assert_eq!(lp.log_basis_inner, layout_lp.log_basis_inner);
     assert_eq!(lp.log_basis_outer, layout_lp.log_basis_outer);
     assert_eq!(lp.log_basis_open, layout_lp.log_basis_open);
-    assert_eq!(lp.a_key.row_len(), 2);
-    assert_eq!(lp.b_key.row_len(), 4);
-    assert_eq!(lp.d_key.row_len(), 3);
+    assert_eq!(lp.inner_commit_matrix.output_rank(), 2);
+    assert_eq!(lp.outer_commit_matrix.output_rank(), 4);
+    assert_eq!(lp.open_commit_matrix.output_rank(), 3);
     assert_eq!(lp.num_live_blocks, layout_lp.num_live_blocks);
     assert_eq!(
         lp.num_positions_per_block,
@@ -189,9 +197,9 @@ fn derived_widths_match_ajtai_col_len() {
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
 
-    assert_eq!(lp.inner_width(), lp.a_key.col_len());
-    assert_eq!(lp.outer_width(), lp.b_key.col_len());
-    assert_eq!(lp.d_matrix_width(), lp.d_key.col_len());
+    assert_eq!(lp.inner_width(), lp.inner_commit_matrix.input_width());
+    assert_eq!(lp.outer_width(), lp.outer_commit_matrix.input_width());
+    assert_eq!(lp.d_matrix_width(), lp.open_commit_matrix.input_width());
 }
 
 #[test]
@@ -243,7 +251,7 @@ fn relation_matrix_row_count_values() {
     assert_eq!(
         lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
             .unwrap(),
-        1 + lp.a_key.row_len()
+        1 + lp.inner_commit_matrix.output_rank()
     );
 }
 
@@ -252,9 +260,9 @@ fn canonical_row_offsets_match_open_coded_layout() {
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
-    let n_a = lp.a_key.row_len();
-    let n_b = lp.b_key.row_len();
-    let n_d = lp.d_key.row_len();
+    let n_a = lp.inner_commit_matrix.output_rank();
+    let n_b = lp.outer_commit_matrix.output_rank();
+    let n_d = lp.open_commit_matrix.output_rank();
 
     for nc in [1usize, 2, 4] {
         let layout = RelationMatrixRowLayout::WithDBlock;

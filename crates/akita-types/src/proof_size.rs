@@ -69,7 +69,7 @@ pub fn level_proof_bytes(
     challenge_field_bits: u32,
     lp: &LevelParams,
     next_lp: Option<&LevelParams>,
-    next_w_len: usize,
+    output_witness_len: usize,
     layout: RelationMatrixRowLayout,
     next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
 ) -> Result<usize, AkitaError> {
@@ -78,10 +78,13 @@ pub fn level_proof_bytes(
     match layout {
         RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(FOLD_GRIND_NONCE_BYTES),
         RelationMatrixRowLayout::WithDBlock => {
-            let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+            let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
             let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-            let v_bytes =
-                proof_ring_vec_bytes(lp.d_key.row_len(), lp.ring_dimension, base_elem_bytes);
+            let v_bytes = proof_ring_vec_bytes(
+                lp.open_commit_matrix.output_rank(),
+                lp.d_a(),
+                base_elem_bytes,
+            );
             let next_commit_bytes = match next_witness_binding {
                 Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
                     let next_lp = next_lp.ok_or_else(|| {
@@ -90,8 +93,8 @@ pub fn level_proof_bytes(
                         )
                     })?;
                     proof_ring_vec_bytes(
-                        next_lp.b_key.row_len(),
-                        next_lp.ring_dimension,
+                        next_lp.outer_commit_matrix.output_rank(),
+                        next_lp.d_a(),
                         base_elem_bytes,
                     )
                 }
@@ -129,7 +132,7 @@ pub fn level_proof_bytes(
 /// product sumcheck. Stage 3 fuses the setup-product term with the carried
 /// witness term, so the serialized round count is the max of the setup domain
 /// rounds (`log2(D) + log2(next_pow2(setup_ring_len))`) and the witness domain
-/// rounds (`sumcheck_rounds(D, next_w_len)`).
+/// rounds (`sumcheck_rounds(D, output_witness_len)`).
 ///
 /// `ring_dimension` and the next-power-of-two of `setup_ring_len` must be
 /// powers of two; this offline helper is not on the verifier path.
@@ -137,13 +140,13 @@ pub fn stage3_setup_product_bytes(
     challenge_field_bits: u32,
     ring_dimension: usize,
     setup_ring_len: usize,
-    next_w_len: usize,
+    output_witness_len: usize,
 ) -> usize {
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let ring_bits = ring_dimension.trailing_zeros() as usize;
     let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
     let setup_rounds = ring_bits + lambda_bits;
-    let witness_rounds = sumcheck_rounds(ring_dimension, next_w_len);
+    let witness_rounds = sumcheck_rounds(ring_dimension, output_witness_len);
     let rounds = setup_rounds.max(witness_rounds);
     // Claimed setup contribution + carried setup-prefix opening + carried
     // next-witness opening + degree-2 fused setup/carry sumcheck rounds.
@@ -249,12 +252,12 @@ mod tests {
     fn dummy_stage3_proof<F: FieldCore>(
         d: usize,
         setup_ring_len: usize,
-        next_w_len: usize,
+        output_witness_len: usize,
     ) -> SetupSumcheckProof<F> {
         let ring_bits = d.trailing_zeros() as usize;
         let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
         let setup_rounds = ring_bits + lambda_bits;
-        let witness_rounds = sumcheck_rounds(d, next_w_len);
+        let witness_rounds = sumcheck_rounds(d, output_witness_len);
         let rounds = setup_rounds.max(witness_rounds);
         SetupSumcheckProof {
             claim: F::zero(),
@@ -273,25 +276,25 @@ mod tests {
     fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         lp: &LevelParams,
         next_lp: &LevelParams,
-        next_w_len: usize,
+        output_witness_len: usize,
         stage3_setup_ring_len: Option<usize>,
         next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
         let current_coeffs = lp
-            .d_key
-            .row_len()
-            .checked_mul(lp.ring_dimension)
+            .open_commit_matrix
+            .output_rank()
+            .checked_mul(lp.d_a())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let next_commit_coeffs = next_lp
-            .b_key
-            .row_len()
-            .checked_mul(next_lp.ring_dimension)
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(next_lp.d_a())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
-        let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+        let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
         let b = 1usize << lp.log_basis_open;
 
         let proof = FoldLevelProof {
@@ -315,7 +318,7 @@ mod tests {
                 next_w_eval: F::zero(),
             },
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {
-                dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len, next_w_len)
+                dummy_stage3_proof::<F>(lp.d_a(), setup_ring_len, output_witness_len)
             }),
         };
         Ok(proof.serialized_size(Compress::No))
@@ -334,7 +337,7 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
 
         for log_basis in 2..=6 {
             let lp = LevelParams::params_only(
@@ -354,7 +357,7 @@ mod tests {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
@@ -362,7 +365,7 @@ mod tests {
                 exact_level_proof_bytes::<F>(
                     &lp,
                     &next_lp,
-                    next_w_len,
+                    output_witness_len,
                     None,
                     crate::NextWitnessBindingPolicy::OuterCommitment,
                 )
@@ -396,14 +399,14 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
 
         let outer = level_proof_bytes(
             128,
             128,
             &lp,
             Some(&next_lp),
-            next_w_len,
+            output_witness_len,
             RelationMatrixRowLayout::WithDBlock,
             Some(crate::NextWitnessBindingPolicy::OuterCommitment),
         )
@@ -413,20 +416,23 @@ mod tests {
             128,
             &lp,
             None,
-            next_w_len,
+            output_witness_len,
             RelationMatrixRowLayout::WithDBlock,
             Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .unwrap();
-        let expected_outer_commitment =
-            proof_ring_vec_bytes(next_lp.b_key.row_len(), D, field_bytes(128));
+        let expected_outer_commitment = proof_ring_vec_bytes(
+            next_lp.outer_commit_matrix.output_rank(),
+            D,
+            field_bytes(128),
+        );
         assert_eq!(outer - terminal_inner, expected_outer_commitment);
         assert_eq!(
             terminal_inner,
             exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 None,
                 crate::NextWitnessBindingPolicy::TerminalInnerState,
             )
@@ -479,23 +485,23 @@ mod tests {
     fn stage3_setup_product_bytes_match_serialized_payload() {
         // The recursive stage-3 payload is priced separately from the direct
         // planner bytes. Check the formula against the real serialized
-        // SetupSumcheckProof across representative (D, setup_ring_len, next_w_len)
+        // SetupSumcheckProof across representative (D, setup_ring_len, output_witness_len)
         // shapes, including non-power-of-two setup lengths that exercise lambda
         // padding and witness-longer shapes that exercise the fused round count.
         const CHALLENGE_BITS: u32 = 128;
         for &d in &[32usize, 64, 128] {
             for &setup_ring_len in &[1usize, 3, 8, 17, 64, 100] {
-                for &next_w_len in &[d, d * 8, d * 256] {
-                    let proof = dummy_stage3_proof::<F>(d, setup_ring_len, next_w_len);
+                for &output_witness_len in &[d, d * 8, d * 256] {
+                    let proof = dummy_stage3_proof::<F>(d, setup_ring_len, output_witness_len);
                     let serialized = proof.claim.serialized_size(Compress::No)
                         + proof.setup_prefix_eval.serialized_size(Compress::No)
                         + proof.next_w_eval.serialized_size(Compress::No)
                         + proof.sumcheck.serialized_size(Compress::No);
                     assert_eq!(
-                        stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len, next_w_len),
+                        stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len, output_witness_len),
                         serialized,
                         "stage3 formula must match the serialized SetupSumcheckProof \
-                         at D={d}, setup_ring_len={setup_ring_len}, next_w_len={next_w_len}"
+                         at D={d}, setup_ring_len={setup_ring_len}, output_witness_len={output_witness_len}"
                     );
                 }
             }
@@ -519,7 +525,7 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
         // 100 is not a power of two, so the verifier pads lambda to 128.
         let setup_ring_len = 100usize;
 
@@ -539,7 +545,7 @@ mod tests {
             let terminal_bytes = exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 None,
                 crate::NextWitnessBindingPolicy::OuterCommitment,
             )
@@ -547,7 +553,7 @@ mod tests {
             let recursive_bytes = exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 Some(setup_ring_len),
                 crate::NextWitnessBindingPolicy::OuterCommitment,
             )
@@ -559,7 +565,7 @@ mod tests {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
@@ -569,7 +575,7 @@ mod tests {
             );
             assert_eq!(
                 recursive_bytes - terminal_bytes,
-                stage3_setup_product_bytes(128, D, setup_ring_len, next_w_len),
+                stage3_setup_product_bytes(128, D, setup_ring_len, output_witness_len),
                 "stage-3 payload must be additive over the direct level bytes at log_basis={log_basis}"
             );
         }
@@ -579,7 +585,7 @@ mod tests {
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
         let num_claims = 3;
 
         for log_basis in 2..=6 {
@@ -612,7 +618,7 @@ mod tests {
                     128,
                     &lp,
                     None,
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithoutCommitmentBlocks,
                     None,
                 )

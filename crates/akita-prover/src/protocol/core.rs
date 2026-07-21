@@ -39,7 +39,7 @@ use akita_types::{
     embed_ring_subfield_scalar, embed_ring_subfield_vector, ensure_trace_stage2_supported,
     prepare_opening_point, proof::relation::evaluation_trace_row_weight,
     recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
-    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_current_w_len,
+    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_input_witness_len,
     root_tensor_projection_enabled, sample_public_row_coefficients,
     tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

@@ -33,7 +33,7 @@ struct TestSetupInputs {
 }
 impl TestSetupInputs {
     fn n_a(&self) -> usize {
-        self.level_params.a_key.row_len()
+        self.level_params.inner_commit_matrix.output_rank()
     }
     fn num_claims(&self) -> usize {
         self.opening_batch.num_total_polynomials()
@@ -128,26 +128,24 @@ fn test_inputs_for_group_sizes(
         .and_then(|width| width.checked_mul(depth_open))
         .and_then(|width| width.checked_mul(num_live_blocks))
         .expect("test B width");
-    if lp.b_key.col_len() < expected_b_width {
-        lp.b_key = crate::AjtaiKeyParams::new_unchecked(
+    if lp.outer_commit_matrix.input_width() < expected_b_width {
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::B,
             n_b,
             expected_b_width,
             1,
             TEST_D,
         );
     }
-    if lp.a_key.coeff_linf_bound() == 0 {
-        lp.a_key = crate::AjtaiKeyParams::new_unchecked(
+    if lp.inner_commit_matrix.coeff_linf_bound() == 0 {
+        lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
             crate::sis::DEFAULT_SIS_SECURITY_POLICY,
             crate::sis::SisTableDigest::CURRENT,
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::A,
             n_a,
-            lp.a_key.col_len(),
+            lp.inner_commit_matrix.input_width(),
             1,
             TEST_D,
         );
@@ -164,26 +162,25 @@ fn test_inputs_for_group_sizes(
                     &lp,
                 );
                 let expected_group_b_width = lp
-                    .a_key
-                    .row_len()
+                    .inner_commit_matrix
+                    .output_rank()
                     .checked_mul(lp.num_digits_outer)
                     .and_then(|width| width.checked_mul(layout.num_live_blocks))
                     .and_then(|width| width.checked_mul(layout.group.num_polynomials()))
                     .expect("test precommitted B width");
-                let b_key = crate::AjtaiKeyParams::new_unchecked(
-                    lp.b_key.security_policy(),
-                    lp.b_key.sis_table_key().table_digest,
-                    lp.b_key.sis_modulus_profile(),
-                    lp.b_key.sis_table_key().role,
-                    lp.b_key.row_len(),
+                let outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+                    lp.outer_commit_matrix.security_policy(),
+                    lp.outer_commit_matrix.sis_table_key().table_digest,
+                    lp.outer_commit_matrix.sis_modulus_profile(),
+                    lp.outer_commit_matrix.output_rank(),
                     expected_group_b_width,
-                    lp.b_key.coeff_linf_bound(),
-                    lp.ring_dimension,
+                    lp.outer_commit_matrix.coeff_linf_bound(),
+                    lp.d_a(),
                 );
                 crate::PrecommittedLevelParams {
                     layout,
-                    a_key: lp.a_key.clone(),
-                    b_key,
+                    inner_commit_matrix: lp.inner_commit_matrix.clone(),
+                    outer_commit_matrix,
                     log_basis_open: lp.log_basis_open,
                     num_digits_inner: lp.num_digits_inner,
                     num_digits_outer: lp.num_digits_outer,

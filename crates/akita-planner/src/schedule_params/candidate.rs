@@ -75,8 +75,8 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+    let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
         width_s,
     ) else {
         return Ok(None);
@@ -84,18 +84,22 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(norm_t) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::B,
+        akita_types::SisMatrixRole::Outer,
         policy.ring_dimension,
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Some(width_t) = decomposed_t_ring_count(a_key.row_len(), delta_open, num_live_blocks, 1)
-    else {
+    let Some(width_t) = decomposed_t_ring_count(
+        inner_commit_matrix.output_rank(),
+        delta_open,
+        num_live_blocks,
+        1,
+    ) else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
         width_t,
     ) else {
         return Ok(None);
@@ -103,7 +107,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(norm_w) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::D,
+        akita_types::SisMatrixRole::Open,
         policy.ring_dimension,
         log_basis,
     ) else {
@@ -112,20 +116,19 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
         width_w,
     ) else {
         return Ok(None);
     };
-    let mut params = LevelParams {
-        ring_dimension: policy.ring_dimension,
+    let params = LevelParams {
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
-        a_key,
-        b_key,
-        d_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
+        open_commit_matrix,
         num_live_ring_elements_per_claim: num_ring_elems,
         num_positions_per_block,
         num_live_blocks,
@@ -143,11 +146,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-        role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
         setup_contribution_mode: SetupContributionMode::Direct,
     }
     .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1)?;
-    params.stamp_role_dims_from_keys();
     Ok(Some(params))
 }
 
@@ -228,7 +229,7 @@ pub(crate) fn planned_next_witness_len(
 ) -> Result<usize, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use LevelParams::next_w_len".to_string(),
+            "multi-group root witness sizing must use LevelParams::output_witness_len".to_string(),
         ));
     }
     if params.setup_prefix.is_some() {
@@ -241,7 +242,7 @@ pub(crate) fn planned_next_witness_len(
     }
 
     intermediate_w_ring_element_count_for_chunks(field_bits, params, final_num_polys, num_chunks)?
-        .checked_mul(params.ring_dimension)
+        .checked_mul(params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
 }
 
@@ -256,7 +257,7 @@ fn grouped_setup_prefix_next_witness_len(
         params.num_live_blocks,
         num_chunks,
         params.num_positions_per_block,
-        params.a_key.row_len(),
+        params.inner_commit_matrix.output_rank(),
         params.num_digits_inner,
         params.num_digits_outer,
         params.num_digits_open,
@@ -268,7 +269,7 @@ fn grouped_setup_prefix_next_witness_len(
             group.layout.num_live_blocks,
             num_chunks,
             group.layout.num_positions_per_block,
-            group.a_key.row_len(),
+            group.inner_commit_matrix.output_rank(),
             group.num_digits_inner,
             group.num_digits_outer,
             group.num_digits_open,
@@ -294,7 +295,7 @@ fn grouped_setup_prefix_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
 
     rings
-        .checked_mul(params.ring_dimension)
+        .checked_mul(params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 
@@ -408,8 +409,8 @@ fn derive_setup_prefix_group(
         ) else {
             continue;
         };
-        let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+        let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
             width_s,
         ) else {
             continue;
@@ -417,19 +418,22 @@ fn derive_setup_prefix_group(
         let Some(norm_t) = rounded_up_collision_inf_norm(
             policy.sis_security_policy,
             family,
-            akita_types::SisMatrixRole::B,
+            akita_types::SisMatrixRole::Outer,
             d,
             log_basis_open,
         ) else {
             continue;
         };
-        let Some(width_t) =
-            decomposed_t_ring_count(a_key.row_len(), num_digits_outer, num_live_blocks, 1)
-        else {
+        let Some(width_t) = decomposed_t_ring_count(
+            inner_commit_matrix.output_rank(),
+            num_digits_outer,
+            num_live_blocks,
+            1,
+        ) else {
             continue;
         };
-        let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+        let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
+            sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
             width_t,
         ) else {
             continue;
@@ -457,15 +461,15 @@ fn derive_setup_prefix_group(
             fold_challenge_shape: fold_shape,
             log_basis_inner,
             log_basis_outer,
-            n_a: a_key.row_len(),
-            a_coeff_linf_bound: a_key.coeff_linf_bound(),
-            n_b: b_key.row_len(),
-            b_coeff_linf_bound: b_key.coeff_linf_bound(),
+            n_a: inner_commit_matrix.output_rank(),
+            a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
+            n_b: outer_commit_matrix.output_rank(),
+            b_coeff_linf_bound: outer_commit_matrix.coeff_linf_bound(),
         };
         let params = PrecommittedLevelParams {
             layout,
-            a_key,
-            b_key,
+            inner_commit_matrix,
+            outer_commit_matrix,
             log_basis_open,
             num_digits_inner,
             num_digits_outer,
@@ -477,7 +481,7 @@ fn derive_setup_prefix_group(
             num_live_blocks,
             num_chunks,
             num_positions_per_block,
-            params.a_key.row_len(),
+            params.inner_commit_matrix.output_rank(),
             num_digits_inner,
             num_digits_outer,
             num_digits_open_val,
@@ -576,14 +580,14 @@ pub(crate) fn derive_candidate_level_params(
         if let Some(prefix) = &candidate_params.setup_prefix {
             let prefix_d_width = prefix.commitment_params.d_segment_width()?;
             let total_d_width = candidate_params
-                .d_key
-                .col_len()
+                .open_commit_matrix
+                .input_width()
                 .checked_add(prefix_d_width)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
                 })?;
-            candidate_params.d_key = AjtaiKeyParams::try_new_with_min_rank(
-                candidate_params.d_key.sis_table_key(),
+            candidate_params.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+                candidate_params.open_commit_matrix.sis_table_key(),
                 total_d_width,
             )?;
         }
@@ -702,8 +706,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+    let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
         width_s,
     ) else {
         return Ok(None);
@@ -711,22 +715,22 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     let Some(norm_t) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::B,
+        akita_types::SisMatrixRole::Outer,
         policy.ring_dimension,
         log_basis,
     ) else {
         return Ok(None);
     };
     let Some(width_t) = decomposed_t_ring_count(
-        a_key.row_len(),
+        inner_commit_matrix.output_rank(),
         num_digits_open,
         num_live_blocks,
         num_claims,
     ) else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
         width_t,
     ) else {
         return Ok(None);
@@ -734,7 +738,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     let Some(norm_w) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::D,
+        akita_types::SisMatrixRole::Open,
         policy.ring_dimension,
         log_basis,
     ) else {
@@ -744,8 +748,8 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
         width_w,
     ) else {
         return Ok(None);
@@ -755,14 +759,13 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     } else {
         0
     };
-    let mut params = (LevelParams {
-        ring_dimension: policy.ring_dimension,
+    let params = (LevelParams {
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
-        a_key,
-        b_key,
-        d_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
+        open_commit_matrix,
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
@@ -780,11 +783,9 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-        role_dims: CommitmentRingDims::uniform(policy.ring_dimension),
         setup_contribution_mode: SetupContributionMode::Direct,
     })
     .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
-    params.stamp_role_dims_from_keys();
     Ok(Some(params))
 }
 
@@ -823,8 +824,8 @@ mod tests {
                 PolynomialGroupLayout::new(6, 1),
                 &precommitted,
             ),
-            a_key: precommitted.a_key.clone(),
-            b_key: precommitted.b_key.clone(),
+            inner_commit_matrix: precommitted.inner_commit_matrix.clone(),
+            outer_commit_matrix: precommitted.outer_commit_matrix.clone(),
             log_basis_open: precommitted.log_basis_open,
             num_digits_inner: precommitted.num_digits_inner,
             num_digits_outer: precommitted.num_digits_outer,
@@ -838,7 +839,7 @@ mod tests {
     fn planned_next_witness_len_rejects_multi_group_root_level_params() {
         let grouped = grouped_level_params();
         let err = planned_next_witness_len(128, &grouped, 1, 1)
-            .expect_err("multi-group root suffix sizing must use next_w_len");
+            .expect_err("multi-group root suffix sizing must use output_witness_len");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 

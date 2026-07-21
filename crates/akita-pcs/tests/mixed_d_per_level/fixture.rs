@@ -16,14 +16,15 @@ use akita_types::sis::{
 };
 use akita_types::{
     intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes, terminal_response_bytes,
-    AjtaiKeyParams, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims,
-    DecompositionParams, FoldStep, LevelParams, LevelParamsLike, PolynomialGroupLayout,
-    RelationMatrixRowLayout, Schedule, TerminalResponseShape, TerminalWitnessPlan,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, FoldStep,
+    InnerCommitMatrixParams, LevelParams, LevelParamsLike, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, RelationMatrixRowLayout, Schedule,
+    TerminalResponseShape, TerminalWitnessPlan,
 };
 struct MixedSuffixFoldPlan {
     params: LevelParams,
-    current_w_len: usize,
-    next_w_len: usize,
+    input_witness_len: usize,
+    output_witness_len: usize,
     is_terminal: bool,
 }
 
@@ -56,7 +57,7 @@ fn generated_fold_step<Cfg: CommitmentConfig>(
 /// Expand a compact generated fold step's witness geometry at a different
 /// active ring dimension.
 ///
-/// Mixed-D hand schedules keep the envelope `current_w_len` / block geometry
+/// Mixed-D hand schedules keep the envelope `input_witness_len` / block geometry
 /// while halving `ring_d`. Ranks are recomputed for the target geometry
 /// instead of reusing the stored compact tuple from either table (the same
 /// role-pricing primitives `GeneratedFoldStep::expand_to_level_params` audits
@@ -161,7 +162,7 @@ fn expand_envelope_witness_at_ring_d(
             policy: sis_policy,
             table_digest: SisTableDigest::CURRENT,
             modulus_profile: sis_modulus_profile,
-            role: SisMatrixRole::A,
+            role: SisMatrixRole::Inner,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: a_bucket,
         },
@@ -171,7 +172,7 @@ fn expand_envelope_witness_at_ring_d(
     let b_bucket = rounded_up_collision_inf_norm(
         sis_policy,
         sis_modulus_profile,
-        SisMatrixRole::B,
+        SisMatrixRole::Outer,
         target_ring_d,
         log_basis_outer,
     )
@@ -181,7 +182,7 @@ fn expand_envelope_witness_at_ring_d(
     let d_bucket = rounded_up_collision_inf_norm(
         sis_policy,
         sis_modulus_profile,
-        SisMatrixRole::D,
+        SisMatrixRole::Open,
         target_ring_d,
         log_basis_open,
     )
@@ -193,7 +194,7 @@ fn expand_envelope_witness_at_ring_d(
             policy: sis_policy,
             table_digest: SisTableDigest::CURRENT,
             modulus_profile: sis_modulus_profile,
-            role: SisMatrixRole::B,
+            role: SisMatrixRole::Outer,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: b_bucket,
         },
@@ -205,7 +206,7 @@ fn expand_envelope_witness_at_ring_d(
             policy: sis_policy,
             table_digest: SisTableDigest::CURRENT,
             modulus_profile: sis_modulus_profile,
-            role: SisMatrixRole::D,
+            role: SisMatrixRole::Open,
             ring_dimension: target_ring_d as u32,
             coeff_linf_bound: d_bucket,
         },
@@ -217,36 +218,32 @@ fn expand_envelope_witness_at_ring_d(
     } else {
         0
     };
-    let mut params = LevelParams {
-        ring_dimension: target_ring_d,
+    let params = LevelParams {
         log_basis_inner,
         log_basis_outer,
         log_basis_open,
-        a_key: AjtaiKeyParams::try_new(
+        inner_commit_matrix: InnerCommitMatrixParams::try_new(
             sis_policy,
             SisTableDigest::CURRENT,
             sis_modulus_profile,
-            SisMatrixRole::A,
             n_a,
             inner_width,
             a_bucket,
             target_ring_d,
         )?,
-        b_key: AjtaiKeyParams::try_new(
+        outer_commit_matrix: OuterCommitMatrixParams::try_new(
             sis_policy,
             SisTableDigest::CURRENT,
             sis_modulus_profile,
-            SisMatrixRole::B,
             n_b,
             outer_width,
             b_bucket,
             target_ring_d,
         )?,
-        d_key: AjtaiKeyParams::try_new(
+        open_commit_matrix: OpenCommitMatrixParams::try_new(
             sis_policy,
             SisTableDigest::CURRENT,
             sis_modulus_profile,
-            SisMatrixRole::D,
             n_d,
             d_matrix_width,
             d_bucket,
@@ -269,17 +266,15 @@ fn expand_envelope_witness_at_ring_d(
         precommitted_groups: Vec::new(),
         setup_prefix: None,
         witness_chunk: akita_types::witness::ChunkedWitnessCfg::default_non_chunked(),
-        role_dims: CommitmentRingDims::uniform(target_ring_d),
         setup_contribution_mode: akita_types::SetupContributionMode::Direct,
     };
-    params.stamp_role_dims_from_keys();
     params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)
 }
 
 fn mixed_continue_suffix_level<EnvelopeCfg, SuffixCfg>(
     key: PolynomialGroupLayout,
     level: usize,
-    current_w_len: usize,
+    input_witness_len: usize,
     suffix_ring_d: usize,
     block_m_vars: usize,
     block_r_vars: usize,
@@ -293,14 +288,14 @@ where
     let fold_shape = SuffixCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level,
-        current_w_len,
+        input_witness_len,
     });
     expand_envelope_witness_at_ring_d(
         &envelope_gen,
         &suffix_policy,
         SuffixCfg::ring_challenge_config,
         level,
-        current_w_len,
+        input_witness_len,
         suffix_ring_d,
         fold_shape,
         1,
@@ -332,7 +327,7 @@ where
     let fold_shape = EnvelopeCfg::fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level,
-        current_w_len: envelope_current_w_len,
+        input_witness_len: envelope_current_w_len,
     });
     expand_envelope_witness_at_ring_d(
         &envelope_gen,
@@ -433,10 +428,10 @@ where
         let suffix_policy = policy_of::<SuffixCfg>();
         let field_bits = suffix_policy.decomposition.field_bits();
         let challenge_field_bits = field_bits * suffix_policy.chal_ext_degree as u32;
-        let suffix_ring_d = suffix_folds[switch_at_fold].params.ring_dimension;
+        let suffix_ring_d = suffix_folds[switch_at_fold].params.d_a();
         let num_fold_levels = envelope_folds.len();
-        let mut w_len = envelope_folds[switch_at_fold - 1].next_w_len;
-        let mut prev_ring_d = envelope_folds[switch_at_fold - 1].params.ring_dimension;
+        let mut witness_len = envelope_folds[switch_at_fold - 1].output_witness_len;
+        let mut prev_ring_d = envelope_folds[switch_at_fold - 1].params.d_a();
         let mut suffix_plan: Vec<MixedSuffixFoldPlan> = Vec::new();
 
         for (level, envelope_step) in envelope_folds.iter().enumerate().skip(switch_at_fold) {
@@ -444,7 +439,7 @@ where
                 mixed_level_params::<EnvelopeCfg, SuffixCfg>(
                     lookup_key.final_group,
                     level,
-                    w_len,
+                    witness_len,
                     &envelope_step.params,
                     suffix_ring_d,
                     prev_ring_d,
@@ -456,14 +451,14 @@ where
                 mixed_continue_suffix_level::<EnvelopeCfg, SuffixCfg>(
                     lookup_key.final_group,
                     level,
-                    w_len,
+                    witness_len,
                     suffix_ring_d,
                     prev.params.position_index_bits(),
                     prev.params.block_index_bits(),
                 )?
             };
             let is_terminal_fold = level + 1 == num_fold_levels;
-            let next_w_len = if is_terminal_fold {
+            let output_witness_len = if is_terminal_fold {
                 TerminalResponseShape::from_groups(
                     &params,
                     field_bits,
@@ -472,18 +467,18 @@ where
                 .logical_num_elems()
             } else {
                 intermediate_w_ring_element_count_with_counts_bits(field_bits, &params, 1, 1)?
-                    .checked_mul(params.ring_dimension)
+                    .checked_mul(params.d_a())
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("mixed-D witness length overflow".into())
                     })?
             };
             suffix_plan.push(MixedSuffixFoldPlan {
                 params,
-                current_w_len: w_len,
-                next_w_len,
+                input_witness_len: witness_len,
+                output_witness_len,
                 is_terminal: is_terminal_fold,
             });
-            w_len = next_w_len;
+            witness_len = output_witness_len;
             prev_ring_d = suffix_ring_d;
         }
 
@@ -503,7 +498,7 @@ where
                 challenge_field_bits,
                 &plan.params,
                 next_lp,
-                plan.next_w_len,
+                plan.output_witness_len,
                 layout,
                 if plan.is_terminal {
                     None
@@ -515,8 +510,8 @@ where
             )?;
             mixed_folds.push(FoldStep {
                 params: plan.params.clone(),
-                current_w_len: plan.current_w_len,
-                next_w_len: plan.next_w_len,
+                input_witness_len: plan.input_witness_len,
+                output_witness_len: plan.output_witness_len,
                 level_bytes,
             });
         }
@@ -526,15 +521,15 @@ where
     let needs_terminal_override = mixed_folds
         .iter()
         .zip(envelope_folds.iter())
-        .any(|(mixed, envelope)| mixed.params.ring_dimension != envelope.params.ring_dimension);
+        .any(|(mixed, envelope)| mixed.params.d_a() != envelope.params.d_a());
 
     let terminal_current_w_len = if needs_terminal_override {
         mixed_folds
             .last()
-            .map(|fold| fold.next_w_len)
-            .unwrap_or(envelope_terminal.current_w_len)
+            .map(|fold| fold.output_witness_len)
+            .unwrap_or(envelope_terminal.input_witness_len)
     } else {
-        envelope_terminal.current_w_len
+        envelope_terminal.input_witness_len
     };
 
     let terminal = if needs_terminal_override {
@@ -558,28 +553,28 @@ where
             )],
         )?;
         let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
-        let current_w_len = witness_shape.logical_num_elems();
+        let input_witness_len = witness_shape.logical_num_elems();
         if let Some(terminal_fold) = mixed_folds.last_mut() {
             let challenge_field_bits = field_bits * policy_of::<SuffixCfg>().chal_ext_degree as u32;
-            terminal_fold.next_w_len = current_w_len;
+            terminal_fold.output_witness_len = input_witness_len;
             terminal_fold.level_bytes = level_proof_bytes(
                 field_bits,
                 challenge_field_bits,
                 &terminal_fold.params,
                 None,
-                current_w_len,
+                input_witness_len,
                 RelationMatrixRowLayout::WithoutCommitmentBlocks,
                 None,
             )?;
         }
         TerminalWitnessPlan {
-            current_w_len,
+            input_witness_len,
             witness_shape,
             terminal_bytes,
         }
     } else {
         TerminalWitnessPlan {
-            current_w_len: terminal_current_w_len,
+            input_witness_len: terminal_current_w_len,
             witness_shape: envelope_terminal.witness_shape.clone(),
             terminal_bytes: envelope_terminal.terminal_bytes,
         }

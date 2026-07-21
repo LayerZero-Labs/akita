@@ -44,8 +44,8 @@ where
         }
         let expected_v_coeffs = scheduled
             .params
-            .d_key
-            .row_len()
+            .open_commit_matrix
+            .output_rank()
             .checked_mul(scheduled.params.role_dims().d_d())
             .ok_or(AkitaError::InvalidProof)?;
         if fold.v.coeff_len() != expected_v_coeffs {
@@ -65,8 +65,8 @@ where
                     .as_ref()
                     .ok_or(AkitaError::InvalidProof)?;
                 let expected_coeffs = next_params
-                    .b_key
-                    .row_len()
+                    .outer_commit_matrix
+                    .output_rank()
                     .checked_mul(next_params.role_dims().d_b())
                     .ok_or(AkitaError::InvalidProof)?;
                 if commitment.coeff_len() != expected_coeffs {
@@ -167,7 +167,7 @@ where
             opening: root_next_opening,
             witness: root_witness,
             basis: BasisMode::Lagrange,
-            w_len: root_step.next_w_len,
+            witness_len: root_step.output_witness_len,
             setup_prefix_opening,
         },
     )

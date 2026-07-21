@@ -5,15 +5,16 @@ use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, num_digits_inner, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, AjtaiKeyParams, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, CommitmentRingDims,
-    DecompositionParams, FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
-    SetupContributionMode, WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams,
+    FoldStep, LevelParams, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams,
+    PrecommittedLevelParams, RelationMatrixRowLayout, Schedule, SetupContributionMode,
+    WitnessLayout, SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
 };
 
 use crate::schedule_params::{
@@ -40,8 +41,8 @@ fn sis_key(
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
     layout: PrecommittedGroupParams,
-    a_key: AjtaiKeyParams,
-    b_key: AjtaiKeyParams,
+    inner_commit_matrix: InnerCommitMatrixParams,
+    outer_commit_matrix: OuterCommitMatrixParams,
     num_digits_inner: usize,
     num_digits_outer: usize,
 }
@@ -72,11 +73,10 @@ fn freeze_precommitted_group_layout(
     let num_positions_per_block = layout.num_positions_per_block;
     let width_s = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
-    let a_key = AjtaiKeyParams::try_new(
+    let inner_commit_matrix = InnerCommitMatrixParams::try_new(
         policy.sis_security_policy,
         policy.sis_table_digest,
         family,
-        akita_types::SisMatrixRole::A,
         layout.n_a,
         width_s,
         layout.a_coeff_linf_bound,
@@ -86,7 +86,7 @@ fn freeze_precommitted_group_layout(
     let norm_t = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
-        akita_types::SisMatrixRole::B,
+        akita_types::SisMatrixRole::Outer,
         d,
         layout.log_basis_outer,
     )
@@ -103,11 +103,10 @@ fn freeze_precommitted_group_layout(
             "precommitted group B bound is below the selected opening requirement".to_string(),
         ));
     }
-    let b_key = AjtaiKeyParams::try_new(
+    let outer_commit_matrix = OuterCommitMatrixParams::try_new(
         policy.sis_security_policy,
         policy.sis_table_digest,
         family,
-        akita_types::SisMatrixRole::B,
         layout.n_b,
         width_t,
         layout.b_coeff_linf_bound,
@@ -116,8 +115,8 @@ fn freeze_precommitted_group_layout(
 
     Ok(PrecommittedGroupSeed {
         layout: *layout,
-        a_key,
-        b_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
         num_digits_inner,
         num_digits_outer,
     })
@@ -174,7 +173,7 @@ fn materialize_precommitted_group_for_open_basis(
         ring_challenge_cfg,
         group.layout.fold_challenge_shape,
         policy.ring_dimension,
-        group.a_key.col_len(),
+        group.inner_commit_matrix.input_width(),
     )?;
     let (num_digits_fold_one, _) = fold_witness_digit_plan(
         group.layout.num_live_blocks,
@@ -202,10 +201,10 @@ fn materialize_precommitted_group_for_open_basis(
         policy.ring_subfield_norm_bound,
         group.layout.num_live_blocks,
         group.layout.group.num_polynomials(),
-        group.a_key.col_len() as u64,
+        group.inner_commit_matrix.input_width() as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;
-    if required_a_bound > group.a_key.coeff_linf_bound() {
+    if required_a_bound > group.inner_commit_matrix.coeff_linf_bound() {
         return Err(AkitaError::InvalidSetup(
             "precommitted A bound does not cover the certified opening basis".to_string(),
         ));
@@ -213,20 +212,20 @@ fn materialize_precommitted_group_for_open_basis(
     let required_b_bound = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::B,
+        akita_types::SisMatrixRole::Outer,
         policy.ring_dimension,
         log_basis_open,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".to_string()))?;
-    if required_b_bound > group.b_key.coeff_linf_bound() {
+    if required_b_bound > group.outer_commit_matrix.coeff_linf_bound() {
         return Err(AkitaError::InvalidSetup(
             "precommitted B bound does not cover the certified opening basis".to_string(),
         ));
     }
     Ok(PrecommittedLevelParams {
         layout: group.layout,
-        a_key: group.a_key.clone(),
-        b_key: group.b_key.clone(),
+        inner_commit_matrix: group.inner_commit_matrix.clone(),
+        outer_commit_matrix: group.outer_commit_matrix.clone(),
         log_basis_open,
         num_digits_inner: group.num_digits_inner,
         num_digits_outer: group.num_digits_outer,
@@ -312,7 +311,7 @@ fn multi_group_root_next_w_len(
     )?;
     witness_layout
         .total_len()
-        .checked_mul(params.ring_dimension)
+        .checked_mul(params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group next witness length overflow".into()))
 }
 
@@ -376,18 +375,18 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(a_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::A, norm_s),
+    let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
         width_s,
     ) else {
         return Ok(None);
     };
-    let n_a = a_key.row_len();
+    let n_a = inner_commit_matrix.output_rank();
 
     let Some(norm_t) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
-        akita_types::SisMatrixRole::B,
+        akita_types::SisMatrixRole::Outer,
         d,
         log_basis,
     ) else {
@@ -398,8 +397,8 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Ok(b_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::B, norm_t),
+    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
         width_t,
     ) else {
         return Ok(None);
@@ -416,14 +415,14 @@ fn multi_group_root_main_level_params_candidate(
     let Some(norm_w) = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
-        akita_types::SisMatrixRole::D,
+        akita_types::SisMatrixRole::Open,
         d,
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Ok(d_key) = AjtaiKeyParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::D, norm_w),
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
+        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
         d_width,
     ) else {
         return Ok(None);
@@ -434,14 +433,13 @@ fn multi_group_root_main_level_params_candidate(
     } else {
         0
     };
-    let mut params = LevelParams {
-        ring_dimension: d,
+    let params = LevelParams {
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
-        a_key,
-        b_key,
-        d_key,
+        inner_commit_matrix,
+        outer_commit_matrix,
+        open_commit_matrix,
         num_live_ring_elements_per_claim,
         num_positions_per_block,
         num_live_blocks,
@@ -460,12 +458,10 @@ fn multi_group_root_main_level_params_candidate(
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),
         setup_prefix: None,
-        role_dims: CommitmentRingDims::uniform(d),
         setup_contribution_mode: SetupContributionMode::Direct,
     }
     .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
 
-    params.stamp_role_dims_from_keys();
     Ok(Some(params))
 }
 
@@ -501,7 +497,7 @@ pub fn find_group_batch_schedule(
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
     let mut best: Option<(usize, Vec<FoldStep>, akita_types::TerminalWitnessPlan)> = None;
 
-    let root_current_w_len = 1usize
+    let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
@@ -509,7 +505,7 @@ pub fn find_group_batch_schedule(
     let fold_challenge_shape = fold_challenge_shape_at_level(AkitaScheduleInputs {
         num_vars: key.final_group.num_vars(),
         level: 0,
-        current_w_len: root_current_w_len,
+        input_witness_len: root_input_witness_len,
     });
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
@@ -537,7 +533,7 @@ pub fn find_group_batch_schedule(
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
     let root_eor_key = PolynomialGroupLayout::new(key.final_group.num_vars(), total_polys);
-    let initial_witness_len_bits = root_current_w_len
+    let initial_witness_len_bits = root_input_witness_len
         .checked_mul(field_bits as usize)
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root witness bit length overflow".into())
@@ -585,15 +581,15 @@ pub fn find_group_batch_schedule(
             }
             candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
             let opening_batch = key.opening_layout()?;
-            let next_w_len = multi_group_root_next_w_len(
+            let output_witness_len = multi_group_root_next_w_len(
                 field_bits,
                 &candidate_params,
                 &opening_batch,
                 RelationMatrixRowLayout::WithDBlock,
             )?;
             // Grouped terminal folds are rejected; suffix folds are scalar.
-            let next_w_len_terminal = next_w_len;
-            if next_w_len
+            let next_w_len_terminal = output_witness_len;
+            if output_witness_len
                 .checked_mul(candidate_log_basis as usize)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -614,7 +610,7 @@ pub fn find_group_batch_schedule(
                 &mut memo,
                 SuffixState {
                     level: 1,
-                    current_witness_len: next_w_len,
+                    current_witness_len: output_witness_len,
                     current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
@@ -626,7 +622,7 @@ pub fn find_group_batch_schedule(
                 policy.claim_ext_degree,
                 0,
                 root_eor_key,
-                root_current_w_len,
+                root_input_witness_len,
             ) else {
                 continue;
             };
@@ -641,7 +637,7 @@ pub fn find_group_batch_schedule(
                         &mut memo,
                         SuffixState {
                             level: 1,
-                            current_witness_len: next_w_len,
+                            current_witness_len: output_witness_len,
                             current_witness_len_terminal: next_w_len_terminal,
                             current_lb: candidate_log_basis,
                             incoming_setup_prefix: Some(natural_len),
@@ -672,7 +668,7 @@ pub fn find_group_batch_schedule(
                     challenge_field_bits,
                     &fold_candidate_params,
                     Some(&suffix_fold.first_fold_params),
-                    next_w_len,
+                    output_witness_len,
                     RelationMatrixRowLayout::WithDBlock,
                     Some(akita_types::NextWitnessBindingPolicy::OuterCommitment),
                 )? + eor_bytes;
@@ -684,8 +680,8 @@ pub fn find_group_batch_schedule(
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(FoldStep {
                         params: fold_candidate_params,
-                        current_w_len: root_current_w_len,
-                        next_w_len,
+                        input_witness_len: root_input_witness_len,
+                        output_witness_len,
                         level_bytes: root_proof_size,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
@@ -841,9 +837,12 @@ mod tests {
 
         let runtime_next_w_len = root
             .params
-            .next_w_len::<Prime128OffsetA7F7>(&opening_batch, RelationMatrixRowLayout::WithDBlock)
+            .output_witness_len::<Prime128OffsetA7F7>(
+                &opening_batch,
+                RelationMatrixRowLayout::WithDBlock,
+            )
             .expect("runtime next w len");
-        assert_eq!(root.next_w_len, runtime_next_w_len);
+        assert_eq!(root.output_witness_len, runtime_next_w_len);
 
         let expected_d_width = root
             .params
@@ -857,7 +856,10 @@ mod tests {
                 .iter()
                 .map(|group| group.d_segment_width().expect("precommitted D width"))
                 .sum::<usize>();
-        assert_eq!(root.params.d_key.col_len(), expected_d_width);
+        assert_eq!(
+            root.params.open_commit_matrix.input_width(),
+            expected_d_width
+        );
     }
 
     #[test]
@@ -996,7 +998,7 @@ mod tests {
             rounded_up_collision_inf_norm(
                 root_policy.sis_security_policy,
                 root_policy.sis_modulus_profile,
-                akita_types::SisMatrixRole::B,
+                akita_types::SisMatrixRole::Outer,
                 root_policy.ring_dimension,
                 3,
             )
@@ -1034,7 +1036,7 @@ mod tests {
             rounded_up_collision_inf_norm(
                 root_policy.sis_security_policy,
                 root_policy.sis_modulus_profile,
-                akita_types::SisMatrixRole::B,
+                akita_types::SisMatrixRole::Outer,
                 root_policy.ring_dimension,
                 3,
             )
@@ -1066,12 +1068,12 @@ mod tests {
             .expect("multi-group schedule");
         let root = schedule.folds.first().expect("multi-group root fold");
 
-        assert_eq!(root.current_w_len, 1usize << key.final_group.num_vars());
+        assert_eq!(root.input_witness_len, 1usize << key.final_group.num_vars());
         assert_eq!(
             root.params.precommitted_groups.len(),
             key.precommitteds.len()
         );
-        assert!(root.next_w_len > 0);
+        assert!(root.output_witness_len > 0);
     }
 
     #[test]

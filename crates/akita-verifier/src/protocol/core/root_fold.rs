@@ -235,7 +235,7 @@ where
 
     // Chunked levels commit a wider (replicated-ẑ) next witness; size it
     // with the per-level chunk count (`num_chunks = 1` is unchanged).
-    let w_len = akita_types::intermediate_w_ring_element_count_for_chunks(
+    let witness_len = akita_types::intermediate_w_ring_element_count_for_chunks(
         F::modulus_bits(),
         root_lp,
         opening_batch.num_total_polynomials(),
@@ -248,7 +248,7 @@ where
     // block.
     let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
     let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
-    if !w_len.is_multiple_of(next_witness_ring_dim) {
+    if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     let prepared = PreparedFoldReplay {
@@ -261,13 +261,13 @@ where
         row_coefficients,
         group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
         group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
-        w_len,
+        witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: w_len / next_witness_ring_dim,
+            next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
         trace_prepared_points: Some(vec![prepared_point.clone()]),
@@ -389,7 +389,7 @@ where
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
+    let witness_len = root_lp.output_witness_len::<F>(opening_batch, relation_matrix_row_layout)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
     // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
@@ -411,7 +411,7 @@ where
         .collect::<Vec<_>>();
 
     let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
-    if !w_len.is_multiple_of(next_witness_ring_dim) {
+    if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     let prepared = PreparedFoldReplay {
@@ -424,13 +424,13 @@ where
         row_coefficients,
         group_ring_opening_points,
         group_ring_multiplier_points,
-        w_len,
+        witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: w_len / next_witness_ring_dim,
+            next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
         },
         trace_prepared_points: Some(prepared_points),
