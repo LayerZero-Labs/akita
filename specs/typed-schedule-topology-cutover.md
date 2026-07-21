@@ -506,6 +506,8 @@ counts remain explicit so partial final blocks are not lost.
 ### Matrix choices
 
 ```rust
+pub const MAX_COMMIT_MATRIX_SLICES: u32 = 16;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedInnerCommitMatrix {
     pub ring_dimension: u32,
@@ -516,7 +518,7 @@ pub struct GeneratedInnerCommitMatrix {
 pub struct GeneratedOuterCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    /// One is monolithic; values above one select balanced slicing.
+    /// One is monolithic; valid values are at most MAX_COMMIT_MATRIX_SLICES.
     pub slice_count: u32,
 }
 
@@ -524,15 +526,16 @@ pub struct GeneratedOuterCommitMatrix {
 pub struct GeneratedOpenCommitMatrix {
     pub ring_dimension: u32,
     pub log_basis: u32,
-    /// One is monolithic; values above one select balanced slicing.
+    /// One is monolithic; valid values are at most MAX_COMMIT_MATRIX_SLICES.
     pub slice_count: u32,
 }
 ```
 
 For a positive derived logical input width `W`, `slice_count = S` requires
-`1 <= S <= W`. A zero logical width means that the matrix role is absent; it
-does not produce a zero-width matrix. `S = 1` is the monolithic case. Expansion
-sets
+`1 <= S <= min(W, MAX_COMMIT_MATRIX_SLICES)`. A zero logical width means that
+the matrix role is absent; it does not produce a zero-width matrix. `S = 1` is
+the default and is the monolithic case. There is no monolithic/sliced enum and
+no second Boolean or layout tag. Expansion sets
 
 ```text
 q = W / S
@@ -546,6 +549,9 @@ and differ in width by at most one; earlier slices receive the remainder. Each
 slice's output rank is the minimum rank returned by the canonical SIS table for
 that slice's derived width, common coefficient bound, and matrix ring
 dimension. The generated schedule stores no slice boundary and no slice rank.
+The expanded runtime matrix stores only its derived `slices` vector, so
+`slices.len()` is the sole runtime slice count; it does not redundantly retain
+the generated `slice_count`.
 
 Commitment compression is not represented by a placeholder in this cutover.
 The compression implementation must add its exact generated and runtime types,
@@ -993,7 +999,8 @@ performs the following checks with checked arithmetic, in this order:
    witness. Emitted live counts are equality-checked audit checksums.
 3. Validate selected bases, ring dimensions, root-final challenge shape,
    partition counts, setup-prefix identities, and balanced slice counts against
-   the catalog's implemented capability domains.
+   both `MAX_COMMIT_MATRIX_SLICES` and the catalog's implemented capability
+   domains.
 4. Derive digit depths, matrix input widths, balanced slice boundaries,
    collision bounds, and the minimum SIS-secure output rank for every physical
    matrix object. A generated output rank or slice boundary is never accepted.
@@ -1032,6 +1039,37 @@ The implementation has one authority for each derived concept:
 These names replace their current equivalents during the vocabulary cutover;
 there are no `_for_level` forwarding helpers or duplicate estimator-side
 formulas.
+
+### Offline SIS generation versus runtime validation
+
+The lattice estimator is an offline artifact generator only. Dynamic planning,
+generated-schedule expansion, schedule validation, setup loading, and proof
+verification do not call or link the estimator. They accept SIS claims only
+through the checked-in table identified by `SisTableDigest`.
+
+The current table already has the required orientation. For each
+`(security policy, modulus profile, ring dimension, collision bucket)` it stores
+the maximum secure input width at every output rank from 1 through 20. Therefore
+`max_secure_collision_linf` scans the ordered A-role collision buckets and, for
+each bucket, directly tests
+
+```text
+input_width <= max_secure_widths_for_bucket[output_rank - 1]
+```
+
+with checked rank indexing. It returns the last contiguous supported bucket,
+stopping at the first unsupported bucket, and rejects a missing row or an
+out-of-range rank. Offline table generation separately validates monotonicity
+across collision buckets. The current A domain has 26 collision buckets, so
+validation performs at most 26 table probes per fixed inner matrix.
+
+No rank-specific inverse table is added. Such a table would transpose the same
+cutoffs, duplicate the security authority, and still require input width as a
+lookup dimension. On base commit `e131faf4`, the complete checked-in infinity
+table across Q32/Q64/Q128 contains 255 bucket rows, 20 rank cutoffs per row, and
+about 72 KiB of generated Rust source. Future profiles extend this same
+digest-bound artifact offline rather than introducing estimator calls at
+runtime.
 
 ### Terminal folded-response validation
 
@@ -1454,7 +1492,7 @@ and SIS contract exist. The schedule topology does not change again.
       is derived from successor input topology.
 - [ ] Every generated inner, outer, and open matrix carries its own ring
       dimension; outer/open matrices carry only `slice_count`, with one meaning
-      monolithic.
+      monolithic and 16 the protocol-wide maximum.
 - [ ] Generated entries carry no output rank, slice boundary, or slice rank;
       expansion derives the minimum secure rank of each physical matrix.
 - [ ] Expanded matrices carry exact output rank, input width, coefficient
@@ -1551,8 +1589,9 @@ fixtures are neutral snapshots containing semantic fields.
 - `W mod S = 0` produces `S` equal contiguous widths.
 - `W mod S != 0` assigns one extra input to exactly the first `W mod S`
   slices.
-- `S = 0`, `S > W`, and every checked-arithmetic overflow reject; `S = 1`
-  expands to one full-width physical matrix.
+- `S = 0`, `S > W`, `S > MAX_COMMIT_MATRIX_SLICES`, and every
+  checked-arithmetic overflow reject; `S = 1` expands to one full-width
+  physical matrix.
 - Each expanded slice output rank equals `min_secure_output_rank` for its own
   derived width; generated entries contain no rank or boundary override.
 - The next-witness contribution equals the sum of all slice output ranks times
