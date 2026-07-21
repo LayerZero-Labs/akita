@@ -12,7 +12,10 @@ The planner can also generate and cache schedule values when a preset wants a sh
 
 Akita proofs recursively fold the witness through at least two levels before the terminal direct-send step. The planner chooses the cheapest supported folded sequence.
 
-The output is an `akita_types::Schedule`: an ordered `folds` vector, one explicit `terminal` handoff, and the total modeled byte count.
+The output is an `akita_types::PlannedFoldSchedule`. Its protocol value is a
+typed `FoldSchedule { root, recursive_folds, terminal }`; its non-protocol
+`FoldScheduleEstimate` stores the modeled byte costs used for selection.
+Estimates are neither serialized nor Fiat–Shamir bound.
 
 ## Inputs And Outputs
 
@@ -28,7 +31,7 @@ same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
   opened at the shared point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`PrecommittedGroupParams` in `precommitteds`. For the scalar same-point batch,
+`PrecommittedGroupDescriptor` in `precommitteds`. For the scalar same-point batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.
@@ -50,7 +53,8 @@ Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, no
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
 2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
-3. If the validated table contains the lookup key, it expands the compact `GeneratedScheduleTableEntry` with `schedule_from_entry`.
+3. If the validated table contains the lookup key, it expands the compact
+   `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
 4. If there is no catalog or no matching entry, it calls `find_group_batch_schedule` and regenerates the schedule from scratch.
 
 Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
@@ -102,7 +106,12 @@ After that candidate is chosen, the suffix DP still performs the important globa
 - Terminate after this fold and ship the clear terminal response.
 - Fold once more and pay the current level proof bytes plus the best suffix below it.
 
-The memoized suffix state is `(level, current_witness_len, current_witness_len_terminal, current_log_basis)`. Two witness lengths are tracked because an ordinary recursive fold uses the full `WithDBlock` witness, while the terminal direct witness has no D/quotient tail. The terminal receives transcript-bound inner `t` from its predecessor and has no commitment block (`WithoutCommitmentBlocks`).
+The memoized suffix state tracks the level, current witness length, and active
+basis choices. Ordinary recursive folds construct the single canonical
+consistency/A/B/D relation and produce another recursive witness. The typed
+terminal fold constructs no relation matrix or quotient: it receives
+transcript-bound inner `t` from its predecessor and checks raw `e`, `t`, and
+folded response `z` directly.
 
 The same topology selects the outgoing binding of the preceding intermediate
 fold. Ordinary recursive edges ship outer `u`; the final edge into a suffix
@@ -130,7 +139,9 @@ ordinary recursive edges and zero outgoing-commitment bytes for the
 nonce plus any extension-opening reduction; their clear witness is priced by
 `terminal_response_bytes`.
 
-This keeps generated-table expansion and DP fallback aligned. A table hit and a table miss are two ways to produce the same runtime `Schedule` shape.
+This keeps generated-table expansion and DP fallback aligned. A table hit and a
+table miss are two ways to produce the same typed runtime `FoldSchedule` and
+the same separately held `FoldScheduleEstimate`.
 
 ## SIS Layout Derivation
 
@@ -141,7 +152,10 @@ For each level candidate, the planner derives the SIS layout in the same order:
 3. Compute the coefficient-`L∞` bucket for each role.
 4. Compute the decomposed matrix width for each role.
 5. Ask the SIS floor table for the minimum secure rank.
-6. Build `AjtaiKeyParams` with the audited rank, width, coefficient-`L∞` bucket, exact SIS profile, ring dimension, and security floor.
+6. Build the role-typed `InnerCommitMatrixParams`,
+   `OuterCommitMatrixParams`, or `OpenCommitMatrixParams` with the audited
+   rank, input width, coefficient-`L∞` bucket, exact SIS profile, ring
+   dimension, and security floor.
 
 Production SIS lookups use explicit role cells and the scalar `SisTableKey`:
 
@@ -162,17 +176,21 @@ One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. 
 
 ## Generated Tables
 
-The planner owns the generated schedule-table representation and expansion logic under `src/generated/`. Shipped table data lives in the `akita-schedules` crate. Compact entries store only the brute-forced values needed to reconstruct a full level:
+The planner owns the generated schedule-table representation and expansion
+logic under `src/generated/`. Shipped table data lives in the
+`akita-schedules` crate. Compact entries mirror the protocol topology:
 
-- `ring_d`
-- `log_basis`
-- `position_index_bits`
-- `block_index_bits`
-- `n_a`
-- `n_b`
-- `n_d`
+- `GeneratedRootFold` records the root source, root-only challenge form,
+  ordered precommitted groups, final-group commitment, open matrix, and witness
+  partition.
+- `GeneratedRecursiveFold` records the recursive witness commitment, open
+  matrix, optional incoming setup prefix, and witness partition.
+- `GeneratedTerminalFold` records only source geometry and the inner matrix
+  choice; terminal B/D matrices and outer/open digit bases do not exist.
 
-Everything else in `LevelParams` is deterministically reconstructed by `GeneratedFoldStep::expand_to_level_params`.
+Generated matrices store ring dimension, digit basis, and slice count where
+applicable. Expansion reconstructs widths, collision buckets, and minimum
+SIS-secure output ranks from the shared security primitives.
 
 The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary lives in `akita-config` because only `akita-config` can name concrete preset `Cfg` types. The emitted modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
 
@@ -221,7 +239,8 @@ This boundary avoids a circular dependency while keeping a single source of trut
 - `src/resolve.rs`: cache-then-generate resolution, catalog validation, compact entry expansion, and proof-byte estimation.
 - `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
 - `src/generated/mod.rs`: generated table types and table lookup helpers.
-- `src/generated/expand.rs`: compact `GeneratedFoldStep` to runtime `LevelParams` expansion.
+- `src/generated/expand.rs`: typed compact root/recursive/terminal expansion to
+  runtime schedule parameters.
 - `src/emit/mod.rs`: reusable generated-table emitter.
 - `crates/akita-config/src/bin/gen_schedule_tables.rs`: offline table emitter adapter for concrete presets.
 - `crates/akita-config/src/generated_families.rs`: preset family list and regeneration hooks.

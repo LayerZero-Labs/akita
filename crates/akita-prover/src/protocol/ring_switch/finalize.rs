@@ -5,8 +5,7 @@ use akita_types::dispatch_for_field;
 /// Complete the ring switch after the caller has bound the next witness.
 ///
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
-/// The caller must first absorb either the next-witness commitment or the
-/// terminal cleartext witness bytes into `transcript`.
+/// The caller must first absorb the next-witness binding into `transcript`.
 ///
 /// Only the current level's inner ring dimension is needed to expand the
 /// full relation-weight table.
@@ -23,11 +22,10 @@ pub fn ring_switch_finalize<F, E, T>(
     setup: &AkitaExpandedSetup<F>,
     transcript: &mut T,
     w: &RecursiveWitnessFlat,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_source_len: usize,
     opening_ring_dim: usize,
     gamma: Option<&[E]>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -99,15 +97,11 @@ where
             (w.len(), flat.trailing_zeros() as usize, 0usize)
         };
         let num_sc_vars = col_bits + ring_bits;
-        let num_i =
-            lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
+        let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
-        let tau0: Vec<E> = match relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-            RelationMatrixRowLayout::WithoutCommitmentBlocks => Vec::new(),
-        };
+        let tau0: Vec<E> = (0..num_sc_vars)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+            .collect();
         let tau1: Vec<E> = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect();
@@ -134,7 +128,6 @@ where
                     lp,
                     &tau1,
                     gamma,
-                    relation_matrix_row_layout,
                     opening_source_len,
                     opening_ring_dim,
                 )
@@ -148,7 +141,6 @@ where
                     lp,
                     &tau1,
                     gamma,
-                    relation_matrix_row_layout,
                     opening_source_len,
                     opening_ring_dim,
                 )

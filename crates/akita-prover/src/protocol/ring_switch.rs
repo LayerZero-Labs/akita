@@ -19,8 +19,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    RelationMatrixRowLayout, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    RingVec,
 };
 
 mod coeffs;
@@ -30,10 +30,9 @@ mod finalize;
 #[cfg(test)]
 mod tests;
 
+pub use coeffs::ring_switch_build_w;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
-pub use coeffs::RingSwitchTerminalArtifacts;
-pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
-pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
+pub use commit::{commit_terminal_w, commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::{
     build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
 };

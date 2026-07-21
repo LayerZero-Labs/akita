@@ -9,7 +9,7 @@ pub mod fp128 {
     use akita_challenges::TensorChallengeShape;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        AkitaScheduleInputs, DecompositionParams, OpeningClaimsLayout, Schedule,
+        AkitaScheduleInputs, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
         SisModulusProfileId,
     };
 
@@ -90,7 +90,7 @@ pub mod fp128 {
 
         fn get_params_for_prove(
             layout: &OpeningClaimsLayout,
-        ) -> Result<Schedule, akita_field::AkitaError> {
+        ) -> Result<FoldSchedule, akita_field::AkitaError> {
             Self::runtime_schedule(
                 crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
             )

@@ -12,7 +12,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     AkitaExpandedSetup, AkitaInstanceDescriptor, AlgebraSection, BasisMode, CallSection,
-    FpExtEncoding, OpeningClaimsLayout, PlanSection, Schedule, SetupSection,
+    FoldSchedule, FpExtEncoding, OpeningClaimsLayout, PlanSection, SetupSection,
 };
 
 /// Bind the canonical [`AkitaInstanceDescriptor`] bytes into a transcript.
@@ -24,7 +24,7 @@ use akita_types::{
 /// transcript-determinism invariant holds.
 ///
 /// The per-proof effective `schedule` is digested into `PlanSection` and
-/// binds every expanded fold `LevelParams`, so there is no separate
+/// binds every expanded fold `CommittedGroupParams`, so there is no separate
 /// setup-level digest to compute here.
 ///
 /// # Errors
@@ -35,7 +35,7 @@ use akita_types::{
 pub fn bind_transcript_instance_descriptor<F, T, const D: usize, Cfg>(
     setup: &AkitaExpandedSetup<F>,
     opening_batch: &OpeningClaimsLayout,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     basis: BasisMode,
     transcript: &mut T,
 ) -> Result<(), AkitaError>

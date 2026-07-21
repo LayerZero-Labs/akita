@@ -18,8 +18,9 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    LevelParams, OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope,
+    SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -88,7 +89,7 @@ macro_rules! impl_multi_chunk_companion {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
                 Self::runtime_schedule(
                     $crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
                 )
@@ -328,7 +329,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         true
     }
 
-    /// Build the runtime [`Schedule`] for `key`.
+    /// Build the runtime [`FoldSchedule`] for `key`.
     ///
     /// Scalar openings use `AkitaScheduleLookupKey::single(group_key)` with an
     /// empty `precommitteds` vector. Grouped roots supply frozen precommit
@@ -344,7 +345,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates expansion / SIS-bucket failures or DP-search failures
     /// (invalid key dimensions, witness overflow). Never panics — this is
     /// verifier-reachable.
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         Self::validate_sis_modulus_profile()?;
         akita_planner::resolve_group_batch_schedule(
             &key,
@@ -355,13 +356,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         )
     }
 
-    /// Schedule consumed by the prove/verify root path.
+    /// FoldSchedule consumed by the prove/verify root path.
     ///
     /// # Errors
     ///
     /// Propagates schedule-key construction, catalog expansion, or DP-search
     /// failures for `layout`.
-    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError>;
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError>;
 
     /// Root commit layout the `batched_prove` flow uses for `layout`,
     /// read off the runtime schedule's root fold. Same layout per-point commits use,
@@ -377,9 +378,9 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Propagates [`Self::get_params_for_prove`] and rejects malformed schedules.
     fn get_params_for_batched_commitment(
         layout: &OpeningClaimsLayout,
-    ) -> Result<LevelParams, AkitaError> {
+    ) -> Result<CommittedGroupParams, AkitaError> {
         let schedule = Self::get_params_for_prove(layout)?;
-        Ok(schedule.root_fold()?.params.clone())
+        Ok(schedule.root.params.final_group.commitment.clone())
     }
 }
 
@@ -436,7 +437,7 @@ mod tests {
             (3, 3)
         }
 
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
             layout.check()?;
             let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
             Self::runtime_schedule(key)
@@ -494,11 +495,18 @@ mod sis_schedule_width_audit {
     use akita_types::sis::min_secure_rank;
 
     pub(super) fn assert_schedule_stays_within_audited_sis_widths(
-        schedule: &Schedule,
+        schedule: &FoldSchedule,
         num_vars: usize,
     ) {
-        for (level_idx, fold) in schedule.fold_steps().enumerate() {
-            let lp = &fold.params;
+        for (level_idx, lp) in std::iter::once(&schedule.root.params.final_group.commitment)
+            .chain(
+                schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|step| &step.params.witness),
+            )
+            .enumerate()
+        {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
             let a_rank = min_secure_rank(
@@ -627,7 +635,7 @@ mod fp128_policy_tests {
         let opening_batch = OpeningClaimsLayout::new(28, 1).expect("singleton opening batch");
         let schedule =
             SmallCfg::get_params_for_prove(&opening_batch).expect("small-field schedule");
-        let root_params = &schedule.root_fold().expect("small-field root fold").params;
+        let root_params = &schedule.root.params.final_group.commitment;
         assert!(
             root_params.inner_commit_matrix.coeff_linf_bound()
                 >= root_params.outer_commit_matrix.coeff_linf_bound() * 2,
@@ -647,7 +655,7 @@ mod fp128_policy_tests {
             .expect("selector should find a generated onehot schedule");
 
         for selection in [&full, &onehot] {
-            assert_eq!(selection.schedule.initial_witness_len(), Some(1usize << 32));
+            assert_eq!(selection.schedule.initial_witness_len(), 1usize << 32);
         }
         assert!(!full.preset.is_onehot());
         assert!(onehot.preset.is_onehot());
@@ -662,7 +670,7 @@ mod fp128_policy_tests {
             .expect("selector should find a generated batched onehot schedule");
 
         assert!(selection.preset.is_onehot());
-        assert_eq!(selection.schedule.initial_witness_len(), Some(1usize << 30));
+        assert_eq!(selection.schedule.initial_witness_len(), 1usize << 30);
     }
 }
 

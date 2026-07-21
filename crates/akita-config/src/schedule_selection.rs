@@ -4,7 +4,7 @@ use crate::CommitmentConfig;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
     dispatch_for_field, folded_root_supports_opening_shape, root_tensor_projection_enabled,
-    FpExtEncoding, OpeningClaimsLayout, Schedule,
+    FoldSchedule, FpExtEncoding, OpeningClaimsLayout,
 };
 
 /// Select the effective folded runtime schedule for a batched opening.
@@ -19,7 +19,7 @@ use akita_types::{
 pub fn effective_batched_schedule<Cfg>(
     opening_batch: &OpeningClaimsLayout,
     opening_point: &[Cfg::ExtField],
-) -> Result<Schedule, AkitaError>
+) -> Result<FoldSchedule, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore,
@@ -28,26 +28,25 @@ where
     let num_vars = opening_batch.max_num_vars();
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
     schedule.validate_structure()?;
-    let root_step = schedule.root_fold()?;
-    let alpha_bits = root_step.params.d_a().trailing_zeros() as usize;
+    let root_step = &schedule.root;
+    let root_params = &root_step.params.final_group.commitment;
+    let alpha_bits = root_params.d_a().trailing_zeros() as usize;
     let supports_opening_shape = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
-        root_step.params.d_a(),
+        root_params.d_a(),
         |D| Ok(folded_root_supports_opening_shape::<
             Cfg::Field,
             Cfg::ExtField,
             D,
         >(
             std::slice::from_ref(&opening_point),
-            &root_step.params,
+            root_params,
             alpha_bits,
         ))
     )?;
-    let tensor_projection_enabled = root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
-        root_step.params.d_a(),
-        num_vars,
-    );
+    let tensor_projection_enabled =
+        root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(root_params.d_a(), num_vars);
 
     if opening_batch.num_groups() > 1 && Cfg::EXT_DEGREE != 1 {
         return Err(AkitaError::UnsupportedSchedule(
@@ -61,216 +60,4 @@ where
     }
 
     Ok(schedule)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::{ExtField, Fp32, FpExt4};
-    use akita_types::{
-        AkitaScheduleLookupKey, FoldStep, LevelParams, LevelParamsLike, PolynomialGroupLayout,
-        SetupMatrixEnvelope, SisModulusProfileId, TerminalResponseShape, TerminalWitnessPlan,
-    };
-
-    type Base = Fp32<251>;
-    type BaseExt = FpExt4<Base>;
-
-    #[derive(Clone)]
-    struct GroupedExtensionCfg;
-
-    fn multi_group_extension_params() -> Result<LevelParams, AkitaError> {
-        Ok(LevelParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            GroupedExtensionCfg::D,
-            3,
-            1,
-            1,
-            1,
-            GroupedExtensionCfg::ring_challenge_config(GroupedExtensionCfg::D)?,
-        ))
-    }
-
-    fn terminal_shape(params: &LevelParams) -> Result<TerminalResponseShape, AkitaError> {
-        akita_types::TerminalResponseShape::from_groups(
-            params,
-            32,
-            [(params as &dyn LevelParamsLike, 1, 1, 1)],
-        )
-    }
-
-    impl CommitmentConfig for GroupedExtensionCfg {
-        type Field = Base;
-        type ExtField = BaseExt;
-
-        const D: usize = 8;
-
-        fn decomposition() -> akita_types::DecompositionParams {
-            akita_types::DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 8,
-                log_open_bound: Some(8),
-            }
-        }
-
-        fn ring_challenge_config(_d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-            Ok(SparseChallengeConfig::pm1_only(1))
-        }
-
-        fn sis_modulus_profile() -> SisModulusProfileId {
-            SisModulusProfileId::Q32Offset99
-        }
-
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            let params = multi_group_extension_params()?;
-            let witness_shape = terminal_shape(&params)?;
-            let terminal_w_len = witness_shape.logical_num_elems();
-            Ok(Schedule {
-                folds: vec![FoldStep {
-                    params,
-                    input_witness_len: 1 << 8,
-                    output_witness_len: terminal_w_len,
-                    level_bytes: 0,
-                }],
-                terminal: TerminalWitnessPlan {
-                    input_witness_len: terminal_w_len,
-                    witness_shape,
-                    terminal_bytes: 0,
-                },
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(_layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
-                4, 1,
-            )))
-        }
-
-        fn get_params_for_batched_commitment(
-            _layout: &OpeningClaimsLayout,
-        ) -> Result<LevelParams, AkitaError> {
-            multi_group_extension_params()
-        }
-    }
-
-    #[test]
-    fn multi_group_extension_openings_reject_unsupported_zero_fold_schedule() {
-        let opening_batch = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(2, 1),
-            PolynomialGroupLayout::new(4, 1),
-        ])
-        .expect("multi-group opening batch");
-        let point = vec![
-            BaseExt::from_base_slice(&[
-                Base::from_u64(0),
-                Base::from_u64(1),
-                Base::from_u64(2),
-                Base::from_u64(3),
-            ]);
-            4
-        ];
-
-        let err = effective_batched_schedule::<GroupedExtensionCfg>(&opening_batch, &point)
-            .expect_err("multi-group extension openings must reject a zero-fold schedule");
-
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[derive(Clone)]
-    struct MultiGroupScalarDirectCfg;
-
-    impl CommitmentConfig for MultiGroupScalarDirectCfg {
-        type Field = Base;
-        type ExtField = Base;
-
-        const D: usize = 8;
-
-        fn decomposition() -> akita_types::DecompositionParams {
-            akita_types::DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 8,
-                log_open_bound: Some(8),
-            }
-        }
-
-        fn ring_challenge_config(_d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-            Ok(SparseChallengeConfig::pm1_only(1))
-        }
-
-        fn sis_modulus_profile() -> SisModulusProfileId {
-            SisModulusProfileId::Q32Offset99
-        }
-
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            let params = multi_group_extension_params()?;
-            let witness_shape = terminal_shape(&params)?;
-            Ok(Schedule {
-                folds: vec![],
-                terminal: TerminalWitnessPlan {
-                    input_witness_len: witness_shape.logical_num_elems(),
-                    witness_shape,
-                    terminal_bytes: 0,
-                },
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(_layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
-                4, 1,
-            )))
-        }
-
-        fn get_params_for_batched_commitment(
-            _layout: &OpeningClaimsLayout,
-        ) -> Result<LevelParams, AkitaError> {
-            Ok(LevelParams::params_only(
-                SisModulusProfileId::Q32Offset99,
-                Self::D,
-                3,
-                1,
-                1,
-                1,
-                Self::ring_challenge_config(Self::D)?,
-            ))
-        }
-    }
-
-    #[test]
-    fn multi_group_openings_reject_preselected_zero_fold_schedule() {
-        let opening_batch = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(2, 1),
-            PolynomialGroupLayout::new(4, 1),
-        ])
-        .expect("multi-group opening batch");
-        let point = vec![Base::from_u64(1); 4];
-
-        let err = effective_batched_schedule::<MultiGroupScalarDirectCfg>(&opening_batch, &point)
-            .expect_err("multi-group openings must reject a preselected zero-fold schedule");
-
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
 }

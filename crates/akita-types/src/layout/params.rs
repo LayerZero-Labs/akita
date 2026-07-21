@@ -1,6 +1,6 @@
 //! Unified per-level parameters for the Akita protocol.
 //!
-//! `LevelParams` merges ring dimension, matrix ranks, challenge config,
+//! `CommittedGroupParams` merges ring dimension, matrix ranks, challenge config,
 //! block geometry, and digit depths into a single struct that fully
 //! describes one recursion level.
 
@@ -18,11 +18,36 @@ pub use crate::sis::{
     OuterCommitMatrixParams, SisModulusProfileId,
 };
 
+pub(crate) fn recursive_opening_num_vars_for_geometry(
+    d_a: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+) -> Result<usize, AkitaError> {
+    if d_a == 0
+        || !d_a.is_power_of_two()
+        || num_positions_per_block == 0
+        || !num_positions_per_block.is_power_of_two()
+        || num_live_blocks == 0
+    {
+        return Err(AkitaError::InvalidSetup(
+            "invalid recursive opening geometry".to_string(),
+        ));
+    }
+    (d_a.trailing_zeros() as usize)
+        .checked_add(num_positions_per_block.trailing_zeros() as usize)
+        .and_then(|bits| {
+            num_live_blocks
+                .checked_next_power_of_two()
+                .and_then(|blocks| bits.checked_add(blocks.trailing_zeros() as usize))
+        })
+        .ok_or_else(|| AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string()))
+}
+
 mod descriptor;
 mod precommitted;
+pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
 use descriptor::{
-    append_fold_linf_policy_descriptor_bytes, append_sparse_challenge_descriptor_bytes,
-    append_tensor_challenge_shape_descriptor_bytes,
+    append_fold_linf_policy_descriptor_bytes, append_tensor_challenge_shape_descriptor_bytes,
 };
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
@@ -39,34 +64,13 @@ pub fn shared_d_digit_log_basis(
     main_log_basis
 }
 
-/// Per-level M-matrix row layout selector.
-///
-/// At an intermediate fold the prover ships a fresh commitment for the next
-/// witness; the verifier never sees `e_hat` in cleartext and the D-block rows
-/// `v = D * e_hat` must appear in the M-matrix to bind `e_hat` into the
-/// sumcheck.
-///
-/// At a terminal fold the cleartext witness is absorbed into the transcript
-/// and shipped on the wire, so the verifier evaluates the final witness
-/// directly and the relation retains neither commitment block.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RelationMatrixRowLayout {
-    /// Full layout including the D-block (`v = D * e_hat` rows). Used at every
-    /// intermediate fold level and at the root when stage-1 runs.
-    WithDBlock,
-    /// Terminal `t`-state layout: omit both public commitment blocks.
-    /// The physical rows are exactly `consistency | A`; canonical terminal
-    /// `t` bytes replace `u` as the transcript-bound public state.
-    WithoutCommitmentBlocks,
-}
-
 /// Unified per-level parameters for one Akita recursion level.
 ///
 /// Combines ring dimension, Ajtai matrix descriptions, block geometry,
 /// sparse-challenge configuration, and digit decomposition depths into a
 /// single authoritative struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LevelParams {
+pub struct CommittedGroupParams {
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -134,7 +138,7 @@ pub struct LevelParams {
     pub setup_contribution_mode: SetupContributionMode,
 }
 
-impl LevelParams {
+impl CommittedGroupParams {
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {
@@ -158,7 +162,7 @@ impl LevelParams {
         self.inner_commit_matrix.ring_dimension()
     }
 
-    /// Build a params-only `LevelParams` with zeroed layout fields.
+    /// Build a params-only `CommittedGroupParams` with zeroed layout fields.
     ///
     /// Only ring dimension, matrix row counts, log_basis, and fold_challenge_config
     /// are populated. Column counts, block geometry, and digit depths are
@@ -771,7 +775,7 @@ impl LevelParams {
 
     /// Append the descriptor digest encoding for this parameter set.
     ///
-    /// Kept next to [`LevelParams`] so protocol-affecting field changes are
+    /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_u32(bytes, self.log_basis_inner);
@@ -783,7 +787,7 @@ impl LevelParams {
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
-        append_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
+        append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
         append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
         push_u128(bytes, self.challenge_l2_sq_max());
@@ -841,17 +845,12 @@ impl LevelParams {
     ///
     /// Returns an error if the summed dimension overflows `usize`.
     pub fn recursive_opening_num_vars(&self) -> Result<usize, AkitaError> {
-        let alpha_bits = self.d_a().trailing_zeros() as usize;
         self.validate_block_geometry()?;
-        let outer_bits = self
-            .position_index_bits()
-            .checked_add(self.block_index_bits())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive opening outer variable overflow".to_string())
-            })?;
-        outer_bits.checked_add(alpha_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("recursive opening num_vars overflow".to_string())
-        })
+        recursive_opening_num_vars_for_geometry(
+            self.d_a(),
+            self.num_positions_per_block,
+            self.num_live_blocks,
+        )
     }
 
     // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
@@ -861,22 +860,6 @@ impl LevelParams {
     // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
     // derive its block starts from these helpers rather than recompute inline.
-
-    /// Active D-block rows for an relation-matrix row layout (dropped at a terminal fold).
-    #[inline]
-    pub fn n_d_active_for(&self, layout: RelationMatrixRowLayout) -> usize {
-        match layout {
-            RelationMatrixRowLayout::WithDBlock => self.open_commit_matrix.output_rank(),
-            RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
-        }
-    }
-
-    /// Whether the relation layout contains public B-commitment rows.
-    #[inline]
-    #[must_use]
-    pub const fn has_commitment_block(layout: RelationMatrixRowLayout) -> bool {
-        !matches!(layout, RelationMatrixRowLayout::WithoutCommitmentBlocks)
-    }
 
     #[inline]
     fn relation_matrix_row_overflow() -> AkitaError {
@@ -980,7 +963,6 @@ impl LevelParams {
     fn multi_group_relation_matrix_row_count_for(
         &self,
         num_commitments: usize,
-        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         if num_commitments != self.group_count() {
             return Err(AkitaError::InvalidSetup(
@@ -992,22 +974,18 @@ impl LevelParams {
             .a_start()
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        if Self::has_commitment_block(layout) {
-            rows = rows
-                .checked_add(self.outer_commit_matrix.output_rank())
-                .ok_or_else(Self::relation_matrix_row_overflow)?;
-        }
+        rows = rows
+            .checked_add(self.outer_commit_matrix.output_rank())
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in self.precommitted_group_iter() {
             rows = rows
                 .checked_add(group.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
-            if Self::has_commitment_block(layout) {
-                rows = rows
-                    .checked_add(group.outer_commit_matrix.output_rank())
-                    .ok_or_else(Self::relation_matrix_row_overflow)?;
-            }
+            rows = rows
+                .checked_add(group.outer_commit_matrix.output_rank())
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
-        rows.checked_add(self.n_d_active_for(layout))
+        rows.checked_add(self.open_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
@@ -1017,7 +995,6 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
         if group_index > final_group_index {
@@ -1031,11 +1008,9 @@ impl LevelParams {
             .a_start()
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        if Self::has_commitment_block(layout) {
-            start = start
-                .checked_add(self.outer_commit_matrix.output_rank())
-                .ok_or_else(Self::relation_matrix_row_overflow)?;
-        }
+        start = start
+            .checked_add(self.outer_commit_matrix.output_rank())
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         for prior_index in 0..group_index {
             let prior = self
                 .precommitted_group_params(prior_index)
@@ -1043,11 +1018,9 @@ impl LevelParams {
             start = start
                 .checked_add(prior.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
-            if Self::has_commitment_block(layout) {
-                start = start
-                    .checked_add(prior.outer_commit_matrix.output_rank())
-                    .ok_or_else(Self::relation_matrix_row_overflow)?;
-            }
+            start = start
+                .checked_add(prior.outer_commit_matrix.output_rank())
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         Ok(start)
     }
@@ -1089,22 +1062,17 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
-        let a_start = self.group_a_start(opening_batch, group_index, layout)?;
+        let a_start = self.group_a_start(opening_batch, group_index)?;
         let n_a = self.group_a_rows(group_index, final_group_index)?;
         let n_b = self.group_b_rows(group_index, final_group_index)?;
         let start = a_start
             .checked_add(n_a)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let end = if Self::has_commitment_block(layout) {
-            start
-                .checked_add(n_b)
-                .ok_or_else(Self::relation_matrix_row_overflow)?
-        } else {
-            start
-        };
+        let end = start
+            .checked_add(n_b)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         Ok(start..end)
     }
 
@@ -1113,10 +1081,9 @@ impl LevelParams {
         &self,
         opening_batch: &OpeningClaimsLayout,
         group_index: usize,
-        layout: RelationMatrixRowLayout,
     ) -> Result<std::ops::Range<usize>, AkitaError> {
         let final_group_index = self.validate_opening_batch(opening_batch)?;
-        let start = self.group_a_start(opening_batch, group_index, layout)?;
+        let start = self.group_a_start(opening_batch, group_index)?;
         let rows = self.group_a_rows(group_index, final_group_index)?;
         let end = start
             .checked_add(rows)
@@ -1128,13 +1095,11 @@ impl LevelParams {
     pub fn output_witness_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
-        layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
-        let relation_rows =
-            self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)?;
+        let relation_rows = self.relation_matrix_row_count(opening_batch.num_groups())?;
         let witness_layout = crate::WitnessLayout::new(
             self,
             opening_batch,
@@ -1157,36 +1122,28 @@ impl LevelParams {
     /// B_pre* | optional D`. Public openings bind through the fused trace term,
     /// not M rows.
     ///
-    /// At the terminal fold the cleartext witness is shipped on the wire and
-    /// the D-block is dropped from the M-matrix; see [`RelationMatrixRowLayout`].
+    /// Terminal folds use a separate direct-response protocol and therefore
+    /// never construct this relation matrix.
     #[inline]
-    pub fn relation_matrix_row_count_for(
-        &self,
-        num_commitments: usize,
-        layout: RelationMatrixRowLayout,
-    ) -> Result<usize, AkitaError> {
+    pub fn relation_matrix_row_count(&self, num_commitments: usize) -> Result<usize, AkitaError> {
         if self.has_precommitted_groups() {
-            return self.multi_group_relation_matrix_row_count_for(num_commitments, layout);
+            return self.multi_group_relation_matrix_row_count_for(num_commitments);
         }
         self.require_scalar_level("relation_matrix_row_count_for")?;
         let after_a = self
             .a_start()
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        let after_commitment = if Self::has_commitment_block(layout) {
-            let commitment_rows = self
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(num_commitments)
-                .ok_or_else(Self::relation_matrix_row_overflow)?;
-            after_a
-                .checked_add(commitment_rows)
-                .ok_or_else(Self::relation_matrix_row_overflow)?
-        } else {
-            after_a
-        };
+        let commitment_rows = self
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(num_commitments)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        let after_commitment = after_a
+            .checked_add(commitment_rows)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
         after_commitment
-            .checked_add(self.n_d_active_for(layout))
+            .checked_add(self.open_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)
     }
 
@@ -1194,29 +1151,29 @@ impl LevelParams {
     ///
     /// Physical quotient rows occupy `0..relation_matrix_row_count`; EvaluationTrace
     /// sits at `relation_matrix_row_count` and is absent from the physical M matrix.
-    pub fn evaluation_trace_row_index_for_layout(
+    pub fn evaluation_trace_row_index(
         &self,
-        layout: RelationMatrixRowLayout,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         opening_batch.check()?;
         if self.has_precommitted_groups() {
             self.validate_opening_batch(opening_batch)?;
         } else {
-            self.require_scalar_level("LevelParams::evaluation_trace_row_index_for_layout")?;
+            self.require_scalar_level(
+                "CommittedGroupParams::evaluation_trace_row_index_for_layout",
+            )?;
         }
-        self.relation_matrix_row_count_for(opening_batch.num_groups(), layout)
+        self.relation_matrix_row_count(opening_batch.num_groups())
     }
 
     /// Boolean variables needed to index the padded row space
     /// (`next_power_of_two(evaluation_trace_row + 1).trailing_zeros()`).
-    pub fn relation_row_index_num_vars_for_layout(
+    pub fn relation_row_index_num_vars(
         &self,
-        layout: RelationMatrixRowLayout,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         let total_rows = self
-            .evaluation_trace_row_index_for_layout(layout, opening_batch)?
+            .evaluation_trace_row_index(opening_batch)?
             .checked_add(1)
             .ok_or_else(|| AkitaError::InvalidSetup("relation-row count overflow".to_string()))?;
         let padded = total_rows.checked_next_power_of_two().ok_or_else(|| {
@@ -1227,7 +1184,7 @@ impl LevelParams {
 
     /// Fill in layout-derived fields from exact digit-innermost geometry.
     ///
-    /// Takes a params-only `LevelParams` (with zeroed layout fields) and
+    /// Takes a params-only `CommittedGroupParams` (with zeroed layout fields) and
     /// `num_positions_per_block` is `M`, power-of-two in the current Boolean layout, and
     /// `num_live_ring_elements_per_claim` is the exact live `N`. The exact live block
     /// count `B` is derived as `ceil(N / M)`.
@@ -1323,7 +1280,7 @@ impl LevelParams {
         rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_block_claims)
     }
 
-    /// Build a new `LevelParams` that keeps rank/ring/SIS-bucket info
+    /// Build a new `CommittedGroupParams` that keeps rank/ring/SIS-bucket info
     /// from `self` but replaces all layout-derived fields with those
     /// from `other`.
     ///
@@ -1334,10 +1291,14 @@ impl LevelParams {
     /// output rank was sized against, so it is preserved from `self`,
     /// matching the placement of the output rank and `sis_modulus_profile`. Pulling the
     /// bucket from `other` would lose the audited value when the layout
-    /// argument was constructed via [`LevelParams::params_only`] or threaded
+    /// argument was constructed via [`CommittedGroupParams::params_only`] or threaded
     /// through [`Self::with_decomp`], and would let the SIS audit at
     /// role-specific commit-matrix constructors short-circuit silently.
-    pub fn with_layout(&self, other: &LevelParams, field_bits: u32) -> Result<Self, AkitaError> {
+    pub fn with_layout(
+        &self,
+        other: &CommittedGroupParams,
+        field_bits: u32,
+    ) -> Result<Self, AkitaError> {
         Self {
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,

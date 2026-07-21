@@ -265,6 +265,59 @@ pub fn fold_witness_digit_plan(
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<(usize, u128), AkitaError> {
+    let (mut inf_norm_bound, rademacher_inf_norm_bound) = fold_witness_unsnapped_linf_cap(
+        num_live_blocks,
+        num_claims,
+        challenge,
+        witness,
+        cap_config,
+    )?;
+    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
+    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
+
+    // Optional digit snap-down: walk `δ_fold` downward while the symmetric
+    // honest-prover digit envelope at `δ-1` still clears
+    // `retain_num/retain_den · t*`.
+    if let (
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
+        Some(rademacher_inf_norm_bound),
+    ) = (cap_config.policy, rademacher_inf_norm_bound)
+    {
+        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
+            && fold_decomposed_digits > 1
+            && rademacher_inf_norm_bound > 0
+        {
+            let floor =
+                (rademacher_inf_norm_bound.saturating_mul(u128::from(
+                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
+                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
+                .max(1);
+            while fold_decomposed_digits > 1 {
+                let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
+                if positive_lower < floor {
+                    break;
+                }
+                fold_decomposed_digits -= 1;
+                inf_norm_bound = inf_norm_bound.min(positive_lower);
+            }
+        }
+    }
+    Ok((fold_decomposed_digits, inf_norm_bound))
+}
+
+/// Honest folded-response infinity-norm cap before any digit-boundary snap.
+///
+/// Terminal responses are encoded as raw centered integers, so their
+/// completeness and codec sizing use this exact cap rather than a gadget
+/// boundary selected for recursive witnesses.
+pub fn fold_witness_unsnapped_linf_cap(
+    num_live_blocks: usize,
+    num_claims: usize,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    cap_config: &FoldWitnessLinfCapConfig,
+) -> Result<(u128, Option<u128>), AkitaError> {
     if num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_witness_digit_plan: num_live_blocks must be positive".to_string(),
@@ -309,39 +362,7 @@ pub fn fold_witness_digit_plan(
             )
         }
     };
-    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
-    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
-
-    // Optional digit snap-down: walk `δ_fold` downward while the symmetric
-    // honest-prover digit envelope at `δ-1` still clears
-    // `retain_num/retain_den · t*`.
-    if let (
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
-        Some(rademacher_inf_norm_bound),
-    ) = (cap_config.policy, rademacher_inf_norm_bound)
-    {
-        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
-            && fold_decomposed_digits > 1
-            && rademacher_inf_norm_bound > 0
-        {
-            // Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
-            let floor =
-                (rademacher_inf_norm_bound.saturating_mul(u128::from(
-                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
-                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
-                .max(1);
-            while fold_decomposed_digits > 1 {
-                let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
-                if positive_lower < floor {
-                    break;
-                }
-                fold_decomposed_digits -= 1;
-                inf_norm_bound = inf_norm_bound.min(positive_lower);
-            }
-        }
-    }
-    Ok((fold_decomposed_digits, inf_norm_bound))
+    Ok((inf_norm_bound, rademacher_inf_norm_bound))
 }
 
 #[cfg(test)]

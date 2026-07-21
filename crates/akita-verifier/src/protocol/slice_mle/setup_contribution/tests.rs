@@ -3,8 +3,8 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, FlatMatrix,
-    LevelParams, OpeningClaimsLayout, OuterCommitMatrixParams, RelationMatrixRowLayout,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, OuterCommitMatrixParams,
     SisModulusProfileId, WitnessLayout,
 };
 
@@ -42,7 +42,6 @@ struct SetupContributionShape {
     n_d: usize,
     n_b: usize,
     num_polys_per_group: Vec<usize>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 }
 
 impl SetupContributionShape {
@@ -59,7 +58,6 @@ impl SetupContributionShape {
             n_d: 1,
             n_b: 2,
             num_polys_per_group: vec![1],
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
     }
 
@@ -76,14 +74,7 @@ impl SetupContributionShape {
             n_d: 2,
             n_b: 2,
             num_polys_per_group: vec![3],
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
-    }
-
-    fn terminal_relation_only() -> Self {
-        let mut shape = Self::root_single_point();
-        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
-        shape
     }
 
     fn dense_non_pow2_z() -> Self {
@@ -132,7 +123,7 @@ impl SetupContributionFixture {
         let n_cols_e = shape.num_claims * shape.num_live_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
-        let mut lp = LevelParams::params_only(
+        let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             TEST_RING_DIM,
             shape.log_basis,
@@ -244,7 +235,6 @@ impl SetupContributionFixture {
                 opening_source_len,
                 row_coefficients: vec![TestField::zero(); shape.num_claims],
                 tau1: Vec::new(),
-                relation_matrix_row_layout: shape.relation_matrix_row_layout,
                 opening_ring_dim: TEST_RING_DIM,
             }),
         };
@@ -370,12 +360,6 @@ fn setup_index_weight_mle_matches_materialized() {
         .assert_setup_index_weight_mle_matches_materialized();
     SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multi_group())
         .assert_setup_index_weight_mle_matches_materialized();
-}
-
-#[test]
-fn setup_contribution_matches_materialized_on_terminal_fixture() {
-    SetupContributionFixture::from_shape(&SetupContributionShape::terminal_relation_only())
-        .assert_direct_matches_materialized();
 }
 
 #[test]

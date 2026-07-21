@@ -82,7 +82,7 @@ pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     requires_reduction: bool,
     transcript: &mut T,
 ) -> Result<FoldEorReplay<F, E>, AkitaError>
@@ -92,6 +92,40 @@ where
     T: Transcript<F>,
 {
     let d_a = lp.role_dims().d_a();
+    verify_fold_eor_geometry(
+        extension_opening_reduction,
+        challenge_point,
+        openings,
+        row_coefficients,
+        opening_batch,
+        basis,
+        d_a,
+        lp.num_positions_per_block,
+        lp.num_live_blocks,
+        requires_reduction,
+        transcript,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_fold_eor_geometry<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    challenge_point: &[E],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    d_a: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
         verify_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
@@ -100,8 +134,8 @@ where
             row_coefficients,
             opening_batch,
             basis,
-            lp.num_positions_per_block,
-            lp.num_live_blocks,
+            num_positions_per_block,
+            num_live_blocks,
             d_a.trailing_zeros() as usize,
             requires_reduction,
             transcript,
@@ -212,8 +246,7 @@ where
 }
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) lp: &'a LevelParams,
-    pub(in crate::protocol::core) relation_matrix_row_layout: RelationMatrixRowLayout,
+    pub(in crate::protocol::core) lp: &'a CommittedGroupParams,
     pub(in crate::protocol::core) fold_grind_nonce: u32,
     pub(in crate::protocol::core) v: RingVec<F>,
     /// Normalized opening geometry (one group for scalar/suffix folds, `G`
@@ -252,17 +285,13 @@ pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
 }
 
 pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
-    Terminal {
-        terminal_response: &'a TerminalResponse<F>,
-        transcript: TerminalWitnessTranscriptParts,
-    },
     Recursive {
         stage1: &'a AkitaStage1Proof<E>,
         stage2: &'a AkitaStage2Proof<F, E>,
         next_witness: PreparedNextWitness<'a, F>,
         next_witness_ring_dim: usize,
         next_opening_source_len: usize,
-        stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
+        stage3: Option<(&'a SetupSumcheckProof<E>, &'a CommittedGroupParams)>,
     },
 }
 
@@ -322,7 +351,7 @@ fn verify_stage2<F, E, T>(
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     setup_claim: Option<E>,
     destination_source_len: usize,
     destination_ring_dim: usize,
@@ -363,7 +392,7 @@ where
 
 enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
     Recursive {
-        lp: &'a LevelParams,
+        lp: &'a CommittedGroupParams,
         layout: akita_types::TraceWeightLayout,
         trace_coeff: E,
         trace_opening_claim: E,
@@ -372,7 +401,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         trace_eval_scale: E,
     },
     Root {
-        lp: &'a LevelParams,
+        lp: &'a CommittedGroupParams,
         layout: akita_types::TraceWeightLayout,
         prepared_point: PreparedOpeningPoint<F, E>,
         trace_block_opening: Vec<E>,
@@ -384,7 +413,7 @@ enum TraceWireAtRoleA<'a, F: FieldCore, E: FieldCore> {
         opening_batch: OpeningClaimsLayout,
     },
     MultiGroupRoot {
-        lp: &'a LevelParams,
+        lp: &'a CommittedGroupParams,
         layout: akita_types::TraceWeightLayout,
         prepared_points: Vec<PreparedOpeningPoint<F, E>>,
         row_coefficients: Vec<E>,
@@ -659,7 +688,7 @@ fn verify_stage3<F, E, T>(
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
     stage2_next_w_eval: E,
-    stage3: Option<(&SetupSumcheckProof<E>, &LevelParams)>,
+    stage3: Option<(&SetupSumcheckProof<E>, &CommittedGroupParams)>,
 ) -> Result<Option<FoldVerifyOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -733,7 +762,7 @@ where
         d_b = role_dims.d_b(),
         d_d = role_dims.d_d(),
         groups = num_groups,
-        terminal = matches!(&prepared.payload, PreparedFoldPayload::Terminal { .. })
+        terminal = false
     )
     .entered();
     {
@@ -774,7 +803,6 @@ where
             role_dims.d_a(),
             &opening_shape,
             prepared.lp,
-            prepared.relation_matrix_row_layout,
             prepared.fold_grind_nonce,
         )?
     };
@@ -790,11 +818,7 @@ where
                 )
             }
         )?;
-        let relation_rhs_layout = relation_rhs_layout_for(
-            prepared.lp,
-            &opening_shape,
-            prepared.relation_matrix_row_layout,
-        )?;
+        let relation_rhs_layout = relation_rhs_layout_for(prepared.lp, &opening_shape)?;
         let relation_rhs = assemble_relation_rhs::<F>(
             role_dims,
             &relation_rhs_layout,
@@ -802,7 +826,6 @@ where
             commitment_rows,
         )?;
         let relation_instance = RingRelationInstance::new(
-            prepared.relation_matrix_row_layout,
             group_challenges,
             prepared.group_ring_opening_points,
             prepared.group_ring_multiplier_points,
@@ -818,50 +841,6 @@ where
     };
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
         match prepared.payload {
-            PreparedFoldPayload::Terminal {
-                terminal_response,
-                transcript: terminal_replay,
-            } => {
-                let _terminal_span = tracing::info_span!(
-                    "verify_terminal_direct_fold",
-                    d_a = role_dims.d_a(),
-                    d_b = role_dims.d_b(),
-                    groups = num_groups
-                )
-                .entered();
-                if prepared.relation_matrix_row_layout
-                    != RelationMatrixRowLayout::WithoutCommitmentBlocks
-                {
-                    return Err(AkitaError::InvalidProof);
-                }
-                {
-                    let _span = tracing::info_span!("terminal_transcript_absorb").entered();
-                    transcript.absorb_and_record_bytes(
-                        ABSORB_TERMINAL_W_REMAINDER,
-                        &terminal_replay.response,
-                    );
-                }
-                super::terminal_direct::verify_terminal_ring_relations(
-                    setup,
-                    &relation_instance,
-                    prepared.lp,
-                    terminal_response,
-                )?;
-                super::terminal_direct::verify_terminal_trace(
-                    &relation_instance,
-                    prepared.lp,
-                    terminal_response,
-                    prepared
-                        .trace_prepared_points
-                        .as_deref()
-                        .ok_or(AkitaError::InvalidProof)?,
-                    &prepared.row_coefficients,
-                    prepared.trace_claim_scales.as_deref(),
-                    prepared.trace_eval_scale,
-                    prepared.trace_eval_target,
-                )?;
-                return Ok((Vec::new(), None));
-            }
             PreparedFoldPayload::Recursive {
                 stage1,
                 stage2,
@@ -906,12 +885,7 @@ where
         }
     }
     let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        ring_switch_verifier::<F, E, T, D>(
-            &ring_switch_replay,
-            prepared.witness_len,
-            transcript,
-            RelationMatrixRowLayout::WithDBlock,
-        )
+        ring_switch_verifier::<F, E, T, D>(&ring_switch_replay, prepared.witness_len, transcript)
     })?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         relation_instance.role_dims(),
@@ -925,10 +899,7 @@ where
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = relation_instance.opening_batch();
-    let evaluation_trace_row = prepared.lp.evaluation_trace_row_index_for_layout(
-        prepared.relation_matrix_row_layout,
-        opening_batch,
-    )?;
+    let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
     let trace_witness_layout = relation_instance.segment_layout(prepared.lp, None)?;

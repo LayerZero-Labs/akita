@@ -16,12 +16,12 @@ use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AkitaError;
 use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
-use akita_transcript::labels::{ABSORB_PROVER_V, ABSORB_TERMINAL_E_HAT};
+use akita_transcript::labels::ABSORB_PROVER_V;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
 use akita_types::{assemble_relation_rhs, relation_rhs_layout_for, RingVec, RingView};
-use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks, RelationMatrixRowLayout};
-use akita_types::{LevelParams, LevelParamsLike, RingRelationInstance};
+use akita_types::{gadget_row_scalars, AkitaCommitmentHint, DigitBlocks};
+use akita_types::{CommittedGroupParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 
 use super::fold_grind::{self, ProverTranscriptGrind};
@@ -30,24 +30,6 @@ use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness
 mod relation_quotient;
 
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
-
-fn absorb_terminal_e_folded_fields<F, T>(
-    transcript: &mut T,
-    e_folded: &RingVec<F>,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore + CanonicalField + akita_serialization::AkitaSerialize,
-    T: Transcript<F>,
-{
-    let bytes = akita_types::raw_field_segment_bytes::<F>(e_folded)?;
-    if bytes.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "terminal e_folded absorb cannot be empty".to_string(),
-        ));
-    }
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_E_HAT, &bytes);
-    Ok(())
-}
 
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
     pre_folded_e: &[&[CyclotomicRing<F, D>]],
@@ -179,13 +161,16 @@ pub(super) fn aggregate_decompose_fold_witnesses<F: FieldCore, const D: usize>(
     ))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_point_decompose_fold_witness<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
     point_polys: &[&P],
     point_indices: &[usize],
-    params: &(impl LevelParamsLike + ?Sized),
+    num_positions_per_block: usize,
+    num_digits_inner: usize,
+    log_basis_inner: u32,
 ) -> Result<DecomposeFoldWitness<F>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -227,9 +212,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Sparse {
                     challenges: &point_challenges,
-                    num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_inner(),
-                    log_basis: params.log_basis_inner(),
+                    num_positions_per_block,
+                    num_digits: num_digits_inner,
+                    log_basis: log_basis_inner,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(z_point) => Ok(z_point),
@@ -244,9 +229,9 @@ where
                                 poly.opening_view()?,
                                 DecomposeFoldPlan {
                                     challenges: poly_challenges,
-                                    num_positions_per_block: params.num_positions_per_block(),
-                                    num_digits: params.num_digits_inner(),
-                                    log_basis: params.log_basis_inner(),
+                                    num_positions_per_block,
+                                    num_digits: num_digits_inner,
+                                    log_basis: log_basis_inner,
                                 },
                             )
                         })
@@ -275,9 +260,9 @@ where
                 batch_view,
                 DecomposeFoldBatchPlan::Tensor {
                     tensor: &point_factored,
-                    num_positions_per_block: params.num_positions_per_block(),
-                    num_digits: params.num_digits_inner(),
-                    log_basis: params.log_basis_inner(),
+                    num_positions_per_block,
+                    num_digits: num_digits_inner,
+                    log_basis: log_basis_inner,
                 },
             )? {
                 BatchDecomposeFoldOutcome::Fused(witness) => Ok(witness),
@@ -347,13 +332,12 @@ where
 /// D-role kernel: `d_row_len` is the D-matrix row count and `e_hat` carries
 /// the opening digits at the D-role ring dimension. Callers extract both from
 /// the schedule; this function must not read schedule types.
-fn compute_v_rows_for_layout<F, T, RB, const D: usize>(
+fn compute_v_rows_and_absorb<F, T, RB, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, RB>,
     transcript: &mut T,
     d_row_len: usize,
     log_basis: u32,
     e_hat: &DigitBlocks,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -362,31 +346,24 @@ where
 {
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    match relation_matrix_row_layout {
-        RelationMatrixRowLayout::WithDBlock => {
-            let _span = tracing::info_span!(
-                "compute_relation_v",
-                e_hat_planes = e_hat.typed_planes::<D>()?.len()
-            )
-            .entered();
-            let v = compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)?;
-            // Absorb `v` via the canonical D-free flat encoder (byte-identical to
-            // the former `RingSliceSerializer` typed path; S2 byte-identity test).
-            akita_types::RingVec::from_ring_elems(&v).append_flat_to_transcript(
-                ABSORB_PROVER_V,
-                D,
-                transcript,
-            )?;
-            Ok(v)
-        }
-        RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(Vec::new()),
-    }
+    let _span = tracing::info_span!(
+        "compute_relation_v",
+        e_hat_planes = e_hat.typed_planes::<D>()?.len()
+    )
+    .entered();
+    let v = compute_v_rows(backend, prepared, d_row_len, e_hat, log_basis)?;
+    akita_types::RingVec::from_ring_elems(&v).append_flat_to_transcript(
+        ABSORB_PROVER_V,
+        D,
+        transcript,
+    )?;
+    Ok(v)
 }
 
 /// Validate the chunked-witness configuration at the prover boundary (no-panic
 /// contract), before any witness math. Mirrors the planner entry guard and the
 /// verifier layout resolution.
-pub(crate) fn validate_chunked_witness_cfg(lp: &LevelParams) -> Result<(), AkitaError> {
+pub(crate) fn validate_chunked_witness_cfg(lp: &CommittedGroupParams) -> Result<(), AkitaError> {
     lp.witness_chunk.validate()
 }
 
@@ -460,11 +437,9 @@ impl RingRelationProver {
         group_ring_multiplier_points: impl IntoRingMultiplierOpeningPointVec<F>,
         block_claims: ProverOpeningData<'a, PointF, P, F>,
         pre_folded_e_by_poly: Vec<RingVec<F>>,
-        lp: LevelParams,
+        lp: CommittedGroupParams,
         transcript: &mut T,
         row_coefficient_rings: RingVec<F>,
-        relation_matrix_row_layout: RelationMatrixRowLayout,
-        terminal_tail_t_vectors: Option<usize>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
         F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
@@ -481,13 +456,6 @@ impl RingRelationProver {
     {
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
-        if !matches!(
-            relation_matrix_row_layout,
-            RelationMatrixRowLayout::WithDBlock
-        ) && !lp.precommitted_groups.is_empty()
-        {
-            return Err(AkitaError::InvalidProof);
-        }
         let dims = lp.role_dims();
         let opening_batch = block_claims.opening_claims().layout()?;
         let polys = block_claims.flat_polys();
@@ -511,21 +479,19 @@ impl RingRelationProver {
         } else {
             (0..num_groups).collect()
         };
-        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
-            for &group_index in &commit_group_order {
-                let group_commitment = block_claims
-                    .opening_claims()
-                    .group_commitment(group_index)?;
-                let group_rows =
-                    RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
-                let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
-                if group_rows != expected_rows {
-                    return Err(AkitaError::InvalidInput(
-                        "batched prover received a commitment with the wrong length".to_string(),
-                    ));
-                }
-                commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
+        for &group_index in &commit_group_order {
+            let group_commitment = block_claims
+                .opening_claims()
+                .group_commitment(group_index)?;
+            let group_rows =
+                RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
+            let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
+            if group_rows != expected_rows {
+                return Err(AkitaError::InvalidInput(
+                    "batched prover received a commitment with the wrong length".to_string(),
+                ));
             }
+            commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
         }
         for group_index in 0..num_groups {
             let group_hint = block_claims.group_hint(group_index)?;
@@ -654,13 +620,12 @@ impl RingRelationProver {
             F,
             dims.d_d(),
             |D_D| {
-                let v_typed = compute_v_rows_for_layout::<F, T, RB, D_D>(
+                let v_typed = compute_v_rows_and_absorb::<F, T, RB, D_D>(
                     ring_switch_ctx,
                     transcript,
                     d_row_len,
                     d_log_basis,
                     &e_hat,
-                    relation_matrix_row_layout,
                 )?;
                 Ok::<_, AkitaError>(RingVec::from_ring_elems(&v_typed))
             }
@@ -682,12 +647,6 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
-        if !matches!(
-            relation_matrix_row_layout,
-            RelationMatrixRowLayout::WithDBlock
-        ) {
-            absorb_terminal_e_folded_fields::<F, T>(transcript, &e_folded)?;
-        }
         // Distributed-prover chunked layout: the grind emits one folded response
         // per block window (`z_i`), and the global response is their sum
         // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
@@ -708,7 +667,7 @@ impl RingRelationProver {
                 &lp,
                 &opening_batch,
                 &grind_groups,
-                terminal_tail_t_vectors,
+                None,
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
         let mut group_challenges = Vec::with_capacity(num_groups);
@@ -721,14 +680,12 @@ impl RingRelationProver {
         // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
-        let relation_rhs_layout =
-            relation_rhs_layout_for(&lp, &opening_batch, relation_matrix_row_layout)?;
+        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
         let relation_rhs =
             assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
                 .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(
-            relation_matrix_row_layout,
             group_challenges,
             group_opening_points,
             group_ring_multiplier_points,

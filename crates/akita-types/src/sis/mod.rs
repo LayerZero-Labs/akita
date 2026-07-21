@@ -46,11 +46,12 @@ pub use fold_witness_grind::{
     FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,
 };
 pub use norm_bound::{
-    fold_witness_digit_plan, fold_witness_linf_cap_policy, max_response_linf_for_role_a_collision,
-    rademacher_proxy_variance, rademacher_proxy_variance_flat_challenges,
-    rademacher_proxy_variance_tensor_challenges, role_a_collision_inf_norm_for_response_bound,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    fold_witness_digit_plan, fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
+    max_response_linf_for_role_a_collision, rademacher_proxy_variance,
+    rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
+    role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
+    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
     MAX_FOLD_GRIND_ATTEMPTS,

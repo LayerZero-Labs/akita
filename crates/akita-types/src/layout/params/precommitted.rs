@@ -2,19 +2,19 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
-use crate::schedule::PrecommittedGroupParams;
+use crate::schedule::PrecommittedGroupDescriptor;
 use crate::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
 
-use super::LevelParams;
+use super::CommittedGroupParams;
 
 /// Group-local root parameters for a precommitted commitment group.
 ///
-/// These fields mirror the group-local pieces of [`LevelParams`]. Widths are
+/// These fields mirror the group-local pieces of [`CommittedGroupParams`]. Widths are
 /// derived from the Ajtai keys and block geometry rather than stored twice.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into the multi-group root key.
-    pub layout: PrecommittedGroupParams,
+    pub layout: PrecommittedGroupDescriptor,
     /// Inner Ajtai matrix (A) used by this group.
     pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Outer commitment matrix (B) used by this group.
@@ -123,7 +123,7 @@ impl PrecommittedLevelParams {
 /// Common view over full and precommitted level parameters.
 ///
 /// Use this trait when code only needs the shared commitment geometry carried
-/// by both [`LevelParams`] and [`PrecommittedLevelParams`].
+/// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
     fn a_rows_len(&self) -> usize;
@@ -145,7 +145,7 @@ pub trait LevelParamsLike {
     fn log_basis_open(&self) -> u32;
 }
 
-impl LevelParamsLike for LevelParams {
+impl LevelParamsLike for CommittedGroupParams {
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.inner_commit_matrix
     }
@@ -253,7 +253,7 @@ impl LevelParamsLike for PrecommittedLevelParams {
     }
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
-        self.layout.fold_challenge_shape
+        TensorChallengeShape::Flat
     }
 
     fn position_index_bits(&self) -> usize {

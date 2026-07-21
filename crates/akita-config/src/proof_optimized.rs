@@ -4,12 +4,14 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use crate::matrix_envelope::accumulate_matrix_envelope_for_level;
+use crate::matrix_envelope::{
+    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
+};
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule, SetupMatrixEnvelope,
+    AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -213,44 +215,30 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     Ok(layouts)
 }
 
-#[cfg(test)]
-fn setup_matrix_envelope_for_shape<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<Option<SetupMatrixEnvelope>, AkitaError> {
-    // Setup-matrix sizing scans many candidate sub-shapes. `runtime_schedule`
-    // serves the shipped table on a hit and regenerates via the planner DP on
-    // a miss; a shape the planner cannot schedule (infeasible — e.g. a witness
-    // too large for this preset's SIS floor) can never be committed, so it
-    // needs no setup capacity. Skip it (returning `Ok(None)`) and let the
-    // caller's `saw_supported_shape` guard error only if *no* shape is
-    // feasible. Go through `get_params_for_prove` so recursive configs build
-    // their recursive schedule keys instead of the direct proof-optimized key.
-    // Genuine bugs in opening_batch-key or envelope construction still
-    // propagate via `?`.
-    let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
-        return Ok(None);
-    };
-
-    Ok(Some(setup_matrix_envelope_for_schedule(&schedule)?))
-}
-
 fn setup_matrix_envelope_for_schedule(
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
     for params in setup_level_params_from_schedule(schedule) {
         accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
     }
+    accumulate_terminal_matrix_envelope(
+        &schedule.terminal.params.witness,
+        &mut envelope.max_setup_len,
+    )?;
     Ok(envelope)
 }
 
-/// Extract setup-level params from a `Schedule`.
+/// Extract setup-level params from a `FoldSchedule`.
 ///
-pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams> {
-    schedule
-        .folds
-        .iter()
-        .map(|fold| fold.params.clone())
+pub fn setup_level_params_from_schedule(schedule: &FoldSchedule) -> Vec<CommittedGroupParams> {
+    std::iter::once(schedule.root.params.final_group.commitment.clone())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|fold| fold.params.witness.clone()),
+        )
         .collect()
 }
 
@@ -262,7 +250,7 @@ pub fn setup_level_params_from_schedule(schedule: &Schedule) -> Vec<LevelParams>
 /// materialized shared matrix is too short for `schedule` and `layout`.
 pub fn ensure_schedule_fits_setup<Cfg>(
     setup: &AkitaExpandedSetup<Cfg::Field>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     layout: &OpeningClaimsLayout,
 ) -> Result<(), AkitaError>
 where
@@ -276,8 +264,15 @@ where
             .total_ring_elements_at_dyn(params.d_a())?;
         ensure_required_setup_len(required_setup_len, available_setup_len, params.d_a())?;
     }
+    let terminal = &schedule.terminal.params.witness;
+    let mut required_setup_len = 1;
+    accumulate_terminal_matrix_envelope(terminal, &mut required_setup_len)?;
+    let available_setup_len = setup
+        .shared_matrix
+        .total_ring_elements_at_dyn(terminal.d_a())?;
+    ensure_required_setup_len(required_setup_len, available_setup_len, terminal.d_a())?;
 
-    let root_params = &schedule.root_fold()?.params;
+    let root_params = &schedule.root.params.final_group.commitment;
     let required_setup_len = root_runtime_matrix_len_for_opening_batch(root_params, layout)?;
     let available_setup_len = setup
         .shared_matrix
@@ -301,7 +296,7 @@ fn ensure_required_setup_len(
 }
 
 fn root_runtime_matrix_len_for_opening_batch(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     let final_group_index = lp.validate_opening_batch(layout)?;
@@ -479,7 +474,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)
@@ -539,7 +534,7 @@ macro_rules! impl_proof_optimized_preset {
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
-            ) -> Result<akita_types::Schedule, akita_field::AkitaError> {
+            ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
                 Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
                     layout,
                 )?)

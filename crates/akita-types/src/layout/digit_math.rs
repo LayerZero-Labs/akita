@@ -75,7 +75,7 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// # Return value
 ///
 /// `(position_index_bits, block_index_bits, n_a)` — the chosen split plus its
-/// per-candidate SIS-secure A-rank. Callers building a `LevelParams` should use
+/// per-candidate SIS-secure A-rank. Callers building a `CommittedGroupParams` should use
 /// this `n_a` so the
 /// derived `outer_commit_matrix.col_len` matches the cost the optimizer scored.
 ///

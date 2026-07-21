@@ -6,7 +6,7 @@ use crate::protocol::extension_opening_reduction::{
 };
 use crate::protocol::ring_switch::{
     ring_switch_build_w, ring_switch_finalize, NextWitnessState, NextWitnessStateOutput,
-    RingSwitchBuildOutput, RingSwitchOutput,
+    RingSwitchOutput,
 };
 use crate::protocol::sumcheck::AkitaStage2Prover;
 use crate::protocol::sumcheck::AkitaStage3Prover;
@@ -28,10 +28,11 @@ use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_W_REMAINDER,
-    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
+use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
     append_claim_values_to_transcript, basis_weights, build_trace_table_scaled,
@@ -45,11 +46,11 @@ use akita_types::{
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
     trace_public_weights_recursive, trace_public_weights_root_terms,
     trace_weight_layout_from_segment, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
-    AkitaStage2Proof, BasisMode, Commitment, ExecutionSchedule, ExtensionOpeningReductionProof,
-    FoldLevelProof, LevelParams, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingVec, RingView, Schedule,
-    SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof, TerminalLevelProof,
-    TerminalResponse, TraceTable,
+    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalLevelProof, TraceTable,
 };
 use std::sync::Arc;
 
@@ -75,7 +76,7 @@ pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
-pub use root_fold::prove_root;
+use root_fold::prove_root;
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.

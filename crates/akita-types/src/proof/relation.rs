@@ -2,7 +2,7 @@
 
 use crate::dispatch_for_field;
 use crate::layout::CommitmentRingDims;
-use crate::layout::{LevelParams, RelationMatrixRowLayout};
+use crate::layout::CommittedGroupParams;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::RingVec;
 use akita_algebra::eq_poly::EqPolynomial;
@@ -60,24 +60,16 @@ impl RelationRhsLayout {
 ///
 /// Returns an error if the opening batch is malformed for multi-group root params.
 pub fn relation_rhs_layout_for(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RelationRhsLayout, AkitaError> {
     opening_batch.check()?;
-    let n_d = lp.n_d_active_for(relation_matrix_row_layout);
-    let commitment_rows = |rows: usize| {
-        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
-            rows
-        } else {
-            0
-        }
-    };
+    let n_d = lp.open_commit_matrix.output_rank();
     if !lp.has_precommitted_groups() {
         return Ok(RelationRhsLayout::uniform(
             n_d,
             lp.inner_commit_matrix.output_rank(),
-            commitment_rows(lp.outer_commit_matrix.output_rank()),
+            lp.outer_commit_matrix.output_rank(),
             0,
             opening_batch.num_groups(),
         ));
@@ -86,13 +78,13 @@ pub fn relation_rhs_layout_for(
     let mut groups = Vec::with_capacity(lp.precommitted_group_count() + 1);
     groups.push(RelationGroupRows {
         n_a: lp.inner_commit_matrix.output_rank(),
-        commit_rows: commitment_rows(lp.outer_commit_matrix.output_rank()),
+        commit_rows: lp.outer_commit_matrix.output_rank(),
         b_inner_rows: 0,
     });
     for group in lp.precommitted_group_iter() {
         groups.push(RelationGroupRows {
             n_a: group.inner_commit_matrix.output_rank(),
-            commit_rows: commitment_rows(group.outer_commit_matrix.output_rank()),
+            commit_rows: group.outer_commit_matrix.output_rank(),
             b_inner_rows: 0,
         });
     }

@@ -32,41 +32,30 @@ fn eight_quotient_rows_adds_one_tau1_var_for_evaluation_trace() {
         lp.d_a(),
     );
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
-    let quotient = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-        .unwrap();
+    let quotient = lp.relation_matrix_row_count(1).unwrap();
     assert_eq!(quotient, 8);
 
     let quotient_only_vars = quotient.next_power_of_two().trailing_zeros() as usize;
     assert_eq!(quotient_only_vars, 3);
     assert_eq!(
-        lp.evaluation_trace_row_index_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .expect("row"),
+        lp.evaluation_trace_row_index(&batch).expect("row"),
         quotient
     );
-    assert_eq!(
-        lp.relation_row_index_num_vars_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .unwrap(),
-        4
-    );
+    assert_eq!(lp.relation_row_index_num_vars(&batch).unwrap(), 4);
 }
 
 #[test]
 fn evaluation_trace_row_is_last_after_quotient_rows() {
     let lp = laid_out_sample_lp();
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
-    let quotient = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-        .unwrap();
+    let quotient = lp.relation_matrix_row_count(1).unwrap();
 
     assert_eq!(
-        lp.evaluation_trace_row_index_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .expect("row"),
+        lp.evaluation_trace_row_index(&batch).expect("row"),
         quotient
     );
     assert_eq!(
-        lp.relation_row_index_num_vars_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .unwrap(),
+        lp.relation_row_index_num_vars(&batch).unwrap(),
         (quotient + 1).next_power_of_two().trailing_zeros() as usize
     );
 }
@@ -74,20 +63,14 @@ fn evaluation_trace_row_is_last_after_quotient_rows() {
 #[test]
 fn multi_group_evaluation_trace_row_matches_quotient_count() {
     let (grouped, batch) = sample_multi_group_root_params();
-    let quotient = grouped
-        .relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
-        .unwrap();
+    let quotient = grouped.relation_matrix_row_count(2).unwrap();
 
     assert_eq!(
-        grouped
-            .evaluation_trace_row_index_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .expect("row"),
+        grouped.evaluation_trace_row_index(&batch).expect("row"),
         quotient
     );
     assert_eq!(
-        grouped
-            .relation_row_index_num_vars_for_layout(RelationMatrixRowLayout::WithDBlock, &batch)
-            .unwrap(),
+        grouped.relation_row_index_num_vars(&batch).unwrap(),
         (quotient + 1).next_power_of_two().trailing_zeros() as usize
     );
 }
@@ -96,34 +79,19 @@ fn multi_group_evaluation_trace_row_matches_quotient_count() {
 fn relation_rhs_row_count_matches_level_params() {
     let lp = laid_out_sample_lp();
     let batch = OpeningClaimsLayout::new(4, 1).expect("batch");
-    for layout in [
-        RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutCommitmentBlocks,
-    ] {
-        let rhs_layout = relation_rhs_layout_for(&lp, &batch, layout).expect("rhs layout");
-        assert_eq!(
-            relation_rhs_row_count(&rhs_layout),
-            lp.relation_matrix_row_count_for(batch.num_groups(), layout)
-                .expect("row count"),
-            "scalar layout {:?}",
-            layout
-        );
-    }
+    let rhs_layout = relation_rhs_layout_for(&lp, &batch).expect("rhs layout");
+    assert_eq!(
+        relation_rhs_row_count(&rhs_layout),
+        lp.relation_matrix_row_count(batch.num_groups())
+            .expect("row count"),
+    );
 
     let (grouped_lp, grouped_batch) = sample_multi_group_root_params();
-    for layout in [
-        RelationMatrixRowLayout::WithDBlock,
-        RelationMatrixRowLayout::WithoutCommitmentBlocks,
-    ] {
-        let rhs_layout =
-            relation_rhs_layout_for(&grouped_lp, &grouped_batch, layout).expect("rhs layout");
-        assert_eq!(
-            relation_rhs_row_count(&rhs_layout),
-            grouped_lp
-                .relation_matrix_row_count_for(grouped_batch.num_groups(), layout)
-                .expect("row count"),
-            "grouped layout {:?}",
-            layout
-        );
-    }
+    let rhs_layout = relation_rhs_layout_for(&grouped_lp, &grouped_batch).expect("rhs layout");
+    assert_eq!(
+        relation_rhs_row_count(&rhs_layout),
+        grouped_lp
+            .relation_matrix_row_count(grouped_batch.num_groups())
+            .expect("row count"),
+    );
 }

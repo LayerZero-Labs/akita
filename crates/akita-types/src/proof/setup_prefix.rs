@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    InnerCommitMatrixParams, LevelParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
+    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -383,13 +383,6 @@ fn serialize_precommitted_level_params<W: Write>(
         .layout
         .num_live_blocks
         .serialize_with_mode(&mut writer, compress)?;
-    match params.layout.fold_challenge_shape {
-        akita_challenges::TensorChallengeShape::Flat => writer.write_all(&[0])?,
-        akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
-            writer.write_all(&[1])?;
-            fold_low_len.serialize_with_mode(&mut writer, compress)?;
-        }
-    }
     params
         .layout
         .log_basis_inner
@@ -438,19 +431,6 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_positions_per_block =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_live_blocks = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let mut shape_tag = [0u8; 1];
-    reader.read_exact(&mut shape_tag)?;
-    let fold_challenge_shape = match shape_tag[0] {
-        0 => akita_challenges::TensorChallengeShape::Flat,
-        1 => akita_challenges::TensorChallengeShape::Tensor {
-            fold_low_len: usize::deserialize_with_mode(&mut reader, compress, validate, &())?,
-        },
-        _ => {
-            return Err(SerializationError::InvalidData(
-                "invalid setup-prefix fold challenge shape tag".to_string(),
-            ))
-        }
-    };
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -465,12 +445,11 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: PrecommittedGroupParams {
+        layout: PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
-            fold_challenge_shape,
             log_basis_inner,
             log_basis_outer,
             n_a,
@@ -507,13 +486,6 @@ fn precommitted_level_params_serialized_size(
             .num_positions_per_block
             .serialized_size(compress)
         + params.layout.num_live_blocks.serialized_size(compress)
-        + 1
-        + match params.layout.fold_challenge_shape {
-            akita_challenges::TensorChallengeShape::Flat => 0,
-            akita_challenges::TensorChallengeShape::Tensor { fold_low_len } => {
-                fold_low_len.serialized_size(compress)
-            }
-        }
         + params.layout.log_basis_inner.serialized_size(compress)
         + params.layout.log_basis_outer.serialized_size(compress)
         + params.log_basis_open.serialized_size(compress)
@@ -1176,7 +1148,7 @@ where
 }
 
 fn active_setup_projection_geometry(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<crate::SetupProjectionGeometry, AkitaError> {
     opening_batch.check()?;
@@ -1235,7 +1207,7 @@ fn active_setup_projection_geometry(
 
 /// Active flat coefficient count under the canonical Stage 3 base projection.
 pub fn active_setup_field_len(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     Ok(active_setup_projection_geometry(level_params, opening_batch)?.natural_field_len())
@@ -1250,7 +1222,7 @@ pub fn padded_setup_prefix_len(natural_field_len: usize) -> usize {
 /// Repack `level_params` into the precommitted-group metadata stored on the
 /// consuming fold.
 pub fn setup_prefix_precommitted_params(
-    prefix_params: &LevelParams,
+    prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
     let d_setup = SETUP_OFFLOAD_D_SETUP;
@@ -1274,12 +1246,11 @@ pub fn setup_prefix_precommitted_params(
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
             return Ok(PrecommittedLevelParams {
-                layout: PrecommittedGroupParams {
+                layout: PrecommittedGroupDescriptor {
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
-                    fold_challenge_shape: prefix_params.fold_challenge_shape,
                     log_basis_inner: prefix_params.log_basis_inner,
                     log_basis_outer: prefix_params.log_basis_outer,
                     n_a: prefix_params.inner_commit_matrix.output_rank(),
@@ -1326,7 +1297,7 @@ pub fn setup_prefix_slot_id(
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
     setup_ring_slots_at_d: usize,
     lookup_slot: Lookup,
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     natural_field_len: usize,
     d_setup: usize,
     coverage_error: &'static str,

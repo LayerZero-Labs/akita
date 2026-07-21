@@ -48,7 +48,7 @@ pub use compute::{
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{AkitaStage2Prover, DigitRangeProver};
 pub use protocol::{
-    batched_prove, commit_w, prove, prove_root, prove_suffix, ProveLevelOutput,
+    batched_prove, commit_terminal_w, commit_w, prove, prove_suffix, ProveLevelOutput,
     RecursiveSuffixOutcome, RingSwitchOutput, SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};

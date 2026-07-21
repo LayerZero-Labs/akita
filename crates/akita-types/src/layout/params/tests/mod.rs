@@ -1,8 +1,8 @@
 use super::*;
 use crate::PolynomialGroupLayout;
 
-fn sample_params_only() -> LevelParams {
-    LevelParams::params_only(
+fn sample_params_only() -> CommittedGroupParams {
+    CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
@@ -13,7 +13,7 @@ fn sample_params_only() -> LevelParams {
     )
 }
 
-fn sample_layout_lp() -> LevelParams {
+fn sample_layout_lp() -> CommittedGroupParams {
     sample_params_only().with_decomp(16, 64, 2, 2, 2).unwrap()
 }
 
@@ -52,13 +52,13 @@ fn distinct_semantic_depths_size_a_b_and_d_independently() {
     );
 }
 
-fn laid_out_sample_lp() -> LevelParams {
+fn laid_out_sample_lp() -> CommittedGroupParams {
     sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap()
 }
 
-fn certify_test_sis_bounds(lp: &mut LevelParams) {
+fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
     const BOUND: u128 = 1;
     lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner_commit_matrix.security_policy(),
@@ -80,8 +80,8 @@ fn certify_test_sis_bounds(lp: &mut LevelParams) {
     );
 }
 
-fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
-    use crate::schedule::PrecommittedGroupParams;
+fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
+    use crate::schedule::PrecommittedGroupDescriptor;
     let lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
@@ -103,7 +103,7 @@ fn sample_multi_group_root_params() -> (LevelParams, OpeningClaimsLayout) {
         precommit_lp.d_a(),
     );
     let mut layout =
-        PrecommittedGroupParams::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+        PrecommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
     layout.n_b = outer_commit_matrix.output_rank();
     layout.b_coeff_linf_bound = outer_commit_matrix.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
@@ -145,25 +145,6 @@ fn with_decomp_derives_exact_live_block_geometry() {
     assert_eq!(lp.n_ring_elems().unwrap(), 17);
 
     assert!(sample_params_only().with_decomp(3, 17, 2, 2, 2).is_err());
-}
-
-#[test]
-fn root_group_fold_linf_config_uses_group_local_tensor_shape() {
-    let (mut lp, batch) = sample_multi_group_root_params();
-    lp.precommitted_groups[0].layout.fold_challenge_shape =
-        TensorChallengeShape::Tensor { fold_low_len: 2 };
-
-    let precommitted = lp.group_params(&batch, 0).unwrap();
-    let final_group = lp.group_params(&batch, 1).unwrap();
-    let precommitted_config = lp
-        .fold_witness_linf_cap_config_for_params(precommitted)
-        .unwrap();
-    let final_config = lp
-        .fold_witness_linf_cap_config_for_params(final_group)
-        .unwrap();
-
-    assert_eq!(precommitted_config.tensor_fold_low_len, 2);
-    assert_eq!(final_config.tensor_fold_low_len, 0);
 }
 
 #[test]
@@ -233,26 +214,9 @@ fn relation_matrix_row_count_values() {
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
 
-    assert_eq!(
-        lp.relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)
-            .unwrap(),
-        1 + 3 + 4 + 2
-    );
-    assert_eq!(
-        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithDBlock)
-            .unwrap(),
-        1 + 3 + 4 * 2 + 2
-    );
-    assert_eq!(
-        lp.relation_matrix_row_count_for(4, RelationMatrixRowLayout::WithDBlock)
-            .unwrap(),
-        1 + 3 + 4 * 4 + 2
-    );
-    assert_eq!(
-        lp.relation_matrix_row_count_for(2, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
-            .unwrap(),
-        1 + lp.inner_commit_matrix.output_rank()
-    );
+    assert_eq!(lp.relation_matrix_row_count(1).unwrap(), 1 + 3 + 4 + 2);
+    assert_eq!(lp.relation_matrix_row_count(2).unwrap(), 1 + 3 + 4 * 2 + 2);
+    assert_eq!(lp.relation_matrix_row_count(4).unwrap(), 1 + 3 + 4 * 4 + 2);
 }
 
 #[test]
@@ -265,7 +229,6 @@ fn canonical_row_offsets_match_open_coded_layout() {
     let n_d = lp.open_commit_matrix.output_rank();
 
     for nc in [1usize, 2, 4] {
-        let layout = RelationMatrixRowLayout::WithDBlock;
         let n_d_active = n_d;
         let a_start = 1;
         let b_start = a_start + n_a;
@@ -275,13 +238,8 @@ fn canonical_row_offsets_match_open_coded_layout() {
         assert_eq!(lp.b_start().unwrap(), b_start);
         assert_eq!(lp.d_start(nc).unwrap(), d_start);
         assert_eq!(
-            lp.relation_matrix_row_count_for(nc, layout).unwrap(),
+            lp.relation_matrix_row_count(nc).unwrap(),
             d_start + n_d_active
-        );
-        assert_eq!(
-            lp.relation_matrix_row_count_for(nc, RelationMatrixRowLayout::WithoutCommitmentBlocks,)
-                .unwrap(),
-            1 + n_a,
         );
     }
 }

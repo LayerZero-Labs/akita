@@ -4,8 +4,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig, TensorChallenges};
 use akita_field::Fp32;
 use akita_types::{
-    OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionGroupInputs,
-    SetupContributionPlan, SisModulusProfileId,
+    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
 
 type F = Fp32<251>;
@@ -23,7 +22,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
 
 #[test]
 fn ring_switch_prepare_rejects_zero_num_live_blocks() {
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -33,7 +32,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         fold_challenge_config(),
     );
     let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
-    let valid_lp = LevelParams::params_only(
+    let valid_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -55,7 +54,6 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
         vec![F::one(); 4].into(),
         &witness_layout,
         3,
@@ -72,7 +70,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 
 #[test]
 fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,

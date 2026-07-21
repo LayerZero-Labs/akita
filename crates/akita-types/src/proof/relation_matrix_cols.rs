@@ -8,8 +8,8 @@
 use crate::layout::CommitmentRingDims;
 use crate::proof::ring_relation::RingRelationInstance;
 use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, RelationMatrixRowLayout, SetupProjectionGeometry,
+    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, SetupProjectionGeometry,
 };
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
@@ -88,7 +88,7 @@ where
 }
 
 fn relation_d_group_width(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     group_index: usize,
 ) -> Result<usize, AkitaError> {
@@ -101,7 +101,7 @@ fn relation_d_group_width(
 }
 
 fn relation_total_d_columns(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
     let mut cursor = 0usize;
@@ -130,7 +130,7 @@ fn relation_total_d_columns(
 }
 
 fn relation_d_column_start(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     target_group_id: usize,
 ) -> Result<usize, AkitaError> {
@@ -180,10 +180,9 @@ pub fn compute_relation_weight_evals<F, E>(
     alpha: E,
     alpha_pows: &[E],
     role_dims: CommitmentRingDims,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
 ) -> Result<Vec<E>, AkitaError>
@@ -200,7 +199,6 @@ where
         lp,
         tau1,
         gamma,
-        relation_matrix_row_layout,
         opening_source_len,
         opening_ring_dim,
         None,
@@ -230,10 +228,9 @@ pub fn compute_relation_matrix_col_evals<F, E>(
     alpha: E,
     alpha_pows: &[E],
     role_dims: CommitmentRingDims,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
 ) -> Result<Vec<E>, AkitaError>
@@ -250,7 +247,6 @@ where
         lp,
         tau1,
         gamma,
-        relation_matrix_row_layout,
         opening_source_len,
         opening_ring_dim,
         None,
@@ -271,10 +267,9 @@ pub fn eval_relation_weight_at_point<F, E>(
     alpha: E,
     alpha_pows: &[E],
     role_dims: CommitmentRingDims,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
     point: &[E],
@@ -292,7 +287,6 @@ where
         lp,
         tau1,
         gamma,
-        relation_matrix_row_layout,
         opening_source_len,
         opening_ring_dim,
         Some(point),
@@ -308,10 +302,9 @@ fn compute_relation_weight_evals_inner<F, E>(
     alpha: E,
     alpha_pows: &[E],
     role_dims: CommitmentRingDims,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
     point: Option<&[E]>,
@@ -344,8 +337,7 @@ where
     let alpha_pows_a = alpha_pows;
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     let eq_tau1 = SplitEqEvals::new(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -353,7 +345,7 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
+    let n_d_active = lp.open_commit_matrix.output_rank();
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
     let witness_layout = instance.segment_layout(lp, None)?;
     let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
@@ -489,9 +481,8 @@ where
         let b_rows: Vec<&[F]> = (0..n_b)
             .map(|r| b_view.row_flat(r))
             .collect::<Result<_, _>>()?;
-        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let b_range =
-            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -707,7 +698,7 @@ where
             Ok::<_, AkitaError>(
                 found
                     || lp
-                        .commitment_row_range(opening_batch, group, relation_matrix_row_layout)?
+                        .commitment_row_range(opening_batch, group)?
                         .contains(&row),
             )
         })?;

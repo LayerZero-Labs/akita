@@ -1,4 +1,4 @@
-//! Schedule planner that finds the global minimum proof size.
+//! FoldSchedule planner that finds the global minimum proof size.
 //!
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
@@ -18,10 +18,13 @@ use akita_types::sis::{
 };
 use akita_types::{
     extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, DecompositionParams, FoldStep,
-    LevelParams, LevelParamsLike, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, PrecommittedLevelParams, RelationMatrixRowLayout, Schedule,
-    SetupContributionMode, TerminalResponseShape, WitnessLayout, SETUP_OFFLOAD_D_SETUP,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
+    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
+    SetupContributionMode, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessLayout, WitnessPartition, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -32,9 +35,129 @@ mod suffix_dp;
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, planned_next_witness_len,
-    scalar_root_fold_level_params_candidate, terminal_witness_shape_for_opening_layout,
+    scalar_root_fold_level_params_candidate,
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
+
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateFoldStep {
+    pub(crate) params: CommittedGroupParams,
+    pub(crate) input_witness_len: usize,
+    pub(crate) output_witness_len: usize,
+    pub(crate) estimated_direct_payload_bytes: usize,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateTerminalResponse {
+    pub(crate) params: akita_types::TerminalCommittedGroupParams,
+    pub(crate) sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    pub(crate) input_witness_len: usize,
+    pub(crate) estimated_direct_payload_bytes: usize,
+    pub(crate) response_shape: TerminalResponseShape,
+    pub(crate) estimated_payload_bytes: usize,
+}
+
+pub(crate) fn materialize_candidate_schedule(
+    cached_total: usize,
+    mut folds: Vec<CandidateFoldStep>,
+    terminal_response: CandidateTerminalResponse,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    if folds.is_empty() {
+        return Err(AkitaError::UnsupportedSchedule(
+            "a fold schedule requires root and terminal folds".to_string(),
+        ));
+    }
+    let root = folds.remove(0);
+    let estimate = FoldScheduleEstimate {
+        estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
+        estimated_recursive_direct_payload_bytes: folds
+            .iter()
+            .map(|fold| fold.estimated_direct_payload_bytes)
+            .collect(),
+        estimated_terminal_direct_payload_bytes: terminal_response
+            .estimated_direct_payload_bytes
+            .checked_add(terminal_response.estimated_payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
+        estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
+    };
+    let recomputed = estimate.estimated_direct_proof_payload_bytes()?;
+    if recomputed != cached_total {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached planner cost {cached_total} disagrees with materialized estimate {recomputed}"
+        )));
+    }
+    let schedule = FoldSchedule {
+        root: RootFoldStep {
+            params: RootFoldParams {
+                final_group: RootFinalGroupParams {
+                    source: if root.params.onehot_chunk_size == 0 {
+                        RootSource::Dense {
+                            coefficient_bits: root.params.field_bits_for_cache(),
+                        }
+                    } else {
+                        RootSource::OneHot {
+                            chunk_size: root.params.onehot_chunk_size,
+                        }
+                    },
+                    challenge: match root.params.fold_challenge_shape {
+                        TensorChallengeShape::Flat => RootFinalChallenge::Flat,
+                        TensorChallengeShape::Tensor { fold_low_len } => {
+                            RootFinalChallenge::Tensor { fold_low_len }
+                        }
+                    },
+                    commitment: root.params.clone(),
+                },
+                precommitted_groups: root
+                    .params
+                    .precommitted_groups
+                    .iter()
+                    .cloned()
+                    .map(|commitment| RootPrecommittedGroupParams {
+                        descriptor: commitment.layout,
+                        commitment,
+                    })
+                    .collect(),
+                open_commit_matrix: root.params.open_commit_matrix.clone(),
+                sparse_challenge_config: root.params.fold_challenge_config,
+                witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
+            },
+            input_witness_len: root.input_witness_len,
+            output_witness_len: root.output_witness_len,
+        },
+        recursive_folds: folds
+            .into_iter()
+            .map(|fold| RecursiveFoldStep {
+                params: RecursiveFoldParams {
+                    open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                    sparse_challenge_config: fold.params.fold_challenge_config,
+                    incoming_setup_prefix: fold.params.setup_prefix.clone(),
+                    witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
+                    witness: fold.params,
+                },
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: TerminalFoldStep {
+            params: TerminalFoldParams {
+                sparse_challenge_config: terminal_response.sparse_challenge_config,
+                witness: terminal_response.params,
+                response_shape: terminal_response.response_shape,
+            },
+            input_witness_len: terminal_response.input_witness_len,
+        },
+    };
+    schedule.validate_structure()?;
+    Ok(PlannedFoldSchedule { schedule, estimate })
+}
+
+fn witness_partition(num_chunks: usize) -> WitnessPartition {
+    if num_chunks == 1 {
+        WitnessPartition::Single
+    } else {
+        WitnessPartition::Distributed { num_chunks }
+    }
+}
 
 /// Validate the policy's multi-chunk witness settings at a planner entry point.
 ///
@@ -166,7 +289,7 @@ pub fn find_schedule(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<Schedule, AkitaError> {
+) -> Result<PlannedFoldSchedule, AkitaError> {
     find_schedule_inner(
         key,
         policy,
@@ -180,7 +303,7 @@ fn find_schedule_inner(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<Schedule, AkitaError> {
+) -> Result<PlannedFoldSchedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
@@ -208,7 +331,7 @@ fn find_schedule_inner(
 
     let field_bits = policy.decomposition.field_bits();
 
-    let mut best: Option<(usize, Vec<FoldStep>, akita_types::TerminalWitnessPlan)> = None;
+    let mut best: Option<(usize, Vec<CandidateFoldStep>, CandidateTerminalResponse)> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -263,17 +386,6 @@ fn find_schedule_inner(
             )?
             .checked_mul(policy.ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("root next witness length overflow".into()))?;
-            let terminal_shape = TerminalResponseShape::from_groups(
-                &candidate_params,
-                field_bits,
-                [(
-                    &candidate_params as &dyn akita_types::LevelParamsLike,
-                    key.num_polynomials(),
-                    key.num_polynomials(),
-                    1,
-                )],
-            )?;
-            let next_w_len_terminal = terminal_shape.logical_num_elems();
             let initial_witness_len_bits = witness_len
                 .checked_mul(field_bits as usize)
                 .ok_or_else(|| {
@@ -295,7 +407,6 @@ fn find_schedule_inner(
                 SuffixState {
                     level: 1,
                     current_witness_len: output_witness_len,
-                    current_witness_len_terminal: next_w_len_terminal,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
                 },
@@ -316,7 +427,7 @@ fn find_schedule_inner(
 
             // A supported root must recurse into at least one suffix fold.
             for suffix_fold in suffix.best_fold_per_lb.values() {
-                let next_witness_binding = if suffix_fold.folds.len() == 1 {
+                let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
                     akita_types::NextWitnessBindingPolicy::OuterCommitment
@@ -325,9 +436,8 @@ fn find_schedule_inner(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
-                    Some(&suffix_fold.first_fold_params),
+                    suffix_fold.first_fold_params.as_ref(),
                     output_witness_len,
-                    RelationMatrixRowLayout::WithDBlock,
                     Some(next_witness_binding),
                 )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
@@ -336,11 +446,11 @@ fn find_schedule_inner(
                     .is_none_or(|(best_cost, _, _)| total < *best_cost)
                 {
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
-                    folds.push(FoldStep {
+                    folds.push(CandidateFoldStep {
                         params: candidate_params.clone(),
                         input_witness_len: witness_len,
                         output_witness_len,
-                        level_bytes: root_proof_size,
+                        estimated_direct_payload_bytes: root_proof_size,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
                     best = Some((total, folds, suffix_fold.terminal.clone()));
@@ -356,11 +466,7 @@ fn find_schedule_inner(
             key.num_polynomials()
         )));
     };
-    Ok(Schedule {
-        folds,
-        terminal,
-        total_bytes,
-    })
+    materialize_candidate_schedule(total_bytes, folds, terminal)
 }
 
 #[cfg(test)]

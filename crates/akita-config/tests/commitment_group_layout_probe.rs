@@ -8,7 +8,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, PlannerPolicy};
-use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
 type Cfg = fp128::D64OneHot;
 
@@ -23,12 +23,8 @@ struct LayoutSummary {
     t_hat_g: usize,
 }
 
-fn root_params(schedule: &akita_types::Schedule) -> Result<&LevelParams, AkitaError> {
-    schedule
-        .folds
-        .first()
-        .map(|fold| &fold.params)
-        .ok_or_else(|| AkitaError::InvalidSetup("schedule is missing its root fold".to_string()))
+fn root_params(schedule: &akita_types::FoldSchedule) -> Result<&CommittedGroupParams, AkitaError> {
+    Ok(&schedule.root.params.final_group.commitment)
 }
 
 fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSummary, AkitaError> {
@@ -39,7 +35,7 @@ fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSumma
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    let params = root_params(&schedule)?;
+    let params = root_params(&schedule.schedule)?;
     let t_hat_g = params
         .num_live_blocks
         .checked_mul(params.inner_commit_matrix.output_rank())

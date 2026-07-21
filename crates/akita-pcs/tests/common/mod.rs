@@ -9,7 +9,7 @@ pub(super) use akita_prover::DensePoly;
 pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::ProverOpeningData;
 use akita_serialization::{AkitaSerialize, Compress};
-pub(super) use akita_types::LevelParams;
+pub(super) use akita_types::CommittedGroupParams;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
@@ -190,7 +190,7 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
 pub(super) fn opening_from_poly<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
 ) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
@@ -202,7 +202,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -247,7 +247,7 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
     let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;

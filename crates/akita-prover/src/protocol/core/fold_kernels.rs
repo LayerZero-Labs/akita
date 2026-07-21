@@ -1,7 +1,7 @@
 //! Pure fold kernels and operation adapters for the prover core.
 //!
 //! Everything here passes the spec's kernel discriminator: no function reads a
-//! schedule type (`ExecutionSchedule`, `LevelParams`). Const-D functions receive extracted numbers and typed
+//! typed fold parameters. Const-D functions receive extracted numbers and typed
 //! buffers; the D-free functions are operation adapters that dispatch exactly
 //! once on a schedule-derived ring dimension supplied by the caller.
 
@@ -90,6 +90,48 @@ where
         folded_blocks.push(folded_block);
     }
     Ok((folded_rings, folded_blocks))
+}
+
+/// Prepare one group's opening point, evaluate all of its claims, and bind the
+/// canonical padded point to the transcript. This is the common opening phase
+/// for ordinary relation folds and the direct terminal fold.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, T, Q, B, const D: usize>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    polys: &[&Q],
+    protocol_point: &[E],
+    basis: BasisMode,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    alpha_bits: usize,
+    transcript: &mut T,
+) -> Result<(PreparedOpeningPoint<F, E>, FoldedClaimEvals<F, D>), AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
+    T: Transcript<F>,
+    Q: RootOpeningSource<F, D>,
+    B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
+{
+    let prepared_point = prepare_opening_point::<F, E, D>(
+        protocol_point,
+        basis,
+        num_positions_per_block,
+        num_live_blocks,
+        alpha_bits,
+    )?;
+    let folded = evaluate_claims_at_prepared_point(
+        backend,
+        prepared,
+        polys,
+        &prepared_point,
+        num_positions_per_block,
+    )?;
+    for coordinate in &prepared_point.padded_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+    }
+    Ok((prepared_point, folded))
 }
 
 #[allow(clippy::too_many_arguments)]

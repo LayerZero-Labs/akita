@@ -15,10 +15,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::DensePoly;
 use akita_prover::OneHotPoly;
 use akita_prover::ProverOpeningData;
-use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress, Valid};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
-use akita_types::Schedule;
-use akita_types::{lagrange_weights, FpExtEncoding, LevelParams};
+use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
     AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
     OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
@@ -40,34 +39,13 @@ const FULL_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 
-fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> LevelParams {
+fn singleton_layout<Cfg: CommitmentConfig>(num_vars: usize) -> CommittedGroupParams {
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch");
     Cfg::get_params_for_batched_commitment(&opening_batch).expect("singleton commitment layout")
 }
 const SMALL_FIELD_TEST_NV: usize = 8;
 const STACK_SIZE: usize = 256 * 1024 * 1024;
-
-fn schedule_bytes_with_realized_terminal_z<FF, E>(
-    proof: &AkitaBatchedProof<FF, E>,
-    schedule: &Schedule,
-) -> usize
-where
-    FF: FieldCore + CanonicalField + AkitaSerialize,
-    E: FieldCore + AkitaSerialize,
-{
-    let scheduled_terminal_bytes = schedule
-        .folds
-        .last()
-        .map(|terminal| terminal.level_bytes)
-        .unwrap_or(0)
-        .saturating_add(schedule.terminal.terminal_bytes);
-    let realized_terminal_bytes = proof.terminal.serialized_size(Compress::No);
-    schedule
-        .total_bytes
-        .saturating_sub(scheduled_terminal_bytes)
-        .saturating_add(realized_terminal_bytes)
-}
 
 static INIT_RAYON: Once = Once::new();
 static E2E_TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -169,13 +147,8 @@ type DenseFixture<FField, E, const D: usize> = (
     AkitaBatchedProof<FField, E>,
     Vec<E>,
     E,
-    LevelParams,
+    CommittedGroupParams,
 );
-
-/// Active log-basis of a runtime schedule's terminal direct step.
-fn schedule_terminal_log_basis(schedule: &akita_types::Schedule) -> u32 {
-    schedule.terminal.log_basis()
-}
 
 /// Count the total number of fold levels (including the batched root and the
 /// terminal step) in a singleton-shaped batched proof, matching the planner's
@@ -349,11 +322,12 @@ fn chunked_multi_chunk_prove_verify() {
             PolynomialGroupLayout::singleton(NV),
         ))
         .expect("multi-chunk schedule");
-        let chunked_levels = plan
-            .folds
-            .iter()
-            .filter(|fold| fold.params.witness_chunk.num_chunks > 1)
-            .count();
+        let chunked_levels = usize::from(plan.root.params.witness_partition.num_chunks() > 1)
+            + plan
+                .recursive_folds
+                .iter()
+                .filter(|fold| fold.params.witness_partition.num_chunks() > 1)
+                .count();
         assert!(
             chunked_levels >= 1,
             "multi-chunk preset must produce at least one chunked fold level"
@@ -426,12 +400,7 @@ fn chunked_multi_chunk_prove_verify() {
             verify_result.err()
         );
 
-        tracing::info!(
-            chunked_levels,
-            proof_bytes,
-            plan_total_bytes = plan.total_bytes,
-            "chunked-d64/nv16 e2e"
-        );
+        tracing::info!(chunked_levels, proof_bytes, "chunked-d64/nv16 e2e");
     });
 }
 
@@ -760,11 +729,6 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
 
-        assert_eq!(
-            proof.terminal_response().layout.log_basis_open,
-            schedule_terminal_log_basis(&plan)
-        );
-
         let mut proof_bytes = Vec::new();
         proof
             .serialize_compressed(&mut proof_bytes)
@@ -874,26 +838,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
-        // `Schedule::total_bytes` is the planner's public upper bound. For
-        // terminal responses: the schedule budgets the variable-length
-        // Golomb `z` segment at its worst-case public length; the proof
-        // carries the realized byte length on the wire.
-        assert!(
-            proof.size() <= plan.total_bytes,
-            "runtime proof {} exceeds planner upper bound {}",
-            proof.size(),
-            plan.total_bytes
-        );
-        assert_eq!(
-            schedule_bytes_with_realized_terminal_z(&proof, &plan),
-            proof.size(),
-            "planner/runtime proof-size accounting should be exact once the \
-                 realized variable-length terminal z payload is substituted",
-        );
-        assert_eq!(
-            decoded.terminal_response().layout.log_basis_open,
-            schedule_terminal_log_basis(&plan)
-        );
+        assert_eq!(decoded.size(), proof.size());
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/onehot-direct-tail");
         let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
@@ -930,11 +875,12 @@ fn batched_onehot_same_point_round_trip() {
             PolynomialGroupLayout::singleton(NV),
         ))
         .expect("runtime schedule");
-        let fold_steps = plan.fold_steps().collect::<Vec<_>>();
+        let fold_params = std::iter::once(&plan.root.params.final_group.commitment)
+            .chain(plan.recursive_folds.iter().map(|step| &step.params.witness))
+            .collect::<Vec<_>>();
         assert!(
-            fold_steps.windows(2).any(|steps| {
-                steps.iter().all(|step| {
-                    let params = &step.params;
+            fold_params.windows(2).any(|params| {
+                params.iter().all(|params| {
                     params.num_live_ring_elements_per_claim % params.num_positions_per_block != 0
                         && params.num_live_blocks
                             == params

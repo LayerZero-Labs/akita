@@ -264,7 +264,7 @@ pub enum GeneratedFold {
 
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupParams],
+    pub precommitteds: &'static [PrecommittedGroupDescriptor],
     pub folds: &'static [GeneratedFold],
 }
 ```
@@ -800,7 +800,7 @@ Digit depths are expanded results, never independent generated inputs.
 ```rust
 pub struct RootFoldParams {
     pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupParams>,
+    pub precommitted_groups: Vec<RootPrecommittedGroupDescriptor>,
     pub open_commit_matrix: OpenCommitMatrixParams,
     pub sparse_challenge_config: SparseChallengeConfig,
     pub witness_partition: WitnessPartition,
@@ -822,7 +822,7 @@ pub struct TerminalFoldParams {
 ```
 
 Only `RootFinalGroupParams` contains a `RootFinalChallenge` field.
-`RootPrecommittedGroupParams`, `RecursiveFoldParams`, and `TerminalFoldParams`
+`RootPrecommittedGroupDescriptor`, `RecursiveFoldParams`, and `TerminalFoldParams`
 are flat by type. Sparse sampler configuration remains explicit because it
 determines challenge distribution and certified norms even for a flat
 challenge.

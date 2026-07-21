@@ -175,7 +175,7 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
 //
 // These impls let callers bundle proof shapes alongside proofs (e.g. when
 // shipping verifier inputs to a Jolt guest program), so that the proof can be
-// deserialized in environments that don't reconstruct a `Schedule` first.
+// deserialized in environments that don't reconstruct a `FoldSchedule` first.
 
 fn deserialize_shape_vec<T, R: Read>(
     reader: &mut R,

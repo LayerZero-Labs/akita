@@ -1,7 +1,7 @@
 //! Layout, parameter, opening-point, and proof-size helpers.
 //!
 //! Pure data and pure verifier-reachable helpers only. The recursion layout is
-//! owned by the schedule: the planner builds each fold level's `LevelParams`
+//! owned by the schedule: the planner builds each fold level's `CommittedGroupParams`
 //! (`akita_planner::schedule_from_entry` / `find_group_batch_schedule`, using the
 //! digit-math `optimal_block_geometry_split` sweep), and prover/verifier read those params
 //! directly. This module retains the layout glue the replay path reaches
@@ -22,9 +22,8 @@ pub use opening_point::{
     ring_opening_point_from_field, BasisMode, RingOpeningPoint,
 };
 pub use params::{
-    shared_d_digit_log_basis, InnerCommitMatrixParams, LevelParams, LevelParamsLike,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams,
-    RelationMatrixRowLayout, SisModulusProfileId,
+    shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, PrecommittedLevelParams, SisModulusProfileId,
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,

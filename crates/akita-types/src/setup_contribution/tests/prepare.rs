@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
-    let mut lp = LevelParams::params_only(
+    let mut lp = CommittedGroupParams::params_only(
         crate::SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
@@ -35,9 +35,8 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     lp.cached_num_digits_block_claims = 2;
     lp.cached_num_digits_fold_value = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let rows = lp
-        .relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)
+        .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
     let group = SetupContributionGroupInputs {
         group_id: 0,
@@ -55,7 +54,6 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     assert!(SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
-        relation_matrix_row_layout,
         eq_tau1,
         &witness_layout,
         opening_source_len,

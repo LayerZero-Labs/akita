@@ -1,9 +1,9 @@
 use super::*;
-use crate::{LevelParams, OpeningClaimsLayout, SisModulusProfileId};
+use crate::{CommittedGroupParams, OpeningClaimsLayout, SisModulusProfileId};
 use akita_challenges::SparseChallengeConfig;
 
-fn sample_level_params() -> LevelParams {
-    LevelParams::params_only(
+fn sample_level_params() -> CommittedGroupParams {
+    CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         64,
         3,
@@ -16,9 +16,9 @@ fn sample_level_params() -> LevelParams {
     .expect("sample level params")
 }
 
-fn prefix_eligible_level_params() -> LevelParams {
+fn prefix_eligible_level_params() -> CommittedGroupParams {
     let full_field_digits = crate::sis::compute_num_digits_full_field(128, 3);
-    LevelParams::params_only(
+    CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         64,
         2,

@@ -1,13 +1,15 @@
 //! Shared setup-matrix envelope accumulation helpers.
 
 use akita_field::AkitaError;
-use akita_types::{LevelParams, SetupMatrixEnvelope, SetupPrefixSlotId};
+use akita_types::{
+    CommittedGroupParams, SetupMatrixEnvelope, SetupPrefixSlotId, TerminalCommittedGroupParams,
+};
 
 /// Extend `max_setup_len` with the full per-level setup footprint.
 ///
 /// Includes the level's own A/B/D matrices, precommitted group-local A/B
 /// matrices, and setup-prefix materialization when the level consumes one. The
-/// shared D matrix is accounted through `LevelParams::d_matrix_width()`: planner
+/// shared D matrix is accounted through `CommittedGroupParams::d_matrix_width()`: planner
 /// materialization includes every precommitted/setup-prefix D segment in that
 /// single width.
 ///
@@ -15,7 +17,7 @@ use akita_types::{LevelParams, SetupMatrixEnvelope, SetupPrefixSlotId};
 ///
 /// Returns [`AkitaError::InvalidSetup`] on overflow.
 pub(crate) fn accumulate_matrix_envelope_for_level(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     include_matrix_len(
@@ -58,6 +60,18 @@ pub(crate) fn accumulate_matrix_envelope_for_level(
         *max_setup_len = envelope.max_setup_len;
     }
     Ok(())
+}
+
+pub(crate) fn accumulate_terminal_matrix_envelope(
+    params: &TerminalCommittedGroupParams,
+    max_setup_len: &mut usize,
+) -> Result<(), AkitaError> {
+    include_matrix_len(
+        max_setup_len,
+        params.inner_commit_matrix.output_rank(),
+        params.inner_width(),
+        "terminal A setup",
+    )
 }
 
 fn include_matrix_len(

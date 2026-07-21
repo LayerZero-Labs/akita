@@ -2,11 +2,14 @@ use akita_field::{CanonicalField, FieldCore};
 use akita_prover::PreparedCrtNttProfile;
 use akita_serialization::{AkitaSerialize, Compress};
 use akita_types::{
-    golomb_rice::{golomb_rice_low_bits_sweep_payload_bytes, rice_low_bits_for_cap},
+    golomb_rice::{
+        analyze_z_fold_golomb_encoding, golomb_rice_low_bits_sweep_payload_bytes,
+        golomb_rice_zigzag_width, rice_low_bits_for_cap,
+    },
     layout::proof_size::field_bytes,
-    tail_segment_multiplicities_from_layout, z_fold_decoded_from_terminal_response,
-    z_fold_encoding_stats_from_terminal_response, AkitaBatchedProof, FoldLevelProof, LevelParams,
-    Schedule, SetupSumcheckProof, TerminalLevelProof, ZFoldEncodingStats,
+    sis::num_digits_for_bound,
+    AkitaBatchedProof, CommittedGroupParams, FoldLevelProof, FoldSchedule, SetupSumcheckProof,
+    TerminalLevelProof, ZFoldEncodingStats,
 };
 
 const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
@@ -20,7 +23,7 @@ pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
 pub(crate) fn emit_proof_tail_report<FF, E>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     field_bits: u32,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -44,7 +47,12 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let t_ring_elems = t_field_elems / ring_dim.max(1);
         let e_bytes = e_field_elems.saturating_mul(field_sz);
         let t_bytes = t_field_elems.saturating_mul(field_sz);
-        let z_budget_bytes = schedule.terminal.witness_shape.layout.z_payload_bytes();
+        let z_budget_bytes = schedule
+            .terminal
+            .params
+            .response_shape
+            .layout
+            .z_payload_bytes();
         let z_slack_bytes = z_budget_bytes.saturating_sub(z_golomb_bytes);
         let z_stats = terminal_response_z_fold_stats(segment, schedule, field_bits).ok();
         let z_witness_linf_cap = z_stats.as_ref().map(|s| s.witness_linf_cap).unwrap_or(0);
@@ -71,7 +79,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_num_elems = num_elems,
             final_w_encoding = "terminal_response",
             final_w_policy = "non_zk_default",
-            tail_log_basis_open = segment.layout.log_basis_open,
+            tail_log_basis_inner = schedule.terminal.params.witness.log_basis_inner,
             tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
@@ -127,8 +135,8 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
 
         eprintln!(
             "[{label}]   final_w: encoding=terminal_response (non-zk default), total={tail_bytes} bytes, \
-             logical_elems={num_elems}, log_basis={}{}",
-            segment.layout.log_basis_open,
+             logical_elems={num_elems}, inner_log_basis={}{}",
+            schedule.terminal.params.witness.log_basis_inner,
             golomb_line,
         );
         eprintln!(
@@ -149,45 +157,69 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
 
 fn terminal_response_z_fold_stats<FF: FieldCore>(
     witness: &akita_types::TerminalResponse<FF>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
-    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
-    let terminal_scheduled = schedule.get_execution_schedule(terminal_fold_level)?;
-    let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
-        tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)
-    else {
-        return Err(akita_field::AkitaError::InvalidSetup(
-            "tail segment multiplicities".to_string(),
-        ));
-    };
-    z_fold_encoding_stats_from_terminal_response(witness, lp, num_t_vectors, field_bits)
+    let params = &schedule.terminal.params.witness;
+    let sparse = &schedule.terminal.params.sparse_challenge_config;
+    let group = witness
+        .layout
+        .groups
+        .first()
+        .ok_or(akita_field::AkitaError::InvalidProof)?;
+    let (honest_cap, security_cap) = params.response_linf_bounds(sparse)?;
+    let z_values = akita_types::decode_terminal_z_golomb_payload(
+        witness
+            .z_payloads
+            .first()
+            .ok_or(akita_field::AkitaError::InvalidProof)?,
+        group.z_coords,
+        honest_cap,
+        security_cap,
+        Some(group.z_payload_bytes),
+    )?;
+    let log_cap = u128::BITS - honest_cap.leading_zeros();
+    let hypothetical_digits =
+        num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
+    analyze_z_fold_golomb_encoding(
+        &z_values,
+        honest_cap,
+        golomb_rice_zigzag_width(security_cap),
+        hypothetical_digits,
+        params.log_basis_inner,
+        witness.z_payloads.first().map_or(0, Vec::len),
+    )
 }
 
 fn emit_z_golomb_k_sweep<FF: FieldCore>(
     label: &str,
     witness: &akita_types::TerminalResponse<FF>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     field_bits: u32,
     actual_z_payload_bytes: usize,
 ) {
-    let terminal_fold_level = schedule.num_fold_levels().saturating_sub(1);
-    let Ok(terminal_scheduled) = schedule.get_execution_schedule(terminal_fold_level) else {
+    let params = &schedule.terminal.params.witness;
+    let sparse = &schedule.terminal.params.sparse_challenge_config;
+    let Some(group) = witness.layout.groups.first() else {
         return;
     };
-    let lp = &terminal_scheduled.params;
-    let Ok((_num_w_vectors, num_t_vectors, _num_z_segments)) =
-        tail_segment_multiplicities_from_layout(lp, &witness.layout, 0)
-    else {
+    let Ok((honest_cap, security_cap)) = params.response_linf_bounds(sparse) else {
         return;
     };
-    let Ok(z_values) = z_fold_decoded_from_terminal_response(witness, lp, num_t_vectors) else {
+    let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
+        witness
+            .z_payloads
+            .first()
+            .map(Vec::as_slice)
+            .unwrap_or_default(),
+        group.z_coords,
+        honest_cap,
+        security_cap,
+        Some(group.z_payload_bytes),
+    ) else {
         return;
     };
-    let Ok(stats) =
-        z_fold_encoding_stats_from_terminal_response(witness, lp, num_t_vectors, field_bits)
-    else {
+    let Ok(stats) = terminal_response_z_fold_stats(witness, schedule, field_bits) else {
         return;
     };
     let low_bits_hi = stats
@@ -286,20 +318,34 @@ pub(crate) fn report_crt_profile(label: &str, profile: PreparedCrtNttProfile) {
 
 pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     root_num_claims: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    tracing::info!(
-        label,
-        levels,
-        total_proof_bytes = schedule.total_bytes,
-        "runtime schedule"
-    );
+    tracing::info!(label, levels, "runtime schedule");
 
-    for (level_idx, level) in schedule.folds.iter().enumerate() {
-        let lp = &level.params;
+    let nonterminal = std::iter::once((
+        0usize,
+        &schedule.root.params.final_group.commitment,
+        schedule.root.input_witness_len,
+        schedule.root.output_witness_len,
+    ))
+    .chain(
+        schedule
+            .recursive_folds
+            .iter()
+            .enumerate()
+            .map(|(index, level)| {
+                (
+                    index + 1,
+                    &level.params.witness,
+                    level.input_witness_len,
+                    level.output_witness_len,
+                )
+            }),
+    );
+    for (level_idx, lp, input_witness_len, output_witness_len) in nonterminal {
         let role_dims = lp.role_dims();
         let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         tracing::info!(
@@ -326,9 +372,8 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
             delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
-            input_witness_len = level.input_witness_len,
-            output_witness_len = level.output_witness_len,
-            level_bytes = level.level_bytes,
+            input_witness_len,
+            output_witness_len,
             "planned fold level"
         );
     }
@@ -336,7 +381,8 @@ pub(crate) fn emit_runtime_schedule_summary(
     tracing::info!(
         label,
         terminal_response_len = schedule.terminal.input_witness_len,
-        final_log_basis = schedule.terminal.log_basis(),
+        final_inner_log_basis = schedule.terminal.params.witness.log_basis_inner,
+        final_inner_ring_dimension = schedule.terminal.params.witness.d_a(),
         "planned terminal state"
     );
 }
@@ -616,7 +662,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-pub(crate) fn print_layout(layout: &LevelParams, num_claims: usize, field_bits: u32) {
+pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, field_bits: u32) {
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),

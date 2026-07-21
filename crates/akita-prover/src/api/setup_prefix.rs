@@ -232,12 +232,12 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
-        active_setup_field_len, setup_prefix_precommitted_params, LevelParams, OpeningClaimsLayout,
-        SetupMatrixEnvelope, SisModulusProfileId,
+        active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
+        OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
     };
 
-    fn prefix_level_params(ring_dimension: usize) -> LevelParams {
-        LevelParams::params_only(
+    fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             ring_dimension,
             3,
@@ -250,7 +250,7 @@ mod tests {
         .expect("level params")
     }
 
-    fn setup_capacity_for(level_params: &LevelParams, n_prefix: usize) -> usize {
+    fn setup_capacity_for(level_params: &CommittedGroupParams, n_prefix: usize) -> usize {
         n_prefix.max(
             level_params
                 .outer_commit_matrix
@@ -267,7 +267,7 @@ mod tests {
     }
 
     fn test_setup<const D: usize>(
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         n_prefix: usize,
     ) -> AkitaProverSetup<F> {
         AkitaProverSetup::<F>::generate_with_capacity(
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn commit_setup_prefix_does_not_back_zero_padding_with_shared_setup() {
-        let level_params = LevelParams::params_only(
+        let level_params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,

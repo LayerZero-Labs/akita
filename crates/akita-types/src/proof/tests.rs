@@ -12,12 +12,12 @@ type F = Prime128Offset275;
 fn test_terminal_witness(coeffs: Vec<F>) -> TerminalResponse<F> {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
-        log_basis_open: 3,
         groups: vec![TailSegmentGroupLayout {
             z_coords: 1,
             e_field_elems: coeffs.len(),
             t_field_elems: 0,
             z_payload_bytes: 1,
+            z_rice_low_bits: 0,
         }],
         logical_num_elems: coeffs.len(),
     };
@@ -34,12 +34,12 @@ fn direct_witness_shape_rejects_oversized_allocations() {
     let err = TerminalResponseShape {
         layout: TailSegmentLayout {
             ring_dimension: 64,
-            log_basis_open: 3,
             groups: vec![TailSegmentGroupLayout {
                 z_coords: 1,
                 e_field_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
                 t_field_elems: 0,
                 z_payload_bytes: 1,
+                z_rice_low_bits: 0,
             }],
             logical_num_elems: DEFAULT_MAX_SEQUENCE_LEN + 1,
         },

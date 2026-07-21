@@ -551,7 +551,7 @@ mod tests {
                 use akita_types::{
                     setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks,
                     InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-                    PrecommittedGroupParams, PrecommittedLevelParams, RingVec,
+                    PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec,
                     SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
                     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
@@ -562,12 +562,11 @@ mod tests {
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupParams {
+                    layout: PrecommittedGroupDescriptor {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
-                        fold_challenge_shape: akita_types::TensorChallengeShape::Flat,
                         log_basis_inner: 1,
                         log_basis_outer: 1,
                         n_a: 1,

@@ -84,14 +84,14 @@ pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
-    build_terminal_response_from_groups, decode_terminal_z_golomb_payload, emit_witness_e_planes,
-    emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
-    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
-    terminal_response_upper_bound_bytes, terminal_response_z_payload_bytes,
-    validate_terminal_response_z_payload, z_fold_decoded_from_terminal_response,
-    z_fold_encoding_stats_from_terminal_response, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalResponse, TerminalResponseGroupParts, TerminalResponseShape,
+    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    raw_field_segment_bytes, tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
+    terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
+    z_fold_decoded_from_terminal_response, z_fold_encoding_stats_from_terminal_response,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 

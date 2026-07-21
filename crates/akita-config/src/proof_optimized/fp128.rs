@@ -171,7 +171,9 @@ pub struct Fp128ScheduleSelection {
     /// Selected concrete preset.
     pub preset: Fp128Preset,
     /// Runtime schedule selected for the supplied lookup key.
-    pub schedule: Schedule,
+    pub schedule: FoldSchedule,
+    /// Non-protocol planner estimate used to compare presets.
+    pub estimate: akita_types::FoldScheduleEstimate,
 }
 
 fn candidate<Cfg: CommitmentConfig>(
@@ -180,8 +182,17 @@ fn candidate<Cfg: CommitmentConfig>(
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     // Planner failures, including unsupported schedules that cannot profitably
     // fold twice, propagate rather than being swallowed into a missing candidate.
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
-    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
+    let planned = akita_planner::find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
+        &crate::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    Ok(Some(Fp128ScheduleSelection {
+        preset,
+        schedule: planned.schedule,
+        estimate: planned.estimate,
+    }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -190,7 +201,10 @@ where
 {
     candidates.into_iter().flatten().min_by_key(|selection| {
         (
-            selection.schedule.total_bytes,
+            selection
+                .estimate
+                .estimated_direct_proof_payload_bytes()
+                .unwrap_or(usize::MAX),
             selection.preset.ring_dimension(),
         )
     })

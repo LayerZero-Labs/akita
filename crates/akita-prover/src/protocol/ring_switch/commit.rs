@@ -1,6 +1,6 @@
 use super::*;
 use crate::compute::{CommitInnerPlan, OperationCtx};
-use akita_types::{dispatch_for_field, NextWitnessBindingPolicy};
+use akita_types::{dispatch_for_field, TerminalCommittedGroupParams};
 
 /// Public state bound for the witness produced by one intermediate fold.
 pub enum NextWitnessState<F: FieldCore> {
@@ -10,8 +10,6 @@ pub enum NextWitnessState<F: FieldCore> {
     TerminalInnerState {
         /// Flat canonical `t` state absorbed by the transcript.
         t_state: RingVec<F>,
-        /// Original per-block inner rows retained for the terminal witness.
-        recomposed_inner_rows: Vec<RingVec<F>>,
     },
 }
 
@@ -38,32 +36,25 @@ pub struct NextWitnessStateOutput<F: FieldCore> {
 /// D-erased hint construction fails.
 #[inline(never)]
 pub fn commit_w<Cfg, B>(
-    commit_params: &LevelParams,
+    commit_params: &CommittedGroupParams,
     expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
     commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
     logical_w: &RecursiveWitnessFlat,
-    binding_policy: NextWitnessBindingPolicy,
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
-    let terminal_inner = match binding_policy {
-        NextWitnessBindingPolicy::OuterCommitment => false,
-        NextWitnessBindingPolicy::TerminalInnerState => true,
-    };
     let dims = commit_params.role_dims();
     commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_a())?;
-    if !terminal_inner {
-        commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_b())?;
-    }
+    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_b())?;
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
     validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
 
-    let (packed_witness, decomposed_inner_rows, terminal_t_state) = dispatch_for_field!(
+    let (packed_witness, decomposed_inner_rows) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
         dims.d_a(),
@@ -110,70 +101,106 @@ where
                 commit_params.log_basis_outer,
             )?;
 
-            let terminal_t_state = if terminal_inner {
-                let coeff_len =
-                    inner
-                        .recomposed_inner_rows
-                        .iter()
-                        .try_fold(0usize, |len, block| {
-                            len.checked_add(block.coeff_len())
-                                .ok_or(AkitaError::InvalidProof)
-                        })?;
-                let mut coeffs = Vec::with_capacity(coeff_len);
-                for block in &inner.recomposed_inner_rows {
-                    coeffs.extend_from_slice(block.coeffs());
-                }
-                Some((RingVec::from_coeffs(coeffs), inner.recomposed_inner_rows))
-            } else {
-                None
-            };
-
-            Ok::<_, AkitaError>((
-                packed_witness,
-                inner.decomposed_inner_rows,
-                terminal_t_state,
-            ))
+            Ok::<_, AkitaError>((packed_witness, inner.decomposed_inner_rows))
         }
     )?;
 
-    let binding = if terminal_inner {
-        let (t_state, recomposed_inner_rows) = terminal_t_state.ok_or(AkitaError::InvalidProof)?;
-        NextWitnessState::TerminalInnerState {
-            t_state,
-            recomposed_inner_rows,
-        }
-    } else {
-        validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
-        let commitment = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Outer),
-            Cfg::Field,
-            dims.d_b(),
-            |D_B| {
-                let (outer_input, remainder) = decomposed_inner_rows.digits().as_chunks::<D_B>();
-                if !remainder.is_empty() {
-                    return Err(AkitaError::InvalidSetup(
-                        "recursive commit digit carrier is not aligned to the B-role dimension"
-                            .into(),
-                    ));
-                }
-                let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
-                    prepared,
-                    commit_params.outer_commit_matrix.output_rank(),
-                    outer_input,
-                    commit_params.log_basis_outer,
-                )?;
-                if u.len() != commit_params.outer_commit_matrix.output_rank() {
-                    return Err(AkitaError::InvalidProof);
-                }
-                Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
+    validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
+    let commitment = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        Cfg::Field,
+        dims.d_b(),
+        |D_B| {
+            let (outer_input, remainder) = decomposed_inner_rows.digits().as_chunks::<D_B>();
+            if !remainder.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "recursive commit digit carrier is not aligned to the B-role dimension".into(),
+                ));
             }
-        )?;
-        NextWitnessState::OuterCommitment(commitment)
-    };
+            let u: Vec<CyclotomicRing<Cfg::Field, D_B>> = backend.digit_rows::<D_B>(
+                prepared,
+                commit_params.outer_commit_matrix.output_rank(),
+                outer_input,
+                commit_params.log_basis_outer,
+            )?;
+            if u.len() != commit_params.outer_commit_matrix.output_rank() {
+                return Err(AkitaError::InvalidProof);
+            }
+            Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
+        }
+    )?;
     let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
-        binding,
+        binding: NextWitnessState::OuterCommitment(commitment),
         hint: RecursiveCommitmentHintCache::from_hint(hint),
+    })
+}
+
+/// Bind the witness entering the terminal fold with its canonical inner
+/// commitment state. No outer digits or outer commitment are computed.
+#[inline(never)]
+pub fn commit_terminal_w<Cfg, B>(
+    commit_params: &TerminalCommittedGroupParams,
+    expanded: &std::sync::Arc<AkitaExpandedSetup<Cfg::Field>>,
+    commit_ctx: &OperationCtx<'_, Cfg::Field, B>,
+    logical_w: &RecursiveWitnessFlat,
+) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
+where
+    Cfg: CommitmentConfig,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    B: CommitmentComputeBackend<Cfg::Field>,
+{
+    let ring_dim = commit_params.d_a();
+    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
+    let backend = commit_ctx.backend();
+    let prepared = commit_ctx.prepared();
+    backend.validate_prepared_setup(prepared, expanded.as_ref())?;
+
+    let (packed_witness, t_state) = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        Cfg::Field,
+        ring_dim,
+        |D_A| {
+            let packed_witness = if <Cfg::ExtField as ExtField<Cfg::Field>>::EXT_DEGREE == 1 {
+                None
+            } else {
+                Some(tensor_pack_recursive_witness::<
+                    Cfg::Field,
+                    Cfg::ExtField,
+                    D_A,
+                >(logical_w)?)
+            };
+            let witness = packed_witness.as_ref().unwrap_or(logical_w);
+            let view = witness.view::<Cfg::Field, D_A>()?;
+            let rows = view.commit_inner_rows(
+                backend,
+                prepared,
+                commit_params.inner_commit_matrix.output_rank(),
+                commit_params.num_positions_per_block,
+                commit_params.num_digits_inner,
+                commit_params.log_basis_inner,
+            )?;
+            let coeff_len = rows
+                .iter()
+                .try_fold(0usize, |len, row| {
+                    len.checked_add(row.len().checked_mul(D_A)?)
+                })
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut coeffs = Vec::with_capacity(coeff_len);
+            for row in rows {
+                for ring in row {
+                    coeffs.extend_from_slice(ring.coefficients());
+                }
+            }
+            Ok::<_, AkitaError>((packed_witness, RingVec::from_coeffs(coeffs)))
+        }
+    )?;
+    Ok(NextWitnessStateOutput {
+        witness: packed_witness,
+        binding: NextWitnessState::TerminalInnerState { t_state },
+        hint: RecursiveCommitmentHintCache::from_hint(AkitaCommitmentHint::singleton(
+            DigitBlocks::empty(ring_dim),
+        )),
     })
 }

@@ -12,8 +12,8 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
     SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
@@ -86,7 +86,9 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         false
     }
 
-    fn get_params_for_prove(_opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        _opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         Err(AkitaError::InvalidSetup(
             "ConservativeCommitmentConfig is only for precommit layouts; proving must use the regular config"
                 .to_string(),
@@ -95,7 +97,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
 
     fn get_params_for_batched_commitment(
         opening_batch: &OpeningClaimsLayout,
-    ) -> Result<LevelParams, AkitaError> {
+    ) -> Result<CommittedGroupParams, AkitaError> {
         opening_batch.check()?;
         if opening_batch.num_groups() != 1 {
             return Err(AkitaError::InvalidSetup(
@@ -110,26 +112,26 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
 
 pub(crate) fn conservative_precommitted_group_params<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
-) -> Result<PrecommittedGroupParams, AkitaError> {
+) -> Result<PrecommittedGroupDescriptor, AkitaError> {
     group.validate()?;
     let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
     let params =
         <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
             &singleton,
         )?;
-    Ok(PrecommittedGroupParams::from_params(group, &params))
+    Ok(PrecommittedGroupDescriptor::from_params(group, &params))
 }
 
 pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-) -> Result<LevelParams, AkitaError> {
+) -> Result<CommittedGroupParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
-    Ok(schedule.root_fold()?.params.clone())
+    Ok(schedule.root.params.final_group.commitment.clone())
 }
 
 pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     if Cfg::decomposition().log_commit_bound != 1 {
         return Err(AkitaError::InvalidSetup(
             "conservative commitments require a one-hot config".to_string(),
@@ -141,20 +143,22 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>();
     policy.basis_range = (min_basis, min_basis);
     policy.decomposition.log_basis = min_basis;
-    let mut schedule = akita_planner::find_group_batch_schedule(
+    let mut planned = akita_planner::find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    let widened = widen_conservative_commit_params::<Cfg>(schedule.root_fold()?.params.clone())?;
-    schedule.root_fold_mut()?.params = widened;
-    Ok(schedule)
+    let widened = widen_conservative_commit_params::<Cfg>(
+        planned.schedule.root.params.final_group.commitment.clone(),
+    )?;
+    planned.schedule.root.params.final_group.commitment = widened;
+    Ok(planned.schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
-    mut params: LevelParams,
-) -> Result<LevelParams, AkitaError> {
+    mut params: CommittedGroupParams,
+) -> Result<CommittedGroupParams, AkitaError> {
     let policy = policy_of::<Cfg>();
     let (min_basis, _) = Cfg::basis_range();
     if params.log_basis_open != min_basis {

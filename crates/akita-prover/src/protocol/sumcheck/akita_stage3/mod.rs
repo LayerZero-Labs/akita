@@ -18,7 +18,7 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    BatchedStage3Geometry, FpExtEncoding, LevelParams, RingRelationInstance,
+    BatchedStage3Geometry, CommittedGroupParams, FpExtEncoding, RingRelationInstance,
     SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
     SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
@@ -72,8 +72,8 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
     pub fn new<F, T>(
         expanded: &AkitaExpandedSetup<F>,
         prefix_slots: &SetupPrefixProverRegistry<F>,
-        lp: &LevelParams,
-        next_fold_level_params: &LevelParams,
+        lp: &CommittedGroupParams,
+        next_fold_level_params: &CommittedGroupParams,
         relation: &RingRelationInstance<F>,
         tau1: &[E],
         alpha: E,
@@ -280,8 +280,8 @@ fn half<E: FieldCore + FromPrimitiveInt>(value: E) -> E {
 fn build_setup_product_term<F, E, T>(
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
+    lp: &CommittedGroupParams,
+    next_fold_level_params: &CommittedGroupParams,
     relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
@@ -479,7 +479,7 @@ where
 /// from the level parameters and ring relation via the ring-switch row
 /// evaluation.
 fn prepare_setup_sumcheck_terms<F, E>(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     relation: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,
@@ -499,7 +499,7 @@ where
 /// Build the stage-3 setup-contribution plan from local prover inputs.
 fn prepare_setup_contribution_plan<F, E>(
     relation: &RingRelationInstance<F>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     x_challenges: &[E],
 ) -> Result<SetupContributionPlan<E>, AkitaError>
@@ -508,10 +508,8 @@ where
     E: FieldCore + LiftBase<F> + MulBase<F>,
 {
     let opening_batch = relation.opening_batch();
-    let relation_matrix_row_layout = relation.relation_matrix_row_layout();
     let chunk_layout = relation.segment_layout(lp, None)?;
-    let rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     let eq_tau1: Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     lp.validate_opening_batch(opening_batch)?;
@@ -531,9 +529,8 @@ where
         let num_claims = group_layout.num_polynomials();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
-        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let b_range =
-            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "multi-group row ranges do not match group matrix heights".to_string(),
@@ -557,7 +554,6 @@ where
     let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
-        relation_matrix_row_layout,
         eq_tau1,
         &chunk_layout,
         opening_source_len,

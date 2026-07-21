@@ -14,8 +14,8 @@ use akita_transcript::labels::{self, ABSORB_PROVER_V};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::proof::append_flat_coefficients;
 use akita_types::{
-    append_digit_range_child_claims, AkitaStage1Proof, DigitRangeEqualityPoint, DigitRangePlan,
-    LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout,
+    append_digit_range_child_claims, AkitaStage1Proof, CommittedGroupParams,
+    DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
 };
 
 type DigitRangeVerifyOutput<E> = Vec<E>;
@@ -42,20 +42,14 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     v_ring_d: usize,
     challenge_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
-    lp: &LevelParams,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
+    lp: &CommittedGroupParams,
     grind_nonce: u32,
 ) -> Result<Vec<Challenges>, AkitaError>
 where
     F: FieldCore + CanonicalField + AkitaSerialize,
     T: Transcript<F>,
 {
-    if matches!(
-        relation_matrix_row_layout,
-        RelationMatrixRowLayout::WithDBlock
-    ) {
-        append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, v_ring_d, transcript)?;
-    }
+    append_flat_coefficients(ABSORB_PROVER_V, v_coeffs, v_ring_d, transcript)?;
     let labels = witness_fold_challenge_labels();
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
@@ -263,8 +257,8 @@ mod fold_grind_nonce_tests {
     fn sample_level_params(
         fold_challenge_config: SparseChallengeConfig,
         fold_shape: TensorChallengeShape,
-    ) -> LevelParams {
-        LevelParams::params_only(
+    ) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,

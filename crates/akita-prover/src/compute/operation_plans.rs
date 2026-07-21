@@ -1,7 +1,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges};
 use akita_field::{AkitaError, FieldCore};
-use akita_types::LevelParams;
+use akita_types::CommittedGroupParams;
 
 // ===========================================================================
 // Open, source-typed operation boundary (PO1)
@@ -52,7 +52,7 @@ pub struct CommitInnerPlan {
 
 impl CommitInnerPlan {
     /// Build inner-commit parameters from a validated commitment layout.
-    pub fn from_level(params: &LevelParams) -> Self {
+    pub fn from_level(params: &CommittedGroupParams) -> Self {
         Self {
             n_a: params.inner_commit_matrix.output_rank(),
             num_positions_per_block: params.num_positions_per_block,

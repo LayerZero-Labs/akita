@@ -3,9 +3,8 @@ use super::*;
 impl<E: FieldCore> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        relation_matrix_row_layout: RelationMatrixRowLayout,
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
         opening_source_len: usize,
@@ -21,28 +20,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
         let rows = {
             let _span = tracing::info_span!("setup_prepare_validate").entered();
-            validate_setup_inputs(
-                level_params,
-                opening_batch,
-                relation_matrix_row_layout,
-                witness_layout,
-                groups,
-            )?;
-            validate_static_inputs(
-                level_params,
-                opening_batch,
-                relation_matrix_row_layout,
-                &eq_tau1,
-            )?
+            validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
+            validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
         let (d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
-            let d_rows = match relation_matrix_row_layout {
-                crate::RelationMatrixRowLayout::WithDBlock => {
-                    level_params.open_commit_matrix.output_rank()
-                }
-                crate::RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
-            };
+            let d_rows = level_params.open_commit_matrix.output_rank();
             let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
                 AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
             })?;
@@ -80,7 +63,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let depth_open = group.depth_open(level_params, opening_batch)?;
                 let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
                 let n_a = group.n_a(level_params, opening_batch)?;
-                let n_b = group.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
+                let n_b = group.n_b(level_params, opening_batch)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
                 let d_col_range =
                     get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
@@ -230,9 +213,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 }
 
 fn validate_static_inputs<E: FieldCore>(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     eq_tau1: &[E],
 ) -> Result<usize, AkitaError> {
     opening_batch.check()?;
@@ -287,8 +269,7 @@ fn validate_static_inputs<E: FieldCore>(
             ));
         }
     }
-    let rows =
-        level_params.relation_matrix_row_count_for(num_groups, relation_matrix_row_layout)?;
+    let rows = level_params.relation_matrix_row_count(num_groups)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
             expected: rows,

@@ -29,7 +29,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     fold_level: usize,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
-) -> Result<Option<LevelParams>, AkitaError> {
+) -> Result<Option<CommittedGroupParams>, AkitaError> {
     if reduced_vars <= 2
         || reduced_vars >= 53
         || block_index_bits == 0
@@ -122,7 +122,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let params = LevelParams {
+    let params = CommittedGroupParams {
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -223,13 +223,14 @@ fn grouped_segment_rings(
 
 pub(crate) fn planned_next_witness_len(
     field_bits: u32,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
     if !params.precommitted_groups.is_empty() {
         return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use LevelParams::output_witness_len".to_string(),
+            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
+                .to_string(),
         ));
     }
     if params.setup_prefix.is_some() {
@@ -248,7 +249,7 @@ pub(crate) fn planned_next_witness_len(
 
 fn grouped_setup_prefix_next_witness_len(
     field_bits: u32,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
@@ -280,10 +281,7 @@ fn grouped_setup_prefix_next_witness_len(
             .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
     }
 
-    let r_rows = params.relation_matrix_row_count_for(
-        params.precommitted_group_count() + 1,
-        RelationMatrixRowLayout::WithDBlock,
-    )?;
+    let r_rows = params.relation_matrix_row_count(params.precommitted_group_count() + 1)?;
     let r_count = r_rows
         .checked_mul(akita_types::sis::compute_num_digits_full_field(
             field_bits,
@@ -297,27 +295,6 @@ fn grouped_setup_prefix_next_witness_len(
     rings
         .checked_mul(params.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
-}
-
-pub(crate) fn terminal_witness_shape_for_opening_layout(
-    terminal_lp: &LevelParams,
-    field_bits: u32,
-    opening_layout: &OpeningClaimsLayout,
-) -> Result<TerminalResponseShape, AkitaError> {
-    if !terminal_lp.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "grouped terminal direct witness layout is unsupported".to_string(),
-        ));
-    }
-    let order = opening_layout.root_group_order()?;
-    let mut group_shapes: Vec<(&dyn akita_types::LevelParamsLike, usize, usize, usize)> =
-        Vec::with_capacity(order.len());
-    for &group_index in &order {
-        let group_lp = terminal_lp.group_params(opening_layout, group_index)?;
-        let group_polys = opening_layout.group_layout(group_index)?.num_polynomials();
-        group_shapes.push((group_lp, group_polys, group_polys, 1));
-    }
-    TerminalResponseShape::from_groups(terminal_lp, field_bits, group_shapes)
 }
 
 fn derive_setup_prefix_group(
@@ -453,12 +430,11 @@ fn derive_setup_prefix_group(
             FoldWitnessNorms::new(log_basis_inner, d, 1, false),
             &fold_linf_cap_config,
         )?;
-        let layout = PrecommittedGroupParams {
+        let layout = PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
             num_live_ring_elements_per_claim: ring_slots,
             num_positions_per_block,
             num_live_blocks,
-            fold_challenge_shape: fold_shape,
             log_basis_inner,
             log_basis_outer,
             n_a: inner_commit_matrix.output_rank(),
@@ -513,7 +489,7 @@ pub(crate) fn derive_candidate_level_params(
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
     requested_fold_shape: TensorChallengeShape,
-) -> Result<Option<(LevelParams, usize, usize)>, AkitaError> {
+) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
     // Chunk count of the witness this level commits/produces (sized below as
     // `next_witness_len`). Equal for the metadata field and the width pricing so
     // a future verifier recomputing the size from `witness_chunk` agrees.
@@ -559,7 +535,7 @@ pub(crate) fn derive_candidate_level_params(
         None => None,
     };
 
-    let mut best: Option<(LayoutCandidateScore, LevelParams, usize, usize)> = None;
+    let mut best: Option<(LayoutCandidateScore, CommittedGroupParams, usize)> = None;
     for r in (1..reduced_vars).rev() {
         let Some(candidate_params) = recursive_fold_level_params_candidate(
             policy,
@@ -597,13 +573,6 @@ pub(crate) fn derive_candidate_level_params(
             1,
             num_chunks,
         )?;
-        let terminal_shape = TerminalResponseShape::from_groups(
-            &candidate_params,
-            policy.decomposition.field_bits(),
-            [(&candidate_params as &dyn LevelParamsLike, 1, 1, 1)],
-        )?;
-        let next_witness_len_terminal = terminal_shape.logical_num_elems();
-
         let score = layout_candidate_score(
             next_witness_len,
             candidate_params.num_live_blocks,
@@ -612,18 +581,13 @@ pub(crate) fn derive_candidate_level_params(
         )?;
         if best
             .as_ref()
-            .is_none_or(|(best_score, _, _, _)| score < *best_score)
+            .is_none_or(|(best_score, _, _)| score < *best_score)
         {
-            best = Some((
-                score,
-                candidate_params,
-                next_witness_len,
-                next_witness_len_terminal,
-            ));
+            best = Some((score, candidate_params, next_witness_len));
         }
     }
 
-    let Some((_, candidate_params, next_witness_len, next_witness_len_terminal)) = best else {
+    let Some((_, candidate_params, next_witness_len)) = best else {
         return Ok(None);
     };
 
@@ -631,11 +595,7 @@ pub(crate) fn derive_candidate_level_params(
         return Ok(None);
     }
 
-    Ok(Some((
-        candidate_params,
-        next_witness_len,
-        next_witness_len_terminal,
-    )))
+    Ok(Some((candidate_params, next_witness_len)))
 }
 
 /// Build one scalar root-fold candidate for an explicit basis and split.
@@ -650,7 +610,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     log_basis: u32,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
-) -> Result<Option<LevelParams>, AkitaError> {
+) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
     if reduced_vars == 0 || block_index_bits >= reduced_vars {
@@ -759,7 +719,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     } else {
         0
     };
-    let params = (LevelParams {
+    let params = (CommittedGroupParams {
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -795,9 +755,9 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
 
-    fn grouped_level_params() -> LevelParams {
+    fn grouped_level_params() -> CommittedGroupParams {
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let mut params = LevelParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
@@ -808,7 +768,7 @@ mod tests {
         )
         .with_decomp(2, 2, 2, 2, 2)
         .expect("grouped params");
-        let precommitted = LevelParams::params_only(
+        let precommitted = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,
@@ -820,7 +780,7 @@ mod tests {
         .with_decomp(2, 2, 2, 2, 2)
         .expect("precommitted params");
         params.precommitted_groups = vec![PrecommittedLevelParams {
-            layout: PrecommittedGroupParams::from_params(
+            layout: PrecommittedGroupDescriptor::from_params(
                 PolynomialGroupLayout::new(6, 1),
                 &precommitted,
             ),
@@ -840,19 +800,6 @@ mod tests {
         let grouped = grouped_level_params();
         let err = planned_next_witness_len(128, &grouped, 1, 1)
             .expect_err("multi-group root suffix sizing must use output_witness_len");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn terminal_witness_shape_rejects_multi_group_root_level_params() {
-        let grouped = grouped_level_params();
-        let layout = OpeningClaimsLayout::from_groups(vec![
-            PolynomialGroupLayout::new(6, 1),
-            PolynomialGroupLayout::new(8, 1),
-        ])
-        .expect("opening layout");
-        let err = terminal_witness_shape_for_opening_layout(&grouped, 128, &layout)
-            .expect_err("grouped terminal witness shape is unsupported");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

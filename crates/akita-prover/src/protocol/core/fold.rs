@@ -9,15 +9,13 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
-use crate::protocol::ring_switch::RingSwitchTerminalArtifacts;
 use akita_types::{
-    build_terminal_response_from_groups, dispatch_for_field, DigitRangeEqualityPoint,
-    DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout, TerminalResponseGroupParts,
-    TerminalResponseShape,
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
+    OpeningClaimsLayout,
 };
 
 fn trace_layout_for_instance<F: FieldCore + CanonicalField>(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     instance: &RingRelationInstance<F>,
     opening_source_len: usize,
     col_bits: usize,
@@ -46,10 +44,6 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) trace_claim_scales: Option<Vec<E>>,
     pub(in crate::protocol::core) trace_scale: E,
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
-    /// Canonical terminal `t` state already bound by the predecessor.
-    pub(in crate::protocol::core) terminal_t_state: Option<RingVec<F>>,
-    /// Per-block terminal `t` rows retained by the predecessor's inner commit.
-    pub(in crate::protocol::core) terminal_recomposed_inner_rows: Option<Vec<RingVec<F>>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -63,11 +57,9 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     transcript: &mut T,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     alpha_bits: usize,
     basis: BasisMode,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    terminal_tail_t_vectors: Option<usize>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
@@ -148,8 +140,6 @@ where
                 basis,
                 pad_base_evals,
                 transcript,
-                relation_matrix_row_layout,
-                terminal_tail_t_vectors,
             })
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}"))
@@ -191,8 +181,6 @@ where
                     basis,
                     pad_base_evals,
                     transcript,
-                    relation_matrix_row_layout,
-                    terminal_tail_t_vectors,
                 },
             )
         }
@@ -209,8 +197,6 @@ where
             basis,
             pad_base_evals,
             transcript,
-            relation_matrix_row_layout,
-            terminal_tail_t_vectors,
         })
     }
 }
@@ -231,13 +217,11 @@ where
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
-    level_params: &'a LevelParams,
+    level_params: &'a CommittedGroupParams,
     alpha_bits: usize,
     basis: BasisMode,
     pad_base_evals: bool,
     transcript: &'p mut T,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    terminal_tail_t_vectors: Option<usize>,
 }
 
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
@@ -279,8 +263,6 @@ where
         basis,
         pad_base_evals,
         transcript,
-        relation_matrix_row_layout,
-        terminal_tail_t_vectors,
     } = args;
     let opening = stack.opening();
     // Extracted level numbers for the A-role claims-evaluation operation; the
@@ -339,39 +321,28 @@ where
                                 .ok_or(AkitaError::InvalidProof)
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let prepared_point = prepare_opening_point::<F, E, D>(
-                        &group_protocol_point,
-                        basis,
-                        group_lp.num_positions_per_block(),
-                        group_lp.num_live_blocks(),
-                        alpha_bits,
-                    )
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!(
-                            "prepare opening point group {group_index} failed: {err:?}"
-                        ))
-                    })?;
                     let group_polys = block_claims.group_polys(group_index).map_err(|err| {
                         AkitaError::InvalidInput(format!(
                             "root group polynomials {group_index} failed: {err:?}"
                         ))
                     })?;
-                    let (group_folded_rings, group_e_folded_by_claim) =
-                        evaluate_claims_at_prepared_point(
+                    let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
+                        prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
                             opening.backend(),
                             Some(opening.prepared()),
                             group_polys,
-                            &prepared_point,
+                            &group_protocol_point,
+                            basis,
                             group_lp.num_positions_per_block(),
+                            group_lp.num_live_blocks(),
+                            alpha_bits,
+                            transcript,
                         )
                         .map_err(|err| {
                             AkitaError::InvalidInput(format!(
                                 "evaluate claims group {group_index} failed: {err:?}"
                             ))
                         })?;
-                    for pt in &prepared_point.padded_point {
-                        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-                    }
                     e_folded_by_claim.extend(
                         group_e_folded_by_claim
                             .iter()
@@ -414,13 +385,9 @@ where
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
-    let commitment = if LevelParams::has_commitment_block(relation_matrix_row_layout) {
-        block_claims.fold_commitment(level_params).map_err(|err| {
-            AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
-        })?
-    } else {
-        RingVec::from_coeffs(Vec::new())
-    };
+    let commitment = block_claims.fold_commitment(level_params).map_err(|err| {
+        AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
+    })?;
     let (instance, witness) = RingRelationProver::new(
         opening,
         stack.ring_switch(),
@@ -437,8 +404,6 @@ where
         level_params.clone(),
         transcript,
         row_coefficient_rings,
-        relation_matrix_row_layout,
-        terminal_tail_t_vectors,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
@@ -481,41 +446,40 @@ where
         trace_prepared_points: Some(prepared_points),
         trace_claim_scales,
         row_coefficients,
-        terminal_t_state: None,
-        terminal_recomposed_inner_rows: None,
     })
 }
 
-pub(in crate::protocol::core) type TerminalFoldResult<F, E> = TerminalLevelProof<F, E>;
-
-pub(in crate::protocol::core) enum FoldProveOutput<F: FieldCore, E: FieldCore> {
-    Intermediate(Box<ProveLevelOutput<F, E>>),
-    Terminal(Box<TerminalFoldResult<F, E>>),
+/// Typed commitment parameters for the witness produced by a non-terminal
+/// fold. The terminal variant exposes only its inner commitment.
+#[derive(Clone, Copy)]
+pub(in crate::protocol::core) enum FoldSuccessorParams<'a> {
+    Recursive(&'a CommittedGroupParams),
+    Terminal(&'a TerminalCommittedGroupParams),
 }
 
-impl<F: FieldCore, E: FieldCore> FoldProveOutput<F, E> {
-    pub(in crate::protocol::core) fn get_intermediate(
-        self,
-    ) -> Result<ProveLevelOutput<F, E>, AkitaError> {
+impl<'a> FoldSuccessorParams<'a> {
+    fn inner_ring_dimension(self) -> usize {
         match self {
-            Self::Intermediate(out) => Ok(*out),
-            Self::Terminal(_) => Err(AkitaError::InvalidInput(
-                "intermediate fold unexpectedly returned terminal proof".to_string(),
-            )),
+            Self::Recursive(params) => params.d_a(),
+            Self::Terminal(params) => params.d_a(),
         }
     }
 
-    pub(in crate::protocol::core) fn get_terminal(
-        self,
-    ) -> Result<TerminalFoldResult<F, E>, AkitaError> {
+    fn log_basis_inner(self) -> u32 {
         match self {
-            Self::Terminal(terminal) => Ok(*terminal),
-            Self::Intermediate(_) => Err(AkitaError::InvalidInput(
-                "terminal fold unexpectedly returned intermediate proof".to_string(),
-            )),
+            Self::Recursive(params) => params.log_basis_open,
+            Self::Terminal(params) => params.log_basis_inner,
+        }
+    }
+
+    fn recursive(self) -> Option<&'a CommittedGroupParams> {
+        match self {
+            Self::Recursive(params) => Some(params),
+            Self::Terminal(_) => None,
         }
     }
 }
+
 /// Prove one recursive fold level after the caller has built its ring-relation
 /// equation and selected the commitment policy for the next `w`.
 ///
@@ -535,11 +499,12 @@ pub(in crate::protocol::core) fn prove_fold<'stack, F, E, T, C, O, TS, R, Cfg>(
     stack: &'stack ProverComputeStack<'stack, F, C, O, TS, R>,
     transcript: &mut T,
     level: usize,
-    scheduled: &ExecutionSchedule,
+    lp: &CommittedGroupParams,
+    next_params: Option<FoldSuccessorParams<'_>>,
+    expected_output_witness_len: Option<usize>,
+    next_witness_binding: Option<akita_types::NextWitnessBindingPolicy>,
     prepared_fold: PreparedFold<F, E>,
-    is_terminal_fold: bool,
-    terminal_direct_witness_shape: Option<&TerminalResponseShape>,
-) -> Result<FoldProveOutput<F, E>, AkitaError>
+) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore
         + CanonicalField
@@ -565,74 +530,59 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let lp = &scheduled.params;
     let ring_d = prepared_fold.instance.role_dims().d_a();
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
-    let build_output = ring_switch_build_w::<F, R>(
+    let logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
         lp,
-        is_terminal_fold,
-        prepared_fold.terminal_recomposed_inner_rows.as_deref(),
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
     })?;
-    if is_terminal_fold {
-        let RingSwitchBuildOutput::Terminal(terminal_artifacts) = build_output else {
-            return Err(AkitaError::InvalidProof);
-        };
-        let terminal_response = bind_terminal_witness::<F, T>(
-            transcript,
-            lp,
-            terminal_artifacts,
-            terminal_direct_witness_shape,
-            prepared_fold.instance.opening_batch(),
-            prepared_fold
-                .terminal_t_state
-                .as_ref()
-                .ok_or(AkitaError::InvalidProof)?,
-        )
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("terminal witness binding failed: {err:?}"))
-        })?;
-        let proof = TerminalLevelProof {
-            extension_opening_reduction: prepared_fold.extension_opening_reduction,
-            fold_grind_nonce,
-            terminal_response,
-        };
-        return Ok(FoldProveOutput::Terminal(Box::new(proof)));
-    }
-    let RingSwitchBuildOutput::Intermediate(logical_w) = build_output else {
-        return Err(AkitaError::InvalidProof);
-    };
-    let next_params = scheduled.next_params.as_ref().ok_or_else(|| {
+    let next_params = next_params.ok_or_else(|| {
         AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
     })?;
-    scheduled.validate_output_witness_len(logical_w.len())?;
+    if Some(logical_w.len()) != expected_output_witness_len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "scheduled fold level {level} produced unexpected next-w length: expected={expected_output_witness_len:?}, actual={}",
+            logical_w.len()
+        )));
+    }
     let _span = tracing::info_span!("commit_w_level", level).entered();
-    let next_commitment = crate::commit_w::<Cfg, C>(
-        next_params,
-        expanded,
-        stack.commit(),
-        &logical_w,
-        scheduled.next_witness_binding.ok_or_else(|| {
-            AkitaError::InvalidSetup("non-terminal fold is missing its outgoing binding".into())
-        })?,
-    )?;
+    let next_commitment = match next_params {
+        FoldSuccessorParams::Recursive(params) => {
+            if next_witness_binding != Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "recursive successor requires outer-commitment binding".into(),
+                ));
+            }
+            crate::commit_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
+        }
+        FoldSuccessorParams::Terminal(params) => {
+            if next_witness_binding
+                != Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal successor requires canonical inner-state binding".into(),
+                ));
+            }
+            crate::commit_terminal_w::<Cfg, C>(params, expanded, stack.commit(), &logical_w)?
+        }
+    };
     drop(_span);
     match &next_commitment.binding {
         NextWitnessState::OuterCommitment(commitment) => {
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
-        NextWitnessState::TerminalInnerState { t_state, .. } => {
+        NextWitnessState::TerminalInnerState { t_state } => {
             let bytes = akita_types::raw_field_segment_bytes(t_state)?;
             transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &bytes);
         }
     }
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
-    let next_opening_ring_dim = next_params.d_a();
+    let next_opening_ring_dim = next_params.inner_ring_dimension();
     if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
@@ -646,15 +596,10 @@ where
         next_opening_source_len,
         next_opening_ring_dim,
         prepared_fold.row_coefficients.as_deref(),
-        relation_matrix_row_layout,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
-    let relation_rhs_layout = relation_rhs_layout_for(
-        lp,
-        prepared_fold.instance.opening_batch(),
-        prepared_fold.instance.relation_matrix_row_layout(),
-    )?;
+    let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         prepared_fold.instance.role_dims(),
         &relation_rhs_layout,
@@ -674,8 +619,7 @@ where
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
     let opening_batch = prepared_fold.instance.opening_batch();
-    let evaluation_trace_row =
-        lp.evaluation_trace_row_index_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.trace_eval_target;
     ensure_trace_stage2_supported(E::EXT_DEGREE)?;
@@ -795,24 +739,34 @@ where
     };
     let proof_w_eval = w_eval;
     transcript.append_serde(ABSORB_STAGE2_NEXT_W_EVAL, &proof_w_eval);
-    let stage3_sumcheck_proof = prove_stage3::<F, E, T>(
-        level,
-        lp.setup_contribution_mode,
-        expanded.as_ref(),
-        prefix_slots,
-        lp,
-        next_params,
-        &prepared_fold.instance,
-        &tau1,
-        alpha,
-        &sumcheck_challenges,
-        w_eval,
-        logical_w.as_i8_digits(),
-        live_x_cols,
-        col_bits,
-        ring_bits,
-        transcript,
-    )?;
+    let stage3_sumcheck_proof = match next_params.recursive() {
+        Some(next_level_params) => prove_stage3::<F, E, T>(
+            level,
+            lp.setup_contribution_mode,
+            expanded.as_ref(),
+            prefix_slots,
+            lp,
+            next_level_params,
+            &prepared_fold.instance,
+            &tau1,
+            alpha,
+            &sumcheck_challenges,
+            w_eval,
+            logical_w.as_i8_digits(),
+            live_x_cols,
+            col_bits,
+            ring_bits,
+            transcript,
+        )?,
+        None => {
+            if lp.setup_contribution_mode != SetupContributionMode::Direct {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal successor cannot carry a recursive setup contribution".into(),
+                ));
+            }
+            None
+        }
+    };
     let (stage3_sumcheck_proof, next_opening_point, next_opening, setup_prefix_opening) =
         if let Some(stage3) = stage3_sumcheck_proof {
             (
@@ -837,15 +791,9 @@ where
             akita_types::NextWitnessBinding::OuterCommitment(commitment.clone().into_compact()),
             NextWitnessState::OuterCommitment(commitment),
         ),
-        NextWitnessState::TerminalInnerState {
-            t_state,
-            recomposed_inner_rows,
-        } => (
+        NextWitnessState::TerminalInnerState { t_state } => (
             akita_types::NextWitnessBinding::TerminalInnerState,
-            NextWitnessState::TerminalInnerState {
-                t_state,
-                recomposed_inner_rows,
-            },
+            NextWitnessState::TerminalInnerState { t_state },
         ),
     };
     let level_proof = FoldLevelProof {
@@ -866,73 +814,19 @@ where
         None => (logical_w, None),
     };
 
-    Ok(FoldProveOutput::Intermediate(Box::new(ProveLevelOutput {
+    Ok(ProveLevelOutput {
         level_proof,
         next_state: SuffixProverState {
             w: committed_witness,
             logical_w,
             binding: next_binding,
             hint: committed_hint,
-            log_basis: next_params.log_basis_open,
+            log_basis: next_params.log_basis_inner(),
             sumcheck_challenges: next_opening_point,
             opening: next_opening,
             setup_prefix_opening,
         },
-    })))
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn bind_terminal_witness<F, T>(
-    transcript: &mut T,
-    lp: &LevelParams,
-    artifacts: RingSwitchTerminalArtifacts<F>,
-    terminal_direct_witness_shape: Option<&TerminalResponseShape>,
-    opening_batch: &OpeningClaimsLayout,
-    bound_t_state: &RingVec<F>,
-) -> Result<TerminalResponse<F>, AkitaError>
-where
-    F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let scheduled_shape = terminal_direct_witness_shape.ok_or_else(|| {
-        AkitaError::InvalidSetup("terminal fold missing scheduled witness shape".to_string())
-    })?;
-    let group_parts = artifacts
-        .groups
-        .iter()
-        .enumerate()
-        .map(|(layout_index, group)| {
-            let params = lp.group_params(opening_batch, group.group_index)?;
-            let (num_w_vectors, num_t_vectors, num_z_segments) =
-                akita_types::tail_segment_multiplicities_from_layout_for_params(
-                    params,
-                    lp.d_a(),
-                    &scheduled_shape.layout,
-                    layout_index,
-                )?;
-            Ok(TerminalResponseGroupParts {
-                params,
-                num_w_vectors,
-                num_t_vectors,
-                num_z_segments,
-                e_folded: &group.e_folded,
-                recomposed_inner_rows: &group.recomposed_inner_rows,
-                z_folded_centered_flat: group.z_folded_centered_flat(),
-            })
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    let segment = build_terminal_response_from_groups::<F>(artifacts.ring_dim(), &group_parts, lp)?;
-    if segment.layout != scheduled_shape.layout {
-        return Err(AkitaError::InvalidSetup(
-            "terminal response layout does not match schedule".to_string(),
-        ));
-    }
-    let parts = segment.terminal_transcript_parts()?;
-    if segment.t_fields.coeffs() != bound_t_state.coeffs() {
-        return Err(AkitaError::InvalidProof);
-    }
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &parts.response);
-    Ok(segment)
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1080,8 +974,8 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     setup_contribution_mode: SetupContributionMode,
     expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
-    lp: &LevelParams,
-    next_level_params: &LevelParams,
+    lp: &CommittedGroupParams,
+    next_level_params: &CommittedGroupParams,
     instance: &RingRelationInstance<F>,
     tau1: &[E],
     alpha: E,

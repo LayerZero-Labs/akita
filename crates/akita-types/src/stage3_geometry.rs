@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use crate::{
         InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-        PrecommittedGroupParams, PrecommittedLevelParams, SisModulusProfileId,
+        PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId,
     };
     use akita_field::Prime32Offset99 as F;
 
@@ -220,12 +220,11 @@ mod tests {
             d_setup: 32,
             natural_len: 1,
             commitment_params: PrecommittedLevelParams {
-                layout: PrecommittedGroupParams {
+                layout: PrecommittedGroupDescriptor {
                     group: PolynomialGroupLayout::singleton(8),
                     num_live_ring_elements_per_claim: 8,
                     num_positions_per_block: 4,
                     num_live_blocks: 2,
-                    fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                     log_basis_inner: 1,
                     log_basis_outer: 3,
                     n_a: 1,

@@ -4,9 +4,7 @@ use akita_field::{AkitaError, CanonicalField};
 
 use crate::sis::compute_num_digits_full_field;
 use crate::PolynomialGroupLayout;
-use crate::{
-    LevelParams, RelationMatrixRowLayout, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
-};
+use crate::{CommittedGroupParams, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -123,7 +121,7 @@ pub fn extension_opening_reduction_level_bytes(
 /// Planned recursive witness size in ring elements for a singleton fold.
 pub fn planned_w_ring_element_count<F: CanonicalField>(
     field_bits: u32,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
     let e_hat_count = lp
@@ -140,7 +138,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .checked_mul(lp.num_digits_fold(1, field_bits)?)
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)?
+        .relation_matrix_row_count(1)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis_open))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
 
@@ -154,7 +152,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
 /// Planned recursive witness size in field elements for a singleton fold.
 pub fn planned_output_witness_len<F: CanonicalField>(
     field_bits: u32,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
     planned_w_ring_element_count::<F>(field_bits, lp)?
         .checked_mul(lp.d_a())

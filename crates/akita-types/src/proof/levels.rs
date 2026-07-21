@@ -1,7 +1,7 @@
 use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
-use crate::{LevelParams, SetupContributionMode};
+use crate::{CommittedGroupParams, SetupContributionMode};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub range_image_evaluation: F,
 }
 
-/// Schedule-shaped outgoing witness binding for an intermediate fold.
+/// FoldSchedule-shaped outgoing witness binding for an intermediate fold.
 ///
 /// The proof stream carries no variant tag. Headerless decoding obtains the
 /// variant from [`NextWitnessBindingShape`]: ordinary recursive edges carry an
@@ -54,7 +54,7 @@ impl<F: FieldCore> NextWitnessBinding<F> {
 pub struct AkitaStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck_proof: SumcheckProof<E>,
-    /// Schedule-shaped binding for the next witness.
+    /// FoldSchedule-shaped binding for the next witness.
     pub next_witness_binding: NextWitnessBinding<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: E,
@@ -202,8 +202,8 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     pub fn stage3_for_mode<'a>(
         &'a self,
         mode: SetupContributionMode,
-        next_fold_level_params: Option<&'a LevelParams>,
-    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>, AkitaError> {
+        next_fold_level_params: Option<&'a CommittedGroupParams>,
+    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a CommittedGroupParams)>, AkitaError> {
         match (mode, self.stage3_sumcheck_proof.as_ref()) {
             (SetupContributionMode::Direct, None) => Ok(None),
             (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(

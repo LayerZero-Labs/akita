@@ -4,9 +4,9 @@ use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding,
-    RelationMatrixRowLayout, RingVec, SisModulusProfileId, TerminalLevelProof, TerminalResponse,
-    TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
+    SisModulusProfileId, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -22,7 +22,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_live_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         3,
@@ -63,7 +63,7 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_live_blocks = 2^3 = 8.
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         3,
@@ -92,7 +92,7 @@ fn chunked_witness_count_rejects_invalid_chunk_counts() {
 }
 
 fn terminal_response_fixture(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     num_claims: usize,
 ) -> (TerminalResponse<F>, TerminalResponseShape) {
     let field_bits = F::modulus_bits();
@@ -159,8 +159,8 @@ fn dummy_stage1_proof<F: FieldCore>(rounds: usize, b: usize) -> AkitaStage1Proof
 }
 
 fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
-    lp: &LevelParams,
-    next_lp: &LevelParams,
+    lp: &CommittedGroupParams,
+    next_lp: &CommittedGroupParams,
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let current_coeffs = lp
@@ -198,7 +198,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let next_lp = LevelParams::params_only(
+    let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         2,
@@ -210,7 +210,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
     let output_witness_len = D * 8;
 
     for log_basis in 2..=6 {
-        let lp = LevelParams::params_only(
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
@@ -228,7 +228,6 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
                 .unwrap(),
@@ -246,7 +245,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     let num_claims = 3;
 
     for log_basis in 2..=6 {
-        let lp = LevelParams::params_only(
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
@@ -274,16 +273,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
         assert_eq!(
-            level_proof_bytes(
-                128,
-                128,
-                &lp,
-                None,
-                output_witness_len,
-                RelationMatrixRowLayout::WithoutCommitmentBlocks,
-                None,
-            )
-            .unwrap(),
+            level_proof_bytes(128, 128, &lp, None, output_witness_len, None,).unwrap(),
             serialized_without_witness,
             "planned terminal-level bytes should match the serialized terminal body \
                  (less terminal_response) at log_basis={log_basis}"
@@ -302,7 +292,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    let next_lp = LevelParams::params_only(
+    let next_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         2,
@@ -314,7 +304,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
     let output_witness_len = D * 8;
 
     for log_basis in 2..=6 {
-        let lp = LevelParams::params_only(
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
@@ -349,7 +339,6 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    RelationMatrixRowLayout::WithDBlock,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
                 .unwrap(),
@@ -402,7 +391,7 @@ struct NoPrecommitSource;
 impl ScheduleKeyPrecommitSource for NoPrecommitSource {
     fn precommitted_group_params(
         _group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupParams, AkitaError> {
+    ) -> Result<PrecommittedGroupDescriptor, AkitaError> {
         Err(AkitaError::InvalidSetup(
             "NoPrecommitSource is only valid for scalar layouts".to_string(),
         ))
@@ -432,12 +421,11 @@ fn validate_rejects_zero_dimensions() {
 fn group_batch_key_rejects_precommitted_num_vars_above_main() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupParams {
+        precommitteds: vec![PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(24, 1),
             num_live_ring_elements_per_claim: 1usize << 18,
             num_positions_per_block: 16,
             num_live_blocks: 1usize << 14,
-            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
@@ -457,12 +445,11 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
 fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupParams {
+        precommitteds: vec![PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(12, 1),
             num_live_ring_elements_per_claim: 64,
             num_positions_per_block: 16,
             num_live_blocks: 4,
-            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
@@ -481,12 +468,11 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupParams {
+        precommitteds: vec![PrecommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(10, 1),
             num_live_ring_elements_per_claim: 16,
             num_positions_per_block: 4,
             num_live_blocks: 4,
-            fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
             log_basis_inner: 1,
             log_basis_outer: 2,
             n_a: 3,
@@ -504,12 +490,11 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 
 #[test]
 fn validate_frozen_precommit_rejects_geometry_mismatch() {
-    let layout = PrecommittedGroupParams {
+    let layout = PrecommittedGroupDescriptor {
         group: PolynomialGroupLayout::new(20, 1),
         num_live_ring_elements_per_claim: 1,
         num_positions_per_block: 16,
         num_live_blocks: 1,
-        fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
         log_basis_inner: 1,
         log_basis_outer: 2,
         n_a: 3,

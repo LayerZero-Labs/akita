@@ -140,7 +140,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
     ))
     .expect("generated schedule");
     assert_eq!(
-        schedule.folds.len(),
+        schedule.num_fold_levels(),
         expected.digit_range_levels.len() + 1,
         "{} schedule must end in exactly one terminal fold",
         expected.name
@@ -151,14 +151,21 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         "{} non-terminal level count",
         expected.name
     );
+    let scheduled_nonterminal = std::iter::once(&schedule.root.params.final_group.commitment)
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|step| &step.params.witness),
+        );
     for ((level, scheduled), level_expected) in proof
         .nonterminal_folds()
-        .zip(schedule.folds.iter())
+        .zip(scheduled_nonterminal)
         .zip(expected.digit_range_levels)
     {
         let bytes = serialize_stage1_payload(level.stage1());
         assert_eq!(
-            1usize << scheduled.params.log_basis,
+            1usize << scheduled.log_basis_open,
             level_expected.basis,
             "{} scheduled range basis",
             expected.name

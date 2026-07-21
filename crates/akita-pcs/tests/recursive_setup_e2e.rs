@@ -17,9 +17,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams,
-    Schedule,
+    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, FoldSchedule, OpeningClaims,
+    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor,
 };
 use common::*;
 
@@ -36,18 +36,15 @@ type ConservativeOneHotCfg = ConservativeCommitmentConfig<OneHotCfg>;
 type RecursiveOneHotScheme = AkitaCommitmentScheme<RecursiveOneHotCfg>;
 type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
 
-fn multi_group_root_params(schedule: &Schedule) -> &LevelParams {
-    &schedule
-        .root_fold()
-        .expect("generated profile root fold")
-        .params
+fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
+    &schedule.root.params.final_group.commitment
 }
 
-fn schedule_uses_setup_prefix(schedule: &Schedule) -> bool {
+fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
-        .folds
+        .recursive_folds
         .iter()
-        .any(|fold| fold.params.setup_prefix.is_some())
+        .any(|fold| fold.params.incoming_setup_prefix.is_some())
 }
 
 fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
@@ -70,7 +67,7 @@ fn generated_recursive_profile_key() -> (AkitaScheduleLookupKey, Vec<PolynomialG
         &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
     )
     .expect("conservative precommit params");
-    let pre_frozen = PrecommittedGroupParams::from_params(pre_key, &pre_params);
+    let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_params);
     let precommitteds = vec![pre_frozen, pre_frozen];
     let pre_keys = vec![pre_key; PRE_GROUPS];
     let key = AkitaScheduleLookupKey {

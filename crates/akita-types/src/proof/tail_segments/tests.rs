@@ -6,8 +6,8 @@ use akita_field::Prime128OffsetA7F7;
 
 type F = Prime128OffsetA7F7;
 
-fn test_lp() -> LevelParams {
-    let mut params = LevelParams::params_only(
+fn test_lp() -> CommittedGroupParams {
+    let mut params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         64,
         3,
@@ -37,7 +37,7 @@ fn test_lp() -> LevelParams {
 }
 
 fn scalar_group_layout(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     num_w_vectors: usize,
     num_t_vectors: usize,
     num_z_segments: usize,
@@ -154,30 +154,6 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
         .expect("direct terminal witness");
 
     assert_eq!(witness.layout, layout);
-}
-
-#[test]
-fn terminal_golomb_grind_covers_terminal_layout() {
-    let lp = test_lp();
-    let layout = scalar_group_layout(&lp, 1, 1, 1, F::modulus_bits()).unwrap();
-    let shape = TerminalResponseShape { layout };
-
-    let terminal = terminal_golomb_grind_tail_t_vectors(
-        &lp,
-        RelationMatrixRowLayout::WithoutCommitmentBlocks,
-        Some(&shape),
-    )
-    .unwrap();
-    assert!(terminal.is_some());
-    assert_eq!(
-        terminal_golomb_grind_tail_t_vectors(
-            &lp,
-            RelationMatrixRowLayout::WithDBlock,
-            Some(&shape),
-        )
-        .unwrap(),
-        None
-    );
 }
 
 #[test]
@@ -300,19 +276,20 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
 fn terminal_layout_validation_rejects_overflow_without_panicking() {
     let layout = TailSegmentLayout {
         ring_dimension: 64,
-        log_basis_open: 6,
         groups: vec![
             TailSegmentGroupLayout {
                 z_coords: 1,
                 e_field_elems: usize::MAX,
                 t_field_elems: 1,
                 z_payload_bytes: 1,
+                z_rice_low_bits: 0,
             },
             TailSegmentGroupLayout {
                 z_coords: 1,
                 e_field_elems: 1,
                 t_field_elems: usize::MAX,
                 z_payload_bytes: usize::MAX,
+                z_rice_low_bits: 0,
             },
         ],
         logical_num_elems: 1,

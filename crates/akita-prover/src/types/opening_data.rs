@@ -4,9 +4,9 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, BatchedStage3Geometry, Commitment, LevelParams, OpeningClaims,
+    AkitaCommitmentHint, BatchedStage3Geometry, Commitment, CommittedGroupParams, OpeningClaims,
     OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    RelationMatrixRowLayout, RingVec, SetupPrefixSlot,
+    RingVec, SetupPrefixSlot,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -213,7 +213,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     /// Borrow root fold commitment rows in the scheduled M-row commitment order.
     pub(crate) fn fold_commitment(
         &self,
-        params: &LevelParams,
+        params: &CommittedGroupParams,
     ) -> Result<RingVec<CommitF>, AkitaError> {
         let opening_batch = self.opening_claims.layout()?;
         if self.opening_claims.num_groups() != opening_batch.num_groups() {
@@ -224,11 +224,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
 
         let mut group_order = (0..opening_batch.num_groups())
             .map(|group_index| {
-                let range = params.commitment_row_range(
-                    &opening_batch,
-                    group_index,
-                    RelationMatrixRowLayout::WithDBlock,
-                )?;
+                let range = params.commitment_row_range(&opening_batch, group_index)?;
                 Ok((range.start, range.len(), group_index))
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;

@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, DigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupParams, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    Commitment, CommittedGroupParams, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -27,7 +27,7 @@ pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Frozen layout, commitment rows, and prover hint for one standalone group.
 pub type CommittedGroupWithHint<F> = (
-    PrecommittedGroupParams,
+    PrecommittedGroupDescriptor,
     Commitment<F>,
     AkitaCommitmentHint<F>,
 );
@@ -126,7 +126,7 @@ where
 }
 
 pub(crate) fn validate_commit_level_params<F>(
-    params: &LevelParams,
+    params: &CommittedGroupParams,
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
@@ -256,7 +256,7 @@ where
 
 pub(crate) fn validate_onehot_chunk_size_for_params<F, P>(
     polys: &[P],
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
@@ -281,7 +281,7 @@ where
 
 pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, P>(
     polys: &[P],
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
@@ -350,7 +350,7 @@ where
 fn commit_with_validated_params<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -461,7 +461,7 @@ pub fn commit_with_params<F, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -502,8 +502,8 @@ where
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
-    let root_fold = schedule.root_fold()?;
-    let ring_d = root_fold.params.role_dims().d_a();
+    let root_fold = schedule.root_fold();
+    let ring_d = root_fold.params.final_group.commitment.role_dims().d_a();
     Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         ring_d,
         opening_batch.max_num_vars(),
@@ -522,8 +522,7 @@ where
     if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(ring_d, key.num_vars()) {
         return Ok(false);
     }
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
-    schedule.root_fold()?;
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
     Ok(true)
 }
 
@@ -692,7 +691,7 @@ where
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
     Ok((
-        PrecommittedGroupParams::from_params(key, &params),
+        PrecommittedGroupDescriptor::from_params(key, &params),
         commitment,
         hint,
     ))
@@ -700,7 +699,7 @@ where
 
 fn precommitted_layouts_from_keys<Cfg>(
     precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<Vec<PrecommittedGroupParams>, AkitaError>
+) -> Result<Vec<PrecommittedGroupDescriptor>, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
@@ -717,7 +716,7 @@ where
             let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
                 &singleton,
             )?;
-            Ok(PrecommittedGroupParams::from_params(key, &params))
+            Ok(PrecommittedGroupDescriptor::from_params(key, &params))
         })
         .collect()
 }
@@ -756,8 +755,7 @@ where
     ) {
         return Ok(false);
     }
-    let schedule = Cfg::runtime_schedule(key.clone())?;
-    schedule.root_fold()?;
+    Cfg::runtime_schedule(key.clone())?;
     Ok(true)
 }
 
@@ -792,7 +790,7 @@ where
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
-    let params = schedule.root_fold()?.params.clone();
+    let params = schedule.root_fold().params.final_group.commitment.clone();
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
@@ -873,7 +871,7 @@ pub fn batched_commit_with_params<F, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -977,7 +975,7 @@ mod tests {
         )
         .unwrap()
         .expanded;
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
             7,
@@ -1006,7 +1004,7 @@ mod tests {
 
     #[test]
     fn onehot_chunk_size_validator_rejects_mismatched_k() {
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -1029,7 +1027,7 @@ mod tests {
 
     #[test]
     fn validate_onehot_chunk_size_rejects_wrapped_onehot_mismatch() {
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
             2,

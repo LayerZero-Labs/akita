@@ -21,8 +21,8 @@ pub use fold_linf_binding::{
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{
-    detect_field_modulus, AkitaSetupSeed, BasisMode, DecompositionParams, LevelParams,
-    OpeningClaimsLayout, Schedule, SisModulusProfileId,
+    detect_field_modulus, AkitaSetupSeed, BasisMode, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, SisModulusProfileId,
 };
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
@@ -170,9 +170,9 @@ pub struct SetupSection {
 impl SetupSection {
     /// Build setup fields from existing setup/layout data.
     ///
-    /// The per-level `LevelParams` are intentionally *not* digested here: the
+    /// The per-level `CommittedGroupParams` are intentionally *not* digested here: the
     /// per-proof effective schedule (`PlanSection`) already binds every
-    /// expanded fold `LevelParams`, and
+    /// expanded fold `CommittedGroupParams`, and
     /// `setup_seed_digest` pins the shared-matrix capacity, so a separate
     /// setup-level digest would be redundant.
     ///
@@ -203,7 +203,7 @@ pub struct PlanSection {
 
 impl PlanSection {
     /// Build a plan section from the runtime schedule the verifier will replay.
-    pub fn from_schedule(schedule: &Schedule) -> Self {
+    pub fn from_schedule(schedule: &FoldSchedule) -> Self {
         Self {
             effective_schedule_digest: digest_effective_schedule(schedule),
         }
@@ -281,7 +281,7 @@ pub fn digest_serializable<S: AkitaSerialize>(
 }
 
 /// Digest a normalized list of commitment level parameters.
-pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
+pub fn digest_level_params(params: &[CommittedGroupParams]) -> DescriptorDigest {
     let mut bytes = Vec::new();
     push_usize(&mut bytes, params.len());
     for params in params {
@@ -291,7 +291,7 @@ pub fn digest_level_params(params: &[LevelParams]) -> DescriptorDigest {
 }
 
 /// Digest the final effective runtime verifier schedule.
-pub fn digest_effective_schedule(schedule: &Schedule) -> DescriptorDigest {
+pub fn digest_effective_schedule(schedule: &FoldSchedule) -> DescriptorDigest {
     let mut bytes = Vec::new();
     schedule.append_descriptor_bytes(&mut bytes);
     blake2b_256(&bytes)
