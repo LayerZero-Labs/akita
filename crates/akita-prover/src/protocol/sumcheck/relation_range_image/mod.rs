@@ -264,10 +264,8 @@ pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProver
 
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
     // Fused relation (`alpha * m`) + trace-weight addend for one witness
-    // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
-    // (`lane * coeff_count + coefficient`). Coefficient-round kernels
-    // pass `2*j` and `2*j+1`; lane-prefix fusion passes lane-relative indices
-    // directly.
+    // corner. `witness_idx0` is the first flat index of an adjacent pair in
+    // the Boolean `w` table (`lane * coeff_count + coefficient`).
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
@@ -277,14 +275,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         w0: E,
         dw: E,
         witness_idx0: usize,
-        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
-            .pair_flat(witness_idx0, witness_idx1, coeff_count);
+            .pair_from_flat_index(witness_idx0, coeff_count);
         accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
@@ -296,14 +293,13 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         w0: i64,
         dw: i64,
         witness_idx0: usize,
-        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
         let coeff_count = self.common_alpha_factor.len();
         let (t0, t1) = self
             .evaluation_trace
-            .pair_flat(witness_idx0, witness_idx1, coeff_count);
+            .pair_from_flat_index(witness_idx0, coeff_count);
         accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 

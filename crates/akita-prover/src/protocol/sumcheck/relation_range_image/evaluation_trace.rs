@@ -440,19 +440,18 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     }
 
     #[inline]
-    pub(crate) fn pair_flat(&self, index0: usize, index1: usize, coeff_count: usize) -> (E, E) {
+    pub(crate) fn pair_from_flat_index(&self, index0: usize, coeff_count: usize) -> (E, E) {
         debug_assert_eq!(self.coeff_count, coeff_count);
-        let lane0 = index0 / coeff_count;
-        let lane1 = index1 / coeff_count;
-        let coefficient0 = index0 % coeff_count;
-        let coefficient1 = index1 % coeff_count;
-        if lane0 == lane1 {
-            let [value0, value1] = self.values_in_lane(lane0, [coefficient0, coefficient1]);
+        debug_assert!(coeff_count.is_power_of_two());
+        let coefficient0 = index0 & (coeff_count - 1);
+        let lane0 = index0 >> coeff_count.trailing_zeros();
+        if coefficient0 + 1 < coeff_count {
+            let [value0, value1] = self.values_in_lane(lane0, [coefficient0, coefficient0 + 1]);
             (value0, value1)
         } else {
             (
                 self.get(lane0, coefficient0, coeff_count),
-                self.get(lane1, coefficient1, coeff_count),
+                self.get(lane0 + 1, 0, coeff_count),
             )
         }
     }

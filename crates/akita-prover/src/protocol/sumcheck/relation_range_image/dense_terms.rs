@@ -68,7 +68,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             w0_i64,
                             dw_i64,
                             2 * j,
-                            2 * j + 1,
                             p0,
                             p1,
                         );
@@ -145,7 +144,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                             w0_i64,
                             dw_i64,
                             2 * j,
-                            2 * j + 1,
                             p0,
                             p1,
                         );
@@ -231,15 +229,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(
-                            &mut rel,
-                            w0,
-                            dw,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        self.accumulate_fused_relation_trace(&mut rel, w0, dw, 2 * j, p0, p1);
                     }
 
                     let e_out = e_second[j_high];
@@ -295,15 +285,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                         };
                         let p0 = a0 * m0;
                         let p1 = a1 * m1;
-                        self.accumulate_fused_relation_trace(
-                            &mut rel,
-                            w0,
-                            dw,
-                            2 * j,
-                            2 * j + 1,
-                            p0,
-                            p1,
-                        );
+                        self.accumulate_fused_relation_trace(&mut rel, w0, dw, 2 * j, p0, p1);
                     }
 
                     let e_out = e_second[j_high];

@@ -74,7 +74,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 w0_i64,
                                 dw_i64,
                                 lane_start + left,
-                                lane_start + left + 1,
                                 p0,
                                 p1,
                             );
@@ -156,7 +155,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 w0_i64,
                                 dw_i64,
                                 lane_start + left,
-                                lane_start + left + 1,
                                 p0,
                                 p1,
                             );
@@ -255,7 +253,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 w0,
                                 dw,
                                 lane_start + left,
-                                lane_start + left + 1,
                                 p0,
                                 p1,
                             );
@@ -324,7 +321,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
                                 w0,
                                 dw,
                                 lane_start + left,
-                                lane_start + left + 1,
                                 p0,
                                 p1,
                             );
