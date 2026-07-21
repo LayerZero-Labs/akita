@@ -254,15 +254,15 @@ fn direct_fused_equation_matches_checked_stage2_input_claim() {
 
 #[test]
 fn common_coordinate_factorization_matches_flattened_rounds() {
-    let common_coefficient_count = 4usize;
+    let common_coeff_count = 4usize;
     let live_relation_lanes = 5usize;
-    let common_bits = common_coefficient_count.trailing_zeros() as usize;
+    let common_bits = common_coeff_count.trailing_zeros() as usize;
     let lane_bits = live_relation_lanes.next_power_of_two().trailing_zeros() as usize;
     let num_vars = common_bits + lane_bits;
     let stage1_point = (0..num_vars)
         .map(|index| F::from_u64(11 * index as u64 + 7))
         .collect::<Vec<_>>();
-    let common_alpha_factor = (0..common_coefficient_count)
+    let common_alpha_factor = (0..common_coeff_count)
         .map(|index| F::from_u64(13 * index as u64 + 17))
         .collect::<Vec<_>>();
     let relation_lane_weights = (0..(1usize << lane_bits))
@@ -276,7 +276,7 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
                 .map(move |&alpha| lane_weight * alpha)
         })
         .collect::<Vec<_>>();
-    let witness = (0..(live_relation_lanes * common_coefficient_count))
+    let witness = (0..(live_relation_lanes * common_coeff_count))
         .map(|index| ((5 * index + 3) % 8) as i8 - 4)
         .collect::<Vec<_>>();
     let evaluation_trace_weights = (0..witness.len())
@@ -307,7 +307,7 @@ fn common_coordinate_factorization_matches_flattened_rounds() {
         Stage2Params {
             stage1_point: &stage1_point,
             b: 8,
-            live_x_cols: live_relation_lanes * common_coefficient_count,
+            live_x_cols: live_relation_lanes * common_coeff_count,
             col_bits: num_vars,
             ring_bits: 0,
         },

@@ -48,7 +48,7 @@ pub struct RelationRangeImagePlan {
     digit_range_plan: DigitRangePlan,
     witness_layout: WitnessLayout,
     role_dims: CommitmentRingDims,
-    common_alpha_coefficient_count: usize,
+    common_relation_witness_coeff_count: usize,
     relation_lane_count: usize,
     groups: Vec<RelationRangeImageGroupPlan>,
 }
@@ -67,7 +67,7 @@ impl RelationRangeImagePlan {
         witness_layout: WitnessLayout,
         opening_batch: &OpeningClaimsLayout,
         role_dims: CommitmentRingDims,
-        opening_ring_dimension: usize,
+        outgoing_witness_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
         validate_role_dims(role_dims)?;
         opening_batch.check()?;
@@ -85,25 +85,26 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let common_alpha_coefficient_count =
-            role_dims.common_stage2_coefficient_count(opening_ring_dimension);
-        if common_alpha_coefficient_count == 0
-            || !common_alpha_coefficient_count.is_power_of_two()
-            || !opening_ring_dimension.is_power_of_two()
+        let common_relation_witness_coeff_count =
+            role_dims.common_relation_witness_coeff_count(outgoing_witness_ring_dimension);
+        if common_relation_witness_coeff_count == 0
+            || !common_relation_witness_coeff_count.is_power_of_two()
+            || !outgoing_witness_ring_dimension.is_power_of_two()
         {
             return Err(AkitaError::InvalidSetup(
-                "relation/range-image common coefficient geometry is malformed".into(),
+                "relation/range-image joint relation-witness geometry is malformed".into(),
             ));
         }
         if !digit_witness_domain
             .live_len()
-            .is_multiple_of(common_alpha_coefficient_count)
+            .is_multiple_of(common_relation_witness_coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
-                "digit witness is not aligned to the common alpha dimension".into(),
+                "digit witness is not aligned to the joint relation-witness block".into(),
             ));
         }
-        let relation_lane_count = digit_witness_domain.live_len() / common_alpha_coefficient_count;
+        let relation_lane_count =
+            digit_witness_domain.live_len() / common_relation_witness_coeff_count;
         if relation_lane_count == 0 {
             return Err(AkitaError::InvalidSetup(
                 "relation/range-image plan requires a non-empty lane domain".into(),
@@ -183,7 +184,7 @@ impl RelationRangeImagePlan {
             digit_range_plan,
             witness_layout,
             role_dims,
-            common_alpha_coefficient_count,
+            common_relation_witness_coeff_count,
             relation_lane_count,
             groups,
         })
@@ -213,16 +214,17 @@ impl RelationRangeImagePlan {
         self.role_dims
     }
 
-    /// Number of low coefficients sharing the common alpha-power factor.
+    /// Width of the low coefficient block aligned for both relation alpha
+    /// sequences and outgoing witness ring elements.
     #[must_use]
-    pub fn common_alpha_coefficient_count(&self) -> usize {
-        self.common_alpha_coefficient_count
+    pub fn common_relation_witness_coeff_count(&self) -> usize {
+        self.common_relation_witness_coeff_count
     }
 
-    /// Number of low address bits bound before relation-lane coordinates.
+    /// Number of aligned low address bits bound before relation-lane coordinates.
     #[must_use]
-    pub fn common_alpha_variable_count(&self) -> usize {
-        self.common_alpha_coefficient_count.trailing_zeros() as usize
+    pub fn common_relation_witness_variable_count(&self) -> usize {
+        self.common_relation_witness_coeff_count.trailing_zeros() as usize
     }
 
     /// Number of live relation lanes after extracting the common alpha factor.
@@ -331,9 +333,9 @@ mod tests {
                         );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
                         assert_eq!(plan.role_dims(), role_dims);
-                        assert_eq!(plan.common_alpha_coefficient_count(), role_dims.d_d());
+                        assert_eq!(plan.common_relation_witness_coeff_count(), role_dims.d_d());
                         assert_eq!(
-                            plan.relation_lane_count() * plan.common_alpha_coefficient_count(),
+                            plan.relation_lane_count() * plan.common_relation_witness_coeff_count(),
                             plan.digit_witness_domain().live_len()
                         );
                         assert_eq!(plan.groups().len(), group_sizes.len());
@@ -361,9 +363,9 @@ mod tests {
     #[test]
     fn plan_common_block_respects_outgoing_ring_dimension() {
         let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(128), 64, 8);
-        assert_eq!(plan.common_alpha_coefficient_count(), 64);
+        assert_eq!(plan.common_relation_witness_coeff_count(), 64);
         assert_eq!(
-            plan.relation_lane_count() * plan.common_alpha_coefficient_count(),
+            plan.relation_lane_count() * plan.common_relation_witness_coeff_count(),
             plan.digit_witness_domain().live_len()
         );
     }

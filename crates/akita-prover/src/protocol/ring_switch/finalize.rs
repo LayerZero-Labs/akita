@@ -82,14 +82,15 @@ where
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
         let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
-        let common_coefficient_count = dims.common_stage2_coefficient_count(opening_ring_dim);
-        if common_coefficient_count == 0
-            || !common_coefficient_count.is_power_of_two()
-            || !w.len().is_multiple_of(common_coefficient_count)
-            || !opening_ring_dim.is_multiple_of(common_coefficient_count)
+        let common_relation_witness_coeff_count =
+            dims.common_relation_witness_coeff_count(opening_ring_dim);
+        if common_relation_witness_coeff_count == 0
+            || !common_relation_witness_coeff_count.is_power_of_two()
+            || !w.len().is_multiple_of(common_relation_witness_coeff_count)
+            || !opening_ring_dim.is_multiple_of(common_relation_witness_coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
-                "relation roles do not admit a common Stage-2 coefficient block".into(),
+                "relation and outgoing witness do not admit a common coefficient block".into(),
             ));
         }
         if dims != akita_types::CommitmentRingDims::uniform(opening_ring_dim)
@@ -101,14 +102,14 @@ where
             ));
         }
         let common_opening_source_len = opening_source_len
-            .checked_mul(opening_ring_dim / common_coefficient_count)
+            .checked_mul(opening_ring_dim / common_relation_witness_coeff_count)
             .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
         let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / common_coefficient_count)
+            .checked_mul(opening_ring_dim / common_relation_witness_coeff_count)
             .ok_or_else(|| AkitaError::InvalidSetup("stage-2 lane domain overflow".into()))?;
-        let live_x_cols = w.len() / common_coefficient_count;
+        let live_x_cols = w.len() / common_relation_witness_coeff_count;
         let col_bits = lane_capacity.trailing_zeros() as usize;
-        let ring_bits = common_coefficient_count.trailing_zeros() as usize;
+        let ring_bits = common_relation_witness_coeff_count.trailing_zeros() as usize;
         let digit_range_equality_low_variable_count =
             if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
                 opening_ring_dim.trailing_zeros() as usize
@@ -155,7 +156,7 @@ where
             rayon::join(prepare_relation_weight_factorization, || {
                 build_w_evals_compact(
                     w.shared_i8_digits(),
-                    common_coefficient_count,
+                    common_relation_witness_coeff_count,
                     1,
                     common_opening_source_len,
                 )
@@ -165,7 +166,7 @@ where
             let relation_weight_factorization = prepare_relation_weight_factorization();
             let w_compact = build_w_evals_compact(
                 w.shared_i8_digits(),
-                common_coefficient_count,
+                common_relation_witness_coeff_count,
                 1,
                 common_opening_source_len,
             );
@@ -181,7 +182,7 @@ where
         })?;
         if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
             return Err(AkitaError::InvalidSetup(
-                "prepared witness geometry disagrees with the common relation factorization".into(),
+                "prepared witness geometry disagrees with the joint relation-witness split".into(),
             ));
         }
 

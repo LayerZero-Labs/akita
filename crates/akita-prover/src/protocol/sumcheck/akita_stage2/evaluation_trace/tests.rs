@@ -19,12 +19,12 @@ const NUM_VARIABLES: usize = 16;
 fn fold_trace_table_at_point<E: FieldCore>(
     mut table: TraceTable<E>,
     live_len: usize,
-    common_coefficient_count: usize,
+    common_relation_witness_coeff_count: usize,
     point: &[E],
 ) -> E {
-    let ring_bits = common_coefficient_count.trailing_zeros() as usize;
-    let mut live_columns = live_len / common_coefficient_count;
-    let mut ring_len = common_coefficient_count;
+    let ring_bits = common_relation_witness_coeff_count.trailing_zeros() as usize;
+    let mut live_columns = live_len / common_relation_witness_coeff_count;
+    let mut ring_len = common_relation_witness_coeff_count;
     for &challenge in &point[..ring_bits] {
         table.fold_y(challenge);
         ring_len /= 2;
@@ -140,27 +140,28 @@ where
         .collect::<Vec<_>>();
     let expected_table = materialize_semantic_trace_oracle(&semantic_trace, output_scale);
 
-    for common_coefficient_count in [D, D / 2, D / 4] {
+    for common_relation_witness_coeff_count in [D, D / 2, D / 4] {
         let prepared = PreparedProverEvaluationTrace::new(
             &semantic_trace,
-            common_coefficient_count,
+            common_relation_witness_coeff_count,
             output_scale,
         )
         .unwrap();
-        let table = prepared.into_temporary_fold_table::<F>().unwrap();
-        if E::EXT_DEGREE == 1 && common_coefficient_count == D {
+        let table = prepared.into_stage2_fold_table::<F>().unwrap();
+        if E::EXT_DEGREE == 1 && common_relation_witness_coeff_count == D {
             assert!(matches!(&table, TraceTable::FieldSparse(_)));
         } else {
             assert!(matches!(&table, TraceTable::RingDense(_)));
         }
         assert_eq!(
             table.materialize_dense(
-                live_len / common_coefficient_count,
-                common_coefficient_count,
+                live_len / common_relation_witness_coeff_count,
+                common_relation_witness_coeff_count,
             ),
             expected_table,
         );
-        let folded = fold_trace_table_at_point(table, live_len, common_coefficient_count, &point);
+        let folded =
+            fold_trace_table_at_point(table, live_len, common_relation_witness_coeff_count, &point);
         assert_eq!(
             folded,
             output_scale * semantic_trace.evaluate_at_point(&point).unwrap()

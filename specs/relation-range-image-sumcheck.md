@@ -4,19 +4,20 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | active |
+| Status | implementation in progress; foundation/correction slice |
 | Branch | `quang/relation-range-image-rewrite` |
-| Base | PR #312 at `8a4ec9b140e23514b8e53e61b885774f8d8397d7` |
+| Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
 | Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
 
 ## Summary
 
-This PR reimplements the current direct/non-offloaded fused sum-check over the digit
-witness. It keeps the proof statement and wire unchanged while replacing the prover's
-x/y/layout branch matrix with one flat-address state machine and optimized LB2-LB6
-kernels. It also makes mixed ring dimensions, multiple commitment groups, and
-multi-chunk witness layouts first-class supported combinations.
+This document specifies the intended reimplementation of the direct/non-offloaded fused
+sum-check over the digit witness. The current PR head has landed checked geometry,
+relation-weight factorization, prepared evaluation-trace support, and direct mixed-role
+verifier differential coverage. It has **not** yet replaced the existing Stage 2 prover
+state machine, removed its x/y and `TraceTable` representations, or demonstrated genuine
+mixed-role proving end to end.
 
 The sum-check has three semantic terms:
 
@@ -59,9 +60,10 @@ basis.
 
 - One checked `RelationRangeImagePlan` and one `RelationRangeImageProver`.
 - One LSB-first flat Boolean address order for homogeneous and mixed dimensions.
-- Exact common-alpha factorization with
-  `g = min(d_a, d_b, d_d, d_out)`, where `d_out` is the outgoing opening ring
-  dimension that stores the Stage 2 witness.
+- Distinguish the relation-only alpha-reset boundary
+  `common_relation_coeff_count = min(d_a, d_b, d_d)` from the current joint
+  relation/witness address boundary
+  `common_relation_witness_coeff_count = min(common_relation_coeff_count, d_out)`.
 - Alpha/common-coordinate rounds before relation-lane rounds.
 - Mandatory evaluation trace represented by per-claim tensor factors, never a flat table.
 - One fused relation/evaluation-trace/range-image round reducer.
@@ -170,7 +172,9 @@ Current setup-contribution stage: unchanged proof position and wire
 |---|---|
 | balanced digit table | `digit_witness` |
 | pointwise `w(w+1)` table | `range_image` |
-| common `[1, alpha, ..., alpha^(g-1)]` factor | `common_alpha_factor` |
+| largest role-common alpha-reset block | `common_relation_coeff_count` |
+| current joint relation/witness low-address block | `common_relation_witness_coeff_count` |
+| alpha powers over the joint low-address block | `common_alpha_factor` |
 | high-lane linear-relation factor | `relation_lane_weights` |
 | prover opening-trace factors | `EvaluationTraceWeights` |
 | prepared trace contraction/fold state | `EvaluationTraceProverState` |
@@ -186,24 +190,40 @@ stage names for new internal objects.
 
 ## One flat address order
 
-All rounds bind the raw physical field-coefficient address LSB first. For nested role
-dimensions
+All rounds bind the raw physical field-coefficient address LSB first. Two counts must not
+be conflated:
 
 ```text
-g = min(d_a, d_b, d_d, d_out),
-k = log2(g),
-z = g * lane + coefficient,  0 <= coefficient < g.
+common_relation_coeff_count = min(d_a, d_b, d_d)
+common_relation_witness_coeff_count
+  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
+
+physical_address
+  = common_relation_witness_coeff_count * relation_lane
+    + coeff_within_common_block
+0 <= coeff_within_common_block < common_relation_witness_coeff_count
 ```
 
-The first `k` challenges are common coefficient coordinates. The rest address physical
-relation lanes and padded witness capacity. x/y is not a public protocol abstraction.
+The first `log2(common_relation_witness_coeff_count)` challenges bind the joint low
+coefficient block. The rest address physical relation lanes and padded witness capacity.
+x/y is not a public protocol abstraction.
+
+The outgoing dimension appears only because the current prover groups the flat witness
+into outgoing ring elements before Stage 2. Keeping the low block no wider than one such
+element preserves the outgoing opening domain, point order, and current Stage 3 handoff;
+a wider relation-only block could fold across outgoing column boundaries. The outgoing
+dimension is not used by the relation equation, role-local alpha resets, or matrix
+semantics. A verifier relation evaluator that does not consume that storage representation
+should derive its algebra from `common_relation_coeff_count`; if it splits the final point
+at the smaller joint count, that split is address geometry, not an additional relation
+contract.
 
 This Stage 2 storage split does not reinterpret the already established Stage 1 tau0
 point. The protocol's digit-range equality point retains its incoming geometry: the
 historical uniform current/outgoing case uses its column-then-ring permutation, while
 mixed-role or cross-level ring transitions retain the historical flat tau0 order. A
 descriptive `digit_range_equality_low_variable_count` records that independent boundary;
-it is not inferred from `k`.
+it is not inferred from the joint relation/witness variable count.
 
 `FlatBooleanDomain` checks the live prefix, padded power-of-two domain, point width, and
 LSB-first interpretation. `WitnessLayout` checks semantic group/chunk units inside that
@@ -226,24 +246,34 @@ integration rather than creating a split-brain range/security contract.
 
 ## Relation factorization
 
-For each role dimension `d_role = g * q`, write
+For each role dimension, write
 
 ```text
-alpha^(g * high_exponent + coefficient)
-  = alpha^coefficient * (alpha^g)^high_exponent.
+d_role = common_relation_witness_coeff_count * role_lane_count
+
+alpha^(common_relation_witness_coeff_count * high_exponent
+        + coeff_within_common_block)
+  = alpha^coeff_within_common_block
+      * (alpha^common_relation_witness_coeff_count)^high_exponent.
 ```
 
 The complete non-trace relation weight is
 
 ```text
-RelationWeight(g * lane + coefficient)
-  = CommonAlphaFactor(coefficient) * RelationLaneWeights(lane).
+RelationWeight(
+  common_relation_witness_coeff_count * relation_lane
+    + coeff_within_common_block
+)
+  = CommonAlphaFactor(coeff_within_common_block)
+      * RelationLaneWeights(relation_lane).
 ```
 
 Role resets, quotient denominators, row challenges, claim coefficients, group weights,
 setup amplitudes, and overlaps are additive contributions to high-lane weights. They do
-not break the common low factor. Mixed `128/64/32` therefore uses a common factor of
-length 32, not 128 and not a full-domain table.
+not break the common low factor. With outgoing dimension at least 32, mixed
+`128/64/32` therefore uses a common factor of length 32, not 128 and not a full-domain
+table. If the outgoing dimension is smaller, the current factorization may use the
+smaller joint block even though the relation-only boundary remains 32.
 
 The prover's relation compiler uses one closed emitter of checked relation events:
 
@@ -259,19 +289,20 @@ struct RelationWeightEvent<E> {
 The canonical compiler returns both factors together as
 `RelationWeightFactorization { common_alpha_factor, relation_lane_weights }`. The
 ring-switch handoff carries that object into Stage 2, which consumes both vectors; it
-does not discard and regenerate the alpha factor from the challenge. Until the atomic
-mixed-dimension prover cutover, only the uniform path consumes this representation and
-the pre-existing mixed path remains a dense transitional fallback.
+does not discard and regenerate the alpha factor from the challenge. The current
+consumer still uses the existing x/y-shaped Stage 2 state machine; the later cutover
+changes that storage/state representation, not the factorization contract.
 
-Every production event has `g`-aligned physical and exponent starts and preserves the
-low common coordinate. Role-local resets begin new aligned events. Overlaps use `+=`
+Every production event has physical and exponent starts aligned to
+`common_relation_witness_coeff_count` and preserves the low common coordinate. Role-local
+resets begin new aligned events. Overlaps use `+=`
 exactly once. Unsupported unaligned events return `AkitaError`; there is no production
 fringe or dense fallback. A dense exact-live vector exists only as a differential oracle.
 
 `contribution` distinguishes protocol-constraint arithmetic from setup-matrix arithmetic,
 so direct setup evaluation and a deferred complete setup claim cannot be mixed. All emitted
-exponents are consecutive; an exponent-pattern enum would add no information. The temporary
-dense and uniform-column consumers keep the current Stage 2 prover behavior while the fused
+exponents are consecutive; an exponent-pattern enum would add no information. The current
+dense test oracle and production factorized consumer preserve Stage 2 behavior while the fused
 prover is cut over. They consume these events and contain no second relation formula.
 
 The emitter explicitly covers E/D consistency, T/B, every per-chunk Z response, the
@@ -290,7 +321,7 @@ these contractions with leaf event replay.
 
 ## Binding order and relation arithmetic
 
-The `k` common alpha coordinates bind first. Relation lane weights are constant over each
+The joint common alpha coordinates bind first. Relation lane weights are constant over each
 low-coordinate block and are not folded during these rounds. For
 
 ```text
@@ -302,7 +333,7 @@ the local relation polynomial is `w(T) * a(T)`. Accumulate its coefficients over
 lane-aligned block, then multiply the totals by `relation_lane_weights[lane]` once. Do
 not multiply every endpoint separately.
 
-After challenge `k-1`, retain
+After the final joint common-coordinate challenge, retain
 
 ```text
 common_alpha_evaluation = MLE(CommonAlphaFactor, common_point).
@@ -371,8 +402,9 @@ digit, and inner-coordinate factors in closed form. It must not scan or material
 prover physical trace segments. The current Stage 2 prover compiles
 `EvaluationTraceWeights` into the prover-owned `PreparedProverEvaluationTrace`: one
 scaled factor per exact live opening block/digit, one shared source-inner vector per
-claim, and common-coordinate column ranges. A temporary bridge then preserves the
-pre-existing foldable `TraceTable` policy: scalar same-dimension claims use sparse
+claim, and common-coordinate column ranges. `into_stage2_fold_table` then adapts that
+support to the existing foldable `TraceTable` policy: scalar same-dimension claims use
+sparse
 columns, while extension or mixed-dimension claims use one exact-live flat dense table.
 The prepared support survives the fused prover cutover; the bridge and `TraceTable`
 disappear in Step 6. Deleted historical trace implementations may remain only under
@@ -391,7 +423,7 @@ The complication matrix is:
 |---|---|---|---|---|
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
-| mixed role dimensions | none | common factor uses global `g`; role subcolumns map into common lanes | each claim retains its own source ring split | remove the existing mixed-D/multichunk guard only after flat-oracle parity |
+| mixed role dimensions | none | common factor uses the joint relation/witness count; role subcolumns map into common lanes | each claim retains its own source ring split | remove the existing mixed-D/multichunk guard only after flat-oracle parity |
 | EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
@@ -420,7 +452,8 @@ chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
 - Stage 1's result and the Stage 2 range-image term see one flat digit witness. Group and
   chunk boundaries do not change `w(w+1)` or equality arithmetic.
 - The common-alpha scan is unchanged because every unit and role-subcolumn boundary is
-  aligned to a physical ring coefficient boundary and therefore to `g`.
+  aligned to a physical ring coefficient boundary and therefore to
+  `common_relation_witness_coeff_count`.
 - One transcript challenge folds every physical address. Chunks do not receive separate
   sum-check challenges.
 - The shared quotient-R suffix is one ordinary relation segment; it is not replicated by
@@ -500,24 +533,27 @@ cross-product.
 
 Recursive setup offload remains a separate cutover boundary. The current Stage 3 builder
 drops `log2(d_a)` Stage 2 coordinates before constructing the setup product, whereas a
-mixed relation binds only `log2(g)` common alpha coordinates before its remaining role
+mixed relation binds only `log2(common_relation_witness_coeff_count)` common alpha
+coordinates before its remaining role
 lanes. Reusing the uniform split would silently omit the A/B lane coordinates. Until the
 Stage 3 setup boundary is generalized to consume the checked common-coordinate count,
 mixed dimensions plus a deferred setup claim are rejected explicitly. The later setup
 boundary slice must remove that rejection and add direct/deferred parity across mixed
 dimensions, groups, and chunks; it must not reinterpret or pad the old `x/y` split.
 
-The final rule is unchanged by chunks and includes the outgoing witness geometry:
+The address rule is unchanged by chunks:
 
 ```text
-g = min(d_a, d_b, d_d, d_out).
+common_relation_coeff_count = min(d_a, d_b, d_d)
+common_relation_witness_coeff_count
+  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
 ```
 
-The relation algebra alone admits the larger factor
-`min(d_a, d_b, d_d)`, but Stage 2 uses its intersection with `d_out` so the factorized
-witness state is also aligned to the outgoing opening geometry. Role subcolumns map into
-`g`-sized common lanes inside each unit. Chunking changes which unit owns a block, not
-alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
+The relation algebra alone admits `common_relation_coeff_count`, but the current Stage 2
+prover uses the intersection with the outgoing dimension so its factorized witness state
+is also aligned to the outgoing witness representation. Role subcolumns map into
+`common_relation_witness_coeff_count`-sized lanes inside each unit. Chunking changes which
+unit owns a block, not alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
 `D_source` split
 
 ```text
@@ -576,9 +612,9 @@ drops superseded compact state. Individual trace/range factors may remain analyt
 longer; they do not create independent witness materialization depths.
 
 ```text
-compact common-coordinate prefix          rounds 0 .. r
-field common-coordinate suffix             rounds r .. k
-field relation-lane suffix                 rounds k .. num_variables
+compact common-coordinate prefix          rounds 0 .. materialization_round
+field common-coordinate suffix             rounds materialization_round .. common_variable_count
+field relation-lane suffix                 rounds common_variable_count .. num_variables
 ```
 
 ## Initial-round policy and optimization candidates
@@ -666,10 +702,18 @@ remap points, or dispatch by historical representation. Typed point views valida
 common, lane, and per-trace source splits.
 
 The relation evaluator is especially performance-sensitive and preserves the compact
-PR #312 implementation strategy. The common uniform case must not enter generic mixed-
-dimension or prover-event code. Mixed dimensions may use a separate succinct evaluator
-when their algebra requires it, but that implementation is still verifier-owned and may
-not make uniform verification pay for generality.
+PR #312 implementation strategy. There is one verifier-owned relation formula. Uniform
+dimensions may specialize prepared lane factors and matrix contractions locally, but
+they do not select a second top-level evaluator. Dispatch may depend on semantic role
+dimensions, never merely on whether the outgoing witness happens to use the same ring
+dimension.
+
+The current head does not yet meet that contract: `RelationMatrixEvaluator::eval_flat_at_point`
+owns the uniform formula while `mixed_relation::evaluate_mixed_relation_at_point` owns a
+second E/T/Z/setup/R formula and is also selected for uniform current roles followed by a
+different outgoing dimension. The verifier-stabilization slice must consolidate those
+formula owners before further prover work. Dense relation weights remain test oracles,
+not a production verifier fallback.
 
 Malformed dimensions, group/chunk layouts, claim offsets, point lengths, degrees, round
 counts, and proof-derived allocations return `AkitaError`. Verifier-reachable code adds no
@@ -690,33 +734,31 @@ geometry so the existing prover/verifier:
 No new numeric-stage wrapper or architecture lands; the later offload PR will delete that
 stage.
 
-## Implementation order
+## Checkpoint and gated implementation order
 
-1. Add/extend dense test oracles and freeze homogeneous/multigroup/multichunk/mixed-D
-   protocol epochs at the actual integration base.
-2. Make `WitnessDomain`, `WitnessLayout`, global claim order, and range-basis authority the
-   checked inputs to one `RelationRangeImagePlan`.
-3. Land the prover semantic relation emitter and compare compiled lane weights against
-   dense weights for every layout cross-product. **Corrective follow-up required:** the
-   landed event compiler remains prover-facing, while the verifier is restored to a
-   separately prepared succinct evaluator derived from the shared checked inputs. The
-   dense mixed prover consumer remains only until Step 6.
-4. Land prover `EvaluationTraceWeights` and consolidate root/multigroup/EOR preparation.
-   **Corrective follow-up required:** fully scaled coefficients and checked geometry remain
-   common, but the verifier receives a minimal closed-form claim evaluator rather than
-   prover segments or materialized trace storage. The existing prover `TraceTable` remains
-   solely as temporary fold storage consumed by the old Stage 2 state machine until Step 6.
-5. Land the one prover-owned prepared opening-support state and gate its construction
-   cost against the previous direct table preparation. Do not add an unused second
-   prover or a production selector.
-6. Implement and measure all three consumers—structured main scan, opening-support side
-   scan, and contraction-first—inside the compact-prefix/folded-suffix state-machine
+The current head has portions of the old Steps 1–5, but their ownership and support
+claims are not yet stable. Proceed in these reviewable slices:
+
+1. Correct names and documentation without changing proof behavior. In particular,
+   separate `common_relation_coeff_count` from
+   `common_relation_witness_coeff_count`, and record actual rather than intended support.
+2. Stabilize the verifier before touching the prover state machine: one semantic relation
+   evaluator, one succinct evaluation-trace evaluator, local uniform specializations,
+   malformed-input coverage, and PR #312 performance parity.
+3. Move prover-only relation events, trace factors, and fold storage out of `akita-types`.
+   Keep only checked protocol geometry and facts consumed by both sides in the common crate.
+4. Freeze dense-oracle, transcript, proof-byte, and end-to-end baselines across uniform,
+   outgoing-transition, mixed-role, group, and chunk fixtures. A parity test for a manually
+   constructed mixed evaluator is not evidence of mixed proving support.
+5. Only after Steps 1–4 pass review, implement and measure the prover consumers—structured
+   main scan, opening-support side scan, and contraction-first—inside the
+   compact-prefix/folded-suffix state-machine
    cutover. Keep the complete-stage winner for each actual geometry class and delete the
    losing candidate code and every selection switch before landing.
-7. Implement every per-basis candidate, select on complete-stage/end-to-end measurements,
+6. Implement every per-basis candidate, select on complete-stage/end-to-end measurements,
    and delete losers.
-8. Adapt the current setup boundary only as required by mixed/group/chunk geometry.
-9. Delete x/y, dense, sparse, two-round wrapper, old constructors, and duplicate
+7. Adapt the current setup boundary only as required by mixed/group/chunk geometry.
+8. Delete x/y, dense, sparse, two-round wrapper, old constructors, and duplicate
    serial/parallel implementations atomically.
 
 Additive oracle/test scaffolding may precede cutover. An unused production prover,
@@ -740,15 +782,15 @@ Verifier relation/trace preparation and final-point evaluators are verifier-owne
 retain only succinct state. A simple verifier evaluator may be a function rather than a
 state type; no type is introduced solely to mirror prover structure.
 
-For the verifier relation matrix, PR #312 is also the source-level baseline. The uniform
-preparation and evaluation path remains structurally recognizable in the diff: its
-prepared tensor/flat challenge evaluations, equality-window and affine-interval
-contractions, setup-plan reuse, and quotient-tail contraction are preserved rather than
-reimplemented under a new abstraction. Unchanged blocks are restored from the PR #312
-source rather than regenerated as equivalent code. Verifier changes relative to PR #312
-require a specific semantic justification—mixed dimensions, compact trace ownership,
-no-panic hardening, removal of dead state, or a strictly local simplification. Equivalent
-rewrites and naming-only churn are rejected even when their measured runtime is similar.
+For the verifier relation matrix, PR #312 is also the source-level baseline. Its prepared
+tensor/flat challenge evaluations, equality-window and affine-interval contractions,
+setup-plan reuse, and quotient-tail contraction remain the optimized primitives. The
+stabilized evaluator assembles the relation formula once and specializes those primitives
+for uniform dimensions; it does not retain the current uniform/mixed pair of complete
+formula implementations. Verifier changes relative to PR #312 require a specific semantic
+justification—mixed dimensions, compact trace ownership, no-panic hardening, removal of
+dead state, or a strictly local simplification. Equivalent rewrites and naming-only churn
+are rejected even when their measured runtime is similar.
 
 | Surface | Responsibility |
 |---|---|
@@ -828,7 +870,7 @@ measured/unmeasured duplicate, ad hoc timer, or strategy knob.
 | group/chunk layout is recomputed in several crates | `WitnessLayout` is the semantic authority; compiled runs are derived and compared once |
 | block equality resets at a chunk boundary | trace segments retain global block starts and uneven ranges |
 | per-chunk Z or shared R is counted incorrectly | closed relation events distinguish replicated Z units from one R suffix |
-| mixed-D multi-chunk silently uses the old guard/fallback | direct setup removes the guard only after dense-oracle parity; recursive setup remains an explicit rejection until Stage 3 binds `log2(g)` rather than `log2(d_a)` coordinates |
+| mixed-D multi-chunk silently uses the old guard/fallback | direct setup removes the guard only after dense-oracle parity; recursive setup remains an explicit rejection until Stage 3 consumes the checked joint relation/witness split rather than assuming `log2(d_a)` low coordinates |
 | role-specific decomposition bases imply unsupported range claims | one explicit global range-basis authority is shared with security/sizing |
 | trace is treated as optional | a nonterminal prover plan requires nonempty `EvaluationTraceWeights`, while the verifier requires nonempty `PreparedEvaluationTrace`; missing EOR scales become ones |
 | nominal fusion still reads the full witness twice | relation and range share one block reducer; trace side scan must have strictly smaller support and measured benefit |
@@ -859,7 +901,8 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
   minimal for their cost models.
 - Homogeneous direct proof bytes, transcript order, challenges, degree, final point, and
   final evaluation match the incoming epoch.
-- Common alpha coordinates bind first and relation lane state is at most `N/g`.
+- Common alpha coordinates bind first and relation lane state is at most
+  `N / common_relation_witness_coeff_count`.
 - No `ring_bits == 0` sentinel, dense mixed relation table, exact fringe, full trace table,
   trace remap, hot unit search, or x/y architecture remains.
 - Multigroup, multichunk, and their mixed-D cross-product prove and verify for every

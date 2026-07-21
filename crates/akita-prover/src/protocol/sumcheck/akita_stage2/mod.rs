@@ -1,17 +1,21 @@
 //! Stage-2 fused sumcheck prover/verifier for the Akita PCS.
 //!
-//! This stage views the committed witness as a Boolean table
-//! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> F`, where `x` indexes the padded
-//! witness columns and `y` indexes the coefficient inside a
-//! `D = 2^{ring_bits}`-dimensional ring element. Let `a(y)` be the multilinear
-//! extension of `alpha_evals_y = [1, alpha, ..., alpha^(D-1)]`, so on Boolean
-//! inputs `a(y) = alpha^{bin(y)}`. Let `M_alpha` be the ring-switch matrix
-//! after evaluating every ring entry at the transcript challenge `alpha`, and
-//! define the `tau1`-weighted row combination
+//! This stage views the committed witness as one flat LSB-first Boolean table.
+//! The current state machine splits its point after
+//! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
+//! index the largest coefficient block aligned for both every relation role and
+//! the outgoing witness ring representation; the remaining coordinates index
+//! relation lanes and padded witness capacity. The legacy `ring_bits`, `col_bits`,
+//! x, and y implementation names refer only to that point partition.
 //!
-//! `m_tau1(x) = sum_i eq(tau1, i) * M_alpha(i, x)`.
+//! Let `common_alpha` be the multilinear extension of
+//! `[1, alpha, ..., alpha^(common_relation_witness_coeff_count - 1)]`. Let the
+//! relation matrix be evaluated at the transcript challenge `alpha`, and define
+//! its `tau1`-weighted relation-lane combination
 //!
-//! The Boolean table stored in `relation_matrix_col_evals` is exactly `x -> m_tau1(x)`.
+//! `relation_lane_weight(lane) = sum_i eq(tau1, i) * M_alpha(i, lane)`.
+//!
+//! The table stored in `relation_matrix_col_evals` is exactly this lane weight.
 //!
 //! If
 //!
@@ -23,7 +27,9 @@
 //! then the linear relation claim over physical quotient rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
-//! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
+//! `               = sum_address digit_witness(address)`
+//! `                   * common_alpha(coeff_within_common_block(address))`
+//! `                   * relation_lane_weight(relation_lane(address))`.
 //!
 //! There is no public-output `y_ring` row: the fold-opening trace check is
 //! internalized as the `EvaluationTrace` relation row (last padded logical row),
@@ -33,7 +39,7 @@
 //! opening target enters the Stage-2 claim through EvaluationTrace.
 //!
 //! The fused EvaluationTrace term binds the committed fold witness to the public
-//! opening through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only
+//! opening through a fixed, public multilinear `TraceWeight(address)` (nonzero only
 //! on the `e_hat` digit segment). Its input contribution is
 //! `eq(tau1, EvaluationTrace_row_index) * trace_target`, where `trace_target` is
 //! the incoming opening claim (or the EOR final claim on extension-opening-reduction
@@ -51,14 +57,19 @@
 //! exact identity established by this sumcheck is
 //!
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
-//! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
-//! `           + w(x, y) * a(y) * m_tau1(x)`
-//! `           + eq(tau1, EvaluationTrace_row_index) * w(x, y) * TraceWeight(x, y) ]`.
+//! `sum_address [ gamma * eq(stage1_point, address)`
+//! `                  * digit_witness(address) * (digit_witness(address) + 1)`
+//! `           + digit_witness(address)`
+//! `               * common_alpha(coeff_within_common_block(address))`
+//! `               * relation_lane_weight(relation_lane(address))`
+//! `           + eq(tau1, EvaluationTrace_row_index)`
+//! `               * digit_witness(address) * TraceWeight(address) ]`.
 //!
-//! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
+//! After all rounds, at the complete flat point `r_stage2`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`
+//! `  + w(r_stage2) * common_alpha(common_point)`
+//! `      * relation_lane_weight(lane_point)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses

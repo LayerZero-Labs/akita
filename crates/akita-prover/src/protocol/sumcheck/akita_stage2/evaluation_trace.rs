@@ -14,13 +14,13 @@ struct PreparedOpeningSupport<E: FieldCore> {
 ///
 /// Block, claim, and digit scalars are compiled once. The source-coordinate trace stays
 /// factored so the Stage 2 cutover can contract it directly after initial challenges.
-/// Until that cutover, `into_temporary_fold_table` is the sole bridge to the existing
+/// Until that cutover, `into_stage2_fold_table` is the sole bridge to the existing
 /// foldable trace storage.
 pub(crate) struct PreparedProverEvaluationTrace<E: FieldCore> {
     opening_support: Vec<PreparedOpeningSupport<E>>,
     source_inner_traces: Vec<std::sync::Arc<[E]>>,
     live_column_count: usize,
-    common_coefficient_count: usize,
+    common_relation_witness_coeff_count: usize,
     all_source_rings_match_common: bool,
 }
 
@@ -31,26 +31,26 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         name = "PreparedProverEvaluationTrace::new",
         fields(
             terms = weights.terms().len(),
-            common_coefficient_count,
+            common_relation_witness_coeff_count,
             physical_field_len = weights.physical_field_len()
         )
     )]
     pub(crate) fn new(
         weights: &EvaluationTraceWeights<E>,
-        common_coefficient_count: usize,
+        common_relation_witness_coeff_count: usize,
         output_scale: E,
     ) -> Result<Self, AkitaError> {
-        if common_coefficient_count == 0
-            || !common_coefficient_count.is_power_of_two()
+        if common_relation_witness_coeff_count == 0
+            || !common_relation_witness_coeff_count.is_power_of_two()
             || !weights
                 .physical_field_len()
-                .is_multiple_of(common_coefficient_count)
+                .is_multiple_of(common_relation_witness_coeff_count)
         {
             return Err(AkitaError::InvalidSetup(
                 "evaluation-trace common-coordinate geometry is malformed".into(),
             ));
         }
-        let live_column_count = weights.physical_field_len() / common_coefficient_count;
+        let live_column_count = weights.physical_field_len() / common_relation_witness_coeff_count;
         let opening_support_count =
             weights
                 .terms()
@@ -82,14 +82,15 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             let source_ring_dimension = term.source_ring_dimension();
             if source_ring_dimension == 0
                 || !source_ring_dimension.is_power_of_two()
-                || !source_ring_dimension.is_multiple_of(common_coefficient_count)
+                || !source_ring_dimension.is_multiple_of(common_relation_witness_coeff_count)
                 || term.inner_trace().len() != source_ring_dimension
             {
                 return Err(AkitaError::InvalidSetup(
                     "evaluation-trace source ring is incompatible with Stage 2".into(),
                 ));
             }
-            all_source_rings_match_common &= source_ring_dimension == common_coefficient_count;
+            all_source_rings_match_common &=
+                source_ring_dimension == common_relation_witness_coeff_count;
             let block_weights = basis_weights_prefix(
                 term.block_opening_point(),
                 term.block_opening_basis(),
@@ -144,13 +145,14 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                                     "evaluation-trace digit address overflow".into(),
                                 )
                             })?;
-                        if !coefficient_start.is_multiple_of(common_coefficient_count) {
+                        if !coefficient_start.is_multiple_of(common_relation_witness_coeff_count) {
                             return Err(AkitaError::InvalidSetup(
                                 "evaluation-trace support is not common-coordinate aligned".into(),
                             ));
                         }
-                        let first_column = coefficient_start / common_coefficient_count;
-                        let column_count = source_ring_dimension / common_coefficient_count;
+                        let first_column = coefficient_start / common_relation_witness_coeff_count;
+                        let column_count =
+                            source_ring_dimension / common_relation_witness_coeff_count;
                         let support_end =
                             first_column.checked_add(column_count).ok_or_else(|| {
                                 AkitaError::InvalidSetup(
@@ -180,7 +182,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             opening_support,
             source_inner_traces,
             live_column_count,
-            common_coefficient_count,
+            common_relation_witness_coeff_count,
             all_source_rings_match_common,
         })
     }
@@ -192,14 +194,14 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
     /// support directly.
     #[tracing::instrument(
         skip_all,
-        name = "PreparedProverEvaluationTrace::into_temporary_fold_table",
+        name = "PreparedProverEvaluationTrace::into_stage2_fold_table",
         fields(
             opening_support = self.opening_support.len(),
-            common_coefficient_count = self.common_coefficient_count,
+            common_relation_witness_coeff_count = self.common_relation_witness_coeff_count,
             live_column_count = self.live_column_count
         )
     )]
-    pub(crate) fn into_temporary_fold_table<F>(self) -> Result<TraceTable<E>, AkitaError>
+    pub(crate) fn into_stage2_fold_table<F>(self) -> Result<TraceTable<E>, AkitaError>
     where
         F: FieldCore,
         E: ExtField<F>,
@@ -208,11 +210,9 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         if !sparse {
             let physical_field_len = self
                 .live_column_count
-                .checked_mul(self.common_coefficient_count)
+                .checked_mul(self.common_relation_witness_coeff_count)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "evaluation-trace temporary table length overflow".into(),
-                    )
+                    AkitaError::InvalidSetup("evaluation-trace fold table length overflow".into())
                 })?;
             let mut dense = vec![E::zero(); physical_field_len];
             for support in self.opening_support {
@@ -222,17 +222,17 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                     .ok_or(AkitaError::InvalidProof)?;
                 let coefficient_start = support
                     .first_column
-                    .checked_mul(self.common_coefficient_count)
+                    .checked_mul(self.common_relation_witness_coeff_count)
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup(
-                            "evaluation-trace temporary table address overflow".into(),
+                            "evaluation-trace fold table address overflow".into(),
                         )
                     })?;
                 let coefficient_end = coefficient_start
                     .checked_add(source_inner_trace.len())
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup(
-                            "evaluation-trace temporary table range overflow".into(),
+                            "evaluation-trace fold table range overflow".into(),
                         )
                     })?;
                 let destination = dense
@@ -252,7 +252,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 .get(support.inner_trace_index)
                 .ok_or(AkitaError::InvalidProof)?;
             for (lane, inner_trace) in source_inner_trace
-                .chunks_exact(self.common_coefficient_count)
+                .chunks_exact(self.common_relation_witness_coeff_count)
                 .enumerate()
             {
                 columns.push(TraceSparseColumn {
@@ -267,7 +267,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
         Ok(TraceTable::field_sparse(
             columns,
             self.live_column_count,
-            self.common_coefficient_count,
+            self.common_relation_witness_coeff_count,
         ))
     }
 }

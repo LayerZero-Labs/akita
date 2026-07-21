@@ -666,7 +666,7 @@ where
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
         source_ring_dimension = ring_d,
-        stage2_common_coefficient_count = 1usize << rs.ring_bits,
+        common_relation_witness_coeff_count = 1usize << rs.ring_bits,
     )
     .entered();
     let trace_compact = dispatch_for_field!(
@@ -690,7 +690,7 @@ where
                 1usize << rs.ring_bits,
                 evaluation_trace_weight,
             )?
-            .into_temporary_fold_table::<F>()
+            .into_stage2_fold_table::<F>()
         }
     )?;
     drop(trace_preparation_span);
