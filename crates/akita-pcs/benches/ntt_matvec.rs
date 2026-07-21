@@ -209,10 +209,10 @@ fn bench_equal_output_shape<const D: usize>(
 fn bench_rank_ring_dim(c: &mut Criterion) {
     let mut group = c.benchmark_group("ntt_matvec_q128/rank_ring_dim/w128");
     for rank in RANKS {
-        bench_shape::<32>(&mut group, rank, FIXED_WIDTH);
         bench_shape::<64>(&mut group, rank, FIXED_WIDTH);
         bench_shape::<128>(&mut group, rank, FIXED_WIDTH);
         bench_shape::<256>(&mut group, rank, FIXED_WIDTH);
+        bench_shape::<512>(&mut group, rank, FIXED_WIDTH);
     }
     group.finish();
 }
@@ -226,18 +226,20 @@ fn bench_width(c: &mut Criterion) {
 }
 
 fn bench_equal_output(c: &mut Criterion) {
-    let mut fixed_output = c.benchmark_group("ntt_matvec_q128/equal_output/output256");
+    let mut fixed_output = c.benchmark_group("ntt_matvec_q128/equal_output/output512");
     for width in WIDTHS {
-        bench_equal_output_shape::<64>(&mut fixed_output, 4, width);
-        bench_equal_output_shape::<128>(&mut fixed_output, 2, width);
-        bench_equal_output_shape::<256>(&mut fixed_output, 1, width);
+        bench_equal_output_shape::<64>(&mut fixed_output, 8, width);
+        bench_equal_output_shape::<128>(&mut fixed_output, 4, width);
+        bench_equal_output_shape::<256>(&mut fixed_output, 2, width);
+        bench_equal_output_shape::<512>(&mut fixed_output, 1, width);
     }
     fixed_output.finish();
 
-    let mut equal_io = c.benchmark_group("ntt_matvec_q128/equal_io/input65536_output256");
-    bench_equal_output_shape::<64>(&mut equal_io, 4, 1024);
-    bench_equal_output_shape::<128>(&mut equal_io, 2, 512);
-    bench_equal_output_shape::<256>(&mut equal_io, 1, 256);
+    let mut equal_io = c.benchmark_group("ntt_matvec_q128/equal_io/input65536_output512");
+    bench_equal_output_shape::<64>(&mut equal_io, 8, 1024);
+    bench_equal_output_shape::<128>(&mut equal_io, 4, 512);
+    bench_equal_output_shape::<256>(&mut equal_io, 2, 256);
+    bench_equal_output_shape::<512>(&mut equal_io, 1, 128);
     equal_io.finish();
 }
 

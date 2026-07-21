@@ -103,21 +103,22 @@ cargo bench -p akita-pcs --bench ntt_matvec -- equal_output
 cargo bench -p akita-pcs --bench ntt_matvec -- equal_io
 ```
 
-The first group sweeps ring degrees 32, 64, 128, and 256 and output ranks 1,
+The first group sweeps ring degrees 64, 128, 256, and 512 and output ranks 1,
 2, 4, and 8 at width 128. The second sweeps widths 128 through 1024 at D64 and
 rank 4. Every shape includes the current i8/L8 prover path and unified i16
 L8/L10/L11 paths. Labels state whether the exact i16 path uses only the base
 CRT residues or also the optional i16 tail.
 
-The equal-output group compares D64/rank-4, D128/rank-2, and D256/rank-1 at
-widths 128, 256, 512, and 1024. All three return 256 field coefficients, but
-their scalar input sizes differ because each input ring contains D
-coefficients. The equal-I/O group compares D64/rank-4/width-1024,
-D128/rank-2/width-512, and D256/rank-1/width-256. Those shapes fix both the
-input at 65,536 coefficients and the output at 256 coefficients. Both groups
-compare i8 and i16 at common bases L2 through L8 and include i16-only L10 and
-L11 cases. Criterion uses 10 samples, a 200 ms warmup, and a 1 second
-measurement window for these large matrices.
+The equal-output group compares D64/rank-8, D128/rank-4, D256/rank-2, and
+D512/rank-1 at widths 128, 256, 512, and 1024. All four return 512 field
+coefficients, but their scalar input sizes differ because each input ring
+contains D coefficients. The equal-I/O group compares
+D64/rank-8/width-1024, D128/rank-4/width-512, D256/rank-2/width-256, and
+D512/rank-1/width-128. Those shapes fix both the input at 65,536 coefficients
+and the output at 512 coefficients. Both groups compare i8 and i16 at common
+bases L2 through L8 and include i16-only L10 and L11 cases. Criterion uses 10
+samples, a 200 ms warmup, and a 1 second measurement window for these large
+matrices.
 
 Prepared-cache construction is not timed. The measured work includes digit
 validation and transformation, pointwise accumulation, inverse transforms,
@@ -131,3 +132,28 @@ cargo bench -p akita-pcs --bench ntt_matvec -- d64_r4_w128
 
 These are kernel measurements, not protocol timings. Use the profile harness
 above for end-to-end proof measurements.
+
+### Interpret ring-degree scaling
+
+Let `n = width * D` be the scalar input dimension and `m = rank * D` be the
+scalar output dimension. An unstructured dense matvec costs `O(m * n)`. Akita
+represents the matrix as `rank * width` negacyclic ring blocks. With a prepared
+matrix, the hot NTT matvec has the approximate per-residue cost
+
+```text
+input transforms:  n * log D
+pointwise products: m * n / D
+output transforms: m * log D
+```
+
+The structural saving is the `1 / D` factor in the pointwise term. A ring
+column count of `width` is not a scalar width: holding it fixed while raising
+D also raises `n`. Use `equal_output` to measure that growing-input scenario.
+Use `equal_io` to hold `m` and `n` fixed and expose the actual structure versus
+transform tradeoff.
+
+Larger D is useful because it reduces both pointwise work and prepared-matrix
+storage. It is not free: transform work grows with `log D`, the exact CRT bound
+grows with D, and fewer independent ring rows and columns can reduce
+parallelism or cache efficiency. The fastest supported D is therefore a
+measured balance, not necessarily the largest available degree.
