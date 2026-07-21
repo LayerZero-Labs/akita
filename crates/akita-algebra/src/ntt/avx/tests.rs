@@ -264,6 +264,27 @@ fn scalar_inverse_ntt_i16<const D: usize>(
     }
 }
 
+fn assert_i16_mont_arrays_eq_mod<const D: usize>(
+    actual: &[MontCoeff<i16>; D],
+    expected: &[MontCoeff<i16>; D],
+    prime: NttPrime<i16>,
+    phase: &str,
+) {
+    // Montgomery coefficients are range-bounded residues, not unique raw
+    // representatives. SIMD and scalar butterflies may differ by one modulus.
+    for (i, (actual, expected)) in actual.iter().zip(expected).enumerate() {
+        assert!(
+            actual.raw() > -prime.p && actual.raw() < prime.p,
+            "{phase} AVX2 output outside (-p, p) at {i}: {actual:?}"
+        );
+        assert_eq!(
+            prime.to_canonical(*actual),
+            prime.to_canonical(*expected),
+            "{phase} mismatch modulo p at {i}: avx2={actual:?}, scalar={expected:?}"
+        );
+    }
+}
+
 fn scalar_forward_ntt_cyclic_i32<const D: usize>(
     a: &mut [MontCoeff<i32>; D],
     prime: NttPrime<i32>,
@@ -367,12 +388,12 @@ fn avx2_ntt_i16_transforms_match_scalar() {
     let mut scalar = input;
     unsafe { forward_ntt_i16(&mut avx, prime, &tw) };
     scalar_forward_ntt_i16(&mut scalar, prime, &tw);
-    assert_eq!(avx, scalar);
+    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "forward");
 
     unsafe { inverse_ntt_i16(&mut avx, prime, &tw) };
     scalar_inverse_ntt_i16(&mut scalar, prime, &tw);
-    assert_eq!(avx, scalar);
-    assert_eq!(avx, input);
+    assert_i16_mont_arrays_eq_mod(&avx, &scalar, prime, "inverse");
+    assert_i16_mont_arrays_eq_mod(&avx, &input, prime, "round-trip");
 }
 
 #[test]
