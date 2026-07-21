@@ -1,17 +1,21 @@
-//! Stage-2 fused sumcheck prover/verifier for the Akita PCS.
+//! Fused relation, evaluation-trace, and range-image sumcheck prover.
 //!
-//! This stage views the committed witness as a Boolean table
-//! `w : {0,1}^{col_bits} x {0,1}^{ring_bits} -> F`, where `x` indexes the padded
-//! witness columns and `y` indexes the coefficient inside a
-//! `D = 2^{ring_bits}`-dimensional ring element. Let `a(y)` be the multilinear
-//! extension of `alpha_evals_y = [1, alpha, ..., alpha^(D-1)]`, so on Boolean
-//! inputs `a(y) = alpha^{bin(y)}`. Let `M_alpha` be the ring-switch matrix
-//! after evaluating every ring entry at the transcript challenge `alpha`, and
-//! define the `tau1`-weighted row combination
+//! This sumcheck views the committed witness as one flat LSB-first Boolean table.
+//! The current state machine splits its point after
+//! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
+//! index the largest coefficient block aligned for both every relation role and
+//! the outgoing witness ring representation; the remaining coordinates index
+//! relation lanes and padded witness capacity. Kernel names use only coefficient
+//! and lane geometry.
 //!
-//! `m_tau1(x) = sum_i eq(tau1, i) * M_alpha(i, x)`.
+//! Let `common_alpha` be the multilinear extension of
+//! `[1, alpha, ..., alpha^(common_relation_witness_coeff_count - 1)]`. Let the
+//! relation matrix be evaluated at the transcript challenge `alpha`, and define
+//! its `tau1`-weighted relation-lane combination
 //!
-//! The Boolean table stored in `relation_matrix_col_evals` is exactly `x -> m_tau1(x)`.
+//! `relation_lane_weight(lane) = sum_i eq(tau1, i) * M_alpha(i, lane)`.
+//!
+//! The table stored in `relation_lane_weights` is exactly this lane weight.
 //!
 //! If
 //!
@@ -23,7 +27,9 @@
 //! then the linear relation claim over physical quotient rows is
 //!
 //! `relation_claim = sum_i eq(tau1, i) * y_alpha[i]`
-//! `               = sum_{x,y} w(x, y) * a(y) * m_tau1(x)`.
+//! `               = sum_address digit_witness(address)`
+//! `                   * common_alpha(coeff_within_common_block(address))`
+//! `                   * relation_lane_weight(relation_lane(address))`.
 //!
 //! There is no public-output `y_ring` row: the fold-opening trace check is
 //! internalized as the `EvaluationTrace` relation row (last padded logical row),
@@ -33,7 +39,7 @@
 //! opening target enters the Stage-2 claim through EvaluationTrace.
 //!
 //! The fused EvaluationTrace term binds the committed fold witness to the public
-//! opening through a fixed, public multilinear `TraceWeight(x, y)` (nonzero only
+//! opening through a fixed, public multilinear `TraceWeight(address)` (nonzero only
 //! on the `e_hat` digit segment). Its input contribution is
 //! `eq(tau1, EvaluationTrace_row_index) * trace_target`, where `trace_target` is
 //! the incoming opening claim (or the EOR final claim on extension-opening-reduction
@@ -51,21 +57,26 @@
 //! exact identity established by this sumcheck is
 //!
 //! `gamma * range_image_evaluation + relation_claim + eq(tau1, EvaluationTrace_row_index) * trace_target =`
-//! `sum_{x,y} [ gamma * eq(stage1_point, (x, y)) * w(x, y) * (w(x, y) + 1)`
-//! `           + w(x, y) * a(y) * m_tau1(x)`
-//! `           + eq(tau1, EvaluationTrace_row_index) * w(x, y) * TraceWeight(x, y) ]`.
+//! `sum_address [ gamma * eq(stage1_point, address)`
+//! `                  * digit_witness(address) * (digit_witness(address) + 1)`
+//! `           + digit_witness(address)`
+//! `               * common_alpha(coeff_within_common_block(address))`
+//! `               * relation_lane_weight(relation_lane(address))`
+//! `           + eq(tau1, EvaluationTrace_row_index)`
+//! `               * digit_witness(address) * TraceWeight(address) ]`.
 //!
-//! After all rounds, at `r_stage2 = (r_x, r_y)`, the verifier checks
+//! After all rounds, at the complete flat point `r_stage2`, the verifier checks
 //!
 //! `gamma * eq(stage1_point, r_stage2) * w(r_stage2) * (w(r_stage2) + 1)`
-//! `  + w(r_stage2) * a(r_y) * m_tau1(r_x)`
+//! `  + w(r_stage2) * common_alpha(common_point)`
+//! `      * relation_lane_weight(lane_point)`
 //! `  + eq(tau1, EvaluationTrace_row_index) * w(r_stage2) * TraceWeight(r_stage2)`,
 //!
 //! exactly the oracle returned by `expected_output_claim()`. The prover fuses
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use super::fold_full_prefix_pair;
+use super::fold_full_prefix_pair as fold_folded_lane_pair;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,
@@ -79,16 +90,15 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::{
     fold_evals_in_place, reduce_signed_accum, CompactPairFoldLut, SumcheckInstanceProver, UniPoly,
 };
-use akita_types::TraceTable;
 use std::mem;
 use std::time::Instant;
 
-enum WTable<E: FieldCore> {
-    Compact(std::sync::Arc<[i8]>),
-    Full(Vec<E>),
+enum WitnessState<E: FieldCore> {
+    CompactPrefix(std::sync::Arc<[i8]>),
+    FoldedSuffix(Vec<E>),
 }
 
-struct Stage2TwoRoundPrefix<E: FieldCore> {
+struct TwoRoundCompactPrefix<E: FieldCore> {
     skip_state: Stage2BivariateSkipState<E>,
     first_challenge: Option<E>,
 }
@@ -108,6 +118,13 @@ fn coeffs_to_poly<E: FieldCore>(coeffs: [E; 3]) -> UniPoly<E> {
     let mut coeffs = vec![coeffs[0], coeffs[1], coeffs[2]];
     trim_trailing_zeros(&mut coeffs);
     UniPoly::from_coeffs(coeffs)
+}
+
+#[inline]
+fn fold_two_round_quad<E: FieldCore>(v00: E, v10: E, v01: E, v11: E, r0: E, r1: E) -> E {
+    let x0 = v00 + r0 * (v10 - v00);
+    let x1 = v01 + r0 * (v11 - v01);
+    x0 + r1 * (x1 - x0)
 }
 
 #[inline]
@@ -202,31 +219,32 @@ pub(crate) fn accumulate_relation_coeffs_signed<E: FieldCore + HasUnreducedOps>(
     accum_small_signed::<E>(rel, 4, dp, dw);
 }
 
-/// Stage-2 fused virtual-claim + relation sumcheck prover.
+/// Fused relation, evaluation-trace, and range-image sumcheck prover.
 ///
-/// Holds a single `w_table` shared by both halves of stage 2. The virtual half
-/// is pre-weighted by `batching_coeff` through `split_eq`, so the round
-/// polynomial is:
+/// Holds one witness state shared by the range-image, relation, and evaluation-trace
+/// terms. The compact prefix is materialized once into the folded field suffix.
+/// The range-image term is pre-weighted by `batching_coeff` through `split_eq`, so
+/// the round polynomial is:
 /// `batching_coeff * virtual_round(t) + relation_round(t)`.
-pub struct AkitaStage2Prover<E: FieldCore> {
-    w_table: WTable<E>,
+pub struct RelationRangeImageProver<E: FieldCore> {
+    witness_state: WitnessState<E>,
     b: usize,
     batching_coeff: E,
     range_image_evaluation: E,
     input_claim: E,
     split_eq: GruenSplitEq<E>,
 
-    alpha_compact: Vec<E>,
-    relation_matrix_col_evals_compact: Vec<E>,
-    trace_table: Option<TraceTable<E>>,
-    live_x_cols: usize,
-    col_bits: usize,
+    common_alpha_factor: Vec<E>,
+    relation_lane_weights: Vec<E>,
+    evaluation_trace: PreparedProverEvaluationTrace<E>,
+    live_lane_count: usize,
+    lane_bits: usize,
     num_vars: usize,
     relation_trace_claim: E,
     prev_norm_claim: E,
     prev_norm_poly: Option<UniPoly<E>>,
-    prefix_r_stage1: Option<Vec<E>>,
-    two_round_prefix: Option<Stage2TwoRoundPrefix<E>>,
+    compact_prefix_stage1_point: Option<Vec<E>>,
+    deferred_compact_prefix: Option<TwoRoundCompactPrefix<E>>,
     cached_round_poly: Option<UniPoly<E>>,
 
     scan_time_total: f64,
@@ -234,18 +252,21 @@ pub struct AkitaStage2Prover<E: FieldCore> {
     rounds_completed: usize,
 }
 
+mod coefficient_prefix;
+mod coefficient_round_fold;
+mod compact_prefix;
 mod dense_terms;
+mod evaluation_trace;
+mod lane_prefix;
 mod lifecycle;
-mod round2_prefix;
 mod round_flow;
-mod x_prefix;
-mod y_prefix;
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
-    // Fused relation (`alpha * m`) + optional trace-weight addend for one witness
-    // corner. `witness_idx0/1` are flat indices into the Boolean `w` table
-    // (`col * y_len + ring_slot`). Y-round kernels pass `2*j` and
-    // `2*j+1`; x-prefix fusion passes column-relative indices directly.
+pub(crate) use evaluation_trace::{build_evaluation_trace_weights, PreparedProverEvaluationTrace};
+
+impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver<E> {
+    // Fused relation (`alpha * m`) + trace-weight addend for one witness
+    // corner. `witness_idx0` is the first flat index of an adjacent pair in
+    // the Boolean `w` table (`lane * coeff_count + coefficient`).
 
     #[inline]
     #[allow(clippy::too_many_arguments)]
@@ -255,16 +276,14 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w0: E,
         dw: E,
         witness_idx0: usize,
-        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
-        accumulate_relation_coeffs(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs(rel, w0, dw, t0, t1);
-        }
+        let coeff_count = self.common_alpha_factor.len();
+        let (t0, t1) = self
+            .evaluation_trace
+            .pair_from_flat_index(witness_idx0, coeff_count);
+        accumulate_relation_coeffs(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]
@@ -275,23 +294,22 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> AkitaStage2Prover<E> {
         w0: i64,
         dw: i64,
         witness_idx0: usize,
-        witness_idx1: usize,
         p0: E,
         p1: E,
     ) {
-        accumulate_relation_coeffs_signed(rel, w0, dw, p0, p1);
-        if let Some(trace) = &self.trace_table {
-            let y_len = self.alpha_compact.len();
-            let (t0, t1) = trace.pair_flat(witness_idx0, witness_idx1, y_len);
-            accumulate_relation_coeffs_signed(rel, w0, dw, t0, t1);
-        }
+        let coeff_count = self.common_alpha_factor.len();
+        let (t0, t1) = self
+            .evaluation_trace
+            .pair_from_flat_index(witness_idx0, coeff_count);
+        accumulate_relation_coeffs_signed(rel, w0, dw, p0 + t0, p1 + t1);
     }
 
     #[inline]
-    pub(super) fn fold_trace_for_round(&mut self, r: E, folding_x_round: bool) {
-        if let Some(trace) = self.trace_table.as_mut() {
-            let y_len = self.alpha_compact.len();
-            trace.fold_for_w_update(self.live_x_cols, y_len, r, folding_x_round);
+    pub(super) fn fold_evaluation_trace_for_current_round(&mut self, challenge: E) {
+        if self.in_coefficient_round() {
+            self.evaluation_trace.fold_coefficients(challenge);
+        } else {
+            self.evaluation_trace.fold_lanes(challenge);
         }
     }
 }

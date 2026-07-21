@@ -102,3 +102,18 @@ fn rejects_non_power_of_two_role_dimension() {
         Err(AkitaError::InvalidSetup(_))
     ));
 }
+
+#[test]
+fn relation_and_witness_common_counts_are_distinct_contracts() {
+    let uniform_roles = CommitmentRingDims::uniform(128);
+    assert_eq!(uniform_roles.common_relation_coeff_count(), 128);
+    assert_eq!(uniform_roles.common_relation_witness_coeff_count(64), 64);
+
+    let mixed_roles = CommitmentRingDims {
+        inner: 128,
+        outer: 64,
+        opening: 32,
+    };
+    assert_eq!(mixed_roles.common_relation_coeff_count(), 32);
+    assert_eq!(mixed_roles.common_relation_witness_coeff_count(16), 16);
+}

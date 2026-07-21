@@ -193,7 +193,6 @@ where
         false,
         transcript,
     )?;
-    let reduction_check = root_eor.reduction_challenges;
     let prepared_points = root_eor.prepared_points;
     let eor_trace_final = root_eor.final_relation;
     let prepared_point = if let Some(prepared) = prepared_without_eor.as_ref() {
@@ -206,38 +205,24 @@ where
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    let trace_block_opening: Vec<E> = if let Some(rho) = &reduction_check {
-        let protocol_point =
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
-            })?;
-        root_trace_block_opening::<E>(
-            &protocol_point,
-            root_lp.num_positions_per_block,
-            root_lp.num_live_blocks,
-            d_a.trailing_zeros() as usize,
-        )?
-    } else {
-        root_trace_block_opening::<E>(
-            shared_opening_point,
-            root_lp.num_positions_per_block,
-            root_lp.num_live_blocks,
-            d_a.trailing_zeros() as usize,
-        )?
-    };
     let ordinary_trace_eval_target =
         opening_batch.batched_eval_target(&row_coefficients, openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
-    let trace_claim_scales = eor_trace_final
+    let claim_reduction_factor = eor_trace_final
         .as_ref()
         .map(|(_, factors_by_point)| {
-            let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
+            factors_by_point
+                .first()
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
         })
-        .transpose()?;
+        .transpose()?
+        .unwrap_or_else(E::one);
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     // Chunked levels commit a wider (replicated-ẑ) next witness; size it
     // with the per-level chunk count (`num_chunks = 1` is unchanged).
@@ -265,7 +250,7 @@ where
         row_coefficients,
         group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
         group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
-        witness_len,
+        w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
@@ -274,12 +259,10 @@ where
             next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        trace_prepared_points: Some(vec![prepared_point.clone()]),
-        trace_block_opening: Some(trace_block_opening),
-        trace_eval_target,
-        trace_eval_scale: E::one(),
-        trace_claim_scales,
-        trace_basis: basis,
+        evaluation_trace_points: vec![prepared_point.clone()],
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: basis,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }
@@ -396,15 +379,6 @@ where
     let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
-    // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
-    // trace-weight table that multi-group roots evaluate.
-    let trace_block_opening = root_trace_block_opening::<E>(
-        shared_opening_point,
-        root_lp.num_positions_per_block,
-        root_lp.num_live_blocks,
-        alpha_bits,
-    )?;
-
     let group_ring_opening_points = prepared_points
         .iter()
         .map(|prepared| prepared.ring_opening_point.clone())
@@ -417,6 +391,7 @@ where
     if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
+    let trace_claim_coefficients = row_coefficients.clone();
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         fold_grind_nonce,
@@ -426,7 +401,7 @@ where
         row_coefficients,
         group_ring_opening_points,
         group_ring_multiplier_points,
-        witness_len,
+        w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
@@ -435,12 +410,10 @@ where
             next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        trace_prepared_points: Some(prepared_points),
-        trace_block_opening: Some(trace_block_opening),
-        trace_eval_target,
-        trace_eval_scale: E::one(),
-        trace_claim_scales: None,
-        trace_basis: basis,
+        evaluation_trace_points: prepared_points,
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: basis,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }

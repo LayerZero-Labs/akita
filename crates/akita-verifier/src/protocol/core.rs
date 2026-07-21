@@ -6,6 +6,7 @@
 
 mod extension_opening_reduction;
 mod verify;
+use crate::protocol::evaluation_trace::{prepare_evaluation_trace, PreparedEvaluationTrace};
 use crate::protocol::ring_switch::{
     ring_switch_verifier, RingSwitchReplay, RingSwitchVerifyOutput,
 };
@@ -30,21 +31,19 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, assemble_relation_rhs, build_trace_claim_multi_group_root,
-    build_trace_claim_root, build_trace_table_scaled, dispatch_for_field,
+    append_claim_values_to_transcript, assemble_relation_rhs, dispatch_for_field,
     ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
     relation_claim_from_layout_extension, relation_rhs_layout_for,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, tensor_equality_factor_eval_at_point,
-    trace_public_weights_recursive, trace_public_weights_root_terms, trace_terms_recursive,
-    trace_weight_layout_from_segment, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
-    BasisMode, CommittedGroupParams, ExtensionOpeningReductionProof, FoldLevelProof,
+    ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
+    scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
+    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
+    EvaluationTraceInputs, ExtensionOpeningReductionProof, FlatBooleanDomain, FoldLevelProof,
     FoldLinfProtocolBinding, FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
     PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
     RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
     SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts, TraceClaim,
+    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

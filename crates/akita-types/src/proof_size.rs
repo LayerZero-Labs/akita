@@ -77,7 +77,7 @@ pub fn level_proof_bytes(
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
     let v_bytes = proof_ring_vec_bytes(
         lp.open_commit_matrix.output_rank(),
-        lp.d_a(),
+        lp.role_dims().d_d(),
         base_elem_bytes,
     );
     let next_commit_bytes = match next_witness_binding {
@@ -89,7 +89,7 @@ pub fn level_proof_bytes(
             })?;
             proof_ring_vec_bytes(
                 next_lp.outer_commit_matrix.output_rank(),
-                next_lp.d_a(),
+                next_lp.role_dims().d_b(),
                 base_elem_bytes,
             )
         }
@@ -276,14 +276,14 @@ mod tests {
         let current_coeffs = lp
             .open_commit_matrix
             .output_rank()
-            .checked_mul(lp.d_a())
+            .checked_mul(lp.role_dims().d_d())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let next_commit_coeffs = next_lp
             .outer_commit_matrix
             .output_rank()
-            .checked_mul(next_lp.d_a())
+            .checked_mul(next_lp.role_dims().d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
@@ -365,6 +365,89 @@ mod tests {
                 "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn planned_level_bytes_use_native_d_and_successor_b_dimensions() {
+        const D_A: usize = 128;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let mut lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D_A,
+            4,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            lp.outer_commit_matrix.security_policy(),
+            lp.outer_commit_matrix.sis_table_key().table_digest,
+            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer_commit_matrix.output_rank(),
+            lp.outer_commit_matrix.input_width() * 2,
+            lp.outer_commit_matrix.coeff_linf_bound(),
+            64,
+        );
+        lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            lp.open_commit_matrix.security_policy(),
+            lp.open_commit_matrix.sis_table_key().table_digest,
+            lp.open_commit_matrix.sis_modulus_profile(),
+            lp.open_commit_matrix.output_rank(),
+            lp.open_commit_matrix.input_width() * 4,
+            lp.open_commit_matrix.coeff_linf_bound(),
+            32,
+        );
+
+        let mut next_lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D_A,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        next_lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            next_lp.outer_commit_matrix.security_policy(),
+            next_lp.outer_commit_matrix.sis_table_key().table_digest,
+            next_lp.outer_commit_matrix.sis_modulus_profile(),
+            next_lp.outer_commit_matrix.output_rank(),
+            next_lp.outer_commit_matrix.input_width() * 2,
+            next_lp.outer_commit_matrix.coeff_linf_bound(),
+            64,
+        );
+        next_lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            next_lp.open_commit_matrix.security_policy(),
+            next_lp.open_commit_matrix.sis_table_key().table_digest,
+            next_lp.open_commit_matrix.sis_modulus_profile(),
+            next_lp.open_commit_matrix.output_rank(),
+            next_lp.open_commit_matrix.input_width() * 2,
+            next_lp.open_commit_matrix.coeff_linf_bound(),
+            64,
+        );
+
+        let output_witness_len = D_A * 8;
+        let planned = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            output_witness_len,
+            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+        )
+        .unwrap();
+        let serialized = exact_level_proof_bytes::<F>(
+            &lp,
+            &next_lp,
+            output_witness_len,
+            None,
+            crate::NextWitnessBindingPolicy::OuterCommitment,
+        )
+        .unwrap();
+        assert_eq!(planned, serialized);
     }
 
     #[test]

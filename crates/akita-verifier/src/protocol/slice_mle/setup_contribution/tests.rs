@@ -4,8 +4,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, OuterCommitMatrixParams,
-    SisModulusProfileId, WitnessLayout,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -151,7 +150,7 @@ impl SetupContributionFixture {
             .and_then(|width| width.checked_mul(shape.num_live_blocks))
             .expect("setup contribution fixture B width");
         if lp.outer_commit_matrix.input_width() < expected_b_width {
-            lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            lp.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
                 lp.outer_commit_matrix.security_policy(),
                 lp.outer_commit_matrix.sis_table_key().table_digest,
                 lp.outer_commit_matrix.sis_modulus_profile(),
@@ -211,8 +210,8 @@ impl SetupContributionFixture {
             num_claims: shape.num_claims,
             num_live_blocks: shape.num_live_blocks,
             depth_witness: shape.depth_commit,
-            depth_commit: shape.depth_commit,
             depth_open: shape.depth_open,
+            depth_commit: shape.depth_open,
             depth_fold: shape.depth_fold,
             log_basis_inner: shape.log_basis,
             log_basis_outer: shape.log_basis,
@@ -224,17 +223,15 @@ impl SetupContributionFixture {
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
         let relation_matrix_evaluator = RelationMatrixEvaluator {
-            groups,
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
-            log_basis_open: shape.log_basis,
+            groups,
+            log_basis: shape.log_basis,
             eq_tau1,
             flat_context: Some(FlatRelationContext {
                 level_params: lp,
                 opening_batch,
                 witness_layout: layout,
                 opening_source_len,
-                row_coefficients: vec![TestField::zero(); shape.num_claims],
-                tau1: Vec::new(),
                 opening_ring_dim: TEST_RING_DIM,
             }),
         };

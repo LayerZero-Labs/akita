@@ -46,10 +46,12 @@ pub use compute::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
-pub use protocol::sumcheck::{AkitaStage2Prover, DigitRangeProver};
+pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};
 pub use protocol::{
-    batched_prove, commit_terminal_w, commit_w, prove, prove_suffix, ProveLevelOutput,
-    RecursiveSuffixOutcome, RingSwitchOutput, SuffixProverState,
+    batched_prove, build_relation_weight_events, commit_terminal_w, commit_w, prove, prove_suffix,
+    ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization, RingSwitchOutput, SuffixProverState,
 };
 pub use protocol::{RingRelationInstance, RingRelationProver, RingRelationWitness};
 pub use types::ProverOpeningData;

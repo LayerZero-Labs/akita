@@ -176,28 +176,40 @@ where
             params.open_commit_matrix.input_width()
         )));
     }
-    let setup_len = setup
-        .shared_matrix
-        .total_ring_elements_at_dyn(params.d_a())?;
     let a_required = params
         .inner_commit_matrix
         .output_rank()
         .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
+    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    if a_required > a_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
+            dims.d_a()
+        )));
+    }
     let b_required = params
         .outer_commit_matrix
         .output_rank()
         .checked_mul(params.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    if b_required > b_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
+            dims.d_b()
+        )));
+    }
     let d_required = params
         .open_commit_matrix
         .output_rank()
         .checked_mul(params.open_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    let required = a_required.max(b_required).max(d_required);
-    if required > setup_len {
+    let d_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_d())?;
+    if d_required > d_available {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params require {required} setup ring elements but setup has {setup_len}",
+            "D-role commit params require {d_required} setup ring elements at d={}, but setup has {d_available}",
+            dims.d_d()
         )));
     }
     Ok(())
@@ -384,6 +396,17 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
+    let gen_ring_dim = backend
+        .prepared_expanded_setup(prepared)
+        .seed()
+        .gen_ring_dim;
+    let mut warmed_ring_dim = gen_ring_dim;
+    for ring_dim in [dims.d_a(), dims.d_b()] {
+        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
+            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
+            warmed_ring_dim = ring_dim;
+        }
+    }
     let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,

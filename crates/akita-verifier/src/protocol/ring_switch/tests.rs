@@ -79,7 +79,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         1,
         fold_challenge_config(),
     )
-    .with_decomp(4, 25, 1, 3, 3)
+    .with_decomp(4, 25, 1, 1, 3)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 2).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
@@ -123,10 +123,10 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         num_claims: 2,
         num_live_blocks: 7,
         depth_witness: 1,
-        depth_commit: 3,
         depth_open: 3,
+        depth_commit: 1,
         depth_fold: 1,
-        log_basis_inner: 1,
+        log_basis_inner: 2,
         log_basis_outer: 2,
         log_basis_open: 2,
         n_a: 2,
@@ -150,7 +150,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         consistency_weight,
         &a_row_weights,
         &gadget,
-        &gadget,
+        &gadget[..group.depth_commit],
     )
     .unwrap();
 
@@ -176,6 +176,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                         * consistency_weight
                         * challenge
                         * digit_weight;
+                }
+                for (digit, &digit_weight) in gadget[..group.depth_commit].iter().enumerate() {
                     for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
                         let t_index = unit
                             .t_index(
