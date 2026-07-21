@@ -8,7 +8,6 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::schedule_terminal_direct_witness_shape;
 use akita_types::terminal_golomb_grind_tail_t_vectors;
 use std::sync::Arc;
 
@@ -18,8 +17,8 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub w: RecursiveWitnessFlat,
     /// Logical suffix witness when it differs from the committed representation.
     pub logical_w: Option<RecursiveWitnessFlat>,
-    /// Current suffix witness commitment.
-    pub commitment: RingVec<F>,
+    /// Transcript-bound public state for the current suffix witness.
+    pub binding: NextWitnessState<F>,
     /// D-erased suffix commitment hint cache.
     pub hint: RecursiveCommitmentHintCache<F>,
     /// Current digit basis, as `log2(b)`.
@@ -50,9 +49,8 @@ impl<F: FieldCore, E: FieldCore> SuffixProverState<F, E> {
 ///
 /// # Errors
 ///
-/// Returns an error if level proving fails, or an invalid-setup error when the
-/// schedule's recursive suffix is empty (root-terminal proofs do not run this
-/// helper).
+/// Returns an error if level proving fails or the required recursive suffix is
+/// absent.
 #[allow(clippy::too_many_arguments)]
 pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     expanded: &Arc<AkitaExpandedSetup<Cfg::Field>>,
@@ -68,7 +66,6 @@ pub fn prove_suffix<'stack, Cfg, T, C, O, TS, R>(
     transcript: &mut T,
     starting_state: SuffixProverState<Cfg::Field, Cfg::ExtField>,
     schedule: &Schedule,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<RecursiveSuffixOutcome<Cfg::Field, Cfg::ExtField>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -111,7 +108,7 @@ where
     <TS as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
     <R as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'stack,
 {
-    let planned_num_levels = schedule_num_fold_levels(schedule);
+    let planned_num_levels = schedule.num_fold_levels();
     if planned_num_levels < 2 {
         return Err(AkitaError::InvalidSetup(
             "prove_suffix expects a non-empty recursive suffix".to_string(),
@@ -121,13 +118,13 @@ where
     let mut current_state = starting_state;
     let mut level = 1usize;
 
-    let terminal_direct_witness_shape = schedule_terminal_direct_witness_shape(schedule)?;
+    let terminal_direct_witness_shape = &schedule.terminal.witness_shape;
     let terminal_tail_t_vectors = {
         let terminal_level = planned_num_levels - 1;
         let terminal_scheduled = schedule.get_execution_schedule(terminal_level)?;
         terminal_golomb_grind_tail_t_vectors(
             &terminal_scheduled.params,
-            RelationMatrixRowLayout::WithoutDBlock,
+            terminal_scheduled.relation_matrix_row_layout(),
             Some(terminal_direct_witness_shape),
         )?
     };
@@ -137,11 +134,7 @@ where
         let level_params = &scheduled.params;
         let role_dims = level_params.role_dims();
         let is_terminal_level = scheduled.is_terminal;
-        let relation_matrix_row_layout = if is_terminal_level {
-            RelationMatrixRowLayout::WithoutDBlock
-        } else {
-            RelationMatrixRowLayout::WithDBlock
-        };
+        let relation_matrix_row_layout = scheduled.relation_matrix_row_layout();
         let tail_t_vectors = if is_terminal_level {
             terminal_tail_t_vectors
         } else {
@@ -149,7 +142,6 @@ where
         };
         let prepared_fold = {
             let stack = stacks.prove_stack_at_level(level);
-            stack.ensure_fold_level_role_ntt(expanded.as_ref(), role_dims)?;
             prepare_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
                 stack,
                 expanded,
@@ -176,7 +168,6 @@ where
             level,
             &scheduled,
             prepared_fold,
-            setup_contribution_mode,
             is_terminal_level,
             if is_terminal_level {
                 Some(terminal_direct_witness_shape)
@@ -201,17 +192,9 @@ where
     };
     let terminal = terminal_result;
 
-    let mut steps = intermediate_levels;
-    let final_w_len = terminal.final_witness().num_elems();
-    steps.push(AkitaLevelProof::Terminal {
-        extension_opening_reduction: terminal.extension_opening_reduction,
-        fold_grind_nonce: terminal.fold_grind_nonce,
-        stage2: terminal.stage2,
-        final_w_len,
-    });
-
     Ok(RecursiveSuffixOutcome {
-        steps,
+        recursive_folds: intermediate_levels,
+        terminal,
         num_levels: planned_num_levels,
     })
 }
@@ -273,7 +256,7 @@ where
     let SuffixProverState {
         w,
         logical_w: optional_logical_w,
-        commitment,
+        binding,
         hint,
         sumcheck_challenges,
         opening,
@@ -286,27 +269,41 @@ where
         .unwrap_or_else(|| Arc::clone(&witness));
     let role_dims = level_params.role_dims();
     let commit_d = role_dims.d_b();
-    if !commitment.can_decode_vec(commit_d) {
-        return Err(AkitaError::InvalidInput(format!(
-            "suffix commitment length {} is not decodable at B-role dimension {}",
-            commitment.coeffs().len(),
-            commit_d,
-        )));
-    }
+    let (witness_commitment, terminal_t_state, terminal_recomposed_inner_rows) = match binding {
+        NextWitnessState::OuterCommitment(commitment) => {
+            if !commitment.can_decode_vec(commit_d) {
+                return Err(AkitaError::InvalidInput(format!(
+                    "suffix commitment length {} is not decodable at B-role dimension {}",
+                    commitment.coeffs().len(),
+                    commit_d,
+                )));
+            }
+            commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
+            (commitment, None, None)
+        }
+        NextWitnessState::TerminalInnerState {
+            t_state,
+            recomposed_inner_rows,
+        } => {
+            if relation_matrix_row_layout != RelationMatrixRowLayout::WithoutCommitmentBlocks {
+                return Err(AkitaError::InvalidSetup(
+                    "terminal inner state requires a commitment-free relation layout".into(),
+                ));
+            }
+            let bytes = akita_types::raw_field_segment_bytes(&t_state)?;
+            transcript.absorb_and_record_bytes(ABSORB_COMMITMENT, &bytes);
+            (
+                RingVec::from_coeffs(Vec::new()),
+                Some(t_state),
+                Some(recomposed_inner_rows),
+            )
+        }
+    };
     // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
     // directly (Slice A re-homed the recomposed rows), so there is no typed
     // reconstruction here (the former `hint.to_typed::<D>()` bridge is gone).
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
-
-    // §6 invariant (H5 byte-parity) — absorb the suffix commitment through the
-    // D-free flat coefficient encoder keyed on the level's B-role dimension.
-    // This is byte-identical to the verifier's
-    // `current_state.commitment.append_flat_to_transcript(...)` (S7
-    // `prepare_fold_data`) and to the former typed `append_as_ring_commitment`
-    // path (S2 byte-identity test). The same coefficient order, same
-    // `ABSORB_COMMITMENT` label.
-    commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
 
     let alpha = role_dims.d_a().trailing_zeros() as usize;
     let needs_extension_reduction =
@@ -339,14 +336,14 @@ where
             setup_polys_storage.as_ref().map(|polys| &polys[..]),
             opening,
             &witness_polys[..],
-            (Commitment::new(commitment), suffix_hint),
+            (Commitment::new(witness_commitment), suffix_hint),
         )?;
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
+    let mut prepared = prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
         block_claims,
@@ -362,7 +359,10 @@ where
         relation_matrix_row_layout,
         terminal_tail_t_vectors,
     )
-    .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
+    .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))?;
+    prepared.terminal_t_state = terminal_t_state;
+    prepared.terminal_recomposed_inner_rows = terminal_recomposed_inner_rows;
+    Ok(prepared)
 }
 
 #[cfg(test)]

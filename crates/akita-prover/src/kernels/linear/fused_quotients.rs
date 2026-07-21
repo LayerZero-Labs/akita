@@ -527,7 +527,7 @@ fn accumulate_centered_quotient_rows_field<
         .collect()
 }
 
-/// Fused split-eq quotient kernel dispatching over [`NttSlotCache`] variants.
+/// Fused split-eq quotient kernel dispatching over [`PreparedNttSlot`] variants.
 ///
 /// Computes three NTT-cached mat-vec products in a single tiled pass:
 /// - D-cyclic: `cyc[0..n_d] · e_hat` (cyclic domain)
@@ -543,7 +543,7 @@ pub(crate) fn fused_split_eq_quotients<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -578,7 +578,7 @@ pub(crate) fn fused_split_eq_quotients_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -617,7 +617,7 @@ fn fused_split_eq_quotients_with_digit_bound<
     F: FieldCore + CanonicalField + HalvingField,
     const D: usize,
 >(
-    slot: &NttSlotCache<D>,
+    slot: &PreparedNttSlot<D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -639,11 +639,14 @@ fn fused_split_eq_quotients_with_digit_bound<
     let b_width = t_hat.len();
     let a_width = z_folded_rings.len();
     match slot {
-        NttSlotCache::Q32 {
+        PreparedNttSlot::Q32 {
             neg,
             cyc,
             params: p,
         } => {
+            let cyc = cyc
+                .as_deref()
+                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();
@@ -673,11 +676,14 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        NttSlotCache::Q64 {
+        PreparedNttSlot::Q64 {
             neg,
             cyc,
             params: p,
         } => {
+            let cyc = cyc
+                .as_deref()
+                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();
@@ -707,11 +713,14 @@ fn fused_split_eq_quotients_with_digit_bound<
                 p,
             )
         }
-        NttSlotCache::Q128 {
+        PreparedNttSlot::Q128 {
             neg,
             cyc,
             params: p,
         } => {
+            let cyc = cyc
+                .as_deref()
+                .ok_or_else(|| AkitaError::InvalidSetup("cyclic NTT domain not prepared".into()))?;
             let neg_rows: Vec<&[_]> = (0..n_a)
                 .map(|i| &neg[i * a_width..(i + 1) * a_width])
                 .collect();

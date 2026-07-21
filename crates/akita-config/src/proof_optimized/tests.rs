@@ -30,28 +30,33 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     // the preceding Fold steps (which do commit) appear.
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{
-        CleartextWitnessShape, DirectStep, FoldStep, Schedule, SisModulusProfileId, Step,
+        FoldStep, LevelParamsLike, Schedule, SisModulusProfileId, TerminalWitnessPlan,
     };
 
     let sparse = SparseChallengeConfig::pm1_only(1);
     let fold_lp =
-        LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse);
+        LevelParams::params_only(SisModulusProfileId::Q128OffsetA7F7, 64, 3, 1, 1, 1, sparse)
+            .with_decomp(1, 4, 1, 1, 1)
+            .expect("laid-out fold params");
+    let witness_shape = akita_types::SegmentTypedWitnessShape::from_groups(
+        &fold_lp,
+        128,
+        [(&fold_lp as &dyn LevelParamsLike, 1, 1, 1)],
+    )
+    .expect("terminal witness shape");
 
     let schedule = Schedule {
-        steps: vec![
-            Step::Fold(FoldStep {
-                params: fold_lp.clone(),
-                current_w_len: 1 << 8,
-                next_w_len: 1 << 4,
-                level_bytes: 0,
-            }),
-            Step::Direct(DirectStep {
-                current_w_len: 1 << 4,
-                witness_shape: CleartextWitnessShape::FieldElements(16),
-                direct_bytes: 0,
-                params: None,
-            }),
-        ],
+        folds: vec![FoldStep {
+            params: fold_lp.clone(),
+            current_w_len: 1 << 8,
+            next_w_len: 1 << 4,
+            level_bytes: 0,
+        }],
+        terminal: TerminalWitnessPlan {
+            current_w_len: 1 << 4,
+            witness_shape,
+            terminal_bytes: 0,
+        },
         total_bytes: 0,
     };
 
@@ -59,234 +64,7 @@ fn setup_level_params_from_schedule_excludes_terminal_direct() {
     assert_eq!(
         setup_levels,
         vec![fold_lp],
-        "terminal Direct.params is None and must not feed setup_levels; see DirectStep::params"
-    );
-}
-
-#[test]
-fn uncommittable_root_direct_schedule_yields_empty_setup_levels_and_loud_get_params_error() {
-    // Documents the deliberate asymmetry between
-    // `setup_level_params_from_schedule` (silently skips
-    // root-direct schedules with `params: None`) and
-    // `Cfg::get_params_for_batched_commitment` (rejects the same
-    // schedule with a documented `InvalidSetup` message). The
-    // contract is described on `DirectStep::params` and the
-    // materializer comment that branches on it; this test locks
-    // it in so neither side drifts.
-    use akita_types::{CleartextWitnessShape, DirectStep, Schedule, Step};
-
-    let uncommittable = Schedule {
-        steps: vec![Step::Direct(DirectStep {
-            current_w_len: 1 << 10,
-            witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
-            direct_bytes: 0,
-            params: None,
-        })],
-        total_bytes: 0,
-    };
-
-    let bound = setup_level_params_from_schedule(&uncommittable);
-    assert!(
-        bound.is_empty(),
-        "uncommittable root-direct schedule must produce no setup levels; \
-         see DirectStep::params"
-    );
-
-    // `get_params_for_batched_commitment` reads the root commit off the
-    // runtime schedule's first step: a root-direct `params: None` is the
-    // uncommittable edge and must be rejected loudly (rather than silently
-    // dropped, as the setup-levels reader above does). Drive the real trait
-    // method through a config whose `runtime_schedule` yields exactly this
-    // uncommittable schedule, and assert the documented `InvalidSetup`.
-    #[derive(Clone)]
-    struct UncommittableRootDirectCfg;
-    impl CommitmentConfig for UncommittableRootDirectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
-        const D: usize = 8;
-        fn decomposition() -> akita_types::DecompositionParams {
-            akita_types::DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 8,
-                log_open_bound: Some(8),
-            }
-        }
-        fn ring_challenge_config(
-            _d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
-        }
-        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-            akita_types::SisModulusProfileId::Q32Offset99
-        }
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-        // Inject the uncommittable root-direct schedule so the default
-        // `get_params_for_batched_commitment` hits its rejection branch.
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            Ok(Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 10,
-                    witness_shape: CleartextWitnessShape::FieldElements(1 << 10),
-                    direct_bytes: 0,
-                    params: None,
-                })],
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
-        }
-    }
-
-    let opening_batch = OpeningClaimsLayout::new(10, 1).expect("singleton opening batch");
-    let err = UncommittableRootDirectCfg::get_params_for_batched_commitment(&opening_batch)
-        .expect_err("uncommittable root-direct must reject get_params_for_batched_commitment");
-    assert!(
-        err.to_string()
-            .contains("root-direct schedule is missing commit params"),
-        "unexpected error: {err}"
-    );
-}
-
-#[test]
-fn setup_matrix_envelope_does_not_add_conservative_layout() {
-    use akita_types::{CleartextWitnessShape, DecompositionParams, DirectStep, Schedule, Step};
-
-    #[derive(Clone)]
-    struct GroupLayoutRejectCfg;
-
-    impl CommitmentConfig for GroupLayoutRejectCfg {
-        type Field = akita_field::Fp32<251>;
-        type ExtField = akita_field::Fp32<251>;
-        const D: usize = 8;
-
-        fn decomposition() -> DecompositionParams {
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 1,
-                log_open_bound: Some(8),
-            }
-        }
-
-        fn ring_challenge_config(
-            _d: usize,
-        ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-            Ok(akita_challenges::SparseChallengeConfig::pm1_only(1))
-        }
-
-        fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-            akita_types::SisModulusProfileId::Q32Offset99
-        }
-
-        fn max_setup_matrix_size(
-            _max_num_vars: usize,
-            _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope { max_setup_len: 1 })
-        }
-
-        fn basis_range() -> (u32, u32) {
-            (3, 3)
-        }
-
-        fn runtime_schedule(_key: AkitaScheduleLookupKey) -> Result<Schedule, AkitaError> {
-            Ok(Schedule {
-                steps: vec![Step::Direct(DirectStep {
-                    current_w_len: 1 << 8,
-                    witness_shape: CleartextWitnessShape::FieldElements(1 << 8),
-                    direct_bytes: 0,
-                    params: None,
-                })],
-                total_bytes: 0,
-            })
-        }
-
-        fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
-        }
-    }
-
-    let opening_batch = OpeningClaimsLayout::new(8, 1).expect("singleton opening batch");
-    let envelope = setup_matrix_envelope_for_shape::<GroupLayoutRejectCfg>(&opening_batch)
-        .expect("runtime setup envelope should use runtime schedule only")
-        .expect("runtime schedule is supported");
-    assert_eq!(envelope.max_setup_len, 1);
-}
-
-#[test]
-fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
-    // Locks in the fix for the descriptor-binding bug at
-    // `akita_prover::protocol::core` and
-    // `akita_verifier::protocol::core`: when the planner-selected
-    // folded root cannot handle the opening shape, both sides build
-    // a fallback root-direct schedule. That schedule's `params` are
-    // hashed into the per-proof effective-schedule digest
-    // (`PlanSection::from_schedule` -> `digest_effective_schedule`),
-    // while the root-direct verification closure recomputes commitments
-    // using `Cfg::get_params_for_batched_commitment(real_opening_batch)`. If
-    // the fallback used a synthetic `same_point(num_vars, 1)`
-    // singleton opening batch (the pre-fix behavior), the descriptor
-    // would bind singleton-sized params while verification ran
-    // against batched ones.
-    use akita_types::{digest_effective_schedule, root_direct_schedule};
-    type Cfg = fp128::D128Full;
-    let real_opening_batch =
-        OpeningClaimsLayout::new(30, 4).expect("batched same-point opening batch");
-    let real_params =
-        Cfg::get_params_for_batched_commitment(&real_opening_batch).expect("batched commit params");
-    let singleton_opening_batch = OpeningClaimsLayout::new(30, 1).expect("singleton opening batch");
-    let singleton_params = Cfg::get_params_for_batched_commitment(&singleton_opening_batch)
-        .expect("singleton commit params");
-
-    // Sanity: a non-singleton opening batch should resolve to a
-    // different commit layout, otherwise the regression couldn't
-    // manifest with this fixture.
-    assert_ne!(
-        real_params, singleton_params,
-        "test fixture: pick an opening batch where batched and singleton params differ"
-    );
-
-    let real_schedule = root_direct_schedule(
-        real_opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        real_params.clone(),
-    )
-    .expect("fallback root-direct schedule");
-    let bound_levels = setup_level_params_from_schedule(&real_schedule);
-    assert_eq!(
-        bound_levels,
-        vec![real_params],
-        "fallback schedule must carry the real opening-batch params the verifier recomputes"
-    );
-
-    // The descriptor binds those params through the schedule digest: a
-    // singleton-params fallback at the same `num_vars` must produce a
-    // different preamble than the real batched-params fallback.
-    let singleton_schedule = root_direct_schedule(
-        real_opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        singleton_params,
-    )
-    .expect("singleton fallback root-direct schedule");
-    assert_ne!(
-        digest_effective_schedule(&real_schedule),
-        digest_effective_schedule(&singleton_schedule),
-        "schedule digest must distinguish batched vs singleton root-direct commit params"
+        "terminal direct steps must not feed setup levels"
     );
 }
 
@@ -294,8 +72,8 @@ fn fallback_root_direct_schedule_binds_real_opening_batch_commit_params() {
 fn multi_group_multi_chunk_schedule_resolves_at_effective_schedule_boundary() {
     type Cfg = fp128::D64OneHotMultiChunkW2R2;
     let opening_batch = OpeningClaimsLayout::from_groups(vec![
-        PolynomialGroupLayout::new(8, 1),
         PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(32, 1),
     ])
     .expect("multi-group opening batch");
     let point = vec![fp128::Field::zero(); opening_batch.max_num_vars()];
@@ -428,9 +206,11 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     type Cfg = fp128::D128Full;
     let opening_batch = OpeningClaimsLayout::new(30, 4).expect("batched same-point opening_batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .unwrap()
-        .expect("batched root schedule should carry commit params");
+    let root_params = schedule
+        .root_fold()
+        .expect("batched root schedule should carry a root fold")
+        .params
+        .clone();
     let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
 
     let runtime_envelope = setup_matrix_envelope_for_shape::<Cfg>(&opening_batch)
@@ -441,33 +221,6 @@ fn setup_matrix_envelope_covers_batched_runtime_root_widths() {
     let setup_envelope = proof_optimized_max_setup_matrix_size::<Cfg>(30, 4)
         .expect("setup envelope should cover generated batched root widths");
     assert!(setup_envelope.max_setup_len >= required);
-}
-
-#[test]
-fn setup_matrix_envelope_covers_single_point_batch_root_widths() {
-    use akita_types::root_direct_schedule;
-
-    type Cfg = fp128::D128Full;
-    let opening_batch = OpeningClaimsLayout::new(30, 4).expect("supported batched opening_batch");
-    let root_params = Cfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("supported batched commit params");
-    let schedule = root_direct_schedule(
-        opening_batch
-            .root_direct_witness_len()
-            .expect("witness len"),
-        root_params.clone(),
-    )
-    .expect("synthetic direct schedule");
-    let required = expected_runtime_root_setup_len(&root_params, &opening_batch);
-
-    let mut max_setup_len = 1;
-    super::accumulate_root_matrix_envelope_for_opening_batch(
-        &schedule,
-        &opening_batch,
-        &mut max_setup_len,
-    )
-    .expect("synthetic direct schedule envelope");
-    assert!(max_setup_len >= required);
 }
 
 #[test]
@@ -497,15 +250,18 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(10, 1)],
-        PolynomialGroupLayout::new(20, 1),
+        &[
+            PolynomialGroupLayout::new(16, 1),
+            PolynomialGroupLayout::new(16, 1),
+        ],
+        PolynomialGroupLayout::new(32, 1),
     )
     .expect("max precommitted group layout");
     let runtime = setup_matrix_envelope_for_shape::<Cfg>(&layout)
         .expect("runtime setup envelope")
         .expect("max precommitted group should be schedulable");
     let setup_envelope =
-        super::proof_optimized_max_setup_matrix_size::<Cfg>(20, 1).expect("setup envelope");
+        super::proof_optimized_max_setup_matrix_size::<Cfg>(32, 3).expect("setup envelope");
 
     assert!(
         setup_envelope.max_setup_len >= runtime.max_setup_len,
@@ -517,8 +273,8 @@ fn proof_optimized_setup_includes_arbitrary_precommit_group_sizes() {
 fn setup_envelope_dominates_bounded_precommit_shape_grid() {
     type Cfg = fp128::D64OneHot;
 
-    const MIN_NUM_VARS: usize = 10;
-    const MAX_NUM_VARS: usize = 20;
+    const MIN_NUM_VARS: usize = 16;
+    const MAX_NUM_VARS: usize = 32;
     let setup_envelope = super::proof_optimized_max_setup_matrix_size::<Cfg>(MAX_NUM_VARS, 1)
         .expect("bounded setup envelope");
     let mut schedulable_shapes = 0usize;
@@ -563,15 +319,20 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
     type Cfg = fp128::D64OneHot;
 
     let layout = OpeningClaimsLayout::from_root_groups(
-        &[PolynomialGroupLayout::new(10, 1)],
-        PolynomialGroupLayout::new(24, 1),
+        &[
+            PolynomialGroupLayout::new(16, 1),
+            PolynomialGroupLayout::new(16, 1),
+        ],
+        PolynomialGroupLayout::new(32, 1),
     )
     .expect("grouped root layout");
     let key = super::proof_optimized_schedule_key::<Cfg>(&layout).expect("grouped root key");
     let schedule = Cfg::runtime_schedule(key).expect("grouped root schedule");
-    let root_params = root_commit_params_from_schedule(&schedule)
-        .expect("root params lookup")
-        .expect("grouped root should carry params");
+    let root_params = schedule
+        .root_fold()
+        .expect("grouped root should carry a root fold")
+        .params
+        .clone();
 
     let expected = expected_runtime_root_setup_len(&root_params, &layout);
     let actual = super::root_runtime_matrix_len_for_opening_batch(&root_params, &layout)
@@ -600,10 +361,9 @@ fn grouped_root_runtime_setup_uses_per_group_roles_and_summed_d_width() {
 #[test]
 fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
     use akita_types::{
-        padded_setup_prefix_len, segment_typed_witness_shape_from_groups,
-        setup_prefix_precommitted_params, setup_prefix_slot_id, AjtaiKeyParams,
-        CleartextWitnessShape, DecompositionParams, DirectStep, FoldStep, LevelParamsLike,
-        SetupContributionMode, Step, SETUP_OFFLOAD_D_SETUP,
+        padded_setup_prefix_len, setup_prefix_precommitted_params, setup_prefix_slot_id,
+        AjtaiKeyParams, DecompositionParams, FoldStep, LevelParamsLike, SegmentTypedWitnessShape,
+        SetupContributionMode, TerminalWitnessPlan, SETUP_OFFLOAD_D_SETUP,
     };
 
     fn scalar_level_params() -> LevelParams {
@@ -621,22 +381,17 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         .expect("scalar params")
     }
 
-    fn terminal_direct_step(params: &LevelParams) -> DirectStep {
-        let witness_shape = segment_typed_witness_shape_from_groups(
+    fn terminal_direct_step(params: &LevelParams) -> TerminalWitnessPlan {
+        let witness_shape = SegmentTypedWitnessShape::from_groups(
             params,
             128,
             [(params as &dyn LevelParamsLike, 1, 1, 1)],
-            1,
         )
         .expect("segment-typed witness shape");
-        let CleartextWitnessShape::SegmentTyped(shape) = &witness_shape else {
-            panic!("expected segment-typed witness");
-        };
-        DirectStep {
-            current_w_len: shape.layout.logical_num_elems,
+        TerminalWitnessPlan {
+            current_w_len: witness_shape.layout.logical_num_elems,
             witness_shape,
-            direct_bytes: 0,
-            params: None,
+            terminal_bytes: 0,
         }
     }
 
@@ -683,27 +438,27 @@ fn recursive_setup_envelope_counts_setup_prefix_d_segment() {
         let direct = terminal_direct_step(&terminal_params);
         let terminal_current_w_len = 64;
         Schedule {
-            steps: vec![
-                Step::Fold(FoldStep {
+            folds: vec![
+                FoldStep {
                     params: root,
                     current_w_len: 256,
                     next_w_len: 128,
                     level_bytes: 0,
-                }),
-                Step::Fold(FoldStep {
+                },
+                FoldStep {
                     params: successor,
                     current_w_len: 128,
                     next_w_len: terminal_current_w_len,
                     level_bytes: 0,
-                }),
-                Step::Fold(FoldStep {
+                },
+                FoldStep {
                     params: terminal_params,
                     current_w_len: terminal_current_w_len,
                     next_w_len: direct.current_w_len,
                     level_bytes: 0,
-                }),
-                Step::Direct(direct),
+                },
             ],
+            terminal: direct,
             total_bytes: 0,
         }
     }
@@ -822,29 +577,27 @@ fn assert_plan_matches_runtime_w_sizes_for_key<Cfg: CommitmentConfig>(key: Polyn
         Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key)).expect("planner should succeed");
     let num_fold_levels = schedule.num_fold_levels();
     for (idx, fold) in schedule.fold_steps().enumerate() {
-        // The last fold in a fold-then-direct schedule is the terminal
-        // recursive fold and ships its W in cleartext under
-        // RelationMatrixRowLayout::Terminal (drops the D-block from the per-row `r`
-        // quotients), so its `next_w_len` is smaller than what the
-        // intermediate-layout helper would report.
         let is_terminal_fold = idx + 1 == num_fold_levels;
-        let layout = if is_terminal_fold {
-            akita_types::RelationMatrixRowLayout::WithoutDBlock
+        let runtime_next_w_len = if is_terminal_fold {
+            // Terminal W is quotient-free. Its canonical shape is the Direct
+            // successor materialized by the planner, not an M-matrix row count.
+            schedule.terminal.witness_shape.logical_num_elems()
         } else {
-            akita_types::RelationMatrixRowLayout::WithDBlock
+            // Root-level batched witnesses fan out over the key's polynomial
+            // count; recursive levels collapse back to singleton-by-construction.
+            let (num_polynomials, num_public_rows) = if idx == 0 {
+                (key.num_polynomials(), 1)
+            } else {
+                (1, 1)
+            };
+            akita_types::intermediate_w_ring_element_count_with_counts::<Cfg::Field>(
+                &fold.params,
+                num_polynomials,
+                num_public_rows,
+            )
+            .expect("valid planned witness")
+                * fold.params.ring_dimension
         };
-        // Root-level batched witnesses fan out over the key's polynomial
-        // count; recursive levels collapse back to singleton-by-construction.
-        let (num_polynomials, num_public_rows) = if idx == 0 {
-            (key.num_polynomials(), 1)
-        } else {
-            (1, 1)
-        };
-        let runtime_next_w_len = akita_types::w_ring_element_count_with_counts_for_layout::<
-            Cfg::Field,
-        >(&fold.params, num_polynomials, num_public_rows, layout)
-        .expect("valid planned witness")
-            * fold.params.ring_dimension;
         assert_eq!(
             runtime_next_w_len, fold.next_w_len,
             "planner/runtime next_w_len mismatch at level {idx} for key={key:?}",
@@ -1118,12 +871,7 @@ fn batched_onehot_4x30_plan_keeps_terminal_witness_bounded() {
         "4x30 onehot schedule should keep a recursive suffix after the root fold"
     );
 
-    let akita_types::CleartextWitnessShape::SegmentTyped(ref shape) =
-        *akita_types::schedule_terminal_direct_witness_shape(&schedule)
-            .expect("4x30 onehot schedule should end in a direct step")
-    else {
-        panic!("4x30 onehot schedule should end in segment-typed witness");
-    };
+    let shape = &schedule.terminal.witness_shape;
     // Bound reflects the committed-fold A-role SIS pricing: honest pricing
     // lifts the per-level rank, widening the terminal witness, but the
     // byte-aware schedule still keeps folding rather than dumping a huge
@@ -1302,4 +1050,21 @@ fn tensor_onehot_preset_keeps_d64_onehot_chunk_size() {
         fp128::D64OneHot::onehot_chunk_size(),
         "tensor verifier preset must preserve the D64 one-hot witness sparsity envelope"
     );
+}
+
+#[test]
+fn setup_capacity_scan_rejects_hostile_metadata_before_planning() {
+    let vars_err =
+        proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(usize::BITS as usize, 1)
+            .expect_err("unrepresentable polynomial variable count must fail closed");
+    assert!(matches!(vars_err, AkitaError::InvalidSetup(_)));
+
+    let oversized_batch = MAX_VERIFIER_SETUP_SCHEDULE_SCANS / 32 + 1;
+    let work_err = proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(32, oversized_batch)
+        .expect_err("oversized setup schedule scan must fail closed");
+    assert!(matches!(work_err, AkitaError::InvalidSetup(_)));
+
+    let grouped_work_err = proof_optimized_max_setup_matrix_size::<fp128::D64OneHot>(32, 512)
+        .expect_err("grouped layouts must count toward the setup scan bound");
+    assert!(matches!(grouped_work_err, AkitaError::InvalidSetup(_)));
 }

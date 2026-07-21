@@ -356,7 +356,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
     pub fn check_v_shape_for_level(&self, lp: &LevelParams) -> Result<(), AkitaError> {
         let expected = match self.relation_matrix_row_layout {
             RelationMatrixRowLayout::WithDBlock => lp.d_key.row_len(),
-            RelationMatrixRowLayout::WithoutDBlock => 0,
+            RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
         };
         let d_d = self.role_dims.d_d();
         let actual = if self.v.coeff_len() == 0 {
@@ -552,7 +552,7 @@ mod tests {
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let err = RingRelationInstance::<F>::new(
-            RelationMatrixRowLayout::WithoutDBlock,
+            RelationMatrixRowLayout::WithoutCommitmentBlocks,
             vec![test_challenges(&lp, opening_batch.num_total_polynomials())],
             vec![opening_point],
             vec![ring_multiplier_point],

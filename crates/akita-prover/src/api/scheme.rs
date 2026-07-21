@@ -13,7 +13,7 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout, SetupContributionMode};
+use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -134,7 +134,6 @@ where
         stacks: &'a impl LevelProveStacks<'a, F, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
         transcript: &mut T,
         basis: BasisMode,
-        setup_contribution_mode: SetupContributionMode,
     ) -> Result<Self::BatchedProof, AkitaError>
     where
         T: Transcript<F> + ProverTranscriptGrind<F>,

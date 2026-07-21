@@ -13,7 +13,7 @@ fn mat_vec_mul_ntt_i8_dense_single_row_chunks_q128() {
     let digit_ring = CyclotomicRing::from_coefficients([F::from_i64(-32); D]);
     let flat_rows = vec![row; cols];
     let flat = FlatMatrix::from_ring_slice(&flat_rows);
-    let slot = build_ntt_slot(
+    let slot = build_negacyclic_and_cyclic_ntt_slot(
         flat.ring_view::<D>(1, cols)
             .expect("valid ring matrix view"),
     )

@@ -4,12 +4,12 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::CanonicalField;
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::kernels::crt_ntt::build_ntt_slot;
 use akita_prover::kernels::linear::{
     decompose_rows_i8_into, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row,
 };
 use akita_prover::DensePoly;
+use akita_types::build_negacyclic_and_cyclic_ntt_slot;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -48,7 +48,7 @@ fn bench_dense_root_matvec_full_nv25_d32(c: &mut Criterion) {
         .shared_matrix
         .total_ring_elements_at::<D>()
         .unwrap();
-    let ntt_shared = build_ntt_slot(
+    let ntt_shared = build_negacyclic_and_cyclic_ntt_slot(
         setup
             .expanded
             .shared_matrix

@@ -5,16 +5,15 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     MulBaseUnreduced,
 };
-use akita_types::{CleartextWitnessProof, FpExtEncoding, RingVec};
+use akita_types::FpExtEncoding;
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
-    DecomposeFoldPlan, DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel,
-    OpeningFoldOutput, OpeningFoldPlan, RootCommitKernel, RootCommitSource, RootOpeningSource,
-    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
-    TensorProjectionBatchKernel, TensorProjectionKernel,
+    DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
+    RootCommitKernel, RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape,
+    RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
@@ -121,17 +120,6 @@ where
 
     fn tensor_batch<'a>(polys: &'a [&'a Self]) -> Result<Self::TensorBatchView<'a>, AkitaError> {
         Ok(SparseRingBatchView { polys })
-    }
-}
-
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for SparseRingPoly<F>
-where
-    F: FieldCore + FromPrimitiveInt,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        Ok(CleartextWitnessProof::FieldElements(RingVec::from_coeffs(
-            self.direct_field_evals()?,
-        )))
     }
 }
 

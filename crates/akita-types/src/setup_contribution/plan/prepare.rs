@@ -19,33 +19,40 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: MulBase<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
-        validate_setup_inputs(
-            level_params,
-            opening_batch,
-            relation_matrix_row_layout,
-            witness_layout,
-            groups,
-        )?;
-        let rows = validate_static_inputs(
-            level_params,
-            opening_batch,
-            relation_matrix_row_layout,
-            &eq_tau1,
-        )?;
-        let d_rows = match relation_matrix_row_layout {
-            crate::RelationMatrixRowLayout::WithDBlock => level_params.d_key.row_len(),
-            crate::RelationMatrixRowLayout::WithoutDBlock => 0,
+        let rows = {
+            let _span = tracing::info_span!("setup_prepare_validate").entered();
+            validate_setup_inputs(
+                level_params,
+                opening_batch,
+                relation_matrix_row_layout,
+                witness_layout,
+                groups,
+            )?;
+            validate_static_inputs(
+                level_params,
+                opening_batch,
+                relation_matrix_row_layout,
+                &eq_tau1,
+            )?
         };
-        let d_row_start = rows
-            .checked_sub(d_rows)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D rows exceed relation rows".into()))?;
-        let d_physical_cols = get_total_d(level_params, opening_batch, groups)?;
-        let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
-            Vec::new().into()
-        } else {
-            checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?
-                .to_vec()
-                .into()
+        let (d_rows, d_physical_cols, d_weights) = {
+            let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
+            let d_rows = match relation_matrix_row_layout {
+                crate::RelationMatrixRowLayout::WithDBlock => level_params.d_key.row_len(),
+                crate::RelationMatrixRowLayout::WithoutCommitmentBlocks => 0,
+            };
+            let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
+            })?;
+            let d_physical_cols = get_total_d(level_params, opening_batch, groups)?;
+            let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
+                Vec::new().into()
+            } else {
+                checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?
+                    .to_vec()
+                    .into()
+            };
+            (d_rows, d_physical_cols, d_weights)
         };
         // Build the bounded equality window once and share it across every E/T/Z
         // column weight. Each canonical column address then costs one bounded
@@ -53,10 +60,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         // `O(col_bits+ring_bits)` equality product recomputed per column, which
         // was the dominant verifier setup-plan cost after the digit-innermost
         // cutover (root cause 4).
-        let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?;
-        let dynamic_groups = groups
+        let eq_window = {
+            let _span = tracing::info_span!("setup_prepare_eq_window").entered();
+            akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?
+        };
+        let mut dynamic_groups = groups
             .iter()
             .map(|group| {
+                let geometry_span =
+                    tracing::info_span!("setup_prepare_group_geometry", group_id = group.group_id)
+                        .entered();
                 let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
                 let num_positions_per_block =
                     group.num_positions_per_block(level_params, opening_batch)?;
@@ -65,7 +78,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let depth_open = group.depth_open(level_params, opening_batch)?;
                 let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
                 let n_a = group.n_a(level_params, opening_batch)?;
-                let n_b = group.n_b(level_params, opening_batch)?;
+                let n_b = group.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
                 let d_col_range =
                     get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
@@ -84,27 +97,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
                         .to_vec()
                         .into();
-                let e_cols = group
-                    .num_claims
-                    .checked_mul(num_live_blocks)
-                    .and_then(|cols| cols.checked_mul(depth_open))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("setup E active width overflow".into())
-                    })?;
-                let (required, segments) = build_packed_segments(
-                    d_col_range.start,
-                    e_cols,
-                    t_cols,
-                    z_cols,
-                    n_a,
-                    n_b,
-                    &a_row_weights,
-                    &b_weights,
-                    &d_weights,
-                    d_rows,
-                    d_physical_cols,
-                )?;
-
+                drop(geometry_span);
                 let e_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
@@ -126,10 +119,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         num_live_blocks,
                         depth_commit,
                         n_a,
-                        t_vector_width,
                         group.num_claims,
-                        group.num_claims,
-                        0,
                         &eq_window,
                     )?
                 };
@@ -172,8 +162,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     z_cols,
                     n_a,
                     n_b,
-                    required,
-                    segments: segments.into(),
+                    required: 0,
+                    segments: Vec::new().into(),
                     a_row_weights,
                     b_weights,
                     e_eq_slice,
@@ -204,12 +194,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_physical_cols,
             &projection_groups,
         )?;
+        for group in &mut dynamic_groups {
+            group.refresh_segments(
+                &d_weights,
+                d_rows,
+                d_physical_cols,
+                projection_geometry.a_ratio(),
+                projection_geometry.b_ratio(),
+                projection_geometry.d_ratio(),
+            )?;
+        }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
             d_rows,
             d_physical_cols,
             d_weights,
             projection_geometry,
+            eq_window,
         })
     }
 

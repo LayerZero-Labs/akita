@@ -88,14 +88,16 @@ pub const ABSORB_EVAL_OPENINGS_FIELD: &[u8] = b"ak/a/eof";
 /// Challenge for γ-batching evaluation claims at the same point.
 pub const CHALLENGE_EVAL_BATCH: &[u8] = b"ak/c/eb";
 
-/// Binds the next-level witness at this fold step. Intermediate folds absorb
-/// the Ajtai commitment `u'` to the next-level witness `w` (`next_w_commitment`);
-/// the terminal fold absorbs the cleartext `final_witness` (packed `w`) in the
-/// same wire position. Diagnostic label only; sponge bytes are positional.
+/// Binds the outgoing witness state of an intermediate fold. Ordinary recursive
+/// edges absorb the outer Ajtai commitment `u = B * decompose(t)`; the final
+/// edge into a suffix terminal absorbs that terminal witness's canonical inner
+/// `t` bytes instead. A terminal fold has no outgoing binding. Diagnostic label
+/// only; sponge bytes are positional and the schedule descriptor fixes the
+/// binding policy.
 pub const ABSORB_NEXT_LEVEL_WITNESS_BINDING: &[u8] = b"ak/a/w";
-/// Absorb terminal logical `e_hat` digits before sparse-challenge sampling.
+/// Absorb terminal raw-field `e_folded` bytes before sparse-challenge sampling.
 pub const ABSORB_TERMINAL_E_HAT: &[u8] = b"ak/a/twh";
-/// Absorb terminal final-witness digits outside logical `e_hat`.
+/// Absorb the terminal `z` response after sparse-challenge sampling.
 pub const ABSORB_TERMINAL_W_REMAINDER: &[u8] = b"ak/a/twr";
 /// Challenge for sampling `τ₀` (F_0 range-check batching point, paper §4.3).
 pub const CHALLENGE_TAU0: &[u8] = b"ak/c/t0";

@@ -8,7 +8,7 @@ use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, PlannerPolicy};
-use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout, Step};
+use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout};
 
 type Cfg = fp128::D64OneHot;
 
@@ -24,13 +24,11 @@ struct LayoutSummary {
 }
 
 fn root_params(schedule: &akita_types::Schedule) -> Result<&LevelParams, AkitaError> {
-    match schedule.steps.first() {
-        Some(Step::Fold(fold)) => Ok(&fold.params),
-        Some(Step::Direct(direct)) => direct.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup("root-direct schedule has no commit params".to_string())
-        }),
-        None => Err(AkitaError::InvalidSetup("empty schedule".to_string())),
-    }
+    schedule
+        .folds
+        .first()
+        .map(|fold| &fold.params)
+        .ok_or_else(|| AkitaError::InvalidSetup("schedule is missing its root fold".to_string()))
 }
 
 fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSummary, AkitaError> {

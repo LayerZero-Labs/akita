@@ -55,16 +55,19 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 fn proof_schedule_from_layout_includes_entire_batch() {
     let batch = OpeningClaimsLayout::from_groups(vec![
         PolynomialGroupLayout::new(16, 1),
+        PolynomialGroupLayout::new(16, 1),
         PolynomialGroupLayout::new(32, 2),
     ])
     .expect("multi-group shape");
-    assert_eq!(batch.num_groups(), 2);
+    assert_eq!(batch.num_groups(), 3);
     let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
-    let root_params =
-        akita_types::multi_group_root_commit_params(&schedule).expect("multi-group root params");
-    assert_eq!(root_params.precommitted_groups.len(), 1);
-    assert_eq!(
-        root_params.precommitted_groups[0].layout.group,
-        PolynomialGroupLayout::new(16, 1)
-    );
+    let root_params = schedule
+        .root_fold()
+        .expect("multi-group root fold")
+        .params
+        .clone();
+    assert_eq!(root_params.precommitted_groups.len(), 2);
+    for precommitted in &root_params.precommitted_groups {
+        assert_eq!(precommitted.layout.group, PolynomialGroupLayout::new(16, 1));
+    }
 }

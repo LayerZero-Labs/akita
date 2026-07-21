@@ -59,11 +59,11 @@ pub use plans::{
 };
 
 pub use poly::{
-    CommitBackendFor, DirectRootWitnessSource, OpeningProveBackendFor, ProjectBackendFor,
-    ProveBackendFor, ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend,
-    RingSwitchProveBackend, RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource,
-    RootOpeningSource, RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend,
-    RootProvePoly, RootTensorSource, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
+    CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
+    ProveFlowBackendFor, ProveStackFor, RecursiveProveBackend, RingSwitchProveBackend,
+    RootCommitBackend, RootCommitPoly, RootCommitPolys, RootCommitSource, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootProveBackend, RootProveFlowBackend, RootProvePoly,
+    RootTensorSource, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,

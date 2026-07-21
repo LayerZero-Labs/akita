@@ -307,20 +307,6 @@ impl OpeningClaimsLayout {
         Ok(start..end)
     }
 
-    /// Raw multi-group root-direct witness length in field elements.
-    pub fn root_direct_witness_len(&self) -> Result<usize, AkitaError> {
-        self.check()?;
-        self.groups.iter().try_fold(0usize, |acc, group| {
-            let shift = u32::try_from(group.num_vars()).map_err(|_| AkitaError::InvalidProof)?;
-            let group_len = 1usize
-                .checked_shl(shift)
-                .ok_or(AkitaError::InvalidProof)?
-                .checked_mul(group.num_polynomials())
-                .ok_or(AkitaError::InvalidProof)?;
-            acc.checked_add(group_len).ok_or(AkitaError::InvalidProof)
-        })
-    }
-
     /// Digest layout-only opening geometry.
     pub fn opening_batch_digest(&self) -> DescriptorDigest {
         let mut bytes = Vec::new();
@@ -775,10 +761,6 @@ mod tests {
         assert_eq!(layout.root_group_claim_range(0).expect("range"), 0..1);
         assert_eq!(layout.root_group_claim_range(1).expect("range"), 1..3);
         assert_eq!(layout.root_group_claim_range(2).expect("range"), 3..4);
-        assert_eq!(
-            layout.root_direct_witness_len().expect("direct len"),
-            4 + 16 + 16
-        );
     }
 
     #[test]

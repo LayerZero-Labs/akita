@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn expanded_setup_roundtrips_and_derives_same_verifier() {
-        let prover_setup = new_prover_setup::<TestF, Cfg>(10, 3).unwrap();
+        let prover_setup = new_prover_setup::<TestF, Cfg>(13, 3).unwrap();
         let verifier_setup = prover_setup.verifier_setup().unwrap();
 
         let mut bytes = Vec::new();
@@ -472,22 +472,20 @@ mod tests {
         assert_eq!(decoded, prover_setup.expanded.as_ref().clone());
         assert_eq!(decoded.seed().max_num_batched_polys, 3);
 
-        let derived_verifier = AkitaVerifierSetup {
-            expanded: Arc::new(decoded.clone()),
-            prefix_slots: SetupPrefixVerifierRegistry::new(),
-        };
+        let derived_verifier = AkitaVerifierSetup::from_parts(
+            Arc::new(decoded.clone()),
+            SetupPrefixVerifierRegistry::new(),
+        );
         assert_eq!(derived_verifier, verifier_setup);
     }
 
     #[test]
     fn setup_accepts_field_coupled_presets() {
-        // D128Full has no schedule table at all, so setup-matrix sizing
-        // falls through to the planner DP via the default `runtime_schedule`
-        // fallback. D64Full has a singleton table but the
-        // (max_num_vars=12, polys=1, points=1) iteration is a table hit.
-        new_prover_setup::<fp128::Field, fp128::D128Full>(12, 1)
+        // Both folded-only catalogs begin at nv=13, the first singleton shape
+        // with the required root and suffix folds.
+        new_prover_setup::<fp128::Field, fp128::D128Full>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Full>(12, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Full>(13, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 
@@ -524,7 +522,7 @@ mod tests {
         #[test]
         fn save_and_load_roundtrips() {
             with_test_cache_dir("roundtrip", || {
-                const MAX_VARS: usize = 12;
+                const MAX_VARS: usize = 13;
 
                 cleanup_setup_file_shape(MAX_VARS, 1);
 

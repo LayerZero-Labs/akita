@@ -14,8 +14,8 @@ use akita_field::AkitaError;
 use akita_types::{AkitaScheduleInputs, PolynomialGroupLayout, PrecommittedGroupParams};
 
 use crate::generated::{
-    generated_schedule_key_cmp, GeneratedDirectStep, GeneratedScheduleCatalogIdentity,
-    GeneratedScheduleTable, GeneratedScheduleTableEntry, GeneratedStep,
+    generated_schedule_key_cmp, GeneratedFold, GeneratedScheduleCatalogIdentity,
+    GeneratedScheduleTable, GeneratedScheduleTableEntry,
 };
 use crate::PlannerPolicy;
 
@@ -393,21 +393,17 @@ fn root_fold_shape_for_entries(
 fn collect_ring_dimensions(entries: &[GeneratedScheduleTableEntry]) -> Vec<usize> {
     let mut dims = Vec::new();
     for entry in entries {
-        collect_step_ring_dimensions(entry.steps, &mut dims);
+        collect_fold_ring_dimensions(entry.folds, &mut dims);
     }
     dims.sort_unstable();
     dims
 }
 
-fn collect_step_ring_dimensions(steps: &[GeneratedStep], dims: &mut Vec<usize>) {
-    for step in steps {
-        match step {
-            GeneratedStep::Fold(f) => push_unique(dims, f.ring_d as usize),
-            GeneratedStep::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
-            GeneratedStep::Direct(GeneratedDirectStep { commit: Some(c) }) => {
-                push_unique(dims, c.ring_d as usize);
-            }
-            GeneratedStep::Direct(GeneratedDirectStep { commit: None }) => {}
+fn collect_fold_ring_dimensions(folds: &[GeneratedFold], dims: &mut Vec<usize>) {
+    for fold in folds {
+        match fold {
+            GeneratedFold::Fold(f) => push_unique(dims, f.ring_d as usize),
+            GeneratedFold::FoldWithSetupMetadata(f) => push_unique(dims, f.fold.ring_d as usize),
         }
     }
 }
@@ -439,9 +435,9 @@ fn entries_key_digest(entries: &[GeneratedScheduleTableEntry]) -> u64 {
         for group in entry.precommitteds {
             write_generated_precommitted_group_key(&mut h, group);
         }
-        h.write_u64(entry.steps.len() as u64);
-        for step in entry.steps {
-            write_generated_step(&mut h, step);
+        h.write_u64(entry.folds.len() as u64);
+        for fold in entry.folds {
+            write_generated_fold(&mut h, fold);
         }
     }
     h.finish()
@@ -494,13 +490,13 @@ fn write_generated_setup_prefix(
     }
 }
 
-fn write_generated_step(h: &mut Fnv64, step: &GeneratedStep) {
-    match step {
-        GeneratedStep::Fold(fold) => {
+fn write_generated_fold(h: &mut Fnv64, fold: &GeneratedFold) {
+    match fold {
+        GeneratedFold::Fold(fold) => {
             h.write_u64(0);
             write_generated_fold_step(h, fold);
         }
-        GeneratedStep::FoldWithSetupMetadata(metadata) => {
+        GeneratedFold::FoldWithSetupMetadata(metadata) => {
             h.write_u64(1);
             write_generated_fold_step(h, &metadata.fold);
             if let Some(group) = &metadata.setup_prefix_group {
@@ -513,15 +509,6 @@ fn write_generated_step(h: &mut Fnv64, step: &GeneratedStep) {
                 akita_types::SetupContributionMode::Direct => 0,
                 akita_types::SetupContributionMode::Recursive => 1,
             });
-        }
-        GeneratedStep::Direct(direct) => {
-            h.write_u64(2);
-            if let Some(commit) = &direct.commit {
-                h.write_u64(1);
-                write_generated_fold_step(h, commit);
-            } else {
-                h.write_u64(0);
-            }
         }
     }
 }
@@ -646,7 +633,7 @@ mod tests {
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: &[],
-            steps: &[],
+            folds: &[],
         }
     }
 
@@ -671,7 +658,7 @@ mod tests {
         GeneratedScheduleTableEntry {
             final_group: PolynomialGroupLayout::new(16, 1),
             precommitteds: &PRECOMMITTED,
-            steps: &[],
+            folds: &[],
         }
     }
 

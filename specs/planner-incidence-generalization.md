@@ -325,11 +325,9 @@ pub struct GeneratedFoldStep {
 }
 ```
 
-The terminal direct step is only a marker:
-
-```rust
-pub struct GeneratedDirectStep;
-```
+The generated row stores only fold decisions. Runtime expansion derives the
+single terminal [`TerminalWitnessPlan`](../crates/akita-types/src/schedule.rs)
+from the last fold's checked parameters; there is no generated terminal marker.
 
 Do not store cached materialization results in generated entries. In particular,
 avoid reintroducing:
@@ -471,4 +469,3 @@ cargo test multipoint
 8. Update prover/verifier protocol code so actual root witness layout matches
    the profile formula.
 9. Add incidence-level and e2e tests.
-

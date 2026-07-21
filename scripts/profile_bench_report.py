@@ -308,11 +308,8 @@ TAIL_SUMMARY_INT_FIELDS = (
     "tail_e_ring_elems",
     "tail_t_field_elems",
     "tail_t_ring_elems",
-    "tail_r_field_elems",
-    "tail_r_ring_elems",
     "tail_e_bytes",
     "tail_t_bytes",
-    "tail_r_bytes",
     "z_rice_low_bits_wire",
     "z_rice_low_bits_cap",
     "z_coords",
@@ -435,7 +432,6 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             "tail_t_field_elems",
             "tail_t_ring_elems",
         ),
-        ("Quotient-tail (`r`)", "tail_r_bytes", "tail_r_field_elems", "tail_r_ring_elems"),
     ):
         seg_bytes = current.get(bytes_key)
         field_coeffs = current.get(field_key)
@@ -451,15 +447,14 @@ def render_tail_encoding(current: dict[str, object]) -> None:
 
     if all(
         current.get(key) is not None
-        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_r_bytes")
+        for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
     ):
         wire_total = (
             int(current["tail_z_bytes"])
             + int(current["tail_e_bytes"])
             + int(current["tail_t_bytes"])
-            + int(current["tail_r_bytes"])
         )
-        print(f"  - Wire total (z+e+t+r): `{fmt_bytes(float(wire_total))} bytes`")
+        print(f"  - Wire total (z+e+t): `{fmt_bytes(float(wire_total))} bytes`")
 
     z_budget = current.get("tail_z_budget_bytes")
     z_slack = current.get("tail_z_slack_bytes")
@@ -715,6 +710,8 @@ def extract_summary(
             summary["setup_ring_elements"] = int(kvs["setup_ring_elements"])
             summary["setup_vector_bytes"] = int(kvs["setup_vector_bytes"])
             summary["setup_ntt_cache_bytes"] = int(kvs["setup_ntt_cache_bytes"])
+        elif " INFO verifier NTT cache size" in line and kvs.get("label") == mode:
+            summary["verifier_ntt_cache_bytes"] = int(kvs["verifier_ntt_cache_bytes"])
         elif "CRT NTT profile" in line and kvs.get("label") == mode:
             summary["crt_profile"] = kvs["crt_profile"]
             summary["crt_num_primes"] = int(kvs["crt_num_primes"])
@@ -1015,6 +1012,7 @@ SUMMARY_CSV_COLUMNS = (
     "setup_ring_elements",
     "setup_vector_bytes",
     "setup_ntt_cache_bytes",
+    "verifier_ntt_cache_bytes",
     "crt_profile",
     "crt_num_primes",
     "crt_prime_modulus_bits",
@@ -1462,6 +1460,7 @@ REPORT_METRICS = [
     Metric("setup_ring_elements", "Setup ring elements", "ring elements", fmt_count),
     Metric("setup_vector_bytes", "Setup vector", "MiB", fmt_mib_with_exact_bytes),
     Metric("setup_ntt_cache_bytes", "Prepared NTT cache", "MiB", fmt_mib_with_exact_bytes),
+    Metric("verifier_ntt_cache_bytes", "Verifier NTT cache", "MiB", fmt_mib_with_exact_bytes),
     Metric("proof_size_bytes", "Proof size", "bytes", fmt_bytes),
     Metric("akita_fold_bytes", "Recursive fold payload", "bytes", fmt_bytes),
     Metric("tail_bytes", "Final-witness tail", "bytes", fmt_bytes),
@@ -1640,6 +1639,7 @@ def render_matrix_summary(
         "Setup and preparation",
         "Setup vector size",
         "Prepared NTT cache size",
+        "Verifier NTT cache size",
         "Commit",
         "Prove",
         "Verify",
@@ -1670,6 +1670,14 @@ def render_matrix_summary(
                 current,
                 baseline,
                 "setup_ntt_cache_bytes",
+                fmt_mib_from_bytes,
+                " MiB",
+                main_baseline is not None,
+            ),
+            optional_value_with_main_delta(
+                current,
+                baseline,
+                "verifier_ntt_cache_bytes",
                 fmt_mib_from_bytes,
                 " MiB",
                 main_baseline is not None,

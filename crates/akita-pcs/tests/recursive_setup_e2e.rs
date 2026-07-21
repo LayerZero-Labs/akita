@@ -17,9 +17,9 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedRootProof, AkitaScheduleLookupKey, BasisMode, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule, SetupContributionMode, Step,
+    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupParams,
+    Schedule,
 };
 use common::*;
 
@@ -37,31 +37,25 @@ type RecursiveOneHotScheme = AkitaCommitmentScheme<RecursiveOneHotCfg>;
 type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
 
 fn multi_group_root_params(schedule: &Schedule) -> &LevelParams {
-    match schedule.steps.first().expect("generated profile root step") {
-        Step::Direct(direct) => direct.params.as_ref().expect("multi-group root params"),
-        Step::Fold(fold) => &fold.params,
-    }
+    &schedule
+        .root_fold()
+        .expect("generated profile root fold")
+        .params
 }
 
 fn schedule_uses_setup_prefix(schedule: &Schedule) -> bool {
-    schedule.steps.iter().any(|step| {
-        matches!(
-            step,
-            Step::Fold(fold) if fold.params.setup_prefix.is_some()
-        )
-    })
+    schedule
+        .folds
+        .iter()
+        .any(|fold| fold.params.setup_prefix.is_some())
 }
 
 fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
-    let root_has_stage3 = match &proof.root {
-        AkitaBatchedRootProof::Fold(fold) => fold.stage3_sumcheck_proof.is_some(),
-        AkitaBatchedRootProof::Terminal(_) | AkitaBatchedRootProof::ZeroFold { .. } => false,
-    };
-    let suffix_has_stage3 = proof
-        .steps
-        .iter()
-        .any(|step| step.stage3_sumcheck_proof().is_some());
-    root_has_stage3 || suffix_has_stage3
+    proof.root.stage3_sumcheck_proof.is_some()
+        || proof
+            .recursive_folds
+            .iter()
+            .any(|step| step.stage3_sumcheck_proof.is_some())
 }
 
 fn generated_recursive_profile_key() -> (AkitaScheduleLookupKey, Vec<PolynomialGroupLayout>) {
@@ -205,7 +199,6 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            SetupContributionMode::Recursive,
         )
         .expect("generated-profile recursive proof");
         assert!(
@@ -224,7 +217,7 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
         )
         .expect("deserialize generated-profile proof");
 
-        let verifier_setup = setup.verifier_setup().expect("verifier setup");
+        let verifier_setup = RecursiveOneHotScheme::setup_verifier(&setup).expect("verifier setup");
         let mut verifier_groups = Vec::new();
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             verifier_groups.push(
@@ -253,7 +246,6 @@ fn generated_recursive_onehot_profile_proves_with_setup_offload() {
             &mut verifier_transcript,
             verify_claims,
             BasisMode::Lagrange,
-            SetupContributionMode::Recursive,
         )
         .expect("generated-profile recursive verify");
     });

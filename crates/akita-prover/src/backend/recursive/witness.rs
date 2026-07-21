@@ -19,8 +19,8 @@ use crate::backend::poly_helpers::{
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
 use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-    FpExtEncoding, WitnessLayout,
+    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
+    WitnessLayout,
 };
 use std::{marker::PhantomData, sync::Arc};
 
@@ -260,12 +260,6 @@ where
         Ok(None)
     }
 
-    pub(crate) fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        Err(AkitaError::InvalidInput(
-            "root-direct witness is not supported for this polynomial type".to_string(),
-        ))
-    }
-
     #[cfg(test)]
     pub(crate) fn fold_blocks(
         &self,
@@ -465,9 +459,9 @@ where
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CpuBackend, DecomposeFoldBatchPlan, DecomposeFoldPlan,
-    DirectRootWitnessSource, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput,
-    OpeningFoldPlan, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan, RootOpeningSource,
+    RootPolyMeta, RootPolyShape, RootTensorSource, TensorPackedWitness,
+    TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
@@ -584,19 +578,6 @@ where
             polys,
             _marker: PhantomData,
         })
-    }
-}
-
-impl<F, const D: usize> DirectRootWitnessSource<F, D> for RecursiveWitnessFlat
-where
-    F: FieldCore + CanonicalField,
-{
-    fn direct_root_witness(&self) -> Result<CleartextWitnessProof<F>, AkitaError> {
-        SuffixWitnessView::<F, D>::from_i8_digits(&self.digits)?.direct_root_witness()
-    }
-
-    fn base_evals(&self) -> Result<Vec<F>, AkitaError> {
-        SuffixWitnessView::<F, D>::from_i8_digits(&self.digits)?.base_evals()
     }
 }
 

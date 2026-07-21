@@ -1,9 +1,9 @@
 #![allow(missing_docs)]
 
 pub use akita_planner::generated::{
-    GeneratedDirectStep, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
+    GeneratedFold, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedSetupPrefixGroup, GeneratedStep, PolynomialGroupLayout, PrecommittedGroupParams,
+    GeneratedSetupPrefixGroup, PolynomialGroupLayout, PrecommittedGroupParams,
     SetupContributionMode, SisModulusProfileId, SisTableDigest,
 };
 pub use akita_planner::{

@@ -27,6 +27,9 @@ use akita_types::{NttCacheKey, OpeningClaimsLayout};
 type Cfg = fp64::D64Full;
 type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
+// The folded-only protocol requires at least two folds. `nv=8` was a
+// root-direct fixture; `nv=14` is the first supported fp64 D64 singleton.
+const CONTRACT_NUM_VARS: usize = 14;
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.
 ///
@@ -119,7 +122,7 @@ where
         &self,
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
-        f: impl FnOnce(&akita_prover::kernels::crt_ntt::NttSlotCacheAny) -> Result<R, AkitaError>,
+        f: impl FnOnce(&akita_types::PreparedNttSlotAny) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         CpuBackend.with_ntt_slot(prepared, key, f)
     }
@@ -175,19 +178,21 @@ where
 
 #[test]
 fn custom_commit_source_runs_commit_with_params() {
-    const NUM_VARS: usize = 8;
-    let len = 1usize << NUM_VARS;
+    let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    let contract =
+        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
 
-    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
+    let dense =
+        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
+    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
-        .expect("setup");
+    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup =
+        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
+            .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
@@ -225,18 +230,20 @@ fn custom_commit_source_runs_commit_with_params() {
 
 #[test]
 fn custom_commit_source_runs_batched_commit_with_params() {
-    const NUM_VARS: usize = 8;
-    let len = 1usize << NUM_VARS;
+    let len = 1usize << CONTRACT_NUM_VARS;
     let evals: Vec<F> = (0..len).map(|idx| F::from_u64((idx as u64) + 1)).collect();
-    let contract = ContractRootPoly::from_field_evals(NUM_VARS, &evals).expect("contract poly");
+    let contract =
+        ContractRootPoly::from_field_evals(CONTRACT_NUM_VARS, &evals).expect("contract poly");
     assert_commit_source_only(&contract);
-    let dense = DensePoly::<F>::from_field_evals(NUM_VARS, D, &evals).expect("dense oracle");
-    let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
+    let dense =
+        DensePoly::<F>::from_field_evals(CONTRACT_NUM_VARS, D, &evals).expect("dense oracle");
+    let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(NUM_VARS, 1).expect("envelope");
-    let setup = AkitaProverSetup::<F>::generate_with_capacity(NUM_VARS, 1, D, setup_envelope)
-        .expect("setup");
+    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup =
+        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
+            .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");

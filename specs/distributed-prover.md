@@ -278,15 +278,13 @@ prover reads `num_chunks` per level and the chunked construction is inert for
 
 ### Terminal level
 
-The terminal direct witness (`build_segment_typed_witness`, z-first
-`SegmentTypedWitness`) is reached after the witness has shrunk. If a terminal
-predecessor is itself a modified (`W > 1`) level, the planner prices the chunked
-terminal **as an upper bound** via the chunked ring count
-(`w_ring_element_count_for_chunks(.., WithoutDBlock, num_chunks)`) — its first
-landing does not yet add a per-chunk `num_segments` to `tail_segment_layout`
-(see [`distributed-planner.md`](distributed-planner.md) Step 5). The prover emits
-the per-window terminal segments matching that count. Otherwise the terminal is the
-ordinary single-segment witness.
+PR #311 removed quotient-backed terminal layouts. The current terminal is the
+structural `WithoutCommitmentBlocks` clear witness and contains only typed
+`z | e | t` segments checked by direct consistency/A and trace equations.
+Chunked/grouped terminal geometry is not currently accepted; this proposal must
+extend `SegmentTypedWitnessShape` and the terminal checker before enabling a `W > 1`
+terminal predecessor. It must not price or reconstruct a `WithoutDBlock`
+quotient tail.
 
 ### Prover flow
 

@@ -626,7 +626,7 @@ levels. Extend for multi-chunk layout:
 
 **v1 planner approach (recommended):** add
 `terminal_direct_witness_shape_chunked(...)` parallel to
-`segment_typed_witness_shape`, producing `CleartextWitnessShape::SegmentTyped`
+`SegmentTypedWitnessShape::from_groups`, producing `SegmentTypedWitnessShape`
 with per-chunk multiplicities encoded in `TailSegmentLayout` (may require adding
 `num_chunks: usize` to the layout struct — coordinate with verifier spec Stage 8).
 

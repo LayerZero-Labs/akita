@@ -106,6 +106,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
 
     /// Derive a verifier setup from this prover setup.
     ///
+    /// This copies protocol-independent setup state. Verifier setup initializes
+    /// a non-serialized lazy terminal NTT-prefix cache; direct terminal checks
+    /// prepare exact or covering prefixes on demand.
+    ///
     /// # Errors
     ///
     /// Returns an error if prover prefix-slot metadata cannot be converted into
@@ -113,10 +117,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        Ok(AkitaVerifierSetup {
-            expanded: self.expanded.clone(),
+        Ok(AkitaVerifierSetup::from_parts(
+            self.expanded.clone(),
             prefix_slots,
-        })
+        ))
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.

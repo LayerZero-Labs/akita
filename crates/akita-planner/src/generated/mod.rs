@@ -37,43 +37,24 @@ pub struct GeneratedFoldStepWithSetupMetadata {
     pub setup_contribution_mode: akita_types::SetupContributionMode,
 }
 
-/// Terminal direct-send step in a generated schedule.
-///
-/// `commit` is `Some` only for a **root-direct** entry (a schedule whose
-/// single step is this `Direct`): it carries the brute-forced root commit
-/// layout — the same 7-field shape as a fold step — so the runtime can
-/// expand it into the committed `LevelParams` via
-/// [`GeneratedFoldStep::expand_to_level_params`] without re-running the
-/// offline SIS derivation.
-///
-/// Terminal-direct steps that follow one or more folds ship the cleartext
-/// witness without committing, so they carry `commit: None`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct GeneratedDirectStep {
-    pub commit: Option<GeneratedFoldStep>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedStep {
+pub enum GeneratedFold {
     Fold(GeneratedFoldStep),
     FoldWithSetupMetadata(GeneratedFoldStepWithSetupMetadata),
-    Direct(GeneratedDirectStep),
 }
 
-impl GeneratedStep {
-    pub fn fold_step(&self) -> Option<&GeneratedFoldStep> {
+impl GeneratedFold {
+    pub fn fold_step(&self) -> &GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&step.fold),
-            Self::Direct(_) => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &step.fold,
         }
     }
 
-    pub fn fold_step_mut(&mut self) -> Option<&mut GeneratedFoldStep> {
+    pub fn fold_step_mut(&mut self) -> &mut GeneratedFoldStep {
         match self {
-            Self::Fold(step) => Some(step),
-            Self::FoldWithSetupMetadata(step) => Some(&mut step.fold),
-            Self::Direct(_) => None,
+            Self::Fold(step) => step,
+            Self::FoldWithSetupMetadata(step) => &mut step.fold,
         }
     }
 }
@@ -82,7 +63,7 @@ impl GeneratedStep {
 pub struct GeneratedScheduleTableEntry {
     pub final_group: akita_types::PolynomialGroupLayout,
     pub precommitteds: &'static [akita_types::PrecommittedGroupParams],
-    pub steps: &'static [GeneratedStep],
+    pub folds: &'static [GeneratedFold],
 }
 
 impl GeneratedScheduleTableEntry {

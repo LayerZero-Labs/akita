@@ -214,9 +214,9 @@ class ProfileBenchReportTests(unittest.TestCase):
         from scripts.profile_bench_report import extract_summary, render_proof_levels
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=12 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=4 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
-            'stage2_sumcheck_bytes=8 root_variant=terminal\n'
+            'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
 
@@ -310,8 +310,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         proof_level = {
             "level": 0,
             "d": 64,
-            "total_bytes": 12,
-            "present_byte_fields": ["fold_grind_nonce_bytes", "stage2_sumcheck_bytes"],
+            "total_bytes": 4,
+            "present_byte_fields": ["fold_grind_nonce_bytes"],
             "extension_opening_partials_bytes": 0,
             "extension_opening_sumcheck_bytes": 0,
             "fold_grind_nonce_bytes": 4,
@@ -319,7 +319,7 @@ class ProfileBenchReportTests(unittest.TestCase):
             "stage1_sumcheck_bytes": 0,
             "stage1_interstage_claims_bytes": 0,
             "stage1_s_claim_bytes": 0,
-            "stage2_sumcheck_bytes": 8,
+            "stage2_sumcheck_bytes": 0,
             "stage3_sumcheck_bytes": 0,
             "next_w_commitment_bytes": 0,
             "next_w_eval_bytes": 0,

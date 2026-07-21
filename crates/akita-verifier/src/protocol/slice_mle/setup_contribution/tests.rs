@@ -82,7 +82,7 @@ impl SetupContributionShape {
 
     fn terminal_relation_only() -> Self {
         let mut shape = Self::root_single_point();
-        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutDBlock;
+        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
         shape
     }
 

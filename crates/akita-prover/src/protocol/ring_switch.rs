@@ -33,7 +33,7 @@ mod tests;
 pub(crate) use coeffs::PreparedRingSwitchGroup;
 pub use coeffs::RingSwitchTerminalArtifacts;
 pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
-pub use commit::{commit_w, NextWitnessCommitment};
+pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::{
     build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
 };

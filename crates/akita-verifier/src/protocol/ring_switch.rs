@@ -4,21 +4,19 @@ use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
+use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
     RandomSampling,
 };
-use akita_transcript::labels::{
-    ABSORB_NEXT_LEVEL_WITNESS_BINDING, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_RING_SWITCH,
-    CHALLENGE_TAU0, CHALLENGE_TAU1,
-};
+use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     eval_relation_weight_at_point, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
     validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams,
     OpeningClaimsLayout, RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRole, RingVec, SetupContributionGroupInputs, SetupContributionPlan,
-    TerminalWitnessTranscriptParts, WitnessLayout, WitnessUnitLayout,
+    RingRole, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    WitnessUnitLayout,
 };
 use std::sync::Arc;
 
@@ -68,21 +66,6 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
             col_bits: self.col_bits,
             ring_bits: self.ring_bits,
             tau0,
-            tau1: self.tau1,
-            b: self.b,
-            alpha: self.alpha,
-        })
-    }
-
-    fn into_terminal_as_output(self) -> Result<RingSwitchVerifyOutput<E>, AkitaError> {
-        if self.tau0.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        Ok(RingSwitchVerifyOutput {
-            relation_matrix_evaluator: self.relation_matrix_evaluator,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
-            tau0: Vec::new(),
             tau1: self.tau1,
             b: self.b,
             alpha: self.alpha,
@@ -147,89 +130,16 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub opening_ring_dim: usize,
 }
 
-/// Replay the verifier half of ring switching.
-///
-/// This handles the single-point relation replay for one committed polynomial
-/// bundle.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or ring-switch row-eval
-/// preparation fails.
+/// Replay the verifier half of ring switching after the caller has absorbed
+/// the schedule-selected outgoing witness binding.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
 pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
-    w_commitment: &RingVec<F>,
-    next_ring_dim: usize,
-    transcript: &mut T,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    // `validate_ring_dispatch` is called inside `ring_switch_verifier_core`;
-    // the outer wrapper just performs the witness absorb before delegating.
-    // The next-witness commitment is shaped at the *next* level's schedule
-    // ring dimension, which may differ from this level's dispatch `D` in
-    // mixed-D schedules.
-    if next_ring_dim == 0 || !w_commitment.can_decode_vec(next_ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
-    transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, w_commitment);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithDBlock,
-    )?
-    .into_intermediate()
-}
-
-/// Terminal variant of [`ring_switch_verifier`].
-///
-/// This owns the required terminal final-witness remainder absorb before
-/// sampling ring-switch challenges.
-///
-/// # Errors
-///
-/// Returns an error if the claim shape is invalid, opening-point routing is
-/// inconsistent, transcript-bound challenge data has the wrong size, or
-/// relation-matrix evaluator preparation fails.
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_terminal")]
-#[inline(never)]
-pub(crate) fn ring_switch_verifier_terminal<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
-    transcript: &mut T,
-    terminal_parts: &TerminalWitnessTranscriptParts,
-) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
-where
-    F: FieldCore + CanonicalField + RandomSampling,
-    E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
-    T: Transcript<F>,
-{
-    transcript.absorb_and_record_bytes(ABSORB_TERMINAL_W_REMAINDER, &terminal_parts.remainder);
-    ring_switch_verifier_core::<F, E, T, D>(
-        replay,
-        w_len,
-        transcript,
-        RelationMatrixRowLayout::WithoutDBlock,
-    )?
-    .into_terminal_as_output()
-}
-
-#[tracing::instrument(skip_all, name = "ring_switch_verifier_core")]
-#[inline(never)]
-fn ring_switch_verifier_core<F, E, T, const D: usize>(
-    replay: &RingSwitchReplay<'_, F, E>,
-    w_len: usize,
     transcript: &mut T,
     relation_matrix_row_layout: RelationMatrixRowLayout,
-) -> Result<RingSwitchVerifyCoreOutput<E>, AkitaError>
+) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -241,7 +151,10 @@ where
     let num_polys = opening_batch.num_total_polynomials();
     let gamma = replay.row_coefficients;
 
-    let alpha: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH);
+    let alpha: E = {
+        let _span = tracing::info_span!("ring_switch_transcript_challenges").entered();
+        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_RING_SWITCH)
+    };
 
     let num_claims = relation.opening_batch().num_total_polynomials();
     // Validate each group's opening/multiplier point against that group's own
@@ -301,23 +214,32 @@ where
     let num_i =
         lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
 
-    let tau0 = match relation_matrix_row_layout {
-        RelationMatrixRowLayout::WithDBlock => Some(
-            (0..num_sc_vars)
-                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                .collect(),
-        ),
-        RelationMatrixRowLayout::WithoutDBlock => None,
+    let (tau0, tau1) = {
+        let _span = tracing::info_span!(
+            "ring_switch_transcript_challenges",
+            tau0_len = num_sc_vars,
+            tau1_len = num_i
+        )
+        .entered();
+        let tau0 = match relation_matrix_row_layout {
+            RelationMatrixRowLayout::WithDBlock => Some(
+                (0..num_sc_vars)
+                    .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                    .collect(),
+            ),
+            RelationMatrixRowLayout::WithoutCommitmentBlocks => None,
+        };
+        let tau1 = (0..num_i)
+            .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
+            .collect::<Vec<_>>();
+        (tau0, tau1)
     };
-    let tau1: Vec<E> = (0..num_i)
-        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
-        .collect();
     if gamma.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
     let relation_matrix_evaluator =
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
-    Ok(RingSwitchVerifyCoreOutput {
+    RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
         col_bits,
         ring_bits,
@@ -327,7 +249,8 @@ where
             .checked_shl(lp.log_basis_open)
             .ok_or_else(|| AkitaError::InvalidSetup("basis size overflow".to_string()))?,
         alpha,
-    })
+    }
+    .into_intermediate()
 }
 
 /// Prepare relation-matrix evaluator state from a fixed
@@ -943,7 +866,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         {
             let _span = tracing::info_span!("structured_chunks").entered();
             // Bounded equality window for the serial Z fallback (tensor mode).
-            let x_eq_window = OffsetEqWindow::new(x_challenges)?;
+            let x_eq_window = setup_plan
+                .is_none()
+                .then(|| OffsetEqWindow::new(x_challenges))
+                .transpose()?;
             for (group_index, group) in self.groups.iter().enumerate() {
                 let units = self.group_units(context, group)?;
                 validate_log_basis(group.log_basis_inner)?;
@@ -969,16 +895,31 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                let (e_contribution, t_contribution) = evaluate_group_et_contributions::<F, E>(
-                    group,
-                    &units,
-                    context.opening_source_len,
-                    x_challenges,
-                    consistency_weight,
-                    a_row_weights,
-                    group_g_open_ext,
-                    &g_t_commit_ext,
-                )?;
+                let (e_contribution, t_contribution) = if let Some(plan) = setup_plan.as_ref() {
+                    let (e_eq_slice, t_eq_slice, _) = plan
+                        .group_column_eq_slices(group_index)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    evaluate_group_et_from_eq_slices::<F, E>(
+                        group,
+                        consistency_weight,
+                        a_row_weights,
+                        group_g_open_ext,
+                        &g_t_commit_ext,
+                        e_eq_slice,
+                        t_eq_slice,
+                    )?
+                } else {
+                    evaluate_group_et_contributions::<F, E>(
+                        group,
+                        &units,
+                        context.opening_source_len,
+                        x_challenges,
+                        consistency_weight,
+                        a_row_weights,
+                        group_g_open_ext,
+                        &g_t_commit_ext,
+                    )?
+                };
                 e_structured_contribution += e_contribution;
                 t_structured_contribution += t_contribution;
 
@@ -988,8 +929,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     //                      · consistency · opening_a[pos] · commit_gadget[cd]
                     // The slice is already `-Σ_unit Σ_fold_digit eq · fold_gadget`,
                     // so this is a cheap contraction with no equality evaluation.
-                    let z_slice = plan
-                        .group_z_eq_slice(group_index)
+                    let (_, _, z_slice) = plan
+                        .group_column_eq_slices(group_index)
                         .ok_or(AkitaError::InvalidProof)?;
                     for (position, &opening_a) in group.opening_a_evals.iter().enumerate() {
                         for (commit_digit, &commit) in g_witness.iter().enumerate() {
@@ -1024,6 +965,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                                             context.opening_source_len,
                                             z_index,
                                         )?;
+                                    let x_eq_window =
+                                        x_eq_window.as_ref().ok_or(AkitaError::InvalidProof)?;
                                     z_weight -=
                                         x_eq_window.eval(z_opening_index) * E::lift_base(fold);
                                 }
@@ -1041,19 +984,33 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let setup_contribution = if let Some(claim) = setup_claim {
             claim
         } else {
-            let _span = tracing::info_span!("setup_contribution").entered();
+            let _span = tracing::info_span!(
+                "setup_contribution",
+                required = setup_plan
+                    .as_ref()
+                    .map_or(0, SetupContributionPlan::required)
+            )
+            .entered();
             let plan = setup_plan.as_ref().ok_or(AkitaError::InvalidProof)?;
             plan.evaluate_direct::<F>(setup, &alpha_pows_a, alpha_pows_b, alpha_pows_d)?
         };
 
         let r_contribution = {
+            let _span = tracing::info_span!("relation_r_contribution").entered();
             let r_gadget = shared_gadget
                 .get(..r_depth)
                 .ok_or(AkitaError::InvalidProof)?;
             let alpha_pow_d = *alpha_pows_d.get(d_d - 1).ok_or(AkitaError::InvalidProof)?;
             let denom = alpha_pow_d * alpha + E::one();
             let offset_r = context.witness_layout.r_offset();
-            compute_r_contribution(self, x_challenges, offset_r, denom, r_gadget)?
+            compute_r_contribution(
+                self,
+                x_challenges,
+                setup_plan.as_ref().map(SetupContributionPlan::eq_window),
+                offset_r,
+                denom,
+                r_gadget,
+            )?
         };
 
         Ok(e_structured_contribution
@@ -1062,6 +1019,116 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             + setup_contribution
             + r_contribution)
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn evaluate_group_et_from_eq_slices<F, E>(
+    group: &RelationMatrixGroupEvaluator<E>,
+    consistency_weight: E,
+    a_row_weights: &[E],
+    g_open_ext: &[E],
+    g_t_commit_ext: &[E],
+    e_eq_slice: &[E],
+    t_eq_slice: &[E],
+) -> Result<(E, E), AkitaError>
+where
+    F: FieldCore + FromPrimitiveInt,
+    E: FieldCore + MulBase<F>,
+{
+    let e_stride = group.depth_open;
+    let t_stride = group
+        .n_a
+        .checked_mul(group.depth_commit)
+        .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
+    let block_claims = group
+        .num_claims
+        .checked_mul(group.num_live_blocks)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
+    let expected_e = block_claims
+        .checked_mul(e_stride)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
+    let expected_t = block_claims
+        .checked_mul(t_stride)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
+    if e_eq_slice.len() != expected_e
+        || t_eq_slice.len() != expected_t
+        || g_open_ext.len() != group.depth_open
+        || g_t_commit_ext.len() != group.depth_commit
+        || a_row_weights.len() != group.n_a
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let challenge_factors = (0..group.num_claims)
+        .map(|claim| {
+            group
+                .c_alphas
+                .affine_factors::<F>(claim, group.num_live_blocks)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let t_weights = a_row_weights
+        .iter()
+        .flat_map(|&row_weight| {
+            g_t_commit_ext
+                .iter()
+                .map(move |&gadget| row_weight * gadget)
+        })
+        .collect::<Vec<_>>();
+    let _span = tracing::info_span!(
+        "structured_et_from_setup_slices",
+        block_claims,
+        e_columns = expected_e,
+        t_columns = expected_t
+    )
+    .entered();
+    cfg_fold_reduce!(
+        0..block_claims,
+        || Ok((E::zero(), E::zero())),
+        |acc: Result<(E, E), AkitaError>, block_claim| {
+            let (mut e_acc, mut t_acc) = acc?;
+            let claim = block_claim / group.num_live_blocks;
+            let block = block_claim % group.num_live_blocks;
+            let challenge = challenge_factors
+                .get(claim)
+                .and_then(|factors| factors.low.get(block))
+                .copied()
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_start = block_claim
+                .checked_mul(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_end = e_start
+                .checked_add(e_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_block = e_eq_slice
+                .get(e_start..e_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut e_weight = E::zero();
+            for (&eq, &gadget) in e_block.iter().zip(g_open_ext) {
+                e_weight += eq * gadget;
+            }
+            e_acc += challenge * consistency_weight * e_weight;
+
+            let t_start = block_claim
+                .checked_mul(t_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let t_end = t_start
+                .checked_add(t_stride)
+                .ok_or(AkitaError::InvalidProof)?;
+            let t_block = t_eq_slice
+                .get(t_start..t_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut t_weight = E::zero();
+            for (&eq, &weight) in t_block.iter().zip(&t_weights) {
+                t_weight += eq * weight;
+            }
+            t_acc += challenge * t_weight;
+            Ok((e_acc, t_acc))
+        },
+        |lhs: Result<(E, E), AkitaError>, rhs: Result<(E, E), AkitaError>| {
+            let (lhs_e, lhs_t) = lhs?;
+            let (rhs_e, rhs_t) = rhs?;
+            Ok((lhs_e + rhs_e, lhs_t + rhs_t))
+        }
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

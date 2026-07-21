@@ -14,7 +14,7 @@ use akita_types::sis::{
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, DecompositionParams, LevelParams,
     OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupParams, Schedule,
-    SetupMatrixEnvelope, SisModulusProfileId, Step,
+    SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -124,14 +124,46 @@ pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<LevelParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
-    let params = root_commit_params(&schedule, "conservative commit schedule")?.clone();
-    widen_conservative_commit_params::<Cfg>(params)
+    Ok(schedule.root_fold()?.params.clone())
+}
+
+pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
+    key: &PolynomialGroupLayout,
+) -> Result<Schedule, AkitaError> {
+    if Cfg::decomposition().log_commit_bound != 1 {
+        return Err(AkitaError::InvalidSetup(
+            "conservative commitments require a one-hot config".to_string(),
+        ));
+    }
+    key.validate()?;
+
+    let (min_basis, _) = Cfg::basis_range();
+    let mut policy = policy_of::<Cfg>();
+    policy.basis_range = (min_basis, min_basis);
+    policy.decomposition.log_basis = min_basis;
+    let mut schedule = akita_planner::find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(*key),
+        &policy,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    let widened = widen_conservative_commit_params::<Cfg>(schedule.root_fold()?.params.clone())?;
+    schedule.root_fold_mut()?.params = widened;
+    Ok(schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     mut params: LevelParams,
 ) -> Result<LevelParams, AkitaError> {
     let policy = policy_of::<Cfg>();
+    let (min_basis, _) = Cfg::basis_range();
+    if params.log_basis_open != min_basis {
+        return Err(AkitaError::InvalidSetup(
+            "conservative commit planner did not use the minimum configured log_basis_open"
+                .to_string(),
+        ));
+    }
+
     let witness_decomposition = DecompositionParams {
         log_basis: params.log_basis_inner,
         ..policy.decomposition
@@ -213,39 +245,4 @@ fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
     )?;
     params.stamp_role_dims_from_keys();
     Ok(params)
-}
-
-pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
-    key: &PolynomialGroupLayout,
-) -> Result<Schedule, AkitaError> {
-    if Cfg::decomposition().log_commit_bound != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "conservative commitments require a one-hot config".to_string(),
-        ));
-    }
-    key.validate()?;
-
-    let (min_basis, _) = Cfg::basis_range();
-    let mut policy = policy_of::<Cfg>();
-    policy.basis_range = (min_basis, min_basis);
-    policy.decomposition.log_basis = min_basis;
-    akita_planner::find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )
-}
-
-fn root_commit_params<'a>(
-    schedule: &'a Schedule,
-    context: &str,
-) -> Result<&'a LevelParams, AkitaError> {
-    match schedule.steps.first() {
-        Some(Step::Fold(root_step)) => Ok(&root_step.params),
-        Some(Step::Direct(direct)) => direct.params.as_ref().ok_or_else(|| {
-            AkitaError::InvalidSetup(format!("root-direct {context} is missing commit params"))
-        }),
-        None => Err(AkitaError::InvalidSetup(format!("{context} has no steps"))),
-    }
 }

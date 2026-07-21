@@ -125,9 +125,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     /// Materialize the dense field-evaluation table directly from the flat
     /// hot-index positions.
     ///
-    /// This is the D-free field-materialization shared by the tensor helpers
-    /// and the [`crate::compute::DirectRootWitnessSource`] impl (which wraps
-    /// it in a [`akita_types::CleartextWitnessProof::FieldElements`] payload).
+    /// This is the D-free field materialization used by the tensor helpers.
     ///
     /// # Errors
     ///

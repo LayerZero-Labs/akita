@@ -7,8 +7,6 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::terminal_golomb_grind_tail_t_vectors;
-use akita_types::CleartextWitnessShape;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
@@ -146,7 +144,6 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     claims: ProverOpeningData<'_, E, P, F>,
     scheduled: &ExecutionSchedule,
     basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
     F: FieldCore
@@ -219,124 +216,9 @@ where
         0,
         scheduled,
         prepared_fold,
-        setup_contribution_mode,
         false,
         None,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))?
     .get_intermediate()
-}
-
-/// Terminal-root analogue of [`prove_root`] used when the
-/// schedule has exactly one fold level (the root is itself the terminal).
-///
-/// Mirrors the intermediate-root path through opening-batch absorbs,
-/// optional extension-opening reduction, and ring-relation setup, then
-/// emits a [`TerminalLevelProof`] through the shared fold prover instead of a
-/// [`ProveLevelOutput`].
-///
-/// # Errors
-///
-/// Returns an error if opening-batch setup, EOR construction, or the inner
-/// terminal-root prover fails.
-#[allow(clippy::too_many_arguments)]
-#[inline(never)]
-pub fn prove_terminal_root_fold_with_params<'stack, Cfg, F, E, T, P, C, O, TS, R>(
-    expanded: &Arc<AkitaExpandedSetup<F>>,
-    stacks: &'stack impl LevelProveStacks<
-        'stack,
-        F,
-        Commit = C,
-        Opening = O,
-        Tensor = TS,
-        RingSwitch = R,
-    >,
-    transcript: &mut T,
-    claims: ProverOpeningData<'_, E, P, F>,
-    scheduled: &ExecutionSchedule,
-    terminal_direct_witness_shape: &CleartextWitnessShape,
-    basis: BasisMode,
-    setup_contribution_mode: SetupContributionMode,
-) -> Result<TerminalLevelProof<F, E>, AkitaError>
-where
-    F: FieldCore
-        + CanonicalField
-        + RandomSampling
-        + HasWide
-        + HalvingField
-        + PseudoMersenneField
-        + FromPrimitiveInt
-        + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
-    C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
-    O: RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
-        + DigitRowsComputeBackend<F>
-        + ComputeBackendSetup<F>
-        + 'stack,
-    TS: RuntimeTensorBackendFor<F, P, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
-        + ComputeBackendSetup<F>
-        + 'stack,
-    R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,
-    Cfg: CommitmentConfig<Field = F, ExtField = E>,
-    <C as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <O as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <TS as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-    <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
-{
-    let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
-    let root_params = &scheduled.params;
-
-    if claims.flat_polys().len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
-
-    // Absorb root claims through the D-free flat commitment encoder keyed on the
-    // root level's B-role dimension (S2/S7 byte parity).
-    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
-
-    let terminal_tail_t_vectors = terminal_golomb_grind_tail_t_vectors(
-        root_params,
-        RelationMatrixRowLayout::WithoutDBlock,
-        Some(terminal_direct_witness_shape),
-    )?;
-    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
-        stack,
-        transcript,
-        claims,
-        root_params,
-        RelationMatrixRowLayout::WithoutDBlock,
-        terminal_tail_t_vectors,
-        basis,
-    )?;
-    let prefix_slots = SetupPrefixProverRegistry::new();
-    let terminal_result = prove_fold::<F, E, T, C, O, TS, R, Cfg>(
-        expanded,
-        &prefix_slots,
-        stack,
-        transcript,
-        0,
-        scheduled,
-        prepared_fold,
-        setup_contribution_mode,
-        true,
-        Some(terminal_direct_witness_shape),
-    )?
-    .get_terminal()?;
-
-    Ok(terminal_result)
 }

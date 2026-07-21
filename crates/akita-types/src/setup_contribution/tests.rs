@@ -296,10 +296,18 @@ fn finalize_test_plan(
             .collect::<Vec<_>>()
             .into(),
         projection_geometry,
+        eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
     };
     for group in &mut plan.groups {
         group
-            .refresh_segments(&plan.d_weights, plan.d_rows, plan.d_physical_cols)
+            .refresh_segments(
+                &plan.d_weights,
+                plan.d_rows,
+                plan.d_physical_cols,
+                plan.projection_geometry.a_ratio(),
+                plan.projection_geometry.b_ratio(),
+                plan.projection_geometry.d_ratio(),
+            )
             .expect("valid cached setup scan segments");
     }
     plan
@@ -848,7 +856,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,
@@ -898,7 +906,7 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
-        RelationMatrixRowLayout::WithoutDBlock,
+        RelationMatrixRowLayout::WithoutCommitmentBlocks,
         1,
         0,
         0,

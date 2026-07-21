@@ -6,7 +6,7 @@ use crate::FlatMatrix;
 use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
-use akita_field::{FieldCore, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -86,12 +86,63 @@ pub struct AkitaExpandedSetup<F: FieldCore> {
 }
 
 /// Verifier setup artifact derived from prover setup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct AkitaVerifierSetup<F: FieldCore> {
     /// Expanded matrix stage used for verification.
     pub expanded: Arc<AkitaExpandedSetup<F>>,
     /// Public setup-prefix commitment metadata for setup-claim offloading.
     pub prefix_slots: SetupPrefixVerifierRegistry<F>,
+    /// Locally derived, negacyclic-only matrix prefixes for direct verifier checks.
+    /// This performance cache is neither serialized nor part of setup identity.
+    verifier_ntt: Arc<crate::ntt_cache::VerifierNttCache>,
+}
+
+impl<F: FieldCore> PartialEq for AkitaVerifierSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.expanded == other.expanded && self.prefix_slots == other.prefix_slots
+    }
+}
+
+impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
+
+impl<F: FieldCore> AkitaVerifierSetup<F> {
+    /// Construct verifier setup state from validated expanded setup and prefix metadata.
+    #[must_use]
+    pub fn from_parts(
+        expanded: Arc<AkitaExpandedSetup<F>>,
+        prefix_slots: SetupPrefixVerifierRegistry<F>,
+    ) -> Self {
+        Self {
+            expanded,
+            prefix_slots,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
+        }
+    }
+
+    /// In-memory byte footprint of verifier NTT prefixes materialized so far.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cache lock was poisoned.
+    pub fn verifier_ntt_cache_bytes(&self) -> Result<usize, AkitaError> {
+        self.verifier_ntt.cache_bytes()
+    }
+}
+
+impl<F: FieldCore + CanonicalField> AkitaVerifierSetup<F> {
+    /// Return an exact or covering negacyclic prefix, preparing it on demand.
+    pub fn prepared_verifier_ntt_prefix<const D: usize>(
+        &self,
+        num_ring_elements: usize,
+    ) -> Result<Arc<crate::PreparedNttSlotAny>, AkitaError> {
+        let key = crate::NttCacheKey {
+            ring_d: D,
+            num_ring_elements,
+        };
+        self.verifier_ntt.prepare(key, || {
+            crate::ntt_cache::build_verifier_ntt_slot_for_key(&self.expanded, key)
+        })
+    }
 }
 
 impl<F: FieldCore> AkitaExpandedSetup<F> {
@@ -512,6 +563,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
                 validate,
                 &(),
             )?,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         })
     }
 }
@@ -603,6 +655,7 @@ mod tests {
                 ),
             ),
             prefix_slots,
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -627,6 +680,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();
@@ -650,6 +704,7 @@ mod tests {
                 ),
             ),
             prefix_slots: SetupPrefixVerifierRegistry::new(),
+            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
         let mut bytes = Vec::new();

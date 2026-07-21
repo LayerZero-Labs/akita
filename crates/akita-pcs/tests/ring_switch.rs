@@ -95,7 +95,7 @@ mod tests {
     use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
     use akita_prover::protocol::ring_switch::{
         build_w_evals_compact, compute_relation_matrix_col_evals, compute_relation_weight_evals,
-        ring_switch_build_w,
+        ring_switch_build_w, RingSwitchBuildOutput,
     };
     use akita_prover::{
         ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
@@ -272,7 +272,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -361,16 +361,15 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false, None)
                 .expect("ring-switch witness");
-        let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
-            build_output.w.as_i8_digits().into(),
-            D,
-            1,
-            opening_source_len,
-        )
-        .expect("compact witness");
+        let RingSwitchBuildOutput::Intermediate(w) = build_output else {
+            panic!("expected recursive witness");
+        };
+        let opening_source_len = w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) =
+            build_w_evals_compact(w.as_i8_digits().into(), D, 1, opening_source_len)
+                .expect("compact witness");
 
         let alpha = F::from_u64(29);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -429,7 +428,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -511,16 +510,15 @@ mod tests {
             .expect("ring relation");
 
         let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false)
+            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &lp, false, None)
                 .expect("ring-switch witness");
-        let opening_source_len = build_output.w.len() / D;
-        let (w_compact, _col_bits, _ring_bits) = build_w_evals_compact(
-            build_output.w.as_i8_digits().into(),
-            D,
-            1,
-            opening_source_len,
-        )
-        .expect("compact witness");
+        let RingSwitchBuildOutput::Intermediate(w) = build_output else {
+            panic!("expected recursive witness");
+        };
+        let opening_source_len = w.len() / D;
+        let (w_compact, _col_bits, _ring_bits) =
+            build_w_evals_compact(w.as_i8_digits().into(), D, 1, opening_source_len)
+                .expect("compact witness");
 
         let alpha = F::from_u64(17);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -585,7 +583,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -787,7 +785,7 @@ mod tests {
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let opening_batch =
             akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch");
@@ -869,8 +867,15 @@ mod tests {
             )
             .expect("ring relation");
 
-        ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, false)
-            .expect("ring-switch witness");
+        ring_switch_build_w::<F, CpuBackend>(
+            &instance,
+            witness,
+            &op_ctx,
+            &level_params,
+            false,
+            None,
+        )
+        .expect("ring-switch witness");
 
         let alpha = F::from_u64(42);
         let alpha_evals_y = scalar_powers(alpha, D);
@@ -1121,16 +1126,16 @@ mod tests {
     }
 
     #[test]
-    fn segment_typed_expand_matches_logical_w() {
+    fn terminal_build_stops_before_quotient_and_recursive_witness() {
         use akita_types::{
-            build_segment_typed_witness, expand_segment_typed_to_i8_digits,
-            ring_opening_point_from_field, BasisMode,
+            build_segment_typed_witness_from_groups, ring_opening_point_from_field, BasisMode,
+            SegmentTypedWitnessGroupParts,
         };
 
         type F = fp128::Field;
         type Cfg = fp128::D128Full;
         const D: usize = Cfg::D;
-        const NV: usize = 12;
+        const NV: usize = 16;
 
         let level_params = Cfg::get_params_for_batched_commitment(
             &akita_types::OpeningClaimsLayout::new(NV, 1).expect("singleton opening batch"),
@@ -1207,38 +1212,42 @@ mod tests {
                 level_params.clone(),
                 &mut transcript,
                 RingVec::from_single(&CyclotomicRing::<F, D>::one()),
-                RelationMatrixRowLayout::WithoutDBlock,
+                RelationMatrixRowLayout::WithoutCommitmentBlocks,
                 None,
             )
             .expect("ring relation");
 
-        let build_output =
-            ring_switch_build_w::<F, CpuBackend>(&instance, witness, &op_ctx, &level_params, true)
-                .expect("ring-switch witness");
-        let logical_digits = build_output.w.as_i8_digits();
-        let artifacts = build_output
-            .terminal_artifacts
-            .expect("terminal artifacts retained");
+        let build_output = ring_switch_build_w::<F, CpuBackend>(
+            &instance,
+            witness,
+            &op_ctx,
+            &level_params,
+            true,
+            None,
+        )
+        .expect("ring-switch witness");
+        let RingSwitchBuildOutput::Terminal(artifacts) = build_output else {
+            panic!("expected direct terminal artifacts");
+        };
         artifacts.ensure_ring_dim::<D>().expect("ring dim");
         let group = artifacts.groups.first().expect("single terminal group");
-        let segment = build_segment_typed_witness::<F>(
+        let segment = build_segment_typed_witness_from_groups::<F>(
             artifacts.ring_dim(),
-            &group.e_folded,
-            &group.recomposed_inner_rows,
-            group.z_folded_centered_flat(),
-            &artifacts.r,
+            &[SegmentTypedWitnessGroupParts {
+                params: &level_params,
+                num_w_vectors: 1,
+                num_t_vectors: 1,
+                num_z_segments: 1,
+                e_folded: &group.e_folded,
+                recomposed_inner_rows: &group.recomposed_inner_rows,
+                z_folded_centered_flat: group.z_folded_centered_flat(),
+            }],
             &level_params,
-            1,
-            1,
-            1,
-            1,
         )
         .expect("segment witness");
-        let expanded = expand_segment_typed_to_i8_digits::<D, F>(&segment, &level_params, 1)
-            .expect("expand segment typed");
-        assert_eq!(
-            expanded, logical_digits,
-            "segment-typed expand must match ring_switch_build_w digit stream"
-        );
+        assert_eq!(segment.layout.ring_dimension, D);
+        assert!(!segment.z_payloads.is_empty());
+        assert!(!segment.e_fields.coeffs().is_empty());
+        assert!(!segment.t_fields.coeffs().is_empty());
     }
 }

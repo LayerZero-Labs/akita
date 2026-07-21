@@ -10,8 +10,8 @@
 //!
 //! Variable counts:
 //!
-//! - one-hot: 10, 15, 20
-//! - dense: 10, 15, 18
+//! - one-hot: 12, 15, 20
+//! - dense: 13, 15, 18
 
 #![allow(missing_docs)]
 
@@ -53,7 +53,8 @@ fn run_single_onehot(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
@@ -77,7 +78,6 @@ fn run_single_onehot(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -99,7 +99,6 @@ fn run_single_onehot(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -138,7 +137,8 @@ fn run_single_dense(nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &stack)
@@ -162,7 +162,6 @@ fn run_single_dense(nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove");
 
@@ -184,7 +183,6 @@ fn run_single_dense(nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -199,8 +197,8 @@ fn run_single_dense(nv: usize) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_onehot_nv10() {
-    run_single_onehot(10);
+fn single_onehot_nv12() {
+    run_single_onehot(12);
 }
 
 #[test]
@@ -223,8 +221,8 @@ fn single_onehot_nv20() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn single_dense_nv10() {
-    run_single_dense(10);
+fn single_dense_nv13() {
+    run_single_dense(13);
 }
 
 #[test]
@@ -275,7 +273,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
             AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, commit_input, &stack)
@@ -299,7 +298,6 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("prove with oversized setup");
 
@@ -322,7 +320,6 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
@@ -333,8 +330,8 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
 }
 
 #[test]
-fn single_onehot_oversized_setup_15_10() {
-    run_single_onehot_oversized_setup(15, 10);
+fn single_onehot_oversized_setup_15_12() {
+    run_single_onehot_oversized_setup(15, 12);
 }
 
 #[test]

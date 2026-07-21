@@ -27,7 +27,7 @@ re-derives rather than trusts.
 **Sources to fold in**
 
 - `crates/akita-types/src/layout/params.rs:41-97`.
-- `crates/akita-types/src/schedule.rs` (`Step`, `FoldStep`, `DirectStep`).
+- `crates/akita-types/src/schedule.rs` (`FoldStep`, `TerminalWitnessPlan`, `Schedule`).
 - Paper §3.11 `sec:akita-planner` ("What the schedule fixes").
 - Council architecture + newcomer reports (schedule invariants, level overload).
 

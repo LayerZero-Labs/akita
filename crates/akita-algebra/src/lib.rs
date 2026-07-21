@@ -25,6 +25,7 @@ pub mod uni_poly;
 // Flat re-exports for convenience.
 pub use akita_field::{
     cfg_chunks, cfg_chunks_mut, cfg_fold_reduce, cfg_into_iter, cfg_iter, cfg_iter_mut, cfg_join,
+    cfg_try_fold_reduce,
 };
 pub use akita_field::{
     AdditiveGroup, AkitaError, BalancedDigitLookup, CanonicalField, FieldCore, FromPrimitiveInt,

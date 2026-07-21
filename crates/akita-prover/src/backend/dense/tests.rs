@@ -2,13 +2,10 @@ use super::poly::DensePoly;
 use crate::backend::test_support::{
     aggregate_witnesses, negacyclic_tensor_product_challenges_i8, tensor_oracle_challenges,
 };
-use crate::compute::DirectRootWitnessSource;
 use akita_algebra::CyclotomicRing;
 use akita_field::Prime128OffsetA7F7 as F;
 use akita_field::{ExtField, FpExt4};
-use akita_types::{
-    tensor_column_partials_from_base_evals, tensor_packed_witness_evals, CleartextWitnessProof,
-};
+use akita_types::{tensor_column_partials_from_base_evals, tensor_packed_witness_evals};
 
 fn ring<const D: usize>(offset: u64) -> CyclotomicRing<F, D> {
     CyclotomicRing::from_coefficients(std::array::from_fn(|idx| {
@@ -77,19 +74,6 @@ fn dense_tensor_decompose_fold_matches_negacyclic_product_reference() {
     .unwrap();
 
     assert_eq!(got, expected);
-}
-
-#[test]
-fn dense_direct_witness_is_field_elements() {
-    const D: usize = 8;
-    let num_vars = 4;
-    let evals = (0..(1usize << num_vars))
-        .map(|idx| F::from_u64(idx as u64 + 1))
-        .collect::<Vec<_>>();
-    let poly = DensePoly::<F>::from_field_evals(num_vars, D, &evals).unwrap();
-    let witness =
-        <DensePoly<F> as DirectRootWitnessSource<F, D>>::direct_root_witness(&poly).unwrap();
-    assert!(matches!(witness, CleartextWitnessProof::FieldElements(_)));
 }
 
 #[test]

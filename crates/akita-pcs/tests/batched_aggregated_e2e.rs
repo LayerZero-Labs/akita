@@ -71,7 +71,8 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup);
+            let verifier_setup =
+                AkitaCommitmentScheme::<OneHotCfg>::setup_verifier(&setup).expect("verifier setup");
 
             let (commitment, hint) =
                 AkitaCommitmentScheme::<OneHotCfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -97,12 +98,11 @@ mod non_zk_aggregated_cases {
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
                 assert!(
-                    !proof.is_root_direct(),
+                    proof.num_fold_levels() >= 2,
                     "aggregated onehot nv={nv} batch={batch_size} should exercise folded proof path"
                 );
             }
@@ -127,7 +127,6 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -163,7 +162,8 @@ mod non_zk_aggregated_cases {
                 setup.expanded.as_ref(),
             )
             .expect("stack");
-            let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
+            let verifier_setup =
+                AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
             let (commitments, hints) =
                 AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -188,12 +188,11 @@ mod non_zk_aggregated_cases {
                 &stack,
                 &mut prover_transcript,
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             )
             .expect("batched prove");
             if expect_folded {
                 assert!(
-                    !proof.is_root_direct(),
+                    proof.num_fold_levels() >= 2,
                     "aggregated dense nv={nv} batch={batch_size} should exercise folded proof path"
                 );
             }
@@ -218,7 +217,6 @@ mod non_zk_aggregated_cases {
                 &mut verifier_transcript,
                 verify_input(&pt[..], opening_groups[0], &commitments[0]),
                 BasisMode::Lagrange,
-                akita_types::SetupContributionMode::Direct,
             );
             assert!(
                 result.is_ok(),
@@ -246,10 +244,10 @@ mod non_zk_aggregated_cases {
         };
     }
 
-    aggregated_onehot_case!(aggregated_onehot_nv10_batch1, 10, 1, false);
+    aggregated_onehot_case!(aggregated_onehot_nv12_batch1, 12, 1, true);
     aggregated_onehot_case!(aggregated_onehot_nv20_batch7, 20, 7, true);
 
-    aggregated_dense_case!(aggregated_dense_nv10_batch1, 10, 1, false);
+    aggregated_dense_case!(aggregated_dense_nv13_batch1, 13, 1, true);
     aggregated_dense_case!(aggregated_dense_nv17_batch5, 17, 5, true);
 }
 
@@ -287,7 +285,8 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             setup.expanded.as_ref(),
         )
         .expect("stack");
-        let verifier_setup = AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup);
+        let verifier_setup =
+            AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
 
         let (commitment, hint) =
             AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, &polys, &stack)
@@ -308,11 +307,10 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         )
         .expect("mixed batched prove");
         assert!(
-            !proof.is_root_direct(),
+            proof.num_fold_levels() >= 2,
             "aggregated mixed dense/onehot should exercise folded proof path"
         );
 
@@ -336,7 +334,6 @@ fn aggregated_mixed_dense_and_onehot_under_dense_cfg() {
             &mut verifier_transcript,
             verify_input(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
-            akita_types::SetupContributionMode::Direct,
         );
         assert!(
             result.is_ok(),
