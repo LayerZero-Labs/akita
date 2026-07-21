@@ -664,9 +664,14 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             let coefficient_eval =
                 akita_sumcheck::multilinear_eval(&alpha_evals, coefficient_point)?;
             return Ok(coefficient_eval
-                * self.eval_at_point::<F, D>(column_point, setup, alpha, setup_claim)?);
+                * self.evaluate_uniform_columns_at_point::<F, D>(
+                    column_point,
+                    setup,
+                    alpha,
+                    setup_claim,
+                )?);
         }
-        mixed_relation::evaluate_mixed_relation_at_point::<F, E>(
+        mixed_relation::evaluate_lane_factored_relation_at_point::<F, E>(
             self,
             point,
             setup,
@@ -772,14 +777,17 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         context.witness_layout.units_for_group(group.group_id)
     }
 
-    /// Evaluate the relation matrix at a point at the supplied point.
+    /// Evaluate uniform-role relation columns after the coefficient coordinates
+    /// have been contracted by [`Self::eval_flat_at_point`].
+    ///
+    /// This is the optimized uniform kernel, not a second verifier entry point.
     ///
     /// # Errors
     ///
     /// Returns an error if the setup matrix cannot be viewed at `D` or an
     /// internal offset-eq evaluation receives inconsistent dimensions.
     #[inline]
-    pub fn eval_at_point<F, const D: usize>(
+    fn evaluate_uniform_columns_at_point<F, const D: usize>(
         &self,
         x_challenges: &[E],
         setup: &AkitaExpandedSetup<F>,

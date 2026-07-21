@@ -21,10 +21,7 @@ use akita_types::{
     FpExtEncoding, SetupProjectionGeometry, WitnessUnitLayout,
 };
 
-#[cfg(test)]
-use akita_types::opening_domain_len;
-
-pub(super) fn evaluate_mixed_relation_at_point<F, E>(
+pub(super) fn evaluate_lane_factored_relation_at_point<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     point: &[E],
     setup: &AkitaExpandedSetup<F>,
