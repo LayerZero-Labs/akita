@@ -97,19 +97,19 @@ mod tests {
         build_w_evals_compact, ring_switch_build_w, RingSwitchBuildOutput,
     };
     use akita_prover::{
-        ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
+        build_relation_weight_events, ComputeBackendSetup, CpuBackend, DensePoly,
+        ProverOpeningData, RelationSetupSource, RelationWeightEventInputs, RelationWeightEvents,
+        RingRelationProver,
     };
     use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
     use akita_transcript::AkitaTranscript;
     use akita_types::relation_claim_from_rows;
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
-        build_relation_weight_events, r_decomp_levels, ring_opening_point_from_field,
-        AjtaiKeyParams, AkitaCommitmentHint, AkitaExpandedSetup, BasisMode, Commitment,
-        CommitmentRingDims, LevelParams, OpeningClaims, PointVariableSelection,
-        PolynomialGroupClaims, RelationMatrixRowLayout, RelationSetupSource,
-        RelationWeightEventInputs, RelationWeightEvents, RingMultiplierOpeningPoint,
-        RingRelationInstance, RingVec,
+        r_decomp_levels, ring_opening_point_from_field, AjtaiKeyParams, AkitaCommitmentHint,
+        AkitaExpandedSetup, BasisMode, Commitment, CommitmentRingDims, LevelParams, OpeningClaims,
+        PointVariableSelection, PolynomialGroupClaims, RelationMatrixRowLayout,
+        RingMultiplierOpeningPoint, RingRelationInstance, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;

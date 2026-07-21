@@ -2,12 +2,6 @@
 
 use std::ops::Range;
 
-use crate::layout::CommitmentRingDims;
-use crate::proof::ring_relation::RingRelationInstance;
-use crate::{
-    gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, RelationMatrixRowLayout, SetupProjectionGeometry,
-};
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
@@ -15,6 +9,11 @@ use akita_algebra::ring::{eval_flat_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+};
+use akita_types::{
+    checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
+    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningClaimsLayout,
+    RelationMatrixRowLayout, RingRelationInstance, SetupProjectionGeometry,
 };
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -202,7 +201,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 "cannot materialize relation weights with a deferred setup claim".into(),
             ));
         }
-        let opening_field_len = crate::opening_domain_len(self.opening_source_len)?
+        let opening_field_len = opening_domain_len(self.opening_source_len)?
             .checked_mul(self.opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
         let mut weights = vec![E::zero(); opening_field_len];
@@ -214,7 +213,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 .enumerate()
             {
                 let physical = event.physical_coefficients.start + offset;
-                let opening_column = crate::checked_opening_source_index(
+                let opening_column = checked_opening_source_index(
                     self.opening_source_len,
                     physical / self.opening_ring_dim,
                 )?;
@@ -253,7 +252,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 "relation and outgoing witness do not admit a common alpha factor".into(),
             ));
         }
-        let opening_field_len = crate::opening_domain_len(self.opening_source_len)?
+        let opening_field_len = opening_domain_len(self.opening_source_len)?
             .checked_mul(self.opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation lane length overflow".into()))?;
         let lane_count = opening_field_len / coeff_count;
@@ -275,7 +274,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             }
             for coefficient_offset in (0..event.physical_coefficients.len()).step_by(coeff_count) {
                 let physical = event.physical_coefficients.start + coefficient_offset;
-                let opening_column = crate::checked_opening_source_index(
+                let opening_column = checked_opening_source_index(
                     self.opening_source_len,
                     physical / self.opening_ring_dim,
                 )?;
@@ -322,7 +321,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             (true, None) | (false, Some(_)) => return Err(AkitaError::InvalidProof),
             _ => {}
         }
-        let opening_field_len = crate::opening_domain_len(self.opening_source_len)?
+        let opening_field_len = opening_domain_len(self.opening_source_len)?
             .checked_mul(self.opening_ring_dim)
             .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
         let expected_point_len = opening_field_len.trailing_zeros() as usize;

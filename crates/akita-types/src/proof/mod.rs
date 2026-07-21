@@ -11,7 +11,6 @@ pub mod batch;
 pub mod commitment;
 pub mod relation;
 pub mod relation_range_image;
-pub mod relation_weights;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
@@ -58,11 +57,6 @@ pub use relation::{
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
-pub use relation_weights::{
-    build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
-    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
-    RelationWeightFactorization,
-};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths,

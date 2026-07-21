@@ -18,15 +18,15 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::DigitBlocks;
 use akita_types::RingRelationInstance;
 use akita_types::{
-    build_relation_weight_events, r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup,
-    FpExtEncoding, LevelParams, RelationMatrixRowLayout, RelationSetupSource,
-    RelationWeightEventInputs, RelationWeightFactorization, RingVec,
+    r_decomp_levels, AkitaCommitmentHint, AkitaExpandedSetup, FpExtEncoding, LevelParams,
+    RelationMatrixRowLayout, RingVec,
 };
 
 mod coeffs;
 mod commit;
 mod evals;
 mod finalize;
+mod relation_weights;
 #[cfg(test)]
 mod tests;
 
@@ -36,6 +36,11 @@ pub use coeffs::{ring_switch_build_w, RingSwitchBuildOutput};
 pub use commit::{commit_w, NextWitnessState, NextWitnessStateOutput};
 pub use evals::build_w_evals_compact;
 pub use finalize::ring_switch_finalize;
+pub use relation_weights::{
+    build_relation_weight_events, RelationSetupSource, RelationWeightContribution,
+    RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
+    RelationWeightFactorization,
+};
 
 /// D-agnostic output of the ring switch protocol, containing everything
 /// needed for sumchecks and level chaining.

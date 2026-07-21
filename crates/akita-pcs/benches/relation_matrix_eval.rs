@@ -8,16 +8,16 @@ use akita_pcs::{AkitaCommitmentScheme, Transcript};
 use akita_prover::backend::DenseView;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{
-    ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData, RingRelationProver,
+    build_relation_weight_events, ComputeBackendSetup, CpuBackend, DensePoly, ProverOpeningData,
+    RelationSetupSource, RelationWeightEventInputs, RingRelationProver,
 };
 use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    build_relation_weight_events, ring_opening_point_from_field, AjtaiKeyParams,
-    AkitaCommitmentHint, AkitaExpandedSetup, BasisMode, Commitment, CommitmentRingDims,
-    LevelParams, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
-    RelationMatrixRowLayout, RelationSetupSource, RelationWeightEventInputs,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingVec,
+    ring_opening_point_from_field, AjtaiKeyParams, AkitaCommitmentHint, AkitaExpandedSetup,
+    BasisMode, Commitment, CommitmentRingDims, LevelParams, OpeningClaims, PointVariableSelection,
+    PolynomialGroupClaims, RelationMatrixRowLayout, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingVec,
 };
 use akita_verifier::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
