@@ -5,8 +5,8 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-22 |
 | Status        | active |
-| PR            | |
-| Supersedes    | Point-model portions of [`shared-opening-claims-api.md`](shared-opening-claims-api.md) and [`multi-group-batching.md`](multi-group-batching.md) |
+| PR            | #322 |
+| Supersedes    | Point-model portions of [`shared-opening-claims-api.md`](shared-opening-claims-api.md), [`multi-group-batching.md`](multi-group-batching.md), and the shared-point witness carry in [`batched-stage3-setup-opening.md`](batched-stage3-setup-opening.md) |
 | Superseded-by | |
 | Book-chapter  | |
 
@@ -29,6 +29,14 @@ nesting is an optimization opportunity, not a protocol precondition and not
 caller-supplied routing metadata. The existing layout and schedule model remains
 the single source of structural truth.
 
+Independent group-local points also remove the reason for Stage 3 to carry the
+recursive-witness claim through the setup-product sumcheck. Under recursive
+setup offloading, the successor opens the witness at the point already produced
+by Stage 2 and opens the setup prefix at the independent point produced by a
+setup-only Stage 3. This removes the Stage 3 witness reduction, reduces prover
+and verifier work, and shortens the Stage 3 proof whenever the padded setup
+prefix domain is smaller than the padded recursive-witness domain.
+
 The first implementation PR also changes full-table multilinear Lagrange and
 equality-table expansion from two multiplications per parent to one
 multiplication and one subtraction. That independent improvement removes almost
@@ -47,10 +55,14 @@ do not mistake design work for shipped behavior.
 | Group preparation | One `prepare_opening_point` call per group | The same canonical call per group, backed by internal exact reuse |
 | Nested points | Prefix/suffix routing is representable | Arbitrary points are valid; nesting is optional optimization metadata derived internally |
 | Layout and schedules | Ordered `(num_vars, num_polys)` groups | Unchanged |
+| Recursive Stage 3 | Fused setup-product and witness-carry sumcheck so both successor groups use projections of one point | Setup-product sumcheck only; carry the Stage 2 witness claim and point unchanged |
 | Lagrange/equality full-table expansion | Two multiplications per parent in serial paths | One multiplication and one subtraction per parent, landed with this record |
 
-The analysis and concrete counts in this record were checked against `main` at
-commit `a1c8782e9b2f3d4fa35e78918c64e4c3c0a6d94d`.
+The analysis and concrete opening-preparation counts in this record were checked
+against `main` at commit `a1c8782e9b2f3d4fa35e78918c64e4c3c0a6d94d`.
+The Stage 3 analysis was checked against the complete diff and implementation at
+open PR #320 head `6652c08a21cb418a845adf65891b276dc1e81816`; this
+specification remains based directly on `main`, not on that PR.
 
 ## Terminology
 
@@ -62,8 +74,13 @@ commit `a1c8782e9b2f3d4fa35e78918c64e4c3c0a6d94d`.
   is equal.
 - **Nested reuse** constructs a larger tensor-product factor from a smaller
   prefix or suffix factor plus additional coordinates.
-- **Offloading** means distributed setup-contribution generation or evaluation.
-  It does not move opening-point preparation out of the verifier.
+- **Recursive setup offloading** proves a setup-prefix opening in Stage 3 and
+  carries that committed prefix into a successor fold instead of scanning the
+  corresponding setup contribution there.
+- **Witness-claim reduction** is PR #320's Stage 3 term that reopens the
+  recursive witness from its Stage 2 point at a projection of the Stage 3
+  challenge. It is required by shared-point routing, not by the setup-product
+  relation.
 
 ## Intent
 
@@ -106,11 +123,21 @@ layout-driven scheduling, and efficient internal reuse.
     point or a single scalar opening relation. Root batching combines their
     separate relations using transcript-derived coefficients.
 12. For a fixed ordered layout, this cutover MUST NOT change setup dimensions,
-    schedule selection, proof fields, proof size, or SIS pricing.
+    schedule eligibility, witness partition, or SIS pricing. The planner MUST
+    reprice the intentionally smaller Stage 3 proof before comparing schedules.
 13. The verifier MUST NOT materialize a full table of size `2^num_vars` merely
     to discover or exploit nested points. It prepares the inner, position, and
     live-block factors required by the selected geometry.
-14. All verifier-reachable point validation and cache lookups MUST satisfy the
+14. In recursive setup-offload mode, the successor witness group MUST use the
+    Stage 2 point and evaluation unchanged. The setup-prefix group MUST use the
+    independently sampled Stage 3 setup point and its verified evaluation.
+15. Stage 3 MUST prove only the setup-product claim. It MUST NOT scan, validate,
+    contract, fold, rerandomize, or serialize a second opening of the recursive
+    witness.
+16. `SetupSumcheckProof` MUST contain exactly the setup-product claim, the
+    setup-prefix evaluation, and the setup-only sumcheck. The Stage 2 proof
+    remains the single source of the recursive-witness evaluation.
+17. All verifier-reachable point validation and cache lookups MUST satisfy the
     repository no-panic contract.
 
 ### Non-Goals
@@ -119,8 +146,9 @@ layout-driven scheduling, and efficient internal reuse.
   points. Such claims belong in separate groups.
 - Extending dense, extension-opening-reduction, root-terminal, or recursive
   suffix protocols to more groups where their schedules currently require one.
-- Changing setup-contribution relations, offloading policy, witness partition,
-  or generated schedule geometry.
+- Changing the setup-product relation, offload eligibility policy, witness
+  partition, or generated commitment geometry. Exact proof-byte repricing is
+  in scope.
 - Adding a persistent or cross-proof cache.
 - Shipping a general prefix/suffix tensor DAG in the first group-local-point
   implementation.
@@ -230,6 +258,84 @@ the two equal precommitted preparations can save at most 146. This is separate
 from the much larger generic Lagrange-table saving, and later direct equality-
 MLE evaluation can reduce the absolute importance of that trace reuse.
 
+### Stage 3 witness-reduction elimination
+
+PR #320's recursive Stage 3 combines two terms over a padded common cube:
+
+```text
+setup product at the Stage 3 setup point
++ eta * witness carry from the Stage 2 point to the Stage 3 witness point
+```
+
+The second term exists to make the successor's setup-prefix point and witness
+point suffix projections of one shared challenge. It is not needed to establish
+the setup-product claim. Once the successor accepts arbitrary group-local
+points, it can carry:
+
+```text
+witness group:      (stage2_point, stage2_next_w_eval)
+setup-prefix group: (stage3_setup_point, stage3_setup_prefix_eval)
+```
+
+Stage 3 then runs only the setup-product sumcheck. On the prover, this removes:
+
+- the balanced-digit validation performed specifically for the witness carry;
+- both full passes over the compact recursive witness in
+  `WitnessClaimReductionTerm`;
+- witness equality-table construction and folding;
+- witness round-polynomial accumulation and batching with `eta`; and
+- computation and serialization of `W(stage3_witness_point)`.
+
+On the verifier, this removes the witness lift scale, the
+`eq(stage2_point, stage3_witness_point)` evaluation, the `eta` batching
+challenge, the Stage 3 witness final-relation term, and the second witness
+evaluation absorption. Stage 2, the setup-product term, the setup-prefix
+evaluation, and the successor's ordinary per-group opening verification remain.
+
+Let:
+
+```text
+w = log2(D_w) + log2(next_power_of_two(witness_field_len / D_w))
+s = log2(D_setup) + log2(next_power_of_two(setup_prefix_field_len / D_setup))
+c = serialized challenge-field bytes
+```
+
+PR #320 prices the fused Stage 3 payload as:
+
+```text
+bytes_fused = 3c + 2c * max(w, s)
+```
+
+The three scalars are the setup-product claim, setup-prefix evaluation, and
+rerandomized witness evaluation. A degree-two compressed sumcheck contributes
+two field elements per round. The setup-only target costs:
+
+```text
+bytes_setup_only = 2c + 2c * s
+saving           = c + 2c * max(0, w - s)
+```
+
+For a 128-bit challenge field, the saving is 16 bytes plus 32 bytes for every
+witness round beyond the setup domain. A naturally smaller setup prefix reduces
+rounds only when its padded power-of-two domain is also smaller. If `w <= s`,
+the proof still saves one field element and removes all witness-term prover and
+verifier work, but the sumcheck round count does not decrease.
+
+The first 32-variable production entry in PR #320's generated
+`fp128_d64_onehot_recursive_multi_chunk_w8r2` table makes the difference
+concrete:
+
+| Offloaded edge | Live witness ring elements | Padded witness rounds `w` | Padded setup field length | Setup rounds `s` | Fused bytes | Setup-only bytes | Saving |
+|----------------|---------------------------:|--------------------------:|--------------------------:|-----------------:|------------:|-----------------:|-------:|
+| Root to recursive fold 0 | 2,647,068 | 28 | `2^25` | 25 | 944 | 832 | 112 |
+| Recursive fold 0 to 1 | 722,408 | 26 | `2^25` | 25 | 880 | 832 | 48 |
+| **Total** | | | | | **1,824** | **1,664** | **160** |
+
+The removed prover witness passes traverse up to 169,412,352 and 46,234,112
+compact digits on these two edges, respectively. These are structural counts
+from the generated geometry at PR #320 head `6652c08a`, not wall-clock benchmark
+results; the implementation must measure the realized speedup.
+
 ### Work that point nesting does not remove
 
 Point nesting does not reduce:
@@ -243,6 +349,10 @@ Point nesting does not reduce:
 The verifier therefore MUST NOT require nested points to claim a broad
 `2^m` verifier speedup. At most, nesting reuses already identified tensor
 factors; it does not shrink the relation or setup geometry.
+
+This limitation concerns tensor-factor reuse between related points. It does
+not apply to the Stage 3 witness reduction above: that entire reduction becomes
+unnecessary because independent group-local points remove its protocol purpose.
 
 ## Design
 
@@ -296,6 +406,14 @@ the prover and verifier:
 Existing transcript helper functions SHOULD be extended directly. The cutover
 MUST NOT introduce a second claims-absorption wrapper or retain old routing
 absorption alongside the new path.
+
+For recursive setup offloading, Stage 2 continues to absorb its
+`next_w_eval`. Setup-only Stage 3 then absorbs its setup-product claim, samples
+only its own sumcheck challenges, and checks the setup-prefix evaluation at the
+resulting point. It MUST NOT sample `CHALLENGE_SUMCHECK_BATCH` for an absent
+witness term or absorb `ABSORB_STAGE3_NEXT_W_EVAL`. The successor transcript
+binds the unchanged Stage 2 witness point and the Stage 3 setup point when it
+absorbs the two ordered group-local claims.
 
 ### One preparation pipeline
 
@@ -361,6 +479,39 @@ evaluation trace. An offloaded contribution result MAY skip the corresponding
 local contribution scan exactly as it does today, but MUST NOT skip point
 validation or any prepared factor consumed by another relation.
 
+This rule does not retain PR #320's witness-claim reduction. That reduction is
+neither setup-contribution material nor group opening preparation; it only moves
+the already-proved recursive-witness claim onto the setup challenge. The target
+offloaded flow is:
+
+1. Stage 2 proves `W(stage2_point) = stage2_next_w_eval` as in direct mode.
+2. Setup-only Stage 3 proves the setup product and returns
+   `(stage3_setup_point, stage3_setup_prefix_eval)`.
+3. The successor creates two `PolynomialGroupClaims` values directly, one from
+   each point/evaluation pair.
+4. The ordinary multi-group opening pipeline verifies both commitments at their
+   respective points.
+
+`BatchedStage3Geometry::shared_suffix_point`,
+`BatchedStage3Geometry::setup_prefix_point_vars`, and
+`WitnessClaimReductionTerm` MUST be removed if they have no consumer after this
+cutover. The implementation MUST extend the setup-product prover directly; it
+MUST NOT preserve the fused driver as a wrapper around a one-term sumcheck.
+
+The target proof shape is:
+
+```rust,ignore
+pub struct SetupSumcheckProof<E> {
+    pub claim: E,
+    pub setup_prefix_eval: E,
+    pub sumcheck: SumcheckProof<E>,
+}
+```
+
+The planner's `stage3_setup_product_bytes` MUST use the setup domain alone and
+MUST match actual serialization. It no longer accepts `output_witness_len`
+unless another setup-only sizing rule genuinely requires it.
+
 ## Evaluation
 
 ### Acceptance Criteria
@@ -368,7 +519,7 @@ validation or any prepared factor consumed by another relation.
 #### This specification PR
 
 - [x] This normative record passes repository documentation guardrails and
-  links the point-model supersession from both predecessor specs.
+  links the superseded point and Stage 3 models from all predecessor specs.
 - [x] `lagrange_weights` and the serial `EqPolynomial` table builders use one
   multiplication and one subtraction per expanded parent while preserving
   exact values and order.
@@ -401,6 +552,30 @@ validation or any prepared factor consumed by another relation.
 - [ ] Old routing fields are removed in one breaking cutover; there is no dual
   encoding or compatibility wrapper.
 
+#### Setup-only Stage 3 cutover
+
+- [ ] Recursive setup offloading carries the Stage 2 witness point and
+  `stage2_next_w_eval` unchanged into the successor witness group.
+- [ ] Stage 3 produces only the setup-prefix point and evaluation; its prover
+  does not receive the compact recursive witness or construct a witness term.
+- [ ] `SetupSumcheckProof` contains only `claim`, `setup_prefix_eval`, and the
+  setup-only sumcheck, and its serializer and shape descriptors agree.
+- [ ] The verifier's Stage 3 final relation contains only the setup-product
+  term and rejects tampering with the claim, setup-prefix evaluation, point, or
+  round polynomial.
+- [ ] Recursive-mode transcript tests confirm removal of the Stage 3 batching
+  challenge and second witness-evaluation absorption while preserving exact
+  prover/verifier event parity.
+- [ ] The old fused geometry, witness reduction, routing helpers, labels, and
+  dead tests are deleted rather than retained behind adapters.
+- [ ] Planner proof accounting matches actual serialization for `w < s`,
+  `w = s`, and `w > s`, including the exact saving
+  `c + 2c * max(0, w - s)`.
+- [ ] Direct setup mode remains byte-identical and does not create a Stage 3
+  proof.
+- [ ] An end-to-end recursive-offload test opens the setup prefix and witness at
+  unrelated points in the successor two-group fold.
+
 #### Verifier preparation and performance
 
 - [ ] Exact duplicate factor reuse is covered by hit/miss tests for inner,
@@ -410,7 +585,8 @@ validation or any prepared factor consumed by another relation.
 - [ ] A preparation benchmark reports base- and extension-field multiplication
   counts separately for equal, nested, and unrelated points.
 - [ ] Arbitrary unrelated points do not add asymptotic work beyond independent
-  per-group preparation and do not change proof or setup size.
+  per-group preparation and do not change group-opening or setup size. Recursive
+  Stage 3 proof size changes only by the setup-only formula above.
 - [ ] Any nested-factor DAG is merged only if the representative production
   profile shows a material wall-clock benefit after exact reuse and the generic
   Lagrange rewrite.
@@ -429,7 +605,9 @@ The group-local cutover must additionally run focused prover/verifier transcript
 tests, multi-group end-to-end tests, and the repository preflight commands from
 `AGENTS.md`. Validation must cover default features and the CI no-default
 feature graph. Malformed claims tests must exercise verifier-reachable APIs and
-confirm `AkitaError` rather than panics.
+confirm `AkitaError` rather than panics. The Stage 3 cutover must also run the
+planner's exact-byte tests and recursive setup-offload end-to-end suite inherited
+from PR #320.
 
 ### Performance
 
@@ -447,8 +625,10 @@ cargo run -p akita-pcs --release --no-default-features \
   --example profile
 ```
 
-For a fixed layout, proof bytes, setup bytes, and generated schedule identity
-must remain unchanged. Exact reuse should allocate at most one stored factor per
+For a fixed layout, setup bytes and commitment geometry remain unchanged. Stage
+3 proof bytes decrease by the formula above, so generated schedule totals and
+possibly the planner-selected suffix MUST be regenerated from the canonical
+proof-size helper. Exact reuse should allocate at most one stored factor per
 distinct cache key. A nested-factor implementation is optional unless profiling
 shows a material improvement beyond exact reuse.
 
@@ -486,6 +666,15 @@ For distinct points there is no single evaluation vector that turns the claims
 into the existing one-point relation without changing the protocol. Transcript
 batching of separate per-group relations is the correct general construction.
 
+### Keep the fused Stage 3 witness carry
+
+The fused construction cryptographically works with group-local points, but its
+witness term no longer serves a protocol need. It scans the prover's compact
+witness twice, adds verifier arithmetic and transcript state, serializes a
+duplicate witness evaluation, and may extend the sumcheck to the larger witness
+domain. Retaining it would preserve dead complexity solely for historical wire
+shape, which Akita does not guarantee. It is rejected.
+
 ## Security and failure behavior
 
 Binding complete ordered group points before batching challenges prevents a
@@ -494,6 +683,14 @@ dimensions are validated before allocation or indexing. Cache equality is an
 implementation optimization only: a false miss costs time, while a false hit
 would be a soundness bug, so semantic cache keys are complete and tested by
 negative cases.
+
+Removing the Stage 3 witness carry does not remove the witness opening proof.
+Stage 2 already binds `stage2_next_w_eval` to the recursive witness commitment
+at `stage2_point`; the successor verifies that exact claim through its witness
+group. Setup-only Stage 3 independently binds the setup-product claim to
+`stage3_setup_prefix_eval` at `stage3_setup_point`. Both ordered claims are
+absorbed before the successor samples its group-batching coefficient. No
+cross-group equality or prefix/suffix relation is assumed for soundness.
 
 Malformed serialized points, excessive group counts, overflowing dimensions,
 and schedule mismatches return typed errors at existing verifier boundaries.
@@ -507,16 +704,20 @@ from one shared point plus selections to one complete point per group. Because
 the descriptor and transcript statement change, proofs produced by the old and
 new APIs are not cross-compatible.
 
-For the same ordered group layout, setup artifacts, schedules, relation
-dimensions, and proof structure remain valid. The Lagrange recurrence change is
-purely computational and produces byte-identical field values.
+The Stage 3 cutover is also a proof-wire and transcript break:
+`SetupSumcheckProof.next_w_eval`, the fused witness rounds, and their transcript
+events disappear. Setup artifacts, commitment dimensions, and SIS pricing
+remain valid, but planner proof totals and generated schedule choices must be
+recomputed. The Lagrange recurrence change is purely computational and produces
+byte-identical field values.
 
 ## Documentation
 
 This active spec is the implementation record until the claims cutover ships.
 The point-model sections of `shared-opening-claims-api.md` and
-`multi-group-batching.md` link here as superseded guidance. When implementation
-is complete, durable user-facing behavior belongs in
+`multi-group-batching.md`, plus the shared-point witness carry in
+`batched-stage3-setup-opening.md`, link here as superseded guidance. When
+implementation is complete, durable user-facing behavior belongs in
 `book/src/usage/commitment-api.md`; verifier preparation and failure behavior
 belong in `book/src/how/verification.md`. At that point this spec should be
 marked `implemented` and later folded or archived according to
@@ -526,23 +727,30 @@ marked `implemented` and later folded or archived according to
 
 1. Land this decision record and the independent one-multiplication
    Lagrange/equality recurrence on a branch based directly on `main`.
-2. Change the claims and prover-data types in one breaking cutover; remove point
-   selection and all pass-through routing APIs.
-3. Change descriptor and transcript absorption in the same cutover, then update
-   generated fixtures and transcript-smell tests.
-4. Route every group through the canonical preparation pipeline and add bounded
+2. Change claims, prover data, descriptor absorption, and transcript absorption
+   in one breaking cutover; remove point selection and all pass-through routing
+   APIs.
+3. In that same cutover, simplify recursive Stage 3 to the setup-product term,
+   carry the Stage 2 witness claim unchanged, and delete fused witness-routing
+   machinery.
+4. Reprice Stage 3 from the setup domain alone, regenerate affected schedules,
+   and add exact serialization tests.
+5. Route every group through the canonical preparation pipeline and add bounded
    exact factor reuse.
-5. Add unrelated-point end-to-end tests and preparation benchmarks.
-6. Implement nested-factor reuse only if the measured result justifies its
+6. Add unrelated-point end-to-end tests and preparation benchmarks, including a
+   recursive setup-offload successor whose two group points are unrelated.
+7. Implement nested-factor reuse only if the measured result justifies its
    complexity.
-7. Fold the shipped behavior into the Akita Book and update this spec's
+8. Fold the shipped behavior into the Akita Book and update this spec's
    lifecycle fields.
 
 ## References
 
 - [`shared-opening-claims-api.md`](shared-opening-claims-api.md)
 - [`multi-group-batching.md`](multi-group-batching.md)
+- [`batched-stage3-setup-opening.md`](batched-stage3-setup-opening.md)
 - [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
 - [`setup-offloading-planner.md`](setup-offloading-planner.md)
+- [PR #320 at inspected head `6652c08a`](https://github.com/LayerZero-Labs/akita/pull/320)
 - [`book/src/how/verification.md`](../book/src/how/verification.md)
 - [`book/src/usage/profiling.md`](../book/src/usage/profiling.md)
