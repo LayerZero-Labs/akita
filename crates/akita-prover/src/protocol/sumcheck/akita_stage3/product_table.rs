@@ -124,7 +124,7 @@ where
         let coefficient_rounds = coefficient_len.trailing_zeros() as usize;
         let total_rounds = coefficient_rounds + index_factor.len().trailing_zeros() as usize;
 
-        Ok(Self {
+        let mut term = Self {
             setup,
             required_rows,
             row_capacity: index_factor.len(),
@@ -137,7 +137,15 @@ where
             index_table: None,
             index_factor,
             input_claim,
-        })
+        };
+        // A one-coefficient setup view has no coefficient-round challenge to
+        // trigger the normal phase transition. Materialize its index state at
+        // construction so the first index round (or a zero-round final value)
+        // consumes the same canonical table as every other geometry.
+        if coefficient_rounds == 0 {
+            term.materialize_index_table();
+        }
+        Ok(term)
     }
 
     pub(super) const fn num_rounds(&self) -> usize {
@@ -384,6 +392,12 @@ mod tests {
     #[test]
     fn rectangular_setup_product_matches_dense_rounds_without_padding() {
         assert_round_parity(16, 16, 64);
+    }
+
+    #[test]
+    fn rectangular_setup_product_materializes_index_state_without_coefficient_rounds() {
+        assert_round_parity(3, 4, 1);
+        assert_round_parity(1, 1, 1);
     }
 
     fn elapsed(mut run: impl FnMut(), samples: usize) -> Duration {

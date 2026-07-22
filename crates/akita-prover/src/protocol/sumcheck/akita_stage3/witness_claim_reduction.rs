@@ -91,6 +91,12 @@ impl<'a, E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductio
             "the caller must validate the exact balanced range while remapping the witness"
         );
         let max_abs_digit = observed_max_abs_digit;
+        // Boolean variables follow the flattened witness's little-endian bit
+        // order. This is an algorithmic low/high split for the two source
+        // passes; it need not coincide with the semantic ring/column boundary.
+        // `contract_columns_row_major` and `build_suffix_phase` use the same
+        // `high * low_len + low` indexing, so either side may contain bits from
+        // both semantic coordinates without changing the bound MLE.
         let prefix_rounds = total_rounds / 2;
         let prefix_len = 1usize << prefix_rounds;
         let suffix_point: Arc<[E]> = Arc::from(old_point[prefix_rounds..].to_vec());
@@ -705,9 +711,14 @@ mod tests {
     }
 
     #[test]
-    fn prefix_suffix_treats_compact_tail_as_zero_padding() {
-        let digits = test_digits(19);
-        let padded_len = 32;
+    fn prefix_suffix_handles_padding_when_split_crosses_ring_column_boundary() {
+        const RING_BITS: usize = 3;
+        const COLUMN_BITS: usize = 2;
+        // Three live column rows of eight ring coefficients occupy the compact
+        // prefix of a 4-by-8 Boolean domain. The 2/3 algorithmic split falls
+        // inside the three ring bits rather than at the ring/column boundary.
+        let digits = test_digits(3 * (1 << RING_BITS));
+        let padded_len = 1 << (RING_BITS + COLUMN_BITS);
         let point = test_point(5);
         let mut term = WitnessClaimReductionTerm::new(
             &digits,
