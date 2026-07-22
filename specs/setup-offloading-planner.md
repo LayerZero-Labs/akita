@@ -236,10 +236,17 @@ Pareto planner may replace this policy, but generated catalogs must bind whichev
 selection policy produced them.
 
 The recursive search also rejects candidates whose exact setup-matrix envelope
-exceeds `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. This is a supported-runtime ceiling,
-not a claim that offloading has no storage cost relative to the independently
-optimized direct schedule. Comparing the direct and offloaded envelope–proof
-frontiers is explicitly deferred to the multi-objective planner.
+exceeds `PlannerPolicy::max_setup_envelope_field_elements`. The shipped policy
+sets this field to `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. The contraction threshold
+is likewise explicit as `PlannerPolicy::min_offloaded_witness_contraction`, with
+a shipped value of three. Both values are candidate-feasibility inputs, so the
+generated catalog identity binds them alongside the selection policy. They are
+not hidden constants whose changes can silently reinterpret an existing table.
+
+The envelope limit is a supported-runtime ceiling, not a claim that offloading
+has no storage cost relative to the independently optimized direct schedule.
+Comparing the direct and offloaded envelope–proof frontiers is explicitly
+deferred to the multi-objective planner.
 
 The generated catalog binds:
 
@@ -247,6 +254,8 @@ The generated catalog binds:
 cost model      = ExactPayloadAndSetupEnvelope
 direct policy   = MinEstimatedProofPayload
 recursive policy = MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+maximum setup envelope = policy.max_setup_envelope_field_elements
+minimum offload contraction = policy.min_offloaded_witness_contraction
 ```
 
 The planner does not use artifact registry contents to decide mode. Registry
@@ -1006,47 +1015,47 @@ the candidate score that decides whether and how long to offload.
 
 ### Acceptance Criteria
 
-- [ ] Ordinary `Cfg` schedules are direct-only.
-- [ ] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP only for
+- [x] Ordinary `Cfg` schedules are direct-only.
+- [x] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP only for
       genuine multi-group keys.
-- [ ] Scalar keys under `RecursiveCommitmentConfig<Cfg>` delegate to the
+- [x] Scalar keys under `RecursiveCommitmentConfig<Cfg>` delegate to the
       ordinary scalar planner/catalog and contain only direct levels.
-- [ ] Every supported nonterminal edge considers a direct successor and may
+- [x] Every supported nonterminal edge considers a direct successor and may
       consider an offloaded successor; no fixed fold count or prefix threshold
       selects the mode.
-- [ ] The planner may select zero, one, or several offloaded edges,
+- [x] The planner may select zero, one, or several offloaded edges,
       bounded only by ordinary recursion depth and capability constraints; it
       does not impose contiguity as a structural rule.
-- [ ] Every selected offloaded edge contracts the entering balanced witness by
+- [x] Every selected offloaded edge contracts the entering balanced witness by
       at least threefold after counting both the recursive witness and padded
       full-field prefix inputs, and strictly reduces the first remaining direct
       setup scan.
-- [ ] The selected schedule lexicographically minimizes first direct setup
+- [x] The selected schedule lexicographically minimizes first direct setup
       footprint and exact estimated proof bytes within the supported setup
       envelope.
-- [ ] The materialized estimate reports the exact setup envelope and selected
+- [x] The materialized estimate reports the exact setup envelope and selected
       offload-edge count, and recomputation agrees with the cached DP value.
-- [ ] Exact proof accounting includes every Stage 3 payload before candidate
+- [x] Exact proof accounting includes every Stage 3 payload before candidate
       comparison.
-- [ ] Recursive successors use two existing opening groups; direct successors
+- [x] Recursive successors use two existing opening groups; direct successors
       use one.
-- [ ] Every fold that consumes an incoming setup prefix is nonterminal, and the
+- [x] Every fold that consumes an incoming setup prefix is nonterminal, and the
       successor-owned `incoming_setup_prefix` is the sole topology authority.
-- [ ] Generated recursive rows store the exact setup-prefix commitment params
+- [x] Generated recursive rows store the exact setup-prefix commitment params
       for every fold that consumes an incoming prefix.
-- [ ] Setup-prefix commitment params describe the prefix group's own inner and
+- [x] Setup-prefix commitment params describe the prefix group's own inner and
       outer matrices and never clone the ordinary witness group's matrices.
-- [ ] `active_setup_field_len` retains scalar arithmetic parity and agrees with
+- [x] `active_setup_field_len` retains scalar arithmetic parity and agrees with
       runtime setup use for grouped-root and witness-plus-prefix suffix layouts;
       scalar parity does not enable scalar offloading.
-- [ ] Every selected recursive edge has an exact preprocessed slot.
-- [ ] The recursive verifier no longer scans setup to obtain the terminal
+- [x] Every selected recursive edge has an exact preprocessed slot.
+- [x] The recursive verifier no longer scans setup to obtain the terminal
       prefix opening.
-- [ ] Generated table replay and DP fallback produce identical topology,
+- [x] Generated table replay and DP fallback produce identical topology,
       params, witness lengths, Stage 3 bytes, and proof-byte totals.
-- [ ] Direct and recursive generated catalogs are separate and reject
+- [x] Direct and recursive generated catalogs are separate and reject
       cross-catalog identity mismatches.
-- [ ] Terminal, unsupported, malformed, or missing-slot cases reject without
+- [x] Terminal, unsupported, malformed, or missing-slot cases reject without
       panic.
 
 ### Testing Strategy

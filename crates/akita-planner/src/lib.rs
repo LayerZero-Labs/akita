@@ -94,6 +94,18 @@ impl SelectionPolicyId {
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
     pub selection_policy: SelectionPolicyId,
+    /// Maximum supported setup-matrix envelope in base-field elements.
+    ///
+    /// This is a candidate-feasibility input, so generated catalogs bind it
+    /// alongside the selection policy that consumes it.
+    pub max_setup_envelope_field_elements: usize,
+    /// Minimum whole-number contraction required when a successor consumes an
+    /// offloaded setup prefix.
+    ///
+    /// The input price includes the balanced recursive witness and the padded
+    /// full-field prefix. The output price includes the complete balanced
+    /// successor witness.
+    pub min_offloaded_witness_contraction: usize,
     /// Ring degree `D` (`Cfg::D`).
     pub ring_dimension: usize,
     /// Gadget base + coefficient bounds (`Cfg::decomposition()`).
