@@ -39,7 +39,9 @@ pub(crate) use candidate::{
     derive_candidate_level_params, planned_next_witness_len,
     scalar_root_fold_level_params_candidate,
 };
-pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
+pub(crate) use suffix_dp::{
+    derive_optimal_suffix_schedule, FoldSuffix, ScheduleMemo, SuffixCtx, SuffixState,
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -47,6 +49,7 @@ pub(crate) struct CandidateFoldStep {
     pub(crate) input_witness_len: usize,
     pub(crate) output_witness_len: usize,
     pub(crate) estimated_direct_payload_bytes: usize,
+    pub(crate) estimated_stage3_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +60,37 @@ pub(crate) struct CandidateTerminalResponse {
     pub(crate) estimated_direct_payload_bytes: usize,
     pub(crate) response_shape: TerminalResponseShape,
     pub(crate) estimated_payload_bytes: usize,
+}
+
+/// Exact Stage-3 payload induced when `successor` consumes the setup prefix
+/// produced by the current fold. Absence of a successor prefix is direct mode.
+pub(crate) fn stage3_payload_bytes_for_successor(
+    policy: &PlannerPolicy,
+    successor: Option<&CommittedGroupParams>,
+    output_witness_len: usize,
+) -> Result<usize, AkitaError> {
+    let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
+        return Ok(0);
+    };
+    let n_prefix = prefix.n_prefix()?;
+    if prefix.d_setup == 0 || !n_prefix.is_multiple_of(prefix.d_setup) {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix field length does not align with its ring dimension".to_string(),
+        ));
+    }
+    let challenge_field_bits = policy
+        .decomposition
+        .field_bits()
+        .checked_mul(policy.chal_ext_degree as u32)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
+        })?;
+    Ok(akita_types::proof_size::stage3_setup_product_bytes(
+        challenge_field_bits,
+        prefix.d_setup,
+        n_prefix / prefix.d_setup,
+        output_witness_len,
+    ))
 }
 
 pub(crate) fn materialize_candidate_schedule(
@@ -72,9 +106,14 @@ pub(crate) fn materialize_candidate_schedule(
     let root = folds.remove(0);
     let estimate = FoldScheduleEstimate {
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
+        estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: folds
             .iter()
             .map(|fold| fold.estimated_direct_payload_bytes)
+            .collect(),
+        estimated_recursive_stage3_payload_bytes: folds
+            .iter()
+            .map(|fold| fold.estimated_stage3_payload_bytes)
             .collect(),
         estimated_terminal_direct_payload_bytes: terminal_response
             .estimated_direct_payload_bytes
@@ -82,7 +121,7 @@ pub(crate) fn materialize_candidate_schedule(
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
     };
-    let recomputed = estimate.estimated_direct_proof_payload_bytes()?;
+    let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
         return Err(AkitaError::InvalidSetup(format!(
             "cached planner cost {cached_total} disagrees with materialized estimate {recomputed}"
@@ -496,6 +535,7 @@ fn find_schedule_inner(
                         input_witness_len: witness_len,
                         output_witness_len,
                         estimated_direct_payload_bytes: root_proof_size,
+                        estimated_stage3_payload_bytes: 0,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
                     best = Some((

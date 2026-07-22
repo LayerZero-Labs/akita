@@ -65,7 +65,7 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )
-    .and_then(|planned| planned.estimate.estimated_direct_proof_payload_bytes())
+    .and_then(|planned| planned.estimate.estimated_proof_payload_bytes())
     .expect("runtime schedule estimate")
 }
 

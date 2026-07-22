@@ -19,8 +19,8 @@ use crate::generated::{
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::schedule_params::{
-    materialize_candidate_schedule, planned_next_witness_len, CandidateFoldStep,
-    CandidateTerminalResponse,
+    materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
+    CandidateFoldStep, CandidateTerminalResponse,
 };
 use crate::PlannerPolicy;
 
@@ -165,7 +165,7 @@ pub(crate) fn walk_generated_schedule_entry(
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
         let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
         let binds_terminal = next_lp.is_none();
-        let level_bytes = level_proof_bytes(
+        let direct_level_bytes = level_proof_bytes(
             field_bits,
             challenge_field_bits,
             lp,
@@ -187,14 +187,20 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("generated level byte count overflow".to_string())
         })?;
-        total_bytes = total_bytes.checked_add(level_bytes).ok_or_else(|| {
-            AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
-        })?;
+        let stage3_bytes =
+            stage3_payload_bytes_for_successor(policy, next_lp, *output_witness_len)?;
+        total_bytes = total_bytes
+            .checked_add(direct_level_bytes)
+            .and_then(|value| value.checked_add(stage3_bytes))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
+            })?;
         folds.push(CandidateFoldStep {
             params: lp.clone(),
             input_witness_len: *input_witness_len,
             output_witness_len: *output_witness_len,
-            estimated_direct_payload_bytes: level_bytes,
+            estimated_direct_payload_bytes: direct_level_bytes,
+            estimated_stage3_payload_bytes: stage3_bytes,
         });
     }
     let terminal_direct_bytes = akita_types::FOLD_GRIND_NONCE_BYTES
