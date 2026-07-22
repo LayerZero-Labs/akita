@@ -288,33 +288,38 @@ The existing rectangular factorization is sufficient for a two-pass
 prefix/suffix prover. It does not require a balanced split, and it does not
 require another factorization of `H`.
 
-Use the setup-index variables as the prefix and the common coefficient
-variables as the suffix. The first pass over the base-field setup source forms
+Akita's committed flat setup MLE binds the common coefficient variables before
+the setup-index variables. The prover MUST preserve that canonical order: the
+common coefficient variables are the prefix and the setup-index variables are
+the suffix. Reversing these phases would change the setup evaluation point and
+break the existing suffix projection used by the carried witness opening.
+
+The first pass over the base-field setup source forms
 
 ```text
-Q[i] = sum_j A[j] * Setup[i,j].
+R[j] = sum_i H[i] * Setup[i,j].
 ```
 
 The prefix rounds prove
 
 ```text
-sum_i H[i] * Q[i].
+sum_j A[j] * R[j].
 ```
 
-`Q` and `H` MUST remain separate multilinear factors. The prover MUST NOT fold
+`R` and `A` MUST remain separate multilinear factors. The prover MUST NOT fold
 their pointwise product as one multilinear table.
 
-After the sampled setup-index point `a` is known, the second pass over the
+After the sampled common-coefficient point `b` is known, the second pass over the
 base-field setup source forms
 
 ```text
-Setup_a[j] = sum_i eq(a,i) * Setup[i,j].
+Setup_b[i] = sum_j eq(b,j) * Setup[i,j].
 ```
 
 The suffix rounds prove
 
 ```text
-H(a) * sum_j A[j] * Setup_a[j].
+A(b) * sum_i H[i] * Setup_b[i].
 ```
 
 The target owned extension-field state is
@@ -329,8 +334,24 @@ is `L + d0 << L * d0`.
 
 Both setup passes MUST read `F` coefficients directly. The implementation MUST
 use `MulBase<F>` or `MulBaseUnreduced<F>` and MUST NOT lift the setup prefix into
-an `E` table. Delayed product accumulation MUST reduce only at an explicitly
-bounded, backend-safe boundary.
+an `E` table. The first pass SHOULD traverse the row-major setup source in its
+physical order, retain one delayed accumulator per common coefficient, and
+reduce those accumulators only at the backend-safe product-accumulator
+boundary.
+
+S2 strictly dominates the two S1 shapes in setup-source passes and materialized
+extension state for Akita's current rectangles:
+
+```text
+S1(k=2):        at least 3 passes, N/4 table elements
+S1(k=log2 d0)): at least log2(d0) passes, L table elements
+S2:             exactly 2 passes, L + d0 table elements.
+```
+
+Therefore S1 MAY be pruned without a production implementation once an exact
+S0/S2 round-parity test and release A/B benchmark confirm S2's expected work
+advantage. This pruning decision and the benchmark geometry MUST be recorded;
+it MUST NOT be an unreported runtime heuristic.
 
 #### Candidate S3: bounded-rank split inside the setup-index weight
 
@@ -375,6 +396,44 @@ decomposition and is forbidden.
 S3 is retained only if its `T * sqrt(L)` state and repeated setup scans improve
 the complete prover over the best S0/S1/S2 candidate. No permanent runtime
 selector or losing implementation remains after selection.
+
+#### Slice 0B selection record
+
+The first implementation selects S2 and retains S0 only as a test/benchmark
+oracle. S1 was pruned by the pass/state dominance above; S3 was not implemented
+because the live S2 setup-index pass was no longer a Stage 3 bottleneck.
+
+The release A/B benchmark uses `L = 2^15`, `d0 = 64`, five samples, and eight
+Rayon threads. It measures construction, every round polynomial, every fold,
+and the terminal table value:
+
+| Kernel | Five-sample time | Relative | Materialized setup-table state |
+|---|---:|---:|---:|
+| S0 dense | 286.058 ms | 1.000 | 2,097,152 `E` elements |
+| S2 rectangular | 30.186 ms | 0.1055 | 32,832 `E` elements |
+
+Thus S2 is 9.48 times faster in this kernel benchmark and uses 63.9 times less
+materialized setup-table state. The state count excludes the existing `H` and
+`A` factors because both candidates require them.
+
+For the `nv=32`, four-polynomial, fp128/D64 recursive multi-group profile, the
+two live Stage 3 invocations report:
+
+| Perfetto span | Aggregate time |
+|---|---:|
+| `stage3_setup_coefficient_pass` | 15.889 ms |
+| `stage3_setup_index_pass` | 19.660 ms |
+| `stage3_sumcheck` | 188.890 ms |
+
+Both setup spans report exactly one source pass per invocation, zero complete
+base-to-extension lifts, and `L + d0 = 524,352` materialized setup-table
+elements. The setup-index pass is 10.4% of aggregate Stage 3 time, so the S3
+split is not justified by this profile.
+
+The same traced end-to-end run proves in 6.938 seconds. A prior single traced
+run of the same workload at the Slice 0A head proved in 12.248 seconds. This
+43.4% delta is useful attribution evidence, not a statistical end-to-end
+benchmark; the isolated S0/S2 release benchmark above is the selection gate.
 
 ### Current linear witness claim
 
@@ -500,9 +559,10 @@ contraction_len * observed_max_abs_digit <= 2^64 - 1,
 which is the conservative addition headroom of the narrow accumulators used by
 the native field backends.
 
-Log basis 2 admits exactly `{-2, -1, 0, 1}`. The first, column-oriented source
-pass uses a dedicated four-way kernel. For each equality weight it computes
-`unit = weight.mul_u64_unreduced(1)` once and applies:
+Log basis 2 admits exactly `{-2, -1, 0, 1}`. The first source pass scans the
+physical row-major compact witness. For each equality weight it computes
+`unit = weight.mul_u64_unreduced(1)` once, reuses that value across the entire
+live row, and applies:
 
 ```text
 -2 => negative += unit; negative += unit
@@ -511,18 +571,35 @@ pass uses a dedicated four-way kernel. For each equality weight it computes
  1 => positive += unit
 ```
 
-The output tile is a physical kernel choice, not proof geometry. The pinned
-eight-thread A/B benchmark selects four adjacent outputs independently for both
-LB2 passes. This bounds the live state to four positive and four negative
-accumulators while reusing one `unit` across four compact digits. Against the
-generic 32-output kernel, LB2 tile 4 reduced the column contraction by about
-51% on dense digits and 30% on sparse digits, and reduced the row contraction
-by about 16% and 12%, respectively. Log bases 3 through 6 retain the generic
-32-output kernel; this slice does not add an unpriced density-based selector.
+The prefix orientation is a physical kernel choice, not proof geometry. On the
+live L0 shape (`8192` weights, `8192` outputs, `51,885,824` live digits), the
+pinned eight-thread A/B benchmark reports:
+
+| Prefix kernel | Previous tiled layout | Row-major layout | Ratio |
+|---|---:|---:|---:|
+| LB2 match | 90.229 ms | 38.418 ms | 0.4258 |
+| LB3--LB6 generic small multiply | 65.591 ms | 63.157 ms | 0.9629 |
+
+The row-major prefix is selected for every supported basis. The suffix is
+already row-oriented and retains independently selected output tiles: four
+outputs for LB2 and 32 outputs for the generic kernel. This slice does not add
+an unpriced density-based selector.
+
+Removing the padded witness copy changed the two-fold Perfetto totals as
+follows on the same recursive profile:
+
+| Span | Padded copy | Compact source | Change |
+|---|---:|---:|---:|
+| witness repack/validation | 46.524 ms | 1.182 ms | -97.5% |
+| complete Stage 3 | 233.161 ms | 188.890 ms | -19.0% |
+| complete prover | 7.344 s | 6.938 s | -5.5% |
 
 Both source-pass Perfetto spans MUST record the selected kernel, log basis,
-certified digit bound, and observed digit bound. Implementations MUST preserve
-the canonical padded zeros and checked physical-to-opening address map.
+certified digit bound, and observed digit bound. The prover MUST preserve the
+canonical padded-zero suffix, but MUST NOT allocate or copy it: both compact
+source passes stop at the exact live `i8` length and interpret the absent tail
+as zero. The checked opening domain still determines the sum-check variable
+count and point split.
 
 This algorithm is specific to the linear Stage 3 claim. It MUST NOT replace or
 reinterpret the nonlinear range-image refold in Stage 2.
@@ -1021,7 +1098,9 @@ exist for those combinations.
 - Introduce a base-field setup source view; do not lift the complete setup
   prefix eagerly.
 - Retain S0 as the dense differential and performance baseline.
-- Implement and measure S1 with `k=2` and `k=log2(d0)`.
+- Either implement and measure S1 with `k=2` and `k=log2(d0)`, or record its
+  strict pass/state dominance by the canonical S2 implementation and prune it
+  before adding production code.
 - Implement S2 directly from the existing `H[i] * A[j]` rectangular
   factorization, with exactly two base-field setup-source passes.
 - Add dense-versus-factorized round-polynomial and terminal-point parity for
