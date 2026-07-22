@@ -65,32 +65,15 @@ fn recompose_and_split_digits_round_trip() {
 }
 
 #[test]
-fn terminal_decoder_separates_coding_scale_from_sis_admission() {
-    let coding_scale = 7;
-    let admissible_cap = 63;
-    let values = [20, -20];
-    let (rice_low_bits, zigzag_w) =
-        tail_golomb_rice_z_params_from_caps(coding_scale, admissible_cap).unwrap();
+fn terminal_decoder_uses_one_coding_and_admission_cap() {
+    let cap = 7;
+    let values = [6, -6];
+    let (rice_low_bits, zigzag_w) = tail_golomb_rice_z_params_from_cap(cap).unwrap();
     let payload = golomb_rice_encode_vec(&values, rice_low_bits, zigzag_w).unwrap();
     assert_eq!(
-        decode_terminal_z_golomb_payload(
-            &payload,
-            values.len(),
-            coding_scale,
-            admissible_cap,
-            None,
-        )
-        .unwrap(),
+        decode_terminal_z_golomb_payload(&payload, values.len(), cap, None).unwrap(),
         values
     );
-    assert!(decode_terminal_z_golomb_payload(
-        &payload,
-        values.len(),
-        coding_scale,
-        coding_scale,
-        None,
-    )
-    .is_err());
 }
 
 #[test]
@@ -257,7 +240,7 @@ fn decode_terminal_z_rejects_coefficient_above_fold_cap() {
     let over_cap = cap as i64 + 1;
     let payload =
         golomb_rice_encode_vec(&[over_cap], rice_low_bits, zigzag_w).expect("zigzag covers cap+1");
-    assert!(decode_terminal_z_golomb_payload(&payload, 1, cap, cap, None,).is_err());
+    assert!(decode_terminal_z_golomb_payload(&payload, 1, cap, None,).is_err());
 }
 
 #[test]
@@ -269,7 +252,7 @@ fn decode_terminal_z_rejects_trailing_zero_byte_padding() {
     let mut payload = golomb_rice_encode_vec(&[-2i64, 1, 0], rice_low_bits, zigzag_w).unwrap();
     payload.push(0x00);
     let cap = lp.fold_witness_linf_cap_for_claims(1).unwrap();
-    assert!(decode_terminal_z_golomb_payload(&payload, 3, cap, cap, None,).is_err());
+    assert!(decode_terminal_z_golomb_payload(&payload, 3, cap, None,).is_err());
 }
 
 #[test]

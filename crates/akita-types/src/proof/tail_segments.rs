@@ -302,11 +302,11 @@ impl TerminalResponseShape {
     /// coordinates. No `t`/`e` gadget-plane equivalent is introduced.
     pub fn derive(
         params: &TerminalCommittedGroupParams,
-        honest_response_linf_cap: u128,
+        admission_cap: u128,
     ) -> Result<Self, AkitaError> {
-        if honest_response_linf_cap == 0 {
+        if admission_cap == 0 {
             return Err(AkitaError::InvalidSetup(
-                "terminal honest response cap must be nonzero".to_string(),
+                "terminal response admission cap must be nonzero".to_string(),
             ));
         }
         let d = params.d_a();
@@ -323,8 +323,8 @@ impl TerminalResponseShape {
             .checked_mul(params.inner_commit_matrix.output_rank())
             .and_then(|value| value.checked_mul(d))
             .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
-        let z_rice_low_bits = cap_rice_low_bits(honest_response_linf_cap);
-        let z_payload_bytes = z_payload_budget_from_cap(z_coords, honest_response_linf_cap);
+        let z_rice_low_bits = cap_rice_low_bits(admission_cap);
+        let z_payload_bytes = z_payload_budget_from_cap(z_coords, admission_cap);
         let logical_num_elems = z_coords
             .checked_add(e_field_elems)
             .and_then(|value| value.checked_add(t_field_elems))
@@ -658,30 +658,28 @@ fn tail_golomb_rice_z_params_from_caps(
     Ok((rice_low_bits, w))
 }
 
-/// Decode terminal `z` using an honest-distribution coding scale and an
-/// independently certified security limit.
+/// Decode terminal `z` using its single capacity-based admission and coding cap.
 pub fn decode_terminal_z_golomb_payload(
     payload: &[u8],
     z_coords: usize,
-    coding_scale: u128,
-    admissible_cap: u128,
+    cap: u128,
     budget_bytes: Option<usize>,
 ) -> Result<Vec<i64>, AkitaError> {
     let binding = FoldLinfProtocolBinding::CURRENT;
     let rice_low_bits = wire_rice_low_bits_from_rule(
-        coding_scale,
+        cap,
         binding.wire_rice_low_bits_rule_id,
         binding.wire_rice_low_bits_delta,
     )?;
-    let zigzag_w = golomb_rice_zigzag_width(admissible_cap);
-    let max_quotient = golomb_rice_max_quotient_for_cap(admissible_cap, rice_low_bits, zigzag_w)?;
+    let zigzag_w = golomb_rice_zigzag_width(cap);
+    let max_quotient = golomb_rice_max_quotient_for_cap(cap, rice_low_bits, zigzag_w)?;
     let values = golomb_rice_decode_vec(payload, z_coords, rice_low_bits, zigzag_w, max_quotient)?;
-    golomb_rice_values_within_cap(&values, admissible_cap)?;
+    golomb_rice_values_within_cap(&values, cap)?;
     if let Some(budget_bytes) = budget_bytes {
         if payload.len() > budget_bytes {
             return Err(AkitaError::InvalidProof);
         }
-        let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(coding_scale))
+        let budget_bits = tail_z_planner_bits_per_coord(cap_rice_low_bits(cap))
             .checked_mul(z_coords)
             .ok_or(AkitaError::InvalidProof)?;
         let total_bits = golomb_rice_total_wire_bits(&values, rice_low_bits, zigzag_w)?;
@@ -709,7 +707,7 @@ pub fn z_fold_decoded_from_terminal_response<F: FieldCore>(
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     let cap = lp.fold_witness_linf_cap_for_claims(num_t_vectors)?;
-    decode_terminal_z_golomb_payload(payload, group.z_coords, cap, cap, None)
+    decode_terminal_z_golomb_payload(payload, group.z_coords, cap, None)
 }
 
 fn z_payload_budget_from_cap(z_coords: usize, cap: u128) -> usize {
@@ -1061,8 +1059,8 @@ pub fn build_terminal_response<F>(
 where
     F: FieldCore + CanonicalField + HalvingField + AkitaSerialize,
 {
-    let (honest_cap, security_cap) = params.response_linf_bounds(sparse)?;
-    let expected = TerminalResponseShape::derive(params, honest_cap)?;
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let expected = TerminalResponseShape::derive(params, admission_cap)?;
     if !scheduled_shape.admits_realized(&expected) || !expected.admits_realized(scheduled_shape) {
         return Err(AkitaError::InvalidSetup(
             "scheduled terminal response shape does not match terminal parameters".into(),
@@ -1085,9 +1083,8 @@ where
         .iter()
         .map(|value| i64::from(*value))
         .collect::<Vec<_>>();
-    crate::golomb_rice_flat_admit_terminal_wire_with_caps(&z_values, honest_cap, security_cap)?;
-    let (rice_low_bits, zigzag_width) =
-        tail_golomb_rice_z_params_from_caps(honest_cap, security_cap)?;
+    golomb_rice_flat_admit_terminal_wire(&z_values, admission_cap)?;
+    let (rice_low_bits, zigzag_width) = tail_golomb_rice_z_params_from_cap(admission_cap)?;
     let z_payload = golomb_rice_encode_vec(&z_values, rice_low_bits, zigzag_width)?;
     if z_payload.len() > group.z_payload_bytes {
         return Err(AkitaError::InvalidInput(
@@ -1133,7 +1130,6 @@ pub fn validate_terminal_response_z_payload<F: FieldCore>(
             .first()
             .ok_or(AkitaError::InvalidProof)?
             .z_coords,
-        cap,
         cap,
         Some(budget_bytes),
     )

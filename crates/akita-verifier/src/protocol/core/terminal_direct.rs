@@ -164,7 +164,7 @@ where
         .groups
         .first()
         .ok_or(AkitaError::InvalidProof)?;
-    let (honest_cap, security_cap) = params.response_linf_bounds(sparse)?;
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
@@ -189,8 +189,7 @@ where
                 let values = decode_terminal_z_golomb_payload(
                     witness.z_payloads.first().ok_or(AkitaError::InvalidProof)?,
                     group_layout.z_coords,
-                    honest_cap,
-                    security_cap,
+                    admission_cap,
                     Some(group_layout.z_payload_bytes),
                 )
                 .map_err(|error| {

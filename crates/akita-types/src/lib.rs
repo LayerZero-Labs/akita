@@ -53,7 +53,7 @@ pub use field_reduction::{
     validate_ring_subfield_role, FpExtEncoding, SubfieldParams,
 };
 pub use golomb_rice::{
-    golomb_rice_flat_admit_terminal_wire_with_caps, golomb_rice_flat_rows_admit_terminal_wire,
+    golomb_rice_flat_admit_terminal_wire, golomb_rice_flat_rows_admit_terminal_wire,
     golomb_rice_max_quotient_for_cap, golomb_rice_rows_admit_terminal_wire,
     golomb_rice_rows_encodable_at_wire_low_bits, golomb_rice_total_wire_bits, ZFoldEncodingStats,
     TAIL_Z_PLANNER_CAP_LOW_BITS_PLUS_TWO,
@@ -129,7 +129,8 @@ pub use schedule::{
     RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
     RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
     ScheduleKeyPrecommitSource, TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep,
-    WitnessPartition,
+    TerminalResponseLinfPolicy, WitnessPartition, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN,
+    TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,

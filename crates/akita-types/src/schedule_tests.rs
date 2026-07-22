@@ -18,6 +18,37 @@ use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 type F = Prime128OffsetA7F7;
 
 #[test]
+fn terminal_projection_preserves_the_fixed_inner_matrix() {
+    let sparse = SparseChallengeConfig::pm1_only(3);
+    let committed = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        4,
+        3,
+        2,
+        sparse,
+    )
+    .with_decomp(4, 32, 2, 2, 2)
+    .expect("committed params");
+    let expected_inner = committed.inner_commit_matrix.clone();
+
+    let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
+        .expect("terminal projection");
+    let response_policy = terminal
+        .response_linf_policy(&sparse)
+        .expect("terminal response bounds");
+
+    assert_eq!(terminal.inner_commit_matrix, expected_inner);
+    assert_eq!(response_cap, response_policy.admission_cap);
+    assert!(response_policy.admission_cap <= response_policy.certified_capacity);
+    assert!(
+        response_policy.admission_cap >= response_policy.unconstrained_target.div_ceil(2),
+        "terminal capacity must retain at least half of the unconstrained target"
+    );
+}
+
+#[test]
 fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);

@@ -293,8 +293,10 @@ where
     )?;
     let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(terminal_expanded);
     let sparse = SuffixCfg::ring_challenge_config(ring_dimension)?;
-    let (honest_cap, _) = terminal_witness.response_linf_bounds(&sparse)?;
-    let response_shape = TerminalResponseShape::derive(&terminal_witness, honest_cap)?;
+    let admission_cap = terminal_witness
+        .response_linf_policy(&sparse)?
+        .admission_cap;
+    let response_shape = TerminalResponseShape::derive(&terminal_witness, admission_cap)?;
     let schedule = FoldSchedule {
         root: envelope.root,
         recursive_folds,

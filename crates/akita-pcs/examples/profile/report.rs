@@ -167,24 +167,23 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
         .groups
         .first()
         .ok_or(akita_field::AkitaError::InvalidProof)?;
-    let (honest_cap, security_cap) = params.response_linf_bounds(sparse)?;
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
             .ok_or(akita_field::AkitaError::InvalidProof)?,
         group.z_coords,
-        honest_cap,
-        security_cap,
+        admission_cap,
         Some(group.z_payload_bytes),
     )?;
-    let log_cap = u128::BITS - honest_cap.leading_zeros();
+    let log_cap = u128::BITS - admission_cap.leading_zeros();
     let hypothetical_digits =
         num_digits_for_bound(log_cap, field_bits, params.log_basis_inner).max(1);
     analyze_z_fold_golomb_encoding(
         &z_values,
-        honest_cap,
-        golomb_rice_zigzag_width(security_cap),
+        admission_cap,
+        golomb_rice_zigzag_width(admission_cap),
         hypothetical_digits,
         params.log_basis_inner,
         witness.z_payloads.first().map_or(0, Vec::len),
@@ -203,7 +202,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     let Some(group) = witness.layout.groups.first() else {
         return;
     };
-    let Ok((honest_cap, security_cap)) = params.response_linf_bounds(sparse) else {
+    let Ok(response_policy) = params.response_linf_policy(sparse) else {
         return;
     };
     let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
@@ -213,8 +212,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
             .map(Vec::as_slice)
             .unwrap_or_default(),
         group.z_coords,
-        honest_cap,
-        security_cap,
+        response_policy.admission_cap,
         Some(group.z_payload_bytes),
     ) else {
         return;

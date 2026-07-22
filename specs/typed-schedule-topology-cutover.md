@@ -160,12 +160,12 @@ commitment compression.
 - A recursive folded response uses the protocol's digit-certification relation
   and its tight difference interval. Its bound retains the clean
   digit-boundary snap required by that relation.
-- A terminal folded response has no clean digit-boundary snap. Planning uses
-  the exact unsnapped honest-response quantile to choose an inner-matrix SIS bucket and
-  minimum output rank. Schedule validation derives the largest A-role
-  collision bucket supported by the expanded inner matrix. Verification checks
-  the actual decoded response infinity norm against that matrix-derived
-  capacity.
+- A terminal folded response has no response-digit boundary. Expansion retains
+  the ordinary fold's inner matrix and derives its exact certified raw-response
+  capacity from the checked SIS table. A candidate is usable only if this
+  capacity retains at least half of the unconstrained response target.
+  Verification checks the decoded response directly against the capacity-based
+  admission cap.
 - Frozen standalone commitments bind their exact security descriptor. On
   replay, the descriptor is rederived and equality-checked; it is not accepted
   as an unaudited override.
@@ -730,28 +730,26 @@ pub struct GeneratedTerminalFold {
 
 The terminal relation has no outer or open commitment matrix and no terminal
 outer/open decomposition digit width. Its response contains raw field-valued
-`t` and `e`, plus centered folded-response coefficients `z` encoded losslessly. The
-verifier decodes `z`, computes its actual infinity norm, applies the complete
-A-role weak-binding formula to the corresponding response-difference interval,
-checks the resulting collision bound against the inner matrix's derived SIS
-capacity, and then checks the opening and inner-commitment relations.
+`t` and `e`, plus centered folded-response coefficients `z` encoded losslessly.
+The verifier decodes `z`, checks its actual infinity norm against the derived
+capacity-based admission cap, and then checks the opening and inner-commitment
+relations.
 It neither receives nor verifies a digit decomposition of terminal `t`, `e`,
 or `z`.
 
-The planner computes an exact, unsnapped honest-response quantile from the
-configured failure probability, terminal witness structure, flat challenge,
-and trace-subfield factors. It applies the same complete A-role formula to that
-quantile to choose the inner matrix's SIS bucket and minimum output rank. This
-quantile is a completeness and cost-model input, not the verifier's acceptance
-bound.
+The planner derives an `unconstrained_response_linf_target` with the canonical
+pre-digit-snap tail/worst-case calculation. It separately derives the fixed
+matrix's `certified_response_linf_capacity`. Terminal projection does not resize
+or reselect the inner matrix. It rejects a candidate when the representable
+capacity retains less than half of the unconstrained target.
 
 During expansion and schedule validation, the canonical SIS-table helper finds
 the largest A-role collision bucket supported by the inner matrix's fixed ring
-dimension, input width, and output rank. The maximum accepted terminal response
-norm is the largest centered norm whose complete A-role collision price fits
-that bucket. The verifier therefore checks the actual decoded response norm
-against capacity already certified by the matrix; there is no terminal
-clean digit-boundary snap and no online lattice-estimator call.
+dimension, input width, and output rank. The `terminal_response_linf_cap` is
+that capacity restricted to the signed representation accepted by the terminal
+NTT kernel. It controls grinding, encoding, payload accounting, and verifier
+admission. No online lattice-estimator call, response-digit snap, or terminal
+matrix reselection occurs.
 
 The predecessor terminal-binding path computes the inner commitment and binds
 raw `t`. It must not decompose `t` merely to satisfy a shared non-terminal code
@@ -1150,10 +1148,21 @@ supported_A_collision_linf = largest prefix endpoint beta_j in
     A_ROLE_COLLISION_BUCKETS such that, for every beta_i <= beta_j,
     min_secure_output_rank(P, H, Q, d_A, beta_i, m_A) <= n_A
 
-terminal_z_linf_limit = min(
+terminal_A_capacity_linf = min(
     floor(supported_A_collision_linf / (8 * omega * nu)),
     maximum_unique_centered_field_magnitude
 )
+
+terminal_response_linf_cap = min(
+    terminal_A_capacity_linf,
+    signed_terminal_response_representation_limit
+)
+
+minimum_usable_terminal_cap = ceil(
+    unconstrained_response_linf_target / 2
+)
+
+require terminal_response_linf_cap >= minimum_usable_terminal_cap
 ```
 
 Schedule validation rejects if no such bucket exists or if the terminal
@@ -1164,12 +1173,31 @@ the fixed-matrix inversion is the sole authority for the matrix's supported
 collision capacity; it scans the checked-in table and does not invoke the
 offline lattice estimator.
 
-The planner computes the unsnapped honest terminal-response quantile and
-chooses the minimum A output rank that secures
-`terminal_A_collision_linf(honest_response_linf)`. It then derives any larger
-collision-bucket prefix supported by that same fixed rank. The honest quantile
-controls completeness, matrix selection, and expected proof size. It is not a
-second verifier bound and is not serialized in the protocol schedule.
+The planner chooses the inner matrix with the same digit-envelope A-role bound
+used for an ordinary committed fold. Terminal projection retains that matrix,
+derives its certified capacity, and applies the half-target feasibility rule.
+The half-target rule is an honest-prover completeness and performance heuristic;
+it is not a security assumption. Security follows from admitting no response
+larger than the exact fixed-matrix capacity. The admission cap is derived rather
+than serialized in the protocol schedule.
+
+The planner does not reapply the coordinate-union Rademacher bound at the
+reduced capacity. That bound is intentionally conservative and becomes vacuous
+for useful production capacities. For the dense fp128, `D = 64` terminal tail
+with six live blocks and 16,384 response coefficients, the current calculation
+gives:
+
+```text
+unconstrained_response_linf_target = 3236
+rank_4_certified_capacity          = 2570
+retained_fraction                  = 2570 / 3236 ~= 0.794
+```
+
+The same union bound evaluated at 2570 gives an upper failure bound greater
+than one, so it cannot certify any positive acceptance probability. Requiring
+that bound to remain non-vacuous would force a capacity of approximately 3012
+and discard a practically useful rank-4 matrix. The explicit one-half rule
+records the calibrated planner policy without weakening exact SIS validation.
 
 For an untrusted terminal response, the verifier performs these steps:
 
@@ -1180,45 +1208,44 @@ For an untrusted terminal response, the verifier performs these steps:
    mismatches, and integers without a unique centered field representative.
 3. Compute the actual `z_linf = max_i |z_i|` during decoding using checked
    integer arithmetic.
-4. Compute `terminal_A_collision_linf(z_linf)`, round it upward to its A-role
-   SIS bucket, and require that bucket not to exceed
-   `supported_A_collision_linf`. This is checked integer arithmetic plus a
-   checked-in table lookup, not a lattice-estimator run. The check contains no
-   opening digit width, digit decomposition, or clean digit-boundary snap.
+4. Require `z_linf <= terminal_response_linf_cap`. The cap was obtained by
+   inverting `supported_A_collision_linf`, so the complete accepted interval is
+   SIS-secure. The check contains no opening digit width or digit decomposition.
 5. Convert the accepted centered integers to field elements and check the raw
    `e` consistency/trace relations and the raw `t = A * z` relation.
 
 The response-difference factor two is tight for direct centered responses: for
 any two accepted responses `z` and `z'`,
-`||z - z'||_infinity <= ||z||_infinity + ||z'||_infinity`. The matrix-derived
-limit, after the full A-role weak-binding multiplier, therefore certifies every
-pair of accepted responses. Recursive digit-certified responses continue to
-use their tighter digit-interval difference formula instead.
+`||z - z'||_infinity <= ||z||_infinity + ||z'||_infinity`. Schedule validation
+applies the full A-role weak-binding multiplier to this interval and proves that
+the capacity-based limit certifies every pair of accepted responses. Recursive
+digit-certified responses continue to use their tighter digit-interval
+difference formula instead.
 
 The initial `TerminalResponseWirePolicyId` uses the current calibrated Rice
-offsets but applies them to the unsnapped honest quantile:
+offsets and applies them to the capacity-based admission cap:
 
 ```text
-honest_log = floor_log2(max(1, honest_response_linf))
-rice_low_bits = honest_log.saturating_sub(2)
-payload_budget_bits_per_coordinate = honest_log + 2
+cap_log = floor_log2(max(1, terminal_response_linf_cap))
+rice_low_bits = cap_log.saturating_sub(2)
+payload_budget_bits_per_coordinate = cap_log + 2
 ```
 
 `TerminalResponseShape::derive` computes a protocol `z`-payload byte limit from
 the exact coordinate count and the named response-wire policy. The initial
-policy retains the current `honest_log + 2` bits-per-coordinate budget with
+policy retains the current `cap_log + 2` bits-per-coordinate budget with
 checked ceiling-to-bytes arithmetic. This is deliberately an average-case
 grinding and denial-of-service limit, not a claim that every vector below
-`terminal_z_linf_limit` has that encoded size. The prover accepts a grind
-attempt only when both the matrix-derived norm check and the payload-byte limit
+`terminal_response_linf_cap` has that encoded size. The prover accepts a grind
+attempt only when both the capacity-based norm check and the payload-byte limit
 pass.
 
 The terminal parser applies the byte limit to its bounded reader before
 allocating the payload, and the canonical decoder additionally caps unary runs
-using `terminal_z_linf_limit`. The descriptor binds the response-wire policy
+using `terminal_response_linf_cap`. The descriptor binds the response-wire policy
 and the derived shape. Codec choice and byte budget can narrow the accepted
-proof set for efficiency, but they never enlarge the matrix-secure norm set;
-the actual A-role collision check is the security rule.
+proof set for efficiency, but they never enlarge the capacity-based, matrix-secure
+norm set. The schedule's A-role capacity validation is the security rule.
 
 ## Final-Root-Group Tensor API
 
@@ -1458,9 +1485,9 @@ introduced.
   matrix's maximum supported collision bucket from its fixed width, dimension,
   and output rank.
 - Make the verifier compute the actual decoded `z` infinity norm and require
-  its complete A-role weak-binding collision price to fit the derived bucket.
-  The honest unsnapped quantile is used only to select parameters and model
-  expected bytes.
+  it to fit the capacity-based terminal cap. Schedule validation derives that
+  cap from the fixed inner matrix and requires it to retain at least half of
+  the unconstrained terminal target.
 - Keep `e` and `t` as raw field elements. Remove their digit-plane-equivalent
   length accounting from wire size and remove terminal `outer_log_basis` and
   `open_log_basis` from planner and schedule inputs.
@@ -1615,8 +1642,10 @@ and SIS contract exist. The schedule topology does not change again.
       by the terminal inner matrix. Verification computes the actual decoded
       `z` infinity norm and requires its complete A-role weak-binding collision
       price to fit the bucket.
-- [ ] Terminal security and encoding contain no clean digit-boundary snap; the
-      honest unsnapped quantile affects planner completeness and cost only.
+- [ ] Terminal security and encoding use the fixed inner matrix's certified
+      response capacity, not a response-digit boundary. Candidate validation
+      requires the representable capacity to retain at least half of the
+      unconstrained target without reselecting the inner matrix.
 - [ ] The predecessor terminal path binds raw `t` without constructing
       `t_hat`; terminal `e` and `t` remain raw field elements on the wire.
 - [ ] Generated rows store independent choices while canonical expansion owns
@@ -1728,16 +1757,17 @@ fixtures are neutral snapshots containing semantic fields.
 
 - Schedule validation rejects an inner matrix that does not cover its source
   collision bound or has no supported terminal collision capacity.
-- The collision-capacity helper accepts `terminal_z_linf_limit` and rejects the
+- The collision-capacity helper accepts `terminal_response_linf_cap` and rejects the
   first larger representable norm. End-to-end response fixtures separately
   satisfy the descriptor-bound payload-byte budget.
 - Malformed, non-canonical, truncated, over-budget, trailing-data, and wrong
   coordinate-count encodings reject without allocation from unchecked lengths.
 - Changing the SIS policy, table digest, inner width, dimension, or output rank
   changes or invalidates the derived terminal response limit.
-- Planner honest-quantile changes affect matrix selection and estimated bytes,
-  but the verifier reads no independent quantile-derived or
-  digit-boundary-snapped bound.
+- Planner target changes affect candidate feasibility and estimated bytes, but
+  the verifier reads no independent target-derived or digit-boundary-snapped
+  bound. A test records that the admission cap retains at least the configured
+  one-half fraction of the unconstrained target.
 
 #### Serialization and no-panic tests
 

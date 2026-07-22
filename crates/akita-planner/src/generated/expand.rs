@@ -18,12 +18,10 @@ use crate::generated::{
 use crate::schedule_params::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
-    ceil_supported_linf_bound, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, fold_witness_digit_plan, fold_witness_unsnapped_linf_cap,
-    min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
-    SisTableKey,
+    decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
+    fold_witness_digit_plan, min_secure_rank, num_digits_inner, num_digits_open,
+    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
@@ -821,34 +819,26 @@ impl GeneratedTerminalFold {
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
         let sparse = ring_challenge_config(ring_dimension)?;
-        let challenge = FoldChallengeNorms::new(&sparse, TensorChallengeShape::Flat);
         let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &sparse,
             TensorChallengeShape::Flat,
             ring_dimension,
             inner_width,
         )?;
-        let witness_norms = FoldWitnessNorms::new(log_basis_inner, ring_dimension, 1, false);
-        let (honest_response_linf_cap, _) = fold_witness_unsnapped_linf_cap(
+        let collision_bucket = rounded_up_role_a_inf_norm(
+            policy.sis_security_policy,
+            policy.sis_modulus_profile,
+            ring_dimension,
+            witness_decomposition,
+            log_basis_inner,
+            &sparse,
+            TensorChallengeShape::Flat,
+            false,
+            0,
+            policy.ring_subfield_norm_bound,
             num_live_blocks,
             1,
-            challenge,
-            witness_norms,
-            &fold_linf_cap_config,
-        )?;
-        let collision = role_a_collision_inf_norm_for_response_bound(
-            challenge.l1_norm,
-            policy.ring_subfield_norm_bound,
-            honest_response_linf_cap,
-        )
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal A collision overflow".to_string()))?;
-        let collision_bucket = ceil_supported_linf_bound(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            akita_types::SisMatrixRole::Inner,
-            ring_dimension as u32,
-            collision,
+            inner_width as u64,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("terminal A collision exceeds the SIS table".to_string())
@@ -869,18 +859,17 @@ impl GeneratedTerminalFold {
             collision_bucket,
             ring_dimension,
         )?;
-        Ok((
-            TerminalCommittedGroupParams {
-                log_basis_inner,
-                inner_commit_matrix,
-                num_live_ring_elements_per_claim,
-                num_positions_per_block,
-                num_live_blocks,
-                num_digits_inner,
-                fold_linf_cap_config,
-            },
-            honest_response_linf_cap,
-        ))
+        let terminal = TerminalCommittedGroupParams {
+            log_basis_inner,
+            inner_commit_matrix,
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            num_digits_inner,
+            fold_linf_cap_config,
+        };
+        let response_policy = terminal.response_linf_policy(&sparse)?;
+        Ok((terminal, response_policy.admission_cap))
     }
 }
 
