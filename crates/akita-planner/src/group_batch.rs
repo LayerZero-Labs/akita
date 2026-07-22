@@ -710,7 +710,8 @@ fn find_group_batch_schedule_inner(
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("root proof size overflow".to_string())
                         })?;
-                    let mut root_envelope = 1;
+                    let mut root_envelope =
+                        akita_types::SetupMatrixEnvelope::minimum().max_setup_len;
                     akita_types::accumulate_matrix_envelope_for_level(
                         &fold_candidate_params,
                         &mut root_envelope,

@@ -15,7 +15,7 @@ use crate::{
 pub fn setup_matrix_envelope_for_schedule(
     schedule: &FoldSchedule,
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
-    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    let mut envelope = SetupMatrixEnvelope::minimum();
     accumulate_matrix_envelope_for_level(
         &schedule.root.params.final_group.commitment,
         &mut envelope.max_setup_len,

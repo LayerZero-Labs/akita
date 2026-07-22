@@ -118,7 +118,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     let layouts = setup_envelope_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut saw_supported_shape = false;
-    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    let mut envelope = SetupMatrixEnvelope::minimum();
     for layout in &layouts {
         let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
             continue;

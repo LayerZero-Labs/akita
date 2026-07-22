@@ -31,6 +31,8 @@ use akita_types::{
 
 use crate::PlannerPolicy;
 
+const NO_STAGE3_PAYLOAD_BYTES: usize = usize::MIN;
+
 mod candidate;
 mod suffix_dp;
 
@@ -79,7 +81,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
-        return Ok(0);
+        return Ok(NO_STAGE3_PAYLOAD_BYTES);
     };
     let n_prefix = prefix.n_prefix()?;
     if prefix.d_setup == 0 || !n_prefix.is_multiple_of(prefix.d_setup) {
@@ -525,7 +527,7 @@ fn find_schedule_inner(
                     Some(next_witness_binding),
                 )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
-                let mut root_envelope = 1;
+                let mut root_envelope = akita_types::SetupMatrixEnvelope::minimum().max_setup_len;
                 akita_types::accumulate_matrix_envelope_for_level(
                     &candidate_params,
                     &mut root_envelope,
