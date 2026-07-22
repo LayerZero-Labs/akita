@@ -496,6 +496,10 @@ where
         debug_assert!(observed_max_abs_digit <= certified_max_abs_digit);
         observed_max_abs_digit
     };
+    // `logical_w` is already the canonical flat opening source: ring
+    // coefficients are the low bits and columns are the high bits. The
+    // prefix/suffix prover may split that little-endian bit string anywhere;
+    // it is not required to split exactly between `ring_bits` and `col_bits`.
     let term = WitnessClaimReductionTerm::new(
         logical_w,
         table_len,
