@@ -513,6 +513,43 @@ class ProfileBenchReportTests(unittest.TestCase):
             self.assertEqual(case_status(base_summary["cases"][0]), "fail")
             self.assertIn("paired binary failed", pr_summary["cases"][0]["error"])
 
+    def test_validate_case_consistency_tolerates_terminal_proof_level(self) -> None:
+        from scripts.profile_bench_report import (
+            PROOF_LEVEL_BYTE_FIELDS,
+            validate_case_consistency,
+        )
+
+        def level(index: int) -> dict:
+            return {
+                "level": index,
+                "d_a": 64,
+                "d": 64,
+                "total_bytes": 0,
+                **{field: 0 for field in PROOF_LEVEL_BYTE_FIELDS},
+            }
+
+        planned = [level(i) for i in range(5)]
+        # The proof carries the planned non-terminal folds plus one trailing
+        # terminal level the planner reports separately; that is allowed.
+        proof_with_terminal = [level(i) for i in range(6)]
+        validate_case_consistency(
+            {"planned_levels": planned, "proof_levels": proof_with_terminal}
+        )
+        # Equal counts (degenerate single/terminal-only proofs) are also allowed.
+        validate_case_consistency(
+            {"planned_levels": planned, "proof_levels": [level(i) for i in range(5)]}
+        )
+        # Two extra proof levels is a genuine mismatch and must fail closed.
+        with self.assertRaises(ValueError):
+            validate_case_consistency(
+                {"planned_levels": planned, "proof_levels": [level(i) for i in range(7)]}
+            )
+        # Fewer proof levels than planned must also fail closed.
+        with self.assertRaises(ValueError):
+            validate_case_consistency(
+                {"planned_levels": planned, "proof_levels": [level(i) for i in range(4)]}
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

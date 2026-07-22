@@ -1959,7 +1959,13 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
     proof_levels = summary.get("proof_levels")
     if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
         return
-    if len(planned_levels) != len(proof_levels):
+    # The prover emits the direct terminal as an extra "proof fold level"
+    # (`print_terminal_level_breakdown`), whereas the planner reports the
+    # terminal separately as "planned terminal state" rather than a "planned
+    # fold level". So the proof carries exactly the planned non-terminal folds,
+    # optionally plus one trailing terminal level. Tolerate that single extra
+    # level; the per-level checks below still cover every planned fold.
+    if len(proof_levels) not in (len(planned_levels), len(planned_levels) + 1):
         raise ValueError(
             "planned/proof level count mismatch: "
             f"planned={len(planned_levels)}, proof={len(proof_levels)}"
