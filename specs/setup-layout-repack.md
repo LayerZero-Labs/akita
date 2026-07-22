@@ -844,6 +844,14 @@ The later setup-offload implementation must bind:
 - `r_x`, `tau_1`, and `alpha`;
 - the role-column view choices used to define `setup_index_weight_S`.
 
+## Canonical setup-contribution pipeline
+
+The target verifier ownership and evaluation model is specified in
+[`setup-contribution-pipeline-unification.md`](setup-contribution-pipeline-unification.md).
+That specification supersedes the implementation-specific evaluator ownership
+described by the archival rollout slices below: one compact semantic plan feeds
+both the direct and recursive execution paths.
+
 ## Downstream Parallel Work Slices
 
 The setup-layout repack is the shared foundation. After it lands, the rest of

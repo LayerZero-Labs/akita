@@ -176,6 +176,7 @@ for a stacked follow-up.
 ### Keep as live specs
 
 `setup-layout-repack.md`, `setup-offloading-planner.md`,
+`setup-contribution-pipeline-unification.md`,
 `eor-streamed-prover.md`, `packed-sumcheck.md`,
 `planner-incidence-generalization.md`, `akita-field-refactor.md`,
 `akita-compute-backend-metal.md`, `crt-ntt-prime-profiles.md`,
