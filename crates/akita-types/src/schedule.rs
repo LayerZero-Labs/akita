@@ -734,11 +734,26 @@ impl FoldSchedule {
                 "root output witness length does not match its successor".to_string(),
             ));
         }
+        let mut predecessor = &self.root.params.final_group.commitment;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             if step.input_witness_len == 0 || step.output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(
                     "recursive fold witness lengths must be nonzero".to_string(),
                 ));
+            }
+            if step.params.witness.setup_prefix != step.params.incoming_setup_prefix {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} setup-prefix mirror disagrees with its successor edge"
+                )));
+            }
+            if step.params.incoming_setup_prefix.is_some()
+                && predecessor.role_dims()
+                    != crate::CommitmentRingDims::uniform(step.params.witness.d_a())
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} setup offload requires predecessor ring dimensions \
+                     to equal the successor inner ring dimension"
+                )));
             }
             let successor_len = self
                 .recursive_folds
@@ -751,6 +766,7 @@ impl FoldSchedule {
                     "recursive fold {index} output witness length does not match its successor"
                 )));
             }
+            predecessor = &step.params.witness;
         }
         if self.terminal.input_witness_len == 0
             || self.terminal.params.response_shape.logical_num_elems() == 0

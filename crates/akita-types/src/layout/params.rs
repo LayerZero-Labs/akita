@@ -131,7 +131,11 @@ pub struct CommittedGroupParams {
     /// group and `open_commit_matrix` describes the shared D matrix over all group `w_hat`
     /// segments.
     pub precommitted_groups: Vec<PrecommittedLevelParams>,
-    /// Optional setup-prefix commitment consumed by this fold.
+    /// Derived runtime mirror of the successor-owned setup-prefix edge.
+    ///
+    /// [`crate::RecursiveFoldParams::incoming_setup_prefix`] is authoritative;
+    /// [`crate::FoldSchedule::validate_structure`] rejects disagreement before
+    /// prover or verifier execution.
     pub setup_prefix: Option<SetupPrefixSlotId>,
 }
 

@@ -90,13 +90,6 @@ where
                 "relation and outgoing witness do not admit a common coefficient block".into(),
             ));
         }
-        // MERGE-FLAG(#314↔typed-schedule): the upstream guard rejected mixed
-        // ring dimensions under recursive setup offload via
-        // `lp.setup_contribution_mode`, but the typed-schedule cutover moved
-        // setup-contribution mode off `CommittedGroupParams` (it is now derived
-        // from the schedule, not the level params) and `ring_switch_finalize`
-        // does not receive it. The equivalent guard must be reinstated at the
-        // schedule/fold-orchestration layer that knows the recursive mode.
         let common_opening_source_len = opening_source_len
             .checked_mul(opening_ring_dim / coeff_count)
             .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
