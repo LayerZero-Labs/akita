@@ -41,8 +41,13 @@ The first implementation PR also changes full-table multilinear Lagrange and
 equality-table expansion from two multiplications per parent to one
 multiplication and one subtraction. That independent improvement removes almost
 half of the opening point preparation multiplications in the representative
-production schedule. The claims, transcript, and descriptor cutover is larger
-follow-up work governed by the acceptance criteria below.
+production schedule. The final implementation MUST also consolidate the
+duplicated serial builders: `akita-algebra` owns one parent-split primitive and
+one full-table serial traversal, and opening-point preparation calls that
+implementation after applying its verifier sequence bound. Optimizing several
+copies independently is an interim arithmetic repair, not the approved
+single-source-of-truth design. The claims, transcript, and descriptor cutover is
+larger follow-up work governed by the acceptance criteria below.
 
 ## Status and decision boundary
 
@@ -56,7 +61,7 @@ do not mistake design work for shipped behavior.
 | Nested points | Prefix/suffix routing is representable | Arbitrary points are valid; nesting is optional optimization metadata derived internally |
 | Layout and schedules | Ordered `(num_vars, num_polys)` groups | Unchanged |
 | Recursive Stage 3 | Fused setup-product and witness-carry sumcheck so both successor groups use projections of one point | Setup-product sumcheck only; carry the Stage 2 witness claim and point unchanged |
-| Lagrange/equality full-table expansion | Two multiplications per parent in serial paths | One multiplication and one subtraction per parent, landed with this record |
+| Lagrange/equality full-table expansion | Three independent serial recurrences, each using two multiplications per parent; a separate parallel recurrence is already optimal | One canonical parent split and one canonical full-table serial traversal, using one multiplication and one subtraction per parent |
 
 The analysis and concrete opening-preparation counts in this record were checked
 against `main` at commit `a1c8782e9b2f3d4fa35e78918c64e4c3c0a6d94d`.
@@ -139,6 +144,16 @@ layout-driven scheduling, and efficient internal reuse.
     remains the single source of the recursive-witness evaluation.
 17. All verifier-reachable point validation and cache lookups MUST satisfy the
     repository no-panic contract.
+18. `akita-algebra` MUST own the canonical Lagrange/equality parent split and
+    the canonical full-table serial traversal. `lagrange_weights` and
+    `EqPolynomial` MUST NOT maintain sibling full-table expansion loops.
+19. Every serial, cached, and parallel Lagrange/equality expansion MUST derive
+    each pair of children from the same arithmetic invariant:
+    `right = value * point` and `left = value - right`. No implementation MAY
+    restore independent multiplication by `1 - point`.
+20. The all-layers cached builder MAY retain a distinct storage traversal
+    because its output contract differs from a full table, but it MUST call the
+    canonical parent-split primitive rather than restating the recurrence.
 
 ### Non-Goals
 
@@ -182,6 +197,44 @@ evaluation-trace inputs derived from each group point.
 
 ### Lagrange expansion
 
+#### Current defect
+
+The code before this record has four paths for the same mathematical
+operation, and they have drifted:
+
+- `akita_types::layout::opening_point::lagrange_weights` owns a serial
+  full-table expansion loop;
+- `EqPolynomial::evals_serial` owns a second serial full-table loop;
+- `EqPolynomial::evals_cached_with_scaling` owns a third serial recurrence
+  while retaining every intermediate layer; and
+- `EqPolynomial::evals_parallel` owns a fourth recurrence.
+
+The first three compute both children by multiplication. The parallel path
+already computes the right child once and obtains the left child by
+subtraction. This is therefore not a missing mathematical identity. It is
+implementation drift caused by duplicating one arithmetic primitive across
+several APIs.
+
+The drift has concrete production consequences. `lagrange_weights` bypasses
+`EqPolynomial`, so it never receives the parallel path's optimal recurrence.
+`EqPolynomial::evals_with_scaling` selects its parallel implementation only
+above its variable-count threshold, while `evals_prefix` normally builds two
+smaller split tables. Those split tables consequently use the inefficient
+serial recurrence in the relevant schedules.
+
+Value-equality tests cannot detect this defect because all four paths return
+the same field elements. The compiler also cannot repair it: `FieldCore`
+multiplication and subtraction are opaque trait operations, and Rust does not
+encode the field distributive law needed to replace `value * (1 - point)` with
+`value - value * point`. The implementation must state and test the cost
+invariant explicitly.
+
+This defect is computational, not cryptographic. It does not change the table,
+proof, transcript, or verifier decision. It wastes one field multiplication
+per expanded parent and makes later performance fixes prone to the same drift.
+
+#### Optimal recurrence
+
 Before this record, a full Lagrange table over `s` variables computed
 both children independently:
 
@@ -208,6 +261,11 @@ It preserves table order and values, and changes the count to:
 ```text
 C_full_new(s) = 2^s - 1
 ```
+
+The new recurrence performs `2^s - 1` subtractions in place of the removed
+multiplications. Field subtraction is substantially cheaper than field
+multiplication in the base and extension fields used here. This count is
+independent of group-local points, point nesting, or cross-group reuse.
 
 The live block prefix uses `EqPolynomial::evals_prefix`. Before this record, its
 normal serial split path required:
@@ -429,6 +487,41 @@ entire `RingOpeningPoint` merely to construct a base-field
 `RingMultiplierOpeningPoint`; representation sharing is preferable when the
 type cutover makes that possible.
 
+### Canonical Lagrange expansion ownership
+
+`akita-algebra` MUST own one inlinable parent-split arithmetic primitive with
+the following semantic contract:
+
+```text
+split(value, point) = (value - value * point, value * point)
+```
+
+The implementation MUST compute `value * point` exactly once. It MUST return or
+write the left child before the right child in the repository's existing
+little-endian table order.
+
+`akita-algebra` MUST also own one serial full-table traversal built from that
+primitive. `EqPolynomial::evals_serial` uses this traversal directly.
+Opening-point preparation applies `basis_weight_len` first to enforce the
+verifier sequence bound, then calls the same traversal. That boundary check is
+meaningful policy and MAY remain in `akita-types`; the expansion loop may not.
+The implementation SHOULD remove `lagrange_weights` if callers can use the
+canonical function without losing the sequence-bound contract. If a named
+opening-point boundary remains, it MUST contain validation and delegation only,
+not a second recurrence or a compatibility-only alias.
+
+`EqPolynomial::evals_cached_with_scaling` has a genuinely different output
+contract because it retains all layers. It MAY keep its layer-allocation and
+layer-order logic, but each parent MUST be expanded by the canonical split
+primitive. The parallel traversal MUST use that primitive as well unless a
+benchmark demonstrates that abstraction prevents inlining or materially
+regresses the hot loop; any specialized parallel spelling must still be pinned
+to the same one-multiplication operation-count test.
+
+This ownership boundary is part of the implementation, not optional cleanup.
+After the cutover, adding another Lagrange or equality-table builder instead of
+extending the canonical primitive is non-conforming.
+
 ### Exact reuse
 
 The first group-local-point implementation MUST reuse exact duplicate factors
@@ -523,6 +616,8 @@ unless another setup-only sizing rule genuinely requires it.
 - [x] `lagrange_weights` and the serial `EqPolynomial` table builders use one
   multiplication and one subtraction per expanded parent while preserving
   exact values and order.
+- [x] This record identifies the independently optimized loops as an interim
+  state and makes canonical serial ownership a required implementation outcome.
 - [x] Focused `akita-types` tests pass with default and no-default features.
 - [x] The branch has `origin/main` as its merge base and contains no commits
   from another open PR.
@@ -578,6 +673,15 @@ unless another setup-only sizing rule genuinely requires it.
 
 #### Verifier preparation and performance
 
+- [ ] There is exactly one serial full-table Lagrange/equality traversal in
+  `akita-algebra`; opening-point preparation validates its sequence bound and
+  calls that traversal instead of owning another loop.
+- [ ] Serial full-table, cached all-layers, and parallel builders all use one
+  canonical parent-split primitive, with no duplicated two-child arithmetic.
+- [ ] An operation-count test over `s` variables observes exactly `2^s - 1`
+  field multiplications for each full-table serial entry point. Output-parity
+  tests cover empty, scaled, base-field, and extension-field tables and preserve
+  little-endian order.
 - [ ] Exact duplicate factor reuse is covered by hit/miss tests for inner,
   position, block, and complete-point keys.
 - [ ] Cache-key negative tests vary basis, `D`, `M`, `B`, coordinate order, and
@@ -613,8 +717,10 @@ from PR #320.
 
 The recurrence changes preserve allocations and table order while replacing
 exactly one multiplication per expanded parent with a subtraction. The first
-implementation should confirm output equivalence in tests; a benchmark is not
-required to accept this algebraic rewrite.
+implementation should confirm output equivalence and exact multiplication
+counts in tests; a wall-clock benchmark is not required to accept this
+algebraic rewrite. Code review MUST also confirm that the serial full-table loop
+has one owner and that the cached builder uses the same parent split.
 
 The later claims cutover must record the preparation-only counts described
 above and run the representative end-to-end profile:
@@ -659,6 +765,15 @@ A DAG can reuse nested factors, but exact reuse and the full-table recurrence
 capture the clearer savings first. The production example bounds whole-point
 nested reuse at 0.36% of old opening preparation. A DAG is deferred until a
 benchmark demonstrates value.
+
+### Optimize every existing expansion loop independently
+
+Changing each current loop to the one-multiplication recurrence gives the right
+local arithmetic count, but it preserves the defect that caused the paths to
+drift. A later edit could optimize one path, restore the old recurrence in
+another, or apply a safety fix inconsistently. This alternative also conflicts
+with the repository's one-canonical-function policy. It is accepted only as the
+interim patch in this specification PR and rejected as the completed design.
 
 ### Combine groups into one synthetic opening
 
@@ -725,23 +840,26 @@ marked `implemented` and later folded or archived according to
 
 ## Execution
 
-1. Land this decision record and the independent one-multiplication
+1. Land this decision record and the interim one-multiplication
    Lagrange/equality recurrence on a branch based directly on `main`.
-2. Change claims, prover data, descriptor absorption, and transcript absorption
+2. Consolidate the serial full-table builders in `akita-algebra`, route
+   opening-point preparation through that owner after its sequence-bound check,
+   and make cached and parallel expansion use the canonical parent split.
+3. Change claims, prover data, descriptor absorption, and transcript absorption
    in one breaking cutover; remove point selection and all pass-through routing
    APIs.
-3. In that same cutover, simplify recursive Stage 3 to the setup-product term,
+4. In that same cutover, simplify recursive Stage 3 to the setup-product term,
    carry the Stage 2 witness claim unchanged, and delete fused witness-routing
    machinery.
-4. Reprice Stage 3 from the setup domain alone, regenerate affected schedules,
+5. Reprice Stage 3 from the setup domain alone, regenerate affected schedules,
    and add exact serialization tests.
-5. Route every group through the canonical preparation pipeline and add bounded
+6. Route every group through the canonical preparation pipeline and add bounded
    exact factor reuse.
-6. Add unrelated-point end-to-end tests and preparation benchmarks, including a
+7. Add unrelated-point end-to-end tests and preparation benchmarks, including a
    recursive setup-offload successor whose two group points are unrelated.
-7. Implement nested-factor reuse only if the measured result justifies its
+8. Implement nested-factor reuse only if the measured result justifies its
    complexity.
-8. Fold the shipped behavior into the Akita Book and update this spec's
+9. Fold the shipped behavior into the Akita Book and update this spec's
    lifecycle fields.
 
 ## References
