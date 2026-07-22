@@ -14,7 +14,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_planner::{find_group_batch_schedule, PlannerPolicy};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
@@ -88,6 +88,16 @@ fn dp_fallback_fires_for_non_shipped_keys() {
     check_table_miss_fallback::<fp32::D128OneHot>(16);
 }
 
+#[test]
+fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_planner() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
+    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
+        .expect("ordinary scalar schedule must resolve");
+    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
+        .expect("recursive adapter scalar schedule must resolve");
+    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
+}
+
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
@@ -97,6 +107,8 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         } else {
             akita_planner::SelectionPolicyId::MinEstimatedProofPayload
         },
+        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),

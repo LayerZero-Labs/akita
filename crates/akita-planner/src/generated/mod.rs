@@ -125,6 +125,8 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub protocol_epoch: u32,
     pub cost_model: crate::PlannerCostModelId,
     pub selection_policy: crate::SelectionPolicyId,
+    pub max_setup_envelope_field_elements: usize,
+    pub min_offloaded_witness_contraction: usize,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,

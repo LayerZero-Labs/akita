@@ -19,14 +19,14 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    active_setup_field_len, extension_opening_reduction_level_bytes,
-    intermediate_w_ring_element_count_for_chunks, level_proof_bytes, padded_setup_prefix_len,
-    AkitaScheduleInputs, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, TerminalFoldParams, TerminalFoldStep,
-    TerminalResponseShape, WitnessLayout, WitnessPartition, SETUP_OFFLOAD_D_SETUP,
+    extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
+    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
+    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -226,7 +226,7 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     }
 }
 
-/// Validate the policy's multi-chunk witness settings at a planner entry point.
+/// Validate the complete planner policy at a verifier-reachable entry point.
 ///
 /// Layout-only rules live on [`akita_types::ChunkedWitnessCfg::validate`]; the recursion-depth
 /// bound (which needs the planner-private [`MAX_RECURSION_DEPTH`]) is enforced
@@ -236,7 +236,27 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
 ///
 /// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
 /// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
-pub(crate) fn validate_policy_witness_chunk(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let expected_selection_policy = if policy.recursive_setup_planning {
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+    } else {
+        crate::SelectionPolicyId::MinEstimatedProofPayload
+    };
+    if policy.selection_policy != expected_selection_policy {
+        return Err(AkitaError::InvalidSetup(
+            "planner selection policy disagrees with recursive setup capability".to_string(),
+        ));
+    }
+    if policy.max_setup_envelope_field_elements == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "maximum setup envelope must be positive".to_string(),
+        ));
+    }
+    if policy.min_offloaded_witness_contraction == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "minimum offloaded witness contraction must be positive".to_string(),
+        ));
+    }
     let mc = policy.witness_chunk;
     mc.validate()?;
     if mc.num_activated_levels > MAX_RECURSION_DEPTH {
@@ -362,22 +382,6 @@ pub fn find_schedule(
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
-        false,
-    )
-}
-
-pub(crate) fn find_schedule_prioritizing_first_direct_setup(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    find_schedule_inner(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-        true,
     )
 }
 
@@ -386,13 +390,12 @@ fn find_schedule_inner(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    prioritize_first_direct_setup: bool,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
     key.validate()?;
-    validate_policy_witness_chunk(policy)?;
+    validate_policy(policy)?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
@@ -403,8 +406,6 @@ fn find_schedule_inner(
         setup_envelope_budget: None,
     };
 
-    key.validate()?;
-    validate_policy_witness_chunk(policy)?;
     if policy.recursive_setup_planning {
         return Err(AkitaError::InvalidSetup(
             "recursive setup planning requires the grouped-batch scheduler".to_string(),
@@ -415,12 +416,6 @@ fn find_schedule_inner(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
-    let root_opening_layout = if prioritize_first_direct_setup {
-        Some(OpeningClaimsLayout::from_groups(vec![key])?)
-    } else {
-        None
-    };
-
     let mut best: Option<CandidateScheduleChoice> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
@@ -490,15 +485,6 @@ fn find_schedule_inner(
             {
                 continue;
             }
-            let root_setup_field_len = if let Some(root_opening_layout) = &root_opening_layout {
-                Some(active_setup_field_len(
-                    &candidate_params,
-                    root_opening_layout,
-                )?)
-            } else {
-                None
-            };
-
             let suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
@@ -524,7 +510,7 @@ fn find_schedule_inner(
             };
 
             // A supported root must recurse into at least one suffix fold.
-            for suffix_fold in suffix.best_proof_fold_per_lb.values() {
+            for suffix_fold in suffix.best_by_payload_per_lb.values() {
                 let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
@@ -545,15 +531,7 @@ fn find_schedule_inner(
                     &mut root_envelope,
                 )?;
                 let setup_envelope = root_envelope.max(suffix_fold.setup_envelope_ring_elements);
-                if best.as_ref().is_none_or(|best| {
-                    match (root_setup_field_len, best.first_direct_setup_field_len) {
-                        (Some(setup_field_len), Some(best_setup_field_len)) => {
-                            (setup_field_len, total) < (best_setup_field_len, best.total_bytes)
-                        }
-                        (None, None) => total < best.total_bytes,
-                        _ => unreachable!("scalar planner objective is fixed per call"),
-                    }
-                }) {
+                if best.as_ref().is_none_or(|best| total < best.total_bytes) {
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(CandidateFoldStep {
                         params: candidate_params.clone(),
@@ -564,7 +542,7 @@ fn find_schedule_inner(
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
                     best = Some(CandidateScheduleChoice {
-                        first_direct_setup_field_len: root_setup_field_len,
+                        first_direct_setup_field_len: None,
                         total_bytes: total,
                         setup_envelope_ring_elements: setup_envelope,
                         folds,

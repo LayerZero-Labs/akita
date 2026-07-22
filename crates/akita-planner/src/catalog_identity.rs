@@ -59,6 +59,8 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
+    h.write_u64(policy.max_setup_envelope_field_elements as u64);
+    h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
@@ -86,6 +88,8 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
+    h.write_u64(identity.max_setup_envelope_field_elements as u64);
+    h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
     match identity.root_fold_shape {
         TensorChallengeShape::Flat => h.write_u64(0),
@@ -126,6 +130,8 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
+    max_setup_envelope_field_elements: usize,
+    min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
@@ -154,6 +160,8 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
+            max_setup_envelope_field_elements: identity.max_setup_envelope_field_elements,
+            min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
@@ -196,6 +204,8 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
+        max_setup_envelope_field_elements: policy.max_setup_envelope_field_elements,
+        min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
@@ -238,6 +248,8 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
+        max_setup_envelope_field_elements: expected.max_setup_envelope_field_elements,
+        min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,

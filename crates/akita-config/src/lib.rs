@@ -142,6 +142,8 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         } else {
             akita_planner::SelectionPolicyId::MinEstimatedProofPayload
         },
+        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),

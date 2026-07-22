@@ -17,10 +17,10 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, find_schedule_prioritizing_first_direct_setup,
-    materialize_candidate_schedule, optimize_fold_challenge_shape,
-    stage3_payload_bytes_for_successor, CandidateFoldStep, CandidateScheduleChoice,
-    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
+    optimize_fold_challenge_shape, stage3_payload_bytes_for_successor, validate_policy,
+    CandidateFoldStep, CandidateScheduleChoice, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -466,10 +466,12 @@ pub fn find_group_batch_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    validate_policy(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_envelope_budget = akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS
+        let setup_envelope_budget = policy
+            .max_setup_envelope_field_elements
             .checked_div(policy.ring_dimension)
             .filter(|budget| *budget > 0)
             .ok_or_else(|| {
@@ -503,16 +505,7 @@ fn find_group_batch_schedule_inner(
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
-        let prioritize_first_direct_setup = policy.recursive_setup_planning;
         let scalar_policy = policy.direct_only();
-        if prioritize_first_direct_setup {
-            return find_schedule_prioritizing_first_direct_setup(
-                key.final_group,
-                &scalar_policy,
-                ring_challenge_config,
-                fold_challenge_shape_at_level,
-            );
-        }
         return find_schedule(
             key.final_group,
             &scalar_policy,
@@ -739,18 +732,34 @@ fn find_group_batch_schedule_inner(
                                 ));
                             }
                         };
-                    if best.as_ref().is_none_or(|best| {
-                        match (
-                            first_direct_setup_field_len,
-                            best.first_direct_setup_field_len,
-                        ) {
-                            (Some(setup_field_len), Some(best_setup_field_len)) => {
-                                (setup_field_len, total) < (best_setup_field_len, best.total_bytes)
+                    let is_better = if let Some(best) = &best {
+                        match policy.selection_policy {
+                            crate::SelectionPolicyId::MinEstimatedProofPayload => {
+                                total < best.total_bytes
                             }
-                            (None, None) => total < best.total_bytes,
-                            _ => unreachable!("planner objective is fixed for one policy"),
+                            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
+                                let setup_field_len = first_direct_setup_field_len.ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "recursive candidate is missing its first direct setup footprint"
+                                            .to_string(),
+                                    )
+                                })?;
+                                let best_setup_field_len = best
+                                    .first_direct_setup_field_len
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "selected recursive candidate is missing its first direct setup footprint"
+                                                .to_string(),
+                                        )
+                                    })?;
+                                (setup_field_len, total)
+                                    < (best_setup_field_len, best.total_bytes)
+                            }
                         }
-                    }) {
+                    } else {
+                        true
+                    };
+                    if is_better {
                         let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                         folds.push(CandidateFoldStep {
                             params: fold_candidate_params,
@@ -772,7 +781,7 @@ fn find_group_batch_schedule_inner(
                 Ok(())
             };
 
-            consider_children(false, &direct_child.best_proof_fold_per_lb)?;
+            consider_children(false, &direct_child.best_by_payload_per_lb)?;
             if let Some(root_natural_len) = natural_len {
                 let offloaded_child = derive_optimal_suffix_schedule(
                     &suffix_ctx,
@@ -785,7 +794,7 @@ fn find_group_batch_schedule_inner(
                     },
                     0,
                 )?;
-                consider_children(true, &offloaded_child.best_fold_per_lb)?;
+                consider_children(true, &offloaded_child.best_by_first_direct_setup_per_lb)?;
             }
         }
     }

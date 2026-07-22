@@ -1419,11 +1419,18 @@ pub enum SelectionPolicyId {
 
 `MinEstimatedProofPayload` is the ordinary direct-only proof-byte policy.
 `MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` rejects recursive
-candidates beyond `MAX_SETUP_MATRIX_FIELD_ELEMENTS`, then compares:
+candidates beyond `PlannerPolicy::max_setup_envelope_field_elements`, then
+compares:
 
 1. first later direct setup scan;
 2. exact estimated proof payload, including Stage 3; and
 3. the existing deterministic candidate ordering for ties.
+
+`PlannerPolicy::min_offloaded_witness_contraction` and
+`PlannerPolicy::max_setup_envelope_field_elements` are explicit generated-table
+identity inputs. The shipped policy sets them to three and
+`MAX_SETUP_MATRIX_FIELD_ELEMENTS`, respectively. Changing either value requires
+catalog regeneration and produces an identity mismatch against an older table.
 
 This is deliberately not the final Pareto planner. In particular, it does not
 claim that an offloaded schedule preserves the independently optimized direct
@@ -1607,6 +1614,11 @@ and SIS contract exist. The schedule topology does not change again.
 
 ### Acceptance Criteria
 
+This checklist tracks the complete multi-cut topology program. Checked items
+are implemented on the current branch. Unchecked capability and terminology
+items remain follow-up work and do not silently become requirements of the
+bounded setup-offload planner cut.
+
 - [ ] Public and generated matrix APIs use `InnerCommitMatrix`,
       `OuterCommitMatrix`, and `OpenCommitMatrix`; A/B/D remain only notation.
 - [ ] Final live Rust uses `digit_bits`, `commit_bound_bits`, and
@@ -1653,17 +1665,17 @@ and SIS contract exist. The schedule topology does not change again.
       digit depths, collision bounds, SIS buckets, widths, and bytes.
 - [ ] `FoldSchedule` contains no planner byte estimate. Estimates live in
       `FoldScheduleEstimate` and are absent from the instance descriptor.
-- [ ] Every catalog family identity-binds `ExactPayloadAndSetupEnvelope` and
+- [x] Every catalog family identity-binds `ExactPayloadAndSetupEnvelope` and
       its explicit direct or recursive selection policy; recursive candidates
-      cannot exceed the supported setup envelope.
-- [ ] Candidate comparison reads an incrementally maintained planner-private
+      cannot exceed the identity-bound supported setup envelope.
+- [x] Candidate comparison reads an incrementally maintained planner-private
       aggregate in O(1); final estimate derivation equality-checks that cache
       against the per-fold component sum.
 - [ ] Current-main generated catalogs retain non-terminal selected parameters
       and costs; terminal deltas match the reviewed direct-response fixture.
 - [ ] The exact nine-fold migration case remains covered by generated-table
       table-hit-versus-DP parity and the relevant transcript-order tests.
-- [ ] Table replay and dynamic planning produce equal schedule descriptors for
+- [x] Table replay and dynamic planning produce equal schedule descriptors for
       every emitted lookup key.
 - [ ] Descriptor mutation tests cover topology, every role dimension and rank,
       every digit width, final-root-group tensor factor, block geometry,

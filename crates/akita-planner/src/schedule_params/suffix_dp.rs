@@ -14,8 +14,6 @@ use super::{
     CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
 };
 
-const MIN_OFFLOADED_WITNESS_CONTRACTION: usize = 3;
-
 /// A fold-first suffix schedule.
 ///
 /// The parent's proof-size formula needs the child's first fold params
@@ -35,22 +33,23 @@ pub(crate) struct FoldSuffix {
 /// because the parent's proof-size formula depends on the child's first
 /// step:
 ///
-/// - `best_fold_per_lb` — best fold-first schedule per first-fold
+/// - `best_by_first_direct_setup_per_lb` — lexicographically best fold-first
+///   schedule by first direct setup scan and then proof payload, per first-fold
 ///   `log_basis`. An entry with no ordinary folds terminates directly on the
 ///   current witness; otherwise it consumes `incoming_setup_prefix` when one
 ///   is present.
-/// - `best_proof_fold_per_lb` — best fold-first schedule per first-fold
-///   `log_basis` after an earlier direct fold has already fixed the setup-size
-///   objective, so only proof bytes matter for the remaining suffix.
+/// - `best_by_payload_per_lb` — smallest-payload fold-first schedule per
+///   first-fold `log_basis`, used after an earlier direct edge has fixed the
+///   setup-size objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
-    pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
-    pub(crate) best_proof_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix>,
+    pub(crate) best_by_payload_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
 impl SuffixResult {
     pub(crate) fn is_empty(&self) -> bool {
-        self.best_fold_per_lb.is_empty()
+        self.best_by_first_direct_setup_per_lb.is_empty()
     }
 }
 
@@ -214,6 +213,7 @@ fn offloaded_witness_contracts(
     field_bits: u32,
     output_witness_len: usize,
     output_log_basis: u32,
+    minimum_contraction: usize,
 ) -> Result<bool, AkitaError> {
     let input_bits = input_witness_len
         .checked_mul(input_log_basis as usize)
@@ -225,7 +225,7 @@ fn offloaded_witness_contracts(
         .ok_or_else(|| AkitaError::InvalidSetup("input witness bit length overflow".to_string()))?;
     let minimum_input_bits = output_witness_len
         .checked_mul(output_log_basis as usize)
-        .and_then(|bits| bits.checked_mul(MIN_OFFLOADED_WITNESS_CONTRACTION))
+        .and_then(|bits| bits.checked_mul(minimum_contraction))
         .ok_or_else(|| {
             AkitaError::InvalidSetup("offloaded witness contraction overflow".to_string())
         })?;
@@ -243,13 +243,17 @@ struct ChildEdge<'a> {
     setup_envelope_budget: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+enum SuffixObjective {
+    FirstDirectSetupThenPayload,
+    Payload,
+}
+
 fn consider_child_suffixes(
     edge: &ChildEdge<'_>,
     child_candidates: &BTreeMap<u32, FoldSuffix>,
-    update_setup_choice: bool,
-    update_proof_choice: bool,
-    best_by_setup: &mut Option<CandidateSuffixChoice>,
-    best_by_proof: &mut Option<CandidateSuffixChoice>,
+    objective: SuffixObjective,
+    best: &mut Option<CandidateSuffixChoice>,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates.values() {
         let child_is_terminal = suffix.folds.is_empty();
@@ -320,20 +324,15 @@ fn consider_child_suffixes(
             terminal: suffix.terminal.clone(),
         };
 
-        if update_setup_choice
-            && best_by_setup.as_ref().is_none_or(|best| {
+        let is_better = best.as_ref().is_none_or(|best| match objective {
+            SuffixObjective::FirstDirectSetupThenPayload => {
                 (first_direct_setup_field_len, total_bytes)
                     < (best.first_direct_setup_field_len, best.total_bytes)
-            })
-        {
-            *best_by_setup = Some(candidate.clone());
-        }
-        if update_proof_choice
-            && best_by_proof
-                .as_ref()
-                .is_none_or(|best| total_bytes < best.total_bytes)
-        {
-            *best_by_proof = Some(candidate);
+            }
+            SuffixObjective::Payload => total_bytes < best.total_bytes,
+        });
+        if is_better {
+            *best = Some(candidate);
         }
     }
     Ok(())
@@ -378,7 +377,8 @@ impl SuffixState {
 /// Suffix DP for the optimal recursive schedule at
 /// `(level, current_witness_len, current_lb)`.
 ///
-/// At each state, `best_fold_per_lb` keeps one candidate per `log_basis` (from
+/// At each state, `best_by_first_direct_setup_per_lb` keeps one candidate per
+/// `log_basis` (from
 /// [`derive_candidate_level_params`]). A candidate may terminate on the current
 /// witness when there is no incoming setup prefix, or fold again and consume
 /// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
@@ -418,15 +418,15 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
     if depth > MAX_RECURSION_DEPTH {
         let result = SuffixResult {
-            best_fold_per_lb: BTreeMap::new(),
-            best_proof_fold_per_lb: BTreeMap::new(),
+            best_by_first_direct_setup_per_lb: BTreeMap::new(),
+            best_by_payload_per_lb: BTreeMap::new(),
         };
         memo.insert(memo_key, result.clone());
         return Ok(result);
     }
 
-    let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let mut best_proof_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
+    let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
+    let mut best_by_payload_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
     let (configured_min_log_basis, max_log_basis) = policy.basis_range;
     let min_log_basis = configured_min_log_basis
         .max(policy.decomposition.log_basis)
@@ -460,6 +460,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 policy.decomposition.field_bits(),
                 next_witness_len,
                 lb,
+                policy.min_offloaded_witness_contraction,
             )? {
                 continue;
             }
@@ -539,10 +540,14 @@ pub(crate) fn derive_optimal_suffix_schedule(
         };
         consider_child_suffixes(
             &direct_edge,
-            &direct_child.best_proof_fold_per_lb,
-            true,
-            true,
+            &direct_child.best_by_payload_per_lb,
+            SuffixObjective::FirstDirectSetupThenPayload,
             &mut best_for_this_lb,
+        )?;
+        consider_child_suffixes(
+            &direct_edge,
+            &direct_child.best_by_payload_per_lb,
+            SuffixObjective::Payload,
             &mut best_proof_for_this_lb,
         )?;
 
@@ -564,18 +569,14 @@ pub(crate) fn derive_optimal_suffix_schedule(
             };
             consider_child_suffixes(
                 &offloaded_edge,
-                &offloaded_child.best_fold_per_lb,
-                true,
-                false,
+                &offloaded_child.best_by_first_direct_setup_per_lb,
+                SuffixObjective::FirstDirectSetupThenPayload,
                 &mut best_for_this_lb,
-                &mut best_proof_for_this_lb,
             )?;
             consider_child_suffixes(
                 &offloaded_edge,
-                &offloaded_child.best_proof_fold_per_lb,
-                false,
-                true,
-                &mut best_for_this_lb,
+                &offloaded_child.best_by_payload_per_lb,
+                SuffixObjective::Payload,
                 &mut best_proof_for_this_lb,
             )?;
         }
@@ -589,7 +590,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 terminal,
             } = choice;
             let first_fold_params = folds.first().map(|fold| fold.params.clone());
-            best_fold_per_lb.insert(
+            best_by_first_direct_setup_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
@@ -610,7 +611,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 terminal,
             } = choice;
             let first_fold_params = folds.first().map(|fold| fold.params.clone());
-            best_proof_fold_per_lb.insert(
+            best_by_payload_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
@@ -625,8 +626,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
     }
 
     let result = SuffixResult {
-        best_fold_per_lb,
-        best_proof_fold_per_lb,
+        best_by_first_direct_setup_per_lb,
+        best_by_payload_per_lb,
     };
     memo.insert(memo_key, result.clone());
     Ok(result)
@@ -638,19 +639,20 @@ mod tests {
 
     #[test]
     fn offloaded_contraction_accepts_exact_threefold_boundary() {
-        assert!(offloaded_witness_contracts(300, 2, 0, 128, 100, 2).unwrap());
-        assert!(!offloaded_witness_contracts(299, 2, 0, 128, 100, 2).unwrap());
+        assert!(offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 3).unwrap());
+        assert!(!offloaded_witness_contracts(299, 2, 0, 128, 100, 2, 3).unwrap());
+        assert!(!offloaded_witness_contracts(300, 2, 0, 128, 100, 2, 4).unwrap());
     }
 
     #[test]
     fn offloaded_contraction_prices_changed_digit_basis() {
-        assert!(offloaded_witness_contracts(900, 2, 0, 128, 100, 6).unwrap());
-        assert!(!offloaded_witness_contracts(899, 2, 0, 128, 100, 6).unwrap());
+        assert!(offloaded_witness_contracts(900, 2, 0, 128, 100, 6, 3).unwrap());
+        assert!(!offloaded_witness_contracts(899, 2, 0, 128, 100, 6, 3).unwrap());
     }
 
     #[test]
     fn offloaded_contraction_includes_full_field_setup_prefix() {
-        assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4).unwrap());
-        assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4).unwrap());
+        assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
+        assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
     }
 }
