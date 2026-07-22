@@ -73,6 +73,9 @@ macro_rules! impl_multi_chunk_companion {
             fn onehot_chunk_size() -> usize {
                 <$base as $crate::CommitmentConfig>::onehot_chunk_size()
             }
+            fn root_log_basis() -> Option<u32> {
+                <$base as $crate::CommitmentConfig>::root_log_basis()
+            }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }

@@ -408,6 +408,13 @@ fn format_bytes(bytes: [u8; 32]) -> String {
     format!("[{}]", values.collect::<Vec<_>>().join(", "))
 }
 
+fn emit_option_u32(value: Option<u32>) -> String {
+    match value {
+        None => "None".to_string(),
+        Some(v) => format!("Some({v})"),
+    }
+}
+
 fn emit_root_fold_shape(shape: TensorChallengeShape) -> String {
     match shape {
         TensorChallengeShape::Flat => "TensorChallengeShape::Flat".to_string(),
@@ -449,6 +456,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
+            "    root_log_basis: {root_log_basis},\n",
             "    onehot_chunk_size: {onehot_chunk_size},\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
@@ -472,6 +480,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         chal_ext_degree = identity.chal_ext_degree,
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
+        root_log_basis = emit_option_u32(identity.root_log_basis),
         onehot_chunk_size = identity.onehot_chunk_size,
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,

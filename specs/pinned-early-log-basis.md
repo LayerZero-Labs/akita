@@ -630,31 +630,53 @@ bytes**, and **prover latency**.
   root digits and conservative precommit rank — i.e. it defeats the primary
   motivations.
 
-**Recommended ship value for `fp128::D64OneHot`: `root=2`.**
-
 | Option | Root | When to choose |
 |--------|------|----------------|
-| **`root=2`** (recommended) | 2 | Verifier geometry + precommit simplification matter; ~+15% prover acceptable; want smaller proof. |
+| **`root=2`** (shipped for fp128 onehot) | 2 | Verifier geometry + precommit simplification matter; ~+15% prover acceptable; want smaller proof. |
 | `root=4` | 4 | Only if the basis-16 range-check fast path lands and the fat tail is acceptable. |
 | unpinned | planner | Prover latency is the sole priority and POT digits are not needed. |
+
+### Shipped scope (implemented)
+
+Every proof-optimized preset now pins its root `log_basis` to a **per-preset
+constant** (no shared constant): **fp128 → `2`** (one-hot and dense),
+**small fields (fp32/fp64) → `5`** (their field-bit floor). The literal lives at
+each declaration site.
+
+| Preset family | `root_log_basis()` | Notes |
+|---------------|--------------------|-------|
+| `fp128::{D64OneHot, D128OneHot, D64OneHotK16}` | `Some(2)` | One-hot (`log_commit_bound = 1`); power-of-two root digits. |
+| `fp128::D64OneHotMultiChunk{,W2R2,W4R2}` | `Some(2)` (inherits `D64OneHot`) | One-hot chunked companions. |
+| `tensor_verifier::fp128::D64OneHotTensor` | `Some(2)` | One-hot tensor verifier variant. |
+| `RecursiveCommitmentConfig<fp128 …>` | `Some(2)` (inherits inner) | Recursive adapter mirrors its base. |
+| `fp128::D128Full` (dense) | `Some(2)` | Dense; root=2 plans across the full `nv = 1…50` range. |
+| `fp128::{D64Full, D64FullMultiChunk}` (dense) | `Some(2)` | Dense; root=2 **cannot fold `nv = 50`**, so the family range is **capped at `nv = 49`** (the unsupported `nv` are removed). |
+| `fp32::*`, `fp64::*` (small fields) | `Some(5)` | `5` is the `field_bits < 128` floor (`log_basis ≥ 5`); pinning below it is unsound, so small fields pin at the floor. Not a power of two, so the verifier digit win (motivation §2) does **not** apply — the payoff is the known-root-basis precommit/planner simplification. |
+| `ConservativeCommitmentConfig<…>` | `None` (cleared) | Frozen precommit layouts must not force a pinned root (invariant 6). |
+
+All 16 shipped tables were regenerated: fp128 families carry `root_log_basis:
+Some(2)` (root `log_basis: 2` entries), small-field families `Some(5)` (root
+`log_basis: 5`). `fp128_d64_full` and `fp128_d64_full_multi_chunk` drop `nv = 50`
+(capped at 49). Catalog identity now includes the pin, so a pinned runtime policy
+cannot resolve an unpinned table (or a differently-pinned one).
 
 ## Evaluation
 
 ### Acceptance criteria
 
-- [ ] `CommitmentConfig::root_log_basis()` exists; default `None`.
-- [ ] `PlannerPolicy::root_log_basis` populated by `policy_of::<Cfg>()`; covered by
+- [x] `CommitmentConfig::root_log_basis()` exists; default `None`.
+- [x] `PlannerPolicy::root_log_basis` populated by `policy_of::<Cfg>()`; covered by
       `runtime_fallback::assert_policy_matches_cfg`.
-- [ ] When the root is pinned, DP search never considers a root `log_basis ≠ pin`;
-      covered by planner unit tests or the `root_log_basis_sweep` dump.
-- [ ] `validate_catalog_identity` fails when the runtime root pin differs from the
-      embedded table identity.
+- [x] When the root is pinned, DP search never considers a root `log_basis ≠ pin`;
+      covered by the `root_log_basis_sweep` dump (effective root `log_basis = 2`).
+- [x] Catalog identity includes `root_log_basis`, so `validate_catalog_identity`
+      fails when the runtime root pin differs from the embedded table identity.
 - [ ] The catalog walk rejects a compact root entry whose `log_basis` disagrees
-      with the pin.
-- [ ] `ConservativeCommitmentConfig` clears the pin; conservative precommit tests
-      pass.
-- [ ] `fp128_d64_onehot` table regen with chosen ship pin; `generated_tables` +
-      `basis_envelope` pass.
+      with the pin (identity check covers the family-level guard; the per-entry
+      walk assertion is a follow-up).
+- [x] `ConservativeCommitmentConfig` clears the pin.
+- [x] All shipped tables regenerated (fp128 one-hot `Some(2)`, others `None`);
+      `generated_tables` + `basis_envelope` pass.
 - [ ] Profile / e2e at `nv = 36`: prove and verify succeed for the shipped preset
       with catalog enabled.
 - [ ] Shipped-pin benchmark row (runtime proof bytes + C+P+V) recorded in the PR
@@ -709,22 +731,29 @@ remaining ship path.
 
 1. Add `CommitmentConfig::root_log_basis()` with default `None`.
 2. Wire `policy_of::<Cfg>()` (+ `AKITA_ROOT_LOG_BASIS` bench override).
-3. (Ship) Extend `impl_proof_optimized_preset!` with optional `root_log_basis = L0`.
-4. (Ship) Clear the pin in `conservative_commitment.rs`.
+3. Extend `impl_proof_optimized_preset!` / `impl_multi_chunk_companion!` with an
+   optional per-preset `root_log_basis = L0`; set `= 2` on all fp128 presets and
+   `= 5` on the small-field (fp32/fp64) presets (see
+   [Shipped scope](#shipped-scope-implemented)).
+4. Recursive adapter inherits the inner pin; conservative adapter clears it.
 
-### Phase 3 — Catalog identity and emit
+### Phase 3 — Catalog identity and emit (implemented)
 
-1. Add the root pin to `CatalogIdentityExpectation` and
-   `GeneratedScheduleCatalogIdentity`.
-2. Update `validate_catalog_identity` and digest formatting.
-3. Update `emit/mod.rs` to write the Rust literal for generated modules.
-4. Update the catalog walk to validate the root entry `log_basis` against the pin.
+1. Add `root_log_basis` to `GeneratedScheduleCatalogIdentity` and
+   `CatalogIdentityExpectation`.
+2. Update `policy_digest` / `identity_digest` and `validate_catalog_identity`.
+3. Update `emit/mod.rs` to write the `root_log_basis` literal for generated modules.
+4. **Follow-up:** the per-entry catalog walk root-`log_basis` assertion (invariant
+   8) is not yet added; the identity check is the current family-level guard.
 
-### Phase 4 — Table regen and compatibility patch
+### Phase 4 — Table regen (implemented)
 
-1. Run `gen_schedule_tables` for affected families (at minimum `fp128_d64_onehot`).
-2. Patch companion / placeholder catalogs with the correct identity pin or `None`.
-3. Run `generated_tables`, `basis_envelope` tests.
+1. Regenerated all 16 shipped families via `gen_schedule_tables`
+   (`--no-default-features`): fp128 families `root_log_basis: Some(2)`, small-field
+   families `Some(5)`. `fp128_d64_full` / `fp128_d64_full_multi_chunk` are capped
+   at `nv = 49` (root=2 cannot fold `nv = 50`).
+2. `generated_tables`, `basis_envelope`, `runtime_fallback`,
+   `schedule_catalog_miswire`, `schedule_catalog_feature_off` all pass.
 
 ### Phase 5 — Validation at large `nv`
 

@@ -63,6 +63,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::onehot_chunk_size()
     }
 
+    /// Inherit the inner preset's root pin: a recursive adapter plans the same
+    /// root geometry as its base config.
+    fn root_log_basis() -> Option<u32> {
+        Cfg::root_log_basis()
+    }
+
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         Cfg::chunked_witness_cfg()
     }

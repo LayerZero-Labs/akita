@@ -51,6 +51,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
+    root_log_basis = 2,
     schedules = (
         "schedules-fp128-d128-full",
         "fp128_d128_full",
@@ -65,6 +66,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
+    root_log_basis = 2,
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -79,6 +81,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
+    root_log_basis = 2,
     schedules = (
         "schedules-fp128-d64-full",
         "fp128_d64_full",
@@ -94,6 +97,7 @@ impl_proof_optimized_preset!(
     128,
     1,
     256,
+    root_log_basis = 2,
     schedules = (
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
@@ -108,7 +112,8 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    16
+    16,
+    root_log_basis = 2
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

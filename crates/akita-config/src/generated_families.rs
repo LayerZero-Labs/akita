@@ -462,12 +462,15 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
     ),
+    // Dense `D64` full-field: root `log_basis = 2` cannot fold `nv = 50` into a
+    // valid >=2-fold schedule (dense witnesses shrink weakest at `lb = 2`), so the
+    // supported range is capped at `nv = 49`.
     family_row!(
         "fp128_d64_full",
         "FP128_D64_FULL_SCHEDULES",
         "fp128-d64-full",
         1,
-        50,
+        49,
         fp128::D64Full
     ),
     family_row!(
@@ -506,12 +509,14 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHotMultiChunkW4R2
     ),
+    // Dense `D64` full-field chunked companion: same `nv = 50` root=2 planning
+    // limit as its base `D64Full`; capped at `nv = 49`.
     family_row!(
         "fp128_d64_full_multi_chunk",
         "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
         "fp128-d64-full-multi-chunk",
         1,
-        50,
+        49,
         fp128::D64FullMultiChunk
     ),
     family_row!(

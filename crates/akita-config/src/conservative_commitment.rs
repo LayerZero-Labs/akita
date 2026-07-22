@@ -78,6 +78,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::onehot_chunk_size()
     }
 
+    /// Clear the root pin on frozen precommit layouts (spec invariant 6): a
+    /// conservative adapter must not force a pinned root geometry.
+    fn root_log_basis() -> Option<u32> {
+        None
+    }
+
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
         Cfg::schedule_catalog()
     }

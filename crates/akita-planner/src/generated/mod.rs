@@ -132,6 +132,11 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
+    /// Root-fold `log_basis` pin this table was emitted under (`Cfg::root_log_basis()`).
+    /// A pinned table (`Some`) never aliases an unpinned one (`None`), even when
+    /// row keys match, so a pinned runtime policy cannot silently resolve an
+    /// unpinned catalog (and vice versa).
+    pub root_log_basis: Option<u32>,
     pub onehot_chunk_size: usize,
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
