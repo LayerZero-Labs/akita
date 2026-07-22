@@ -11,7 +11,7 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_flat_admit_terminal_wire_with_caps, golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_flat_admit_terminal_wire, golomb_rice_rows_admit_terminal_wire,
     sis::{FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
     TerminalCommittedGroupParams, TerminalResponseShape, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
@@ -215,7 +215,7 @@ pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
     pub(crate) nonce: u32,
 }
 
-/// Sample the flat scalar terminal fold against its exact unsnapped response
+/// Sample the flat scalar terminal fold against its capacity-based response
 /// cap. The returned witness retains centered `z` coefficients only; terminal
 /// `e` and `t` are never gadget decomposed.
 pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
@@ -237,7 +237,7 @@ where
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    let (honest_cap, security_cap) = params.response_linf_bounds(sparse)?;
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
     let expected_group =
         shape.layout.groups.first().ok_or_else(|| {
             AkitaError::InvalidSetup("terminal response shape has no group".into())
@@ -313,7 +313,7 @@ where
                 )
             }
         )?;
-        if u128::from(witness.centered_inf_norm) > honest_cap {
+        if u128::from(witness.centered_inf_norm) > admission_cap {
             return Ok(None);
         }
         let centered = witness
@@ -321,8 +321,7 @@ where
             .iter()
             .map(|&value| i64::from(value))
             .collect::<Vec<_>>();
-        let wire_ok =
-            golomb_rice_flat_admit_terminal_wire_with_caps(&centered, honest_cap, security_cap);
+        let wire_ok = golomb_rice_flat_admit_terminal_wire(&centered, admission_cap);
         if wire_ok.is_err() {
             return Ok(None);
         }

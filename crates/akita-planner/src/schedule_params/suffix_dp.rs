@@ -73,9 +73,9 @@ fn make_terminal_direct_step(
             "terminal direct response must be a scalar flat fold".to_string(),
         ));
     }
-    let (terminal_params, honest_response_linf_cap) =
+    let (terminal_params, admission_cap) =
         akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, honest_response_linf_cap)?;
+    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
     let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
     Ok(CandidateTerminalResponse {
         params: terminal_params,
@@ -112,7 +112,7 @@ pub(super) fn try_terminal_direct_suffix_cost(
     match result {
         Ok(candidate) => Ok(Some(candidate)),
         // Candidate construction is an optimization search. A geometry whose
-        // fixed inner matrix cannot admit the unsnapped terminal response is
+        // fixed inner matrix cannot admit the directly checked terminal response is
         // infeasible, not a fatal planner error.
         Err(AkitaError::InvalidSetup(_)) => Ok(None),
         Err(error) => Err(error),

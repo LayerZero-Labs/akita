@@ -467,7 +467,7 @@ pub fn golomb_rice_flat_admit_terminal_wire(values: &[i64], cap: u128) -> Result
 
 /// Whether centered coefficients fit a terminal wire whose coding scale and
 /// matrix-certified admission cap differ.
-pub fn golomb_rice_flat_admit_terminal_wire_with_caps(
+pub(crate) fn golomb_rice_flat_admit_terminal_wire_with_caps(
     values: &[i64],
     coding_scale: u128,
     admissible_cap: u128,

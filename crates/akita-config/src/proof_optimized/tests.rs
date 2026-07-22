@@ -112,7 +112,7 @@ fn generated_q32_terminals_require_the_i16_tail() {
         assert_every_table_terminal_uses_i16_tail::<fp32::D256OneHot, 256>(
             fp32_d256_onehot_table(),
         ),
-        (64, 128),
+        (64, 64),
     );
 }
 

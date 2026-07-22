@@ -5,8 +5,8 @@ use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
-    SisModulusProfileId, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -16,6 +16,157 @@ use akita_sumcheck::EqFactoredUniPoly;
 use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 
 type F = Prime128OffsetA7F7;
+
+fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
+    CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        ring_dimension,
+        3,
+        2,
+        2,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    )
+    .with_decomp(4, 4, 2, 2, 2)
+    .expect("schedule validation params")
+}
+
+fn recursive_schedule(
+    predecessor_ring_dimension: usize,
+    successor_ring_dimension: usize,
+    offload: bool,
+) -> FoldSchedule {
+    let predecessor = committed_params(predecessor_ring_dimension);
+    let mut successor = committed_params(successor_ring_dimension);
+    let incoming_setup_prefix = offload.then(|| {
+        let natural_len = crate::SETUP_OFFLOAD_D_SETUP;
+        let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
+            .expect("setup-prefix commitment params");
+        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params)
+    });
+    successor.setup_prefix = incoming_setup_prefix.clone();
+    let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
+        successor_ring_dimension,
+    ));
+    let terminal_response_len = 3 * successor_ring_dimension;
+
+    FoldSchedule {
+        root: RootFoldStep {
+            params: RootFoldParams {
+                final_group: RootFinalGroupParams {
+                    source: RootSource::Dense {
+                        coefficient_bits: 128,
+                    },
+                    challenge: RootFinalChallenge::Flat,
+                    commitment: predecessor.clone(),
+                },
+                precommitted_groups: Vec::new(),
+                open_commit_matrix: predecessor.open_commit_matrix.clone(),
+                sparse_challenge_config: predecessor.fold_challenge_config,
+                witness_partition: WitnessPartition::Single,
+            },
+            input_witness_len: predecessor_ring_dimension,
+            output_witness_len: successor_ring_dimension,
+        },
+        recursive_folds: vec![RecursiveFoldStep {
+            params: RecursiveFoldParams {
+                open_commit_matrix: successor.open_commit_matrix.clone(),
+                sparse_challenge_config: successor.fold_challenge_config,
+                incoming_setup_prefix,
+                witness_partition: WitnessPartition::Single,
+                witness: successor,
+            },
+            input_witness_len: successor_ring_dimension,
+            output_witness_len: successor_ring_dimension,
+        }],
+        terminal: TerminalFoldStep {
+            params: TerminalFoldParams {
+                witness: terminal,
+                sparse_challenge_config: SparseChallengeConfig::pm1_only(3),
+                response_shape: TerminalResponseShape {
+                    layout: TailSegmentLayout {
+                        ring_dimension: successor_ring_dimension,
+                        groups: vec![TailSegmentGroupLayout {
+                            z_coords: successor_ring_dimension,
+                            e_field_elems: successor_ring_dimension,
+                            t_field_elems: successor_ring_dimension,
+                            z_payload_bytes: 1,
+                            z_rice_low_bits: 0,
+                        }],
+                        logical_num_elems: terminal_response_len,
+                    },
+                },
+            },
+            input_witness_len: successor_ring_dimension,
+        },
+    }
+}
+
+#[test]
+fn schedule_rejects_setup_prefix_split_authority() {
+    let mut schedule = recursive_schedule(64, 64, true);
+    schedule.recursive_folds[0].params.witness.setup_prefix = None;
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("setup-prefix authorities must agree");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn schedule_rejects_offloaded_ring_dimension_transition() {
+    let schedule = recursive_schedule(128, 64, true);
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("offload requires uniform predecessor/successor geometry");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn schedule_accepts_direct_ring_dimension_transition() {
+    recursive_schedule(128, 64, false)
+        .validate_structure()
+        .expect("direct setup contribution supports a ring-dimension transition");
+}
+
+#[test]
+fn schedule_accepts_offload_at_uniform_successor_dimension() {
+    recursive_schedule(64, 64, true)
+        .validate_structure()
+        .expect("offload supports uniform predecessor/successor geometry");
+}
+
+#[test]
+fn terminal_projection_preserves_the_fixed_inner_matrix() {
+    let sparse = SparseChallengeConfig::pm1_only(3);
+    let committed = CommittedGroupParams::params_only(
+        SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        3,
+        4,
+        3,
+        2,
+        sparse,
+    )
+    .with_decomp(4, 32, 2, 2, 2)
+    .expect("committed params");
+    let expected_inner = committed.inner_commit_matrix.clone();
+
+    let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
+        .expect("terminal projection");
+    let response_policy = terminal
+        .response_linf_policy(&sparse)
+        .expect("terminal response bounds");
+
+    assert_eq!(terminal.inner_commit_matrix, expected_inner);
+    assert_eq!(response_cap, response_policy.admission_cap);
+    assert!(response_policy.admission_cap <= response_policy.certified_capacity);
+    assert!(
+        response_policy.admission_cap >= response_policy.unconstrained_target.div_ceil(2),
+        "terminal capacity must retain at least half of the unconstrained target"
+    );
+}
 
 #[test]
 fn chunked_witness_count_matches_chunk_layout_arithmetic() {

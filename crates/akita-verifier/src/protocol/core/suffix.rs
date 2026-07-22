@@ -342,8 +342,10 @@ where
     if raw_field_segment_bytes(&proof.terminal_response.t_fields)? != *t_state {
         return Err(AkitaError::InvalidProof);
     }
-    let (honest_cap, _) = params.response_linf_bounds(&scheduled.sparse_challenge_config)?;
-    let expected_shape = TerminalResponseShape::derive(params, honest_cap)?;
+    let admission_cap = params
+        .response_linf_policy(&scheduled.sparse_challenge_config)?
+        .admission_cap;
+    let expected_shape = TerminalResponseShape::derive(params, admission_cap)?;
     if scheduled.response_shape != expected_shape
         || proof.terminal_response.layout != expected_shape.layout
     {

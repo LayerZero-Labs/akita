@@ -10,14 +10,14 @@ use akita_field::Prime32Offset99;
 fn sample_schedule() -> FoldSchedule {
     let sparse = SparseChallengeConfig::pm1_only(3);
     let committed =
-        CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 2, 3, 2, sparse)
+        CommittedGroupParams::params_only(SisModulusProfileId::Q32Offset99, 64, 3, 4, 3, 2, sparse)
             .with_decomp(4, 32, 2, 2, 2)
             .expect("sample committed params");
-    let (terminal_witness, honest_cap) =
+    let (terminal_witness, admission_cap) =
         TerminalCommittedGroupParams::try_from_expanded_group(committed.clone())
             .expect("terminal response bounds");
     let response_shape =
-        TerminalResponseShape::derive(&terminal_witness, honest_cap).expect("terminal shape");
+        TerminalResponseShape::derive(&terminal_witness, admission_cap).expect("terminal shape");
     FoldSchedule {
         root: RootFoldStep {
             params: RootFoldParams {

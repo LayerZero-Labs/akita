@@ -153,13 +153,13 @@ pub(crate) fn walk_generated_schedule_entry(
         input_witness_len = output_witness_len;
     }
     let terminal_level = entry.recursive_folds.len() + 1;
-    let (terminal_params, honest_response_linf_cap) = entry.terminal.expand_to_level_params(
+    let (terminal_params, admission_cap) = entry.terminal.expand_to_level_params(
         policy,
         ring_challenge_config,
         terminal_level,
         input_witness_len,
     )?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, honest_response_linf_cap)?;
+    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
     let mut folds = Vec::with_capacity(expanded.len());
     let mut total_bytes = 0usize;
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {

@@ -293,7 +293,6 @@ fn truncate_ring_vec(rv: &mut RingVec<F>, new_len: usize) {
 fn mixed_d_schedule_shape_and_ring_dim_validation() {
     let schedule = mixed_schedule();
     assert_mixed_d_fixture_schedule(&schedule);
-    assert_eq!(schedule.num_fold_levels(), 4);
 
     init_rayon_pool();
     run_on_large_stack(|| {

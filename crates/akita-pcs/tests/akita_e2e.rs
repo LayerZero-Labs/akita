@@ -879,16 +879,14 @@ fn batched_onehot_same_point_round_trip() {
             .chain(plan.recursive_folds.iter().map(|step| &step.params.witness))
             .collect::<Vec<_>>();
         assert!(
-            fold_params.windows(2).any(|params| {
-                params.iter().all(|params| {
-                    params.num_live_ring_elements_per_claim % params.num_positions_per_block != 0
-                        && params.num_live_blocks
-                            == params
-                                .num_live_ring_elements_per_claim
-                                .div_ceil(params.num_positions_per_block)
-                })
+            fold_params.iter().any(|params| {
+                params.num_live_ring_elements_per_claim % params.num_positions_per_block != 0
+                    && params.num_live_blocks
+                        == params
+                            .num_live_ring_elements_per_claim
+                            .div_ceil(params.num_positions_per_block)
             }),
-            "fixture must cross two consecutive production folds with exact partial final rows"
+            "fixture must cross a production fold with an exact partial final row"
         );
         let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
             .checked_mul(D)

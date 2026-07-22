@@ -871,27 +871,31 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             validate_log_basis(group.log_basis_inner)?;
             validate_log_basis(group.log_basis_outer)?;
             validate_log_basis(group.log_basis_open)?;
+            let witness_depth = if group.log_basis_inner == shared_log_basis {
+                group.depth_witness
+            } else {
+                0
+            };
+            let commit_depth = if group.log_basis_outer == shared_log_basis {
+                group.depth_commit
+            } else {
+                0
+            };
+            let open_depth = if group.log_basis_open == shared_log_basis {
+                group.depth_open
+            } else {
+                0
+            };
+            let fold_depth = if group.log_basis_open == shared_log_basis {
+                group.depth_fold
+            } else {
+                0
+            };
             Ok(max_depth
-                .max(
-                    (group.log_basis_inner == shared_log_basis)
-                        .then_some(group.depth_witness)
-                        .unwrap_or(0),
-                )
-                .max(
-                    (group.log_basis_outer == shared_log_basis)
-                        .then_some(group.depth_commit)
-                        .unwrap_or(0),
-                )
-                .max(
-                    (group.log_basis_open == shared_log_basis)
-                        .then_some(group.depth_open)
-                        .unwrap_or(0),
-                )
-                .max(
-                    (group.log_basis_open == shared_log_basis)
-                        .then_some(group.depth_fold)
-                        .unwrap_or(0),
-                ))
+                .max(witness_depth)
+                .max(commit_depth)
+                .max(open_depth)
+                .max(fold_depth))
         })?;
         let shared_gadget = gadget_row_scalars::<F>(max_shared_depth, shared_log_basis);
         let shared_gadget_ext = shared_gadget

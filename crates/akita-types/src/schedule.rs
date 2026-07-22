@@ -507,6 +507,38 @@ pub struct TerminalCommittedGroupParams {
     pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
 }
 
+/// Minimum fraction of the unconstrained terminal-response target that a
+/// fixed inner matrix must admit. This is a planner completeness heuristic,
+/// not a security assumption: security always uses the matrix's exact
+/// SIS-certified capacity.
+pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM: u128 = 1;
+pub const TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN: u128 = 2;
+
+/// Derived terminal-response norm policy for one fixed inner matrix.
+///
+/// The three values have deliberately different meanings:
+///
+/// - `unconstrained_target` is the pre-digit-snap Rademacher/worst-case target
+///   for an honest response. The terminal path has no response digits, so a
+///   digit boundary must not reduce this value.
+/// - `certified_capacity` is the largest raw response norm secured by the
+///   fixed inner matrix, obtained by inverting its checked SIS-table capacity.
+/// - `admission_cap` is the verifier's actual raw-response limit. It is the
+///   certified capacity restricted to the current signed response
+///   representation.
+///
+/// A candidate is usable only when `admission_cap >= ceil(target / 2)`. The
+/// half-target rule is intentionally empirical: applying the conservative
+/// coordinate union bound again at a reduced cap is vacuous for production
+/// tails. It affects honest-prover viability only. The exact SIS capacity
+/// remains the security authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalResponseLinfPolicy {
+    pub unconstrained_target: u128,
+    pub certified_capacity: u128,
+    pub admission_cap: u128,
+}
+
 impl TerminalCommittedGroupParams {
     pub fn from_expanded_group(params: CommittedGroupParams) -> Self {
         Self {
@@ -520,53 +552,15 @@ impl TerminalCommittedGroupParams {
         }
     }
 
-    /// Project an ordinary scalar group into terminal parameters and resize
-    /// its fixed inner matrix for the unsnapped raw-response collision bound.
+    /// Project an ordinary scalar group into terminal parameters and validate
+    /// the directly checked response bound against its fixed inner matrix.
     pub fn try_from_expanded_group(
         params: CommittedGroupParams,
     ) -> Result<(Self, u128), AkitaError> {
         let sparse = params.fold_challenge_config;
-        let mut terminal = Self::from_expanded_group(params);
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &sparse,
-            akita_challenges::TensorChallengeShape::Flat,
-        );
-        let witness =
-            crate::sis::FoldWitnessNorms::new(terminal.log_basis_inner, terminal.d_a(), 1, false);
-        let (honest_cap, _) = crate::sis::fold_witness_unsnapped_linf_cap(
-            terminal.num_live_blocks,
-            1,
-            challenge,
-            witness,
-            &terminal.fold_linf_cap_config,
-        )?;
-        let old_key = terminal.inner_commit_matrix.sis_table_key();
-        let collision = crate::sis::role_a_collision_inf_norm_for_response_bound(
-            challenge.l1_norm,
-            old_key.modulus_profile.ring_subfield_embedding_norm_bound(),
-            honest_cap,
-        )
-        .ok_or_else(|| AkitaError::InvalidSetup("terminal A collision overflow".into()))?;
-        let collision_bucket = crate::sis::ceil_supported_linf_bound(
-            old_key.policy,
-            old_key.table_digest,
-            old_key.modulus_profile,
-            crate::sis::SisMatrixRole::Inner,
-            old_key.ring_dimension,
-            collision,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal A collision exceeds the SIS table".into())
-        })?;
-        terminal.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::try_new_with_min_rank(
-            crate::sis::SisTableKey {
-                coeff_linf_bound: collision_bucket,
-                ..old_key
-            },
-            terminal.inner_width(),
-        )?;
-        terminal.response_linf_bounds(&sparse)?;
-        Ok((terminal, honest_cap))
+        let terminal = Self::from_expanded_group(params);
+        let response_policy = terminal.response_linf_policy(&sparse)?;
+        Ok((terminal, response_policy.admission_cap))
     }
 
     #[inline]
@@ -588,20 +582,23 @@ impl TerminalCommittedGroupParams {
         )
     }
 
-    /// Derive the honest terminal response cap and the independently
-    /// certified A-collision limit from the exact typed terminal parameters.
-    /// This is the single protocol source used by planning, encoding, and
-    /// verifier admission.
-    pub fn response_linf_bounds(
+    /// Derive the terminal target, fixed-matrix capacity, and admission cap.
+    ///
+    /// This is the single source used by planning, encoding, grinding, and
+    /// verifier admission. The fixed matrix is never resized here. Candidates
+    /// retaining less than half of the unconstrained target are rejected as
+    /// impractical, while every admitted response remains secured by the exact
+    /// matrix capacity.
+    pub fn response_linf_policy(
         &self,
         sparse: &akita_challenges::SparseChallengeConfig,
-    ) -> Result<(u128, u128), AkitaError> {
+    ) -> Result<TerminalResponseLinfPolicy, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms::new(
             sparse,
             akita_challenges::TensorChallengeShape::Flat,
         );
         let witness = crate::sis::FoldWitnessNorms::new(self.log_basis_inner, self.d_a(), 1, false);
-        let (honest_cap, _) = crate::sis::fold_witness_unsnapped_linf_cap(
+        let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
             self.num_live_blocks,
             1,
             challenge,
@@ -614,7 +611,7 @@ impl TerminalCommittedGroupParams {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("terminal A has no collision capacity".into())
             })?;
-        let security_cap = crate::sis::max_response_linf_for_role_a_collision(
+        let certified_capacity = crate::sis::max_response_linf_for_role_a_collision(
             collision_capacity,
             challenge.l1_norm,
             self.inner_commit_matrix
@@ -623,12 +620,26 @@ impl TerminalCommittedGroupParams {
         )
         .filter(|value| *value > 0)
         .ok_or_else(|| AkitaError::InvalidSetup("terminal A cannot certify a response".into()))?;
-        if honest_cap > security_cap {
-            return Err(AkitaError::InvalidSetup(
-                "terminal honest response cap exceeds A collision capacity".into(),
-            ));
+        // Terminal NTT kernels currently consume signed i16 coefficients.
+        // This representation limit is independent of the SIS capacity.
+        let admission_cap = certified_capacity.min(i16::MAX as u128);
+        let minimum_usable_cap = unconstrained_target
+            .checked_mul(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM)
+            .ok_or_else(|| AkitaError::InvalidSetup("terminal target ratio overflow".into()))?
+            .div_ceil(TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN);
+        if admission_cap < minimum_usable_cap {
+            return Err(AkitaError::InvalidSetup(format!(
+                "terminal response capacity {admission_cap} retains less than \
+                     {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM}/\
+                     {TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN} of target \
+                     {unconstrained_target}"
+            )));
         }
-        Ok((honest_cap, security_cap))
+        Ok(TerminalResponseLinfPolicy {
+            unconstrained_target,
+            certified_capacity,
+            admission_cap,
+        })
     }
 
     /// Validate the terminal Fiat–Shamir grind nonce under the same bound
@@ -638,10 +649,10 @@ impl TerminalCommittedGroupParams {
         sparse: &akita_challenges::SparseChallengeConfig,
         nonce: u32,
     ) -> Result<(), AkitaError> {
-        let (honest_cap, _) = self.response_linf_bounds(sparse)?;
+        let admission_cap = self.response_linf_policy(sparse)?.admission_cap;
         crate::sis::FoldWitnessGrindContract {
             policy: self.fold_linf_cap_config.policy,
-            witness_linf_cap: honest_cap,
+            witness_linf_cap: admission_cap,
         }
         .validate_nonce(
             nonce,
@@ -723,11 +734,26 @@ impl FoldSchedule {
                 "root output witness length does not match its successor".to_string(),
             ));
         }
+        let mut predecessor = &self.root.params.final_group.commitment;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             if step.input_witness_len == 0 || step.output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(
                     "recursive fold witness lengths must be nonzero".to_string(),
                 ));
+            }
+            if step.params.witness.setup_prefix != step.params.incoming_setup_prefix {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} setup-prefix mirror disagrees with its successor edge"
+                )));
+            }
+            if step.params.incoming_setup_prefix.is_some()
+                && predecessor.role_dims()
+                    != crate::CommitmentRingDims::uniform(step.params.witness.d_a())
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} setup offload requires predecessor ring dimensions \
+                     to equal the successor inner ring dimension"
+                )));
             }
             let successor_len = self
                 .recursive_folds
@@ -740,6 +766,7 @@ impl FoldSchedule {
                     "recursive fold {index} output witness length does not match its successor"
                 )));
             }
+            predecessor = &step.params.witness;
         }
         if self.terminal.input_witness_len == 0
             || self.terminal.params.response_shape.logical_num_elems() == 0
