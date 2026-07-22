@@ -62,11 +62,11 @@ pub fn lagrange_weights<F: FieldCore>(point: &[F]) -> Result<Vec<F>, AkitaError>
     weights[0] = F::one();
     for (level, &p) in point.iter().enumerate() {
         let k = 1usize << level;
-        let one_minus_p = F::one() - p;
         for i in (0..k).rev() {
             let value = weights[i];
-            weights[i] = value * one_minus_p;
-            weights[i + k] = value * p;
+            let right = value * p;
+            weights[i] = value - right;
+            weights[i + k] = right;
         }
     }
     Ok(weights)
@@ -264,6 +264,22 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
+
+    #[test]
+    fn lagrange_weights_match_direct_multilinear_basis() {
+        let x = F::from_u64(2);
+        let y = F::from_u64(3);
+        assert_eq!(lagrange_weights::<F>(&[]).unwrap(), vec![F::one()]);
+        assert_eq!(
+            lagrange_weights(&[x, y]).unwrap(),
+            vec![
+                (F::one() - x) * (F::one() - y),
+                x * (F::one() - y),
+                (F::one() - x) * y,
+                x * y,
+            ]
+        );
+    }
 
     #[test]
     fn opening_point_keeps_exact_live_block_prefix() {

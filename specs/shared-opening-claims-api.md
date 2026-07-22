@@ -1,5 +1,11 @@
 # Spec: OpeningClaims API
 
+> **Point-model supersession (2026-07-22).** The shared-point and
+> `PointVariableSelection` design in this record is superseded by
+> [`group-local-opening-points.md`](group-local-opening-points.md). The target
+> model stores one complete opening point per polynomial group and treats exact
+> or nested reuse as an internal verifier optimization.
+
 
 | Field        | Value                                                                                                       |
 | ------------ | ----------------------------------------------------------------------------------------------------------- |

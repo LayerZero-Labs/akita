@@ -1,5 +1,11 @@
 # Spec: Multi-commitment groups and conservative-rank root batching
 
+> **Point-model supersession (2026-07-22).** The shared-point restriction and
+> prefix/suffix routing described in this record are superseded by
+> [`group-local-opening-points.md`](group-local-opening-points.md). Multi-group
+> roots may use one arbitrary complete point per group; reuse is derived inside
+> verifier preparation rather than exposed as a protocol constraint.
+
 
 | Field     | Value                              |
 | --------- | ---------------------------------- |
