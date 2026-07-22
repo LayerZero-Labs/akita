@@ -12,8 +12,6 @@ use akita_types::{
     TerminalLevelProof, ZFoldEncodingStats,
 };
 
-const TAIL_Z_LENGTH_PREFIX_BYTES: usize = 8;
-
 pub(crate) fn report_timing(label: &str, phase: &str, elapsed_s: f64) {
     tracing::info!(label, elapsed_s, "{phase}");
     eprintln!("[{label}] {phase}: {elapsed_s:.6}s");
@@ -40,13 +38,14 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         let z_golomb_bytes = segment.z_payloads.iter().map(Vec::len).sum::<usize>();
         let z_field_elems = segment.layout.z_coords();
         let z_ring_elems = z_field_elems / ring_dim.max(1);
-        let z_wire_bytes = TAIL_Z_LENGTH_PREFIX_BYTES.saturating_add(z_golomb_bytes);
         let e_field_elems = segment.e_fields.coeff_len();
         let t_field_elems = segment.t_fields.coeff_len();
         let e_ring_elems = e_field_elems / ring_dim.max(1);
         let t_ring_elems = t_field_elems / ring_dim.max(1);
         let e_bytes = e_field_elems.saturating_mul(field_sz);
         let t_bytes = t_field_elems.saturating_mul(field_sz);
+        let z_wire_bytes = tail_bytes.saturating_sub(e_bytes.saturating_add(t_bytes));
+        let z_prefix_bytes = z_wire_bytes.saturating_sub(z_golomb_bytes);
         let z_budget_bytes = schedule
             .terminal
             .params
@@ -80,7 +79,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             final_w_encoding = "terminal_response",
             final_w_policy = "non_zk_default",
             tail_log_basis_inner = schedule.terminal.params.witness.log_basis_inner,
-            tail_z_prefix_bytes = TAIL_Z_LENGTH_PREFIX_BYTES,
+            tail_z_prefix_bytes = z_prefix_bytes,
             tail_z_golomb_bytes = z_golomb_bytes,
             tail_z_bytes = z_wire_bytes,
             tail_z_field_elems = z_field_elems,
@@ -140,7 +139,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
             golomb_line,
         );
         eprintln!(
-            "[{label}]     z: {z_wire_bytes} B (len_prefix={TAIL_Z_LENGTH_PREFIX_BYTES} + golomb={z_golomb_bytes}), \
+            "[{label}]     z: {z_wire_bytes} B (len_prefix={z_prefix_bytes} + golomb={z_golomb_bytes}), \
              field_coeffs={z_field_elems}, ring_elems={z_ring_elems}",
         );
         eprintln!(
@@ -149,6 +148,7 @@ pub(crate) fn emit_proof_tail_report<FF, E>(
         eprintln!(
             "[{label}]     t: {t_bytes} B, field_coeffs={t_field_elems}, ring_elems={t_ring_elems}",
         );
+        assert_eq!(tail_bytes, z_wire_bytes + e_bytes + t_bytes);
         if std::env::var("AKITA_Z_GOLOMB_SWEEP").ok().as_deref() == Some("1") {
             emit_z_golomb_k_sweep(label, segment, schedule, field_bits, z_golomb_bytes);
         }

@@ -299,6 +299,7 @@ TAIL_SUMMARY_INT_FIELDS = (
     "final_w_num_elems",
     "final_w_bits_per_elem",
     "tail_log_basis_open",
+    "tail_log_basis_inner",
     "tail_log_basis",
     "tail_z_prefix_bytes",
     "tail_z_golomb_bytes",
@@ -327,6 +328,7 @@ TAIL_SUMMARY_FLOAT_FIELDS = (
 
 TAIL_ENCODING_POLICIES = {
     "segment_typed": "non-zk folded terminal (default in profile bench)",
+    "terminal_response": "non-zk quotient-free terminal response (default in profile bench)",
     "packed_digits": "zk-feature folded terminal fallback",
     "field_elements": "root-direct cleartext witness",
     "none": "root-direct zero-fold (no cleartext tail)",
@@ -358,10 +360,12 @@ def ingest_tail_summary_fields(summary: dict[str, object], kvs: dict[str, str]) 
         summary["z_witness_linf_cap"] = kvs["z_witness_linf_cap"]
     elif "z_beta_inf" in kvs:
         summary["z_witness_linf_cap"] = kvs["z_beta_inf"]
-    tail_log_basis_open = summary.get("tail_log_basis_open", summary.get("tail_log_basis"))
-    if tail_log_basis_open is not None:
-        summary["tail_log_basis_open"] = tail_log_basis_open
-        summary["terminal_log_basis"] = tail_log_basis_open
+    terminal_log_basis = summary.get(
+        "tail_log_basis_inner",
+        summary.get("tail_log_basis_open", summary.get("tail_log_basis")),
+    )
+    if terminal_log_basis is not None:
+        summary["terminal_log_basis"] = terminal_log_basis
 
 
 def render_tail_encoding(current: dict[str, object]) -> None:
@@ -396,16 +400,17 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             )
         return
 
-    if encoding != "segment_typed":
+    if encoding not in ("segment_typed", "terminal_response"):
         return
 
-    if (
-        current.get("tail_num_elems") is not None
-        and current.get("tail_log_basis_open") is not None
-    ):
+    terminal_log_basis = current.get(
+        "tail_log_basis_inner", current.get("tail_log_basis_open")
+    )
+    if current.get("tail_num_elems") is not None and terminal_log_basis is not None:
+        basis_role = "inner" if encoding == "terminal_response" else "D/open"
         print(
             f"  - Logical witness: `{fmt_count(float(current['tail_num_elems']))}` elements, "
-            f"D/open gadget basis width `{current['tail_log_basis_open']}` bits, "
+            f"{basis_role} gadget basis width `{terminal_log_basis}` bits, "
             "folded-witness (`z`) segment first on the wire"
         )
 
@@ -509,6 +514,42 @@ def render_tail_encoding(current: dict[str, object]) -> None:
             f"  - Folded-witness Golomb model: {ring_note}"
             f"`{fmt_count(float(z_field_coeffs))}` field coefficients{comparison}{savings_note}"
         )
+
+
+def render_terminal_response_components(cases: list[dict[str, object]]) -> None:
+    rows = [
+        case
+        for case in cases
+        if case_status(case) == "ok"
+        and case.get("tail_encoding") in ("segment_typed", "terminal_response")
+        and all(
+            case.get(key) is not None
+            for key in ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes", "tail_bytes")
+        )
+    ]
+    if not rows:
+        return
+
+    print("### Terminal response component breakdown")
+    print()
+    print(
+        "| Workload | Folded response (`z`) | Opening values (`e`) | "
+        "Inner-commitment values (`t`) | Total terminal response |"
+    )
+    print("| --- | ---: | ---: | ---: | ---: |")
+    for case in rows:
+        print(
+            f"| {md_text(human_case_label(case))} | "
+            f"{fmt_bytes(float(case['tail_z_bytes']))} bytes | "
+            f"{fmt_bytes(float(case['tail_e_bytes']))} bytes | "
+            f"{fmt_bytes(float(case['tail_t_bytes']))} bytes | "
+            f"{fmt_bytes(float(case['tail_bytes']))} bytes |"
+        )
+    print()
+    print(
+        "The `z` column includes its per-segment length prefixes and Golomb payload; `e` and `t` "
+        "are raw field bytes. These three columns sum exactly to the serialized terminal response."
+    )
 
 
 def write_text(path: pathlib.Path, text: str) -> None:
@@ -1955,6 +1996,17 @@ def validate_case_consistency(summary: dict[str, object]) -> None:
             f"proof_size_bytes={proof_size}, accounted_bytes={accounted}"
         )
 
+    tail_component_keys = ("tail_z_bytes", "tail_e_bytes", "tail_t_bytes")
+    if summary.get("tail_bytes") is not None and all(
+        summary.get(key) is not None for key in tail_component_keys
+    ):
+        component_total = sum(int(summary[key]) for key in tail_component_keys)
+        if component_total != int(summary["tail_bytes"]):
+            raise ValueError(
+                "terminal response component mismatch: "
+                f"tail_bytes={summary['tail_bytes']}, z_e_t_sum={component_total}"
+            )
+
     planned_levels = summary.get("planned_levels")
     proof_levels = summary.get("proof_levels")
     if not isinstance(planned_levels, list) or not isinstance(proof_levels, list):
@@ -2069,8 +2121,14 @@ def render_report(args: argparse.Namespace) -> int:
     print("- Memory: maximum resident set size from `/usr/bin/time` on the benchmark process.")
     print()
 
+    for current in current_cases:
+        if case_status(current) == "ok":
+            validate_case_consistency(current)
+
     render_matrix_summary(current_cases, baselines[0][1])
     if args.compact:
+        print()
+        render_terminal_response_components(current_cases)
         print()
         print(
             "Detailed schedule and proof-size breakdowns by fold level are available in "
@@ -2081,8 +2139,6 @@ def render_report(args: argparse.Namespace) -> int:
     print()
 
     for index, current in enumerate(current_cases):
-        if case_status(current) == "ok":
-            validate_case_consistency(current)
         if len(current_cases) > 1:
             print("<details>")
             print(f"<summary>{html.escape(section_title(current), quote=False)} details</summary>")
@@ -2191,7 +2247,8 @@ def render_report(args: argparse.Namespace) -> int:
         if (
             current.get("terminal_w_len") is not None
             and current.get("terminal_log_basis") is not None
-            and current.get("tail_encoding") not in ("segment_typed", "none", None)
+            and current.get("tail_encoding")
+            not in ("segment_typed", "terminal_response", "none", None)
         ):
             print(
                 "- Observed terminal state: "
