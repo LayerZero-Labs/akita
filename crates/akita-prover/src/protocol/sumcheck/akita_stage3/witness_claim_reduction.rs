@@ -8,12 +8,14 @@ use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, Zero};
 use akita_sumcheck::reduce_signed_accum;
 use std::sync::Arc;
 
-// Selected independently by `stage3_small_digit_kernel_ab`. These are physical
-// implementation tiles, not protocol geometry. LB2 benefits from four-way
-// matching and small register tiles in both layouts. The generic kernel keeps
-// the existing coarser task tile rather than adding a density-based selector.
+// Selected independently by the explicit Stage 3 A/B benchmarks. Prefix
+// contractions scan source rows and reuse each weight across the live row.
+// Suffix contractions retain small output tiles: LB2 benefits from four-way
+// matching, while the generic kernel uses a coarser task tile.
+#[cfg(test)]
 const LB2_COLUMN_OUTPUT_TILE: usize = 4;
 const LB2_ROW_OUTPUT_TILE: usize = 4;
+#[cfg(test)]
 const DIRECT_COLUMN_OUTPUT_TILE: usize = 32;
 const DIRECT_ROW_OUTPUT_TILE: usize = 32;
 
@@ -23,8 +25,9 @@ const DIRECT_ROW_OUTPUT_TILE: usize = 32;
 /// of the old opening point in one source pass and proves the prefix rounds from
 /// square-root state. Phase 2 makes one more source pass after the prefix
 /// challenges are known, then proves the suffix rounds from the folded witness.
-pub(super) struct WitnessClaimReductionTerm<E: FieldCore> {
-    source: Arc<[i8]>,
+pub(super) struct WitnessClaimReductionTerm<'a, E: FieldCore> {
+    source: &'a [i8],
+    padded_len: usize,
     phase: WitnessClaimReductionPhase<E>,
     input_claim: E,
     prefix_rounds: usize,
@@ -48,17 +51,22 @@ enum WitnessClaimReductionPhase<E: FieldCore> {
     },
 }
 
-impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTerm<E> {
+impl<'a, E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTerm<'a, E> {
     pub(super) fn new(
-        source: Arc<[i8]>,
+        source: &'a [i8],
         padded_len: usize,
         old_point: Arc<[E]>,
         log_basis: u32,
         observed_max_abs_digit: u8,
     ) -> Result<Self, AkitaError> {
-        if padded_len < 2 || !padded_len.is_power_of_two() || source.len() != padded_len {
+        if padded_len < 2
+            || !padded_len.is_power_of_two()
+            || source.is_empty()
+            || source.len() > padded_len
+        {
             return Err(AkitaError::InvalidInput(
-                "witness claim reduction requires a complete power-of-two compact domain".into(),
+                "witness claim reduction requires a non-empty compact source within a power-of-two domain"
+                    .into(),
             ));
         }
         let total_rounds = padded_len.trailing_zeros() as usize;
@@ -90,9 +98,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
         validate_unreduced_headroom(suffix_evals.len(), max_abs_digit)?;
         let table = {
             let kernel = if log_basis == 2 {
-                "lb2_match_unreduced"
+                "lb2_row_major_match_unreduced"
             } else {
-                "direct_small_unreduced"
+                "direct_small_row_major_unreduced"
             };
             let _span = tracing::info_span!(
                 "stage3_witness_prefix_pass",
@@ -103,23 +111,16 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
             )
             .entered();
             if log_basis == 2 {
-                contract_columns_lb2::<E, LB2_COLUMN_OUTPUT_TILE>(
-                    &source,
-                    &suffix_evals,
-                    prefix_len,
-                )
+                contract_columns_row_major::<E, true>(source, &suffix_evals, prefix_len)
             } else {
-                contract_columns_small::<E, DIRECT_COLUMN_OUTPUT_TILE>(
-                    &source,
-                    &suffix_evals,
-                    prefix_len,
-                )
+                contract_columns_row_major::<E, false>(source, &suffix_evals, prefix_len)
             }
         };
         let input_claim = multilinear_eval(&table, &old_point[..prefix_rounds])?;
         let phase = if prefix_rounds == 0 {
             Self::build_suffix_phase(
-                &source,
+                source,
+                padded_len,
                 &[],
                 suffix_point,
                 E::one(),
@@ -137,6 +138,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
         };
         Ok(Self {
             source,
+            padded_len,
             phase,
             input_claim,
             prefix_rounds,
@@ -197,7 +199,8 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
                     let suffix_point = Arc::clone(suffix_point);
                     let prefix_challenges = std::mem::take(challenges);
                     self.phase = Self::build_suffix_phase(
-                        &self.source,
+                        self.source,
+                        self.padded_len,
                         &prefix_challenges,
                         suffix_point,
                         prefix_scale,
@@ -237,6 +240,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
 
     fn build_suffix_phase(
         source: &[i8],
+        padded_len: usize,
         prefix_challenges: &[E],
         suffix_point: Arc<[E]>,
         prefix_scale: E,
@@ -245,10 +249,10 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> WitnessClaimReductionTer
     ) -> Result<WitnessClaimReductionPhase<E>, AkitaError> {
         let prefix_evals = EqPolynomial::evals(prefix_challenges)?;
         let prefix_len = prefix_evals.len();
-        if !source.len().is_multiple_of(prefix_len) {
+        if !padded_len.is_multiple_of(prefix_len) {
             return Err(AkitaError::InvalidProof);
         }
-        let suffix_len = source.len() / prefix_len;
+        let suffix_len = padded_len / prefix_len;
         validate_unreduced_headroom(prefix_len, max_abs_digit)?;
         let table = {
             let kernel = if log_basis == 2 {
@@ -316,6 +320,7 @@ fn accumulate_lb2_unit<A: Copy + std::ops::AddAssign>(
     }
 }
 
+#[cfg(test)]
 fn contract_columns_small<E, const TILE: usize>(
     source: &[i8],
     weights: &[E],
@@ -333,7 +338,11 @@ where
             let mut negative = [E::MulU64Accum::zero(); TILE];
             for (row, &weight) in weights.iter().enumerate() {
                 let source_start = row * output_len + output_start;
-                for offset in 0..chunk.len() {
+                if source_start >= source.len() {
+                    break;
+                }
+                let live_len = chunk.len().min(source.len() - source_start);
+                for offset in 0..live_len {
                     accumulate_signed_small::<E>(
                         &mut positive[offset],
                         &mut negative[offset],
@@ -349,6 +358,76 @@ where
     output
 }
 
+fn contract_columns_row_major<E, const LB2: bool>(
+    source: &[i8],
+    weights: &[E],
+    output_len: usize,
+) -> Vec<E>
+where
+    E: FieldCore + HasUnreducedOps,
+{
+    let (positive, negative) = cfg_fold_reduce!(
+        0..weights.len(),
+        || (
+            (0..output_len)
+                .map(|_| E::MulU64Accum::zero())
+                .collect::<Vec<_>>(),
+            (0..output_len)
+                .map(|_| E::MulU64Accum::zero())
+                .collect::<Vec<_>>(),
+        ),
+        |(mut positive, mut negative), row| {
+            let source_start = row * output_len;
+            if source_start < source.len() {
+                let live_len = output_len.min(source.len() - source_start);
+                let weight = weights[row];
+                if LB2 {
+                    let unit = weight.mul_u64_unreduced(1);
+                    for (column, &digit) in source[source_start..source_start + live_len]
+                        .iter()
+                        .enumerate()
+                    {
+                        accumulate_lb2_unit(
+                            &mut positive[column],
+                            &mut negative[column],
+                            unit,
+                            digit,
+                        );
+                    }
+                } else {
+                    for (column, &digit) in source[source_start..source_start + live_len]
+                        .iter()
+                        .enumerate()
+                    {
+                        accumulate_signed_small::<E>(
+                            &mut positive[column],
+                            &mut negative[column],
+                            weight,
+                            digit,
+                        );
+                    }
+                }
+            }
+            (positive, negative)
+        },
+        |(mut left_positive, mut left_negative), (right_positive, right_negative)| {
+            for (left, right) in left_positive.iter_mut().zip(right_positive) {
+                *left += right;
+            }
+            for (left, right) in left_negative.iter_mut().zip(right_negative) {
+                *left += right;
+            }
+            (left_positive, left_negative)
+        }
+    );
+    positive
+        .into_iter()
+        .zip(negative)
+        .map(|(positive, negative)| reduce_signed_accum::<E>(positive, negative))
+        .collect()
+}
+
+#[cfg(test)]
 fn contract_columns_lb2<E, const TILE: usize>(
     source: &[i8],
     weights: &[E],
@@ -366,8 +445,12 @@ where
             let mut negative = [E::MulU64Accum::zero(); TILE];
             for (row, &weight) in weights.iter().enumerate() {
                 let source_start = row * output_len + output_start;
+                if source_start >= source.len() {
+                    break;
+                }
+                let live_len = chunk.len().min(source.len() - source_start);
                 let unit = weight.mul_u64_unreduced(1);
-                for offset in 0..chunk.len() {
+                for offset in 0..live_len {
                     accumulate_lb2_unit(
                         &mut positive[offset],
                         &mut negative[offset],
@@ -398,9 +481,13 @@ where
             let output_start = chunk_index * TILE;
             for (offset, slot) in chunk.iter_mut().enumerate() {
                 let source_start = (output_start + offset) * weights.len();
+                if source_start >= source.len() {
+                    break;
+                }
+                let live_len = weights.len().min(source.len() - source_start);
                 let mut positive = E::MulU64Accum::zero();
                 let mut negative = E::MulU64Accum::zero();
-                for (column, &weight) in weights.iter().enumerate() {
+                for (column, &weight) in weights[..live_len].iter().enumerate() {
                     accumulate_signed_small::<E>(
                         &mut positive,
                         &mut negative,
@@ -433,12 +520,14 @@ where
                 let unit = weight.mul_u64_unreduced(1);
                 for offset in 0..chunk.len() {
                     let source_index = (output_start + offset) * weights.len() + column;
-                    accumulate_lb2_unit(
-                        &mut positive[offset],
-                        &mut negative[offset],
-                        unit,
-                        source[source_index],
-                    );
+                    if let Some(&digit) = source.get(source_index) {
+                        accumulate_lb2_unit(
+                            &mut positive[offset],
+                            &mut negative[offset],
+                            unit,
+                            digit,
+                        );
+                    }
                 }
             }
             for (offset, slot) in chunk.iter_mut().enumerate() {
@@ -525,7 +614,7 @@ mod tests {
         let rounds = len.trailing_zeros() as usize;
         let point = test_point(rounds);
         let mut term = WitnessClaimReductionTerm::new(
-            Arc::from(digits.clone()),
+            &digits,
             len,
             Arc::from(point.clone()),
             log_basis,
@@ -596,7 +685,7 @@ mod tests {
         digits[19..].fill(0);
         let point = test_point(5);
         let term = WitnessClaimReductionTerm::new(
-            Arc::from(digits.clone()),
+            &digits,
             digits.len(),
             Arc::from(point.clone()),
             3,
@@ -616,31 +705,60 @@ mod tests {
     }
 
     #[test]
+    fn prefix_suffix_treats_compact_tail_as_zero_padding() {
+        let digits = test_digits(19);
+        let padded_len = 32;
+        let point = test_point(5);
+        let mut term = WitnessClaimReductionTerm::new(
+            &digits,
+            padded_len,
+            Arc::from(point.clone()),
+            3,
+            digits
+                .iter()
+                .map(|digit| digit.unsigned_abs())
+                .max()
+                .unwrap(),
+        )
+        .expect("valid compact witness term");
+        let mut dense = digits
+            .iter()
+            .map(|&digit| F::from_i64(i64::from(digit)))
+            .collect::<Vec<_>>();
+        dense.resize(padded_len, F::zero());
+        let mut equality = EqPolynomial::evals(&point).expect("valid equality point");
+        assert_eq!(
+            term.input_claim(),
+            product_claim(&dense, &equality, &[F::one()])
+        );
+
+        for round in 0..point.len() {
+            let got = term.compute_round_univariate();
+            let expected = accumulate_left_round(&dense, &equality, F::one());
+            assert_eq!(got.coeffs, vec![expected.0, expected.1, expected.2]);
+            let challenge = F::from_u64(31 + round as u64);
+            term.ingest_challenge(round, challenge)
+                .expect("valid compact witness round");
+            fold_dense_left_round(&mut dense, challenge);
+            fold_factor_in_place(&mut equality, challenge);
+        }
+        assert_eq!(term.folded_witness_value().unwrap(), dense[0]);
+    }
+
+    #[test]
     fn prefix_suffix_rejects_malformed_domains() {
-        assert!(WitnessClaimReductionTerm::<F>::new(
-            Arc::from(vec![1i8; 3]),
-            3,
-            Arc::from(test_point(2)),
-            3,
-            1,
-        )
-        .is_err());
-        assert!(WitnessClaimReductionTerm::<F>::new(
-            Arc::from(vec![1i8; 4]),
-            8,
-            Arc::from(test_point(3)),
-            3,
-            1,
-        )
-        .is_err());
-        assert!(WitnessClaimReductionTerm::<F>::new(
-            Arc::from(vec![1i8; 8]),
-            8,
-            Arc::from(test_point(2)),
-            3,
-            1,
-        )
-        .is_err());
+        assert!(
+            WitnessClaimReductionTerm::<F>::new(&[1i8; 3], 3, Arc::from(test_point(2)), 3, 1,)
+                .is_err()
+        );
+        assert!(
+            WitnessClaimReductionTerm::<F>::new(&[1i8; 9], 8, Arc::from(test_point(3)), 3, 1,)
+                .is_err()
+        );
+        assert!(
+            WitnessClaimReductionTerm::<F>::new(&[1i8; 8], 8, Arc::from(test_point(2)), 3, 1,)
+                .is_err()
+        );
     }
 
     fn median_duration(mut samples: Vec<Duration>) -> Duration {
@@ -911,5 +1029,81 @@ mod tests {
                 row_direct
             );
         }
+    }
+
+    #[test]
+    #[ignore = "explicit Stage 3 witness orientation experiment"]
+    fn stage3_column_orientation_ab() {
+        const WEIGHT_COUNT: usize = 1 << 13;
+        const OUTPUT_COUNT: usize = 1 << 13;
+        const LIVE_LEN: usize = 51_885_824;
+        const SAMPLES: usize = 3;
+        let weights = (0..WEIGHT_COUNT)
+            .map(|index| F::from_u64(17 + index as u64 * 2))
+            .collect::<Vec<_>>();
+        let source = (0..LIVE_LEN)
+            .map(|index| [-4, -3, -2, -1, 0, 1, 2, 3][index % 8])
+            .collect::<Vec<_>>();
+        let current = median_run(
+            || {
+                black_box(contract_columns_small::<F, DIRECT_COLUMN_OUTPUT_TILE>(
+                    black_box(&source),
+                    black_box(&weights),
+                    OUTPUT_COUNT,
+                ));
+            },
+            SAMPLES,
+        );
+        let row_major = median_run(
+            || {
+                black_box(contract_columns_row_major::<F, false>(
+                    black_box(&source),
+                    black_box(&weights),
+                    OUTPUT_COUNT,
+                ));
+            },
+            SAMPLES,
+        );
+        assert_eq!(
+            contract_columns_small::<F, DIRECT_COLUMN_OUTPUT_TILE>(&source, &weights, OUTPUT_COUNT,),
+            contract_columns_row_major::<F, false>(&source, &weights, OUTPUT_COUNT)
+        );
+        eprintln!(
+            "stage3 witness column orientation LB3: current={current:?}, row_major={row_major:?}, ratio={:.4}",
+            row_major.as_secs_f64() / current.as_secs_f64()
+        );
+        drop(source);
+
+        let lb2_source = (0..LIVE_LEN)
+            .map(|index| [-2, -1, 0, 1][index % 4])
+            .collect::<Vec<_>>();
+        let lb2_current = median_run(
+            || {
+                black_box(contract_columns_lb2::<F, LB2_COLUMN_OUTPUT_TILE>(
+                    black_box(&lb2_source),
+                    black_box(&weights),
+                    OUTPUT_COUNT,
+                ));
+            },
+            SAMPLES,
+        );
+        let lb2_row_major = median_run(
+            || {
+                black_box(contract_columns_row_major::<F, true>(
+                    black_box(&lb2_source),
+                    black_box(&weights),
+                    OUTPUT_COUNT,
+                ));
+            },
+            SAMPLES,
+        );
+        assert_eq!(
+            contract_columns_lb2::<F, LB2_COLUMN_OUTPUT_TILE>(&lb2_source, &weights, OUTPUT_COUNT,),
+            contract_columns_row_major::<F, true>(&lb2_source, &weights, OUTPUT_COUNT)
+        );
+        eprintln!(
+            "stage3 witness column orientation LB2: current={lb2_current:?}, row_major={lb2_row_major:?}, ratio={:.4}",
+            lb2_row_major.as_secs_f64() / lb2_current.as_secs_f64()
+        );
     }
 }

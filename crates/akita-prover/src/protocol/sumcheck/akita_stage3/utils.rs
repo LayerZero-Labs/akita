@@ -2,6 +2,7 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::parallel::*;
 use akita_field::FieldCore;
 
+#[cfg(test)]
 pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_factor: &[E]) -> E {
     let right_len = right_factor.len();
     cfg_fold_reduce!(
@@ -19,6 +20,7 @@ pub(super) fn product_claim<E: FieldCore>(table: &[E], left_factor: &[E], right_
     )
 }
 
+#[cfg(test)]
 pub(super) fn accumulate_right_round<E: FieldCore>(
     table: &[E],
     left_factor: &[E],
@@ -111,6 +113,7 @@ pub(super) fn fold_factor_in_place<E: FieldCore>(factor: &mut Vec<E>, challenge:
         .collect();
 }
 
+#[cfg(test)]
 pub(super) fn fold_right_round<E: FieldCore>(
     table: &mut Vec<E>,
     right_factor: &mut Vec<E>,
@@ -136,6 +139,7 @@ pub(super) fn fold_right_round<E: FieldCore>(
     *table = folded;
 }
 
+#[cfg(test)]
 pub(super) fn fold_left_round<E: FieldCore>(
     table: &mut Vec<E>,
     left_factor: &mut Vec<E>,
