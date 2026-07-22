@@ -870,7 +870,9 @@ fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &Wi
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
+    pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
+    pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
 }
@@ -885,6 +887,22 @@ impl FoldScheduleEstimate {
                 })
             })?
             .checked_add(self.estimated_terminal_direct_payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
+    }
+
+    pub fn estimated_stage3_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_recursive_stage3_payload_bytes
+            .iter()
+            .try_fold(self.estimated_root_stage3_payload_bytes, |sum, value| {
+                sum.checked_add(*value).ok_or_else(|| {
+                    AkitaError::InvalidSetup("fold schedule estimate overflow".to_string())
+                })
+            })
+    }
+
+    pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_direct_proof_payload_bytes()?
+            .checked_add(self.estimated_stage3_payload_bytes()?)
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

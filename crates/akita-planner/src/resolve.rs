@@ -141,5 +141,5 @@ pub fn estimate_proof_bytes(
     )?
     .planned_schedule
     .estimate
-    .estimated_direct_proof_payload_bytes()
+    .estimated_proof_payload_bytes()
 }

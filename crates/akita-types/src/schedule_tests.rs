@@ -1,4 +1,23 @@
 use super::*;
+
+#[test]
+fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
+    let estimate = FoldScheduleEstimate {
+        estimated_root_direct_payload_bytes: 100,
+        estimated_root_stage3_payload_bytes: 11,
+        estimated_recursive_direct_payload_bytes: vec![200, 300],
+        estimated_recursive_stage3_payload_bytes: vec![22, 0],
+        estimated_terminal_direct_payload_bytes: 400,
+        estimated_terminal_response_payload_bytes: 350,
+    };
+
+    assert_eq!(
+        estimate.estimated_direct_proof_payload_bytes().unwrap(),
+        1_000
+    );
+    assert_eq!(estimate.estimated_stage3_payload_bytes().unwrap(), 33);
+    assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
+}
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::tail_golomb_rice_z_params;
 use crate::{

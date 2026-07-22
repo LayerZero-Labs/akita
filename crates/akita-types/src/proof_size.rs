@@ -51,9 +51,8 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// **excludes** the optional
 /// recursive stage-3 setup-product sumcheck
 /// (`SetupContributionMode::Recursive`), whose per-level overhead is priced
-/// separately by [`stage3_setup_product_bytes`] and is not fed into the
-/// planner DP. The shipped schedules and the planner score the direct-mode
-/// proof; recursive observed sizes are reported on top of that baseline.
+/// separately by [`stage3_setup_product_bytes`]. The planner adds that exact
+/// payload when the selected successor consumes an incoming setup prefix.
 ///
 /// `next_lp` is required only for an intermediate outer-commitment binding
 /// (it sizes the next-level witness commitment shipped on the wire). It is
@@ -116,9 +115,8 @@ pub fn level_proof_bytes(
 ///
 /// This is the proof-size overhead that `SetupContributionMode::Recursive`
 /// adds on top of the direct-mode payload priced by [`level_proof_bytes`]. It
-/// is reporting/assertion-only and is intentionally **not** fed into the
-/// planner DP: the shipped schedules price the direct-mode fold, and recursive
-/// observed sizes are reported separately.
+/// is added to the direct fold payload before the planner compares direct and
+/// offloaded successor edges.
 ///
 /// The payload is the setup claim and the carried next-witness opening (two
 /// challenge-field elements), followed by a degree-[`crate::SETUP_SUMCHECK_DEGREE`]
