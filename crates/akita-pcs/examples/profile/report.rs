@@ -321,7 +321,27 @@ pub(crate) fn emit_runtime_schedule_summary(
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    tracing::info!(label, levels, "runtime schedule");
+    let setup_envelope_ring_elements = akita_types::setup_matrix_envelope_for_schedule(schedule)
+        .map(|envelope| envelope.max_setup_len)
+        .unwrap_or(0);
+    let setup_envelope_field_elements = setup_envelope_ring_elements
+        .saturating_mul(schedule.root.params.final_group.commitment.d_a());
+    let setup_envelope_bytes =
+        setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
+    let selected_offload_edges = schedule
+        .recursive_folds
+        .iter()
+        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .count();
+    tracing::info!(
+        label,
+        levels,
+        selected_offload_edges,
+        setup_envelope_ring_elements,
+        setup_envelope_field_elements,
+        setup_envelope_bytes,
+        "runtime schedule"
+    );
 
     let nonterminal = std::iter::once((
         0usize,
@@ -374,6 +394,18 @@ pub(crate) fn emit_runtime_schedule_summary(
             output_witness_len,
             "planned fold level"
         );
+    }
+
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+            tracing::info!(
+                label,
+                successor_level = index + 1,
+                setup_prefix_natural_field_elements = prefix.natural_len,
+                setup_prefix_padded_field_elements = prefix.n_prefix().unwrap_or(0),
+                "planned recursive setup edge"
+            );
+        }
     }
 
     tracing::info!(

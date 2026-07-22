@@ -100,7 +100,6 @@ macro_rules! impl_multi_chunk_companion {
 
 pub mod conservative_commitment;
 pub mod generated_families;
-mod matrix_envelope;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -135,7 +134,14 @@ pub fn opening_schedule_key<Cfg: CommitmentConfig>(
 }
 
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
+    let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
+        cost_model: akita_planner::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selection_policy: if recursive_setup_planning {
+            akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else {
+            akita_planner::SelectionPolicyId::MinEstimatedProofPayload
+        },
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
@@ -147,7 +153,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         basis_range: Cfg::basis_range(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
-        recursive_setup_planning: Cfg::recursive_setup_planning(),
+        recursive_setup_planning,
     }
 }
 

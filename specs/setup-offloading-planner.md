@@ -203,16 +203,19 @@ offloaded successor. It discards the offloaded alternative unless:
 
 ```text
 balanced_witness_bits_entering_successor
++ padded_setup_prefix_field_elements * field_bits
     >= 3 * complete_witness_bits_leaving_successor
 
 first_later_direct_setup_field_len
     < producer_direct_setup_field_len
 ```
 
-The contraction numerator excludes the raw full-field setup prefix. The
-denominator includes every balanced-digit output produced from both successor
-groups, including relation or commitment suffixes represented in the current
-witness format.
+The contraction numerator includes both sources consumed by the successor:
+the balanced-digit recursive witness and the padded full-field setup prefix.
+Omitting the prefix biases the planner toward artificially inflating the
+producer witness solely to pass the heuristic. The denominator includes every
+balanced-digit output produced from both successor groups, including relation
+or commitment suffixes represented in the current witness format.
 
 Successor fit and contraction are candidate-feasibility conditions. They are
 not verifier security assumptions. Security continues to follow from the exact
@@ -231,6 +234,20 @@ Among feasible complete schedules, the PR #318 policy compares:
 where `exact_estimated_proof_bytes` includes every Stage 3 payload. The future
 Pareto planner may replace this policy, but generated catalogs must bind whichever
 selection policy produced them.
+
+The recursive search also rejects candidates whose exact setup-matrix envelope
+exceeds `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. This is a supported-runtime ceiling,
+not a claim that offloading has no storage cost relative to the independently
+optimized direct schedule. Comparing the direct and offloaded envelope–proof
+frontiers is explicitly deferred to the multi-objective planner.
+
+The generated catalog binds:
+
+```text
+cost model      = ExactPayloadAndSetupEnvelope
+direct policy   = MinEstimatedProofPayload
+recursive policy = MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+```
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -1001,10 +1018,14 @@ the candidate score that decides whether and how long to offload.
       bounded only by ordinary recursion depth and capability constraints; it
       does not impose contiguity as a structural rule.
 - [ ] Every selected offloaded edge contracts the entering balanced witness by
-      at least threefold and strictly reduces the first remaining direct setup
-      scan.
+      at least threefold after counting both the recursive witness and padded
+      full-field prefix inputs, and strictly reduces the first remaining direct
+      setup scan.
 - [ ] The selected schedule lexicographically minimizes first direct setup
-      footprint and exact estimated proof bytes.
+      footprint and exact estimated proof bytes within the supported setup
+      envelope.
+- [ ] The materialized estimate reports the exact setup envelope and selected
+      offload-edge count, and recomputation agrees with the cached DP value.
 - [ ] Exact proof accounting includes every Stage 3 payload before candidate
       comparison.
 - [ ] Recursive successors use two existing opening groups; direct successors

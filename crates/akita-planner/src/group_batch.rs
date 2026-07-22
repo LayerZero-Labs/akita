@@ -19,7 +19,7 @@ use akita_types::{
 use crate::schedule_params::{
     derive_optimal_suffix_schedule, find_schedule, find_schedule_prioritizing_first_direct_setup,
     materialize_candidate_schedule, optimize_fold_challenge_shape,
-    stage3_payload_bytes_for_successor, CandidateFoldStep, CandidateTerminalResponse,
+    stage3_payload_bytes_for_successor, CandidateFoldStep, CandidateScheduleChoice,
     RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
@@ -466,13 +466,45 @@ pub fn find_group_batch_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
+    if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
+        let setup_envelope_budget = akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS
+            .checked_div(policy.ring_dimension)
+            .filter(|budget| *budget > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("supported setup envelope is empty".to_string())
+            })?;
+        return find_group_batch_schedule_inner(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+            Some(setup_envelope_budget),
+        );
+    }
+    find_group_batch_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+        None,
+    )
+}
+
+fn find_group_batch_schedule_inner(
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    setup_envelope_budget: Option<usize>,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let prioritize_first_direct_setup = policy.recursive_setup_planning;
-        let mut scalar_policy = *policy;
-        scalar_policy.recursive_setup_planning = false;
+        let scalar_policy = policy.direct_only();
         if prioritize_first_direct_setup {
             return find_schedule_prioritizing_first_direct_setup(
                 key.final_group,
@@ -494,16 +526,10 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
-    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let fold_shape_at_level = &fold_challenge_shape_at_level;
+    let fold_shape_at_level = fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(
-        Option<usize>,
-        usize,
-        Vec<CandidateFoldStep>,
-        CandidateTerminalResponse,
-    )> = None;
+    let mut best: Option<CandidateScheduleChoice> = None;
 
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -537,6 +563,7 @@ pub fn find_group_batch_schedule(
         fold_challenge_shape_at_level: fold_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
+        setup_envelope_budget,
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
@@ -690,6 +717,16 @@ pub fn find_group_batch_schedule(
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("root proof size overflow".to_string())
                         })?;
+                    let mut root_envelope = 1;
+                    akita_types::accumulate_matrix_envelope_for_level(
+                        &fold_candidate_params,
+                        &mut root_envelope,
+                    )?;
+                    let setup_envelope =
+                        root_envelope.max(suffix_fold.setup_envelope_ring_elements);
+                    if setup_envelope_budget.is_some_and(|budget| setup_envelope > budget) {
+                        continue;
+                    }
                     let first_direct_setup_field_len =
                         match (policy.recursive_setup_planning, offloaded, natural_len) {
                             (false, _, _) => None,
@@ -702,18 +739,18 @@ pub fn find_group_batch_schedule(
                                 ));
                             }
                         };
-                    if best
-                        .as_ref()
-                        .is_none_or(|(best_setup_field_len, best_total, _, _)| {
-                            match (first_direct_setup_field_len, *best_setup_field_len) {
-                                (Some(setup_field_len), Some(best_setup_field_len)) => {
-                                    (setup_field_len, total) < (best_setup_field_len, *best_total)
-                                }
-                                (None, None) => total < *best_total,
-                                _ => unreachable!("planner objective is fixed for one policy"),
+                    if best.as_ref().is_none_or(|best| {
+                        match (
+                            first_direct_setup_field_len,
+                            best.first_direct_setup_field_len,
+                        ) {
+                            (Some(setup_field_len), Some(best_setup_field_len)) => {
+                                (setup_field_len, total) < (best_setup_field_len, best.total_bytes)
                             }
-                        })
-                    {
+                            (None, None) => total < best.total_bytes,
+                            _ => unreachable!("planner objective is fixed for one policy"),
+                        }
+                    }) {
                         let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                         folds.push(CandidateFoldStep {
                             params: fold_candidate_params,
@@ -723,12 +760,13 @@ pub fn find_group_batch_schedule(
                             estimated_stage3_payload_bytes: root_stage3_payload_bytes,
                         });
                         folds.extend(suffix_fold.folds.iter().cloned());
-                        best = Some((
+                        best = Some(CandidateScheduleChoice {
                             first_direct_setup_field_len,
-                            total,
+                            total_bytes: total,
+                            setup_envelope_ring_elements: setup_envelope,
                             folds,
-                            suffix_fold.terminal.clone(),
-                        ));
+                            terminal: suffix_fold.terminal.clone(),
+                        });
                     }
                 }
                 Ok(())
@@ -752,11 +790,17 @@ pub fn find_group_batch_schedule(
         }
     }
 
-    let Some((_, total_bytes, folds, terminal)) = best else {
+    let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no multi-group schedule with at least two folds for num_vars={}",
             key.final_group.num_vars()
         )));
     };
-    materialize_candidate_schedule(total_bytes, folds, terminal)
+    materialize_candidate_schedule(
+        best.total_bytes,
+        best.setup_envelope_ring_elements,
+        best.first_direct_setup_field_len,
+        best.folds,
+        best.terminal,
+    )
 }

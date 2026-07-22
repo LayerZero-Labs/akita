@@ -875,6 +875,14 @@ pub struct FoldScheduleEstimate {
     pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
+    /// Maximum setup-matrix envelope, in ring elements at the active level's
+    /// inner ring dimension.
+    pub estimated_setup_envelope_ring_elements: usize,
+    /// Natural (unpadded) setup length at the first direct edge, when the
+    /// recursive setup planner is active.
+    pub first_direct_setup_field_len: Option<usize>,
+    /// Number of recursive successors that consume an offloaded setup prefix.
+    pub selected_offload_edges: usize,
 }
 
 impl FoldScheduleEstimate {

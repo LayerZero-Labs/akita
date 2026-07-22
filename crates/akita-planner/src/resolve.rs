@@ -77,8 +77,7 @@ pub fn resolve_group_batch_schedule(
         }
     }
     if scalar_recursive_key {
-        let mut scalar_policy = *policy;
-        scalar_policy.recursive_setup_planning = false;
+        let scalar_policy = policy.direct_only();
         let planned = find_schedule_prioritizing_first_direct_setup(
             key.final_group,
             &scalar_policy,

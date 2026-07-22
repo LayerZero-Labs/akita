@@ -62,6 +62,15 @@ pub(crate) struct CandidateTerminalResponse {
     pub(crate) estimated_payload_bytes: usize,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CandidateScheduleChoice {
+    pub(crate) first_direct_setup_field_len: Option<usize>,
+    pub(crate) total_bytes: usize,
+    pub(crate) setup_envelope_ring_elements: usize,
+    pub(crate) folds: Vec<CandidateFoldStep>,
+    pub(crate) terminal: CandidateTerminalResponse,
+}
+
 /// Exact Stage-3 payload induced when `successor` consumes the setup prefix
 /// produced by the current fold. Absence of a successor prefix is direct mode.
 pub(crate) fn stage3_payload_bytes_for_successor(
@@ -95,6 +104,8 @@ pub(crate) fn stage3_payload_bytes_for_successor(
 
 pub(crate) fn materialize_candidate_schedule(
     cached_total: usize,
+    cached_setup_envelope: usize,
+    first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -104,7 +115,7 @@ pub(crate) fn materialize_candidate_schedule(
         ));
     }
     let root = folds.remove(0);
-    let estimate = FoldScheduleEstimate {
+    let mut estimate = FoldScheduleEstimate {
         estimated_root_direct_payload_bytes: root.estimated_direct_payload_bytes,
         estimated_root_stage3_payload_bytes: root.estimated_stage3_payload_bytes,
         estimated_recursive_direct_payload_bytes: folds
@@ -120,6 +131,9 @@ pub(crate) fn materialize_candidate_schedule(
             .checked_add(terminal_response.estimated_payload_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
+        estimated_setup_envelope_ring_elements: cached_setup_envelope,
+        first_direct_setup_field_len,
+        selected_offload_edges: 0,
     };
     let recomputed = estimate.estimated_proof_payload_bytes()?;
     if recomputed != cached_total {
@@ -189,6 +203,18 @@ pub(crate) fn materialize_candidate_schedule(
         },
     };
     schedule.validate_structure()?;
+    let recomputed_envelope =
+        akita_types::setup_matrix_envelope_for_schedule(&schedule)?.max_setup_len;
+    if recomputed_envelope != cached_setup_envelope {
+        return Err(AkitaError::InvalidSetup(format!(
+            "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"
+        )));
+    }
+    estimate.selected_offload_edges = schedule
+        .recursive_folds
+        .iter()
+        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .count();
     Ok(PlannedFoldSchedule { schedule, estimate })
 }
 
@@ -374,6 +400,7 @@ fn find_schedule_inner(
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
+        setup_envelope_budget: None,
     };
 
     key.validate()?;
@@ -394,12 +421,7 @@ fn find_schedule_inner(
         None
     };
 
-    let mut best: Option<(
-        Option<usize>,
-        usize,
-        Vec<CandidateFoldStep>,
-        CandidateTerminalResponse,
-    )> = None;
+    let mut best: Option<CandidateScheduleChoice> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -517,18 +539,21 @@ fn find_schedule_inner(
                     Some(next_witness_binding),
                 )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
-                if best
-                    .as_ref()
-                    .is_none_or(|(best_setup_field_len, best_total, _, _)| {
-                        match (root_setup_field_len, *best_setup_field_len) {
-                            (Some(setup_field_len), Some(best_setup_field_len)) => {
-                                (setup_field_len, total) < (best_setup_field_len, *best_total)
-                            }
-                            (None, None) => total < *best_total,
-                            _ => unreachable!("scalar planner objective is fixed per call"),
+                let mut root_envelope = 1;
+                akita_types::accumulate_matrix_envelope_for_level(
+                    &candidate_params,
+                    &mut root_envelope,
+                )?;
+                let setup_envelope = root_envelope.max(suffix_fold.setup_envelope_ring_elements);
+                if best.as_ref().is_none_or(|best| {
+                    match (root_setup_field_len, best.first_direct_setup_field_len) {
+                        (Some(setup_field_len), Some(best_setup_field_len)) => {
+                            (setup_field_len, total) < (best_setup_field_len, best.total_bytes)
                         }
-                    })
-                {
+                        (None, None) => total < best.total_bytes,
+                        _ => unreachable!("scalar planner objective is fixed per call"),
+                    }
+                }) {
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(CandidateFoldStep {
                         params: candidate_params.clone(),
@@ -538,25 +563,32 @@ fn find_schedule_inner(
                         estimated_stage3_payload_bytes: 0,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
-                    best = Some((
-                        root_setup_field_len,
-                        total,
+                    best = Some(CandidateScheduleChoice {
+                        first_direct_setup_field_len: root_setup_field_len,
+                        total_bytes: total,
+                        setup_envelope_ring_elements: setup_envelope,
                         folds,
-                        suffix_fold.terminal.clone(),
-                    ));
+                        terminal: suffix_fold.terminal.clone(),
+                    });
                 }
             }
         }
     }
 
-    let Some((_, total_bytes, folds, terminal)) = best else {
+    let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),
             key.num_polynomials()
         )));
     };
-    materialize_candidate_schedule(total_bytes, folds, terminal)
+    materialize_candidate_schedule(
+        best.total_bytes,
+        best.setup_envelope_ring_elements,
+        best.first_direct_setup_field_len,
+        best.folds,
+        best.terminal,
+    )
 }
 
 #[cfg(test)]

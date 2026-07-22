@@ -91,6 +91,12 @@ fn dp_fallback_fires_for_non_shipped_keys() {
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
+        cost_model: akita_planner::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selection_policy: if Cfg::recursive_setup_planning() {
+            akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else {
+            akita_planner::SelectionPolicyId::MinEstimatedProofPayload
+        },
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),

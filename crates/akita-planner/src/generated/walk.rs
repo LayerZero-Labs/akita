@@ -226,8 +226,34 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated schedule validates to zero proof bytes".to_string(),
         ));
     }
+    let mut setup_envelope = 1;
+    for fold in &folds {
+        akita_types::accumulate_matrix_envelope_for_level(&fold.params, &mut setup_envelope)?;
+    }
+    akita_types::accumulate_terminal_matrix_envelope(&terminal_params, &mut setup_envelope)?;
+    let first_direct_setup_field_len = if policy.recursive_setup_planning {
+        folds
+            .iter()
+            .zip(folds.iter().skip(1))
+            .find(|(_, successor)| successor.params.setup_prefix.is_none())
+            .map(|(producer, _)| {
+                let incoming_prefix = producer
+                    .params
+                    .setup_prefix
+                    .as_ref()
+                    .map(|prefix| prefix.natural_len);
+                let layout =
+                    crate::suffix_opening_layout(producer.input_witness_len, incoming_prefix)?;
+                akita_types::active_setup_field_len(&producer.params, &layout)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
+        setup_envelope,
+        first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {
             params: terminal_params,

@@ -14,6 +14,7 @@ pub mod relation_range_image;
 pub mod ring_relation;
 pub mod scheme;
 pub mod setup;
+pub mod setup_envelope;
 pub mod setup_prefix;
 pub mod stage1;
 pub mod terminal_witness;
@@ -66,6 +67,10 @@ pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+};
+pub use setup_envelope::{
+    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
+    inflate_envelope_for_setup_prefix_slot, setup_matrix_envelope_for_schedule,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
