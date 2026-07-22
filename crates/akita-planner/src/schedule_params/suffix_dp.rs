@@ -226,14 +226,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     }
 
     let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
-    let min_log_basis = configured_min_log_basis
-        .max(policy.decomposition.log_basis)
-        .max(if policy.decomposition.field_bits() < 128 {
-            5
-        } else {
-            0
-        });
+    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;

@@ -100,6 +100,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
+        root_log_basis: Cfg::root_log_basis(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),

@@ -145,10 +145,33 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
+        root_log_basis: root_log_basis_override().unwrap_or_else(Cfg::root_log_basis),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
     }
+}
+
+/// Benchmark/experiment hook: parse `AKITA_ROOT_LOG_BASIS` into a
+/// [`PlannerPolicy::root_log_basis`] override.
+///
+/// The outer `Option` distinguishes "variable unset" (returns `None`, so
+/// `policy_of` falls back to the preset's `Cfg::root_log_basis()`) from an
+/// explicit override:
+///
+/// - unset → `None` (use the preset default)
+/// - `unpinned` / `none` / empty → `Some(None)` (force unpinned root)
+/// - `2` → `Some(Some(2))` (pin the root fold to `log_basis = 2`)
+///
+/// This lets the profile harness and planner sweeps exercise every root pin
+/// from a single build (the pin is otherwise a compile-time preset constant).
+fn root_log_basis_override() -> Option<Option<u32>> {
+    let raw = std::env::var("AKITA_ROOT_LOG_BASIS").ok()?;
+    let raw = raw.trim();
+    if raw.is_empty() || raw.eq_ignore_ascii_case("none") || raw.eq_ignore_ascii_case("unpinned") {
+        return Some(None);
+    }
+    Some(raw.parse::<u32>().ok())
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -276,6 +299,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
+
+    /// Pin for the root-fold (level 0) `log_basis`.
+    ///
+    /// `Some(lb)` forces the offline DP to use `log_basis = lb` at the root fold
+    /// (clamped into [`Self::basis_range`]); `None` leaves the root to the
+    /// ordinary search. Fold levels `≥ 1` are never pinned. The default `None` is
+    /// unpinned and reproduces the historical schedules byte-for-byte. Copied
+    /// into [`PlannerPolicy::root_log_basis`] by `policy_of::<Cfg>()`.
+    fn root_log_basis() -> Option<u32> {
+        None
+    }
 
     /// One-hot chunk size `K` of the committed witnesses under this config.
     ///
