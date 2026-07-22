@@ -62,7 +62,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         for num_polys in 1..=max_num_batched_polys {
             let opening_batch = OpeningClaimsLayout::new(max_num_vars, num_polys)?;
             let params = Self::get_params_for_batched_commitment(&opening_batch)?;
-            crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+            akita_types::accumulate_matrix_envelope_for_level(
                 &params,
                 &mut envelope.max_setup_len,
             )?;

@@ -11,16 +11,16 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    padded_setup_prefix_len, AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams,
-    DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, WitnessLayout,
-    SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
+    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    PrecommittedLevelParams, WitnessLayout,
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, find_schedule_prioritizing_first_direct_setup,
-    materialize_candidate_schedule, optimize_fold_challenge_shape, CandidateFoldStep,
-    CandidateTerminalResponse, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
+    optimize_fold_challenge_shape, stage3_payload_bytes_for_successor, validate_policy,
+    CandidateFoldStep, CandidateScheduleChoice, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
+    SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -466,21 +466,46 @@ pub fn find_group_batch_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    validate_policy(policy)?;
+    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
+    let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
+    if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
+        let setup_envelope_budget = policy
+            .max_setup_envelope_field_elements
+            .checked_div(policy.ring_dimension)
+            .filter(|budget| *budget > 0)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("supported setup envelope is empty".to_string())
+            })?;
+        return find_group_batch_schedule_inner(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+            Some(setup_envelope_budget),
+        );
+    }
+    find_group_batch_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+        None,
+    )
+}
+
+fn find_group_batch_schedule_inner(
+    key: &AkitaScheduleLookupKey,
+    policy: &PlannerPolicy,
+    ring_challenge_config: RingChallengeConfigFn<'_>,
+    fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    setup_envelope_budget: Option<usize>,
+) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
-        let prioritize_first_direct_setup = policy.recursive_setup_planning;
-        let mut scalar_policy = *policy;
-        scalar_policy.recursive_setup_planning = false;
-        if prioritize_first_direct_setup {
-            return find_schedule_prioritizing_first_direct_setup(
-                key.final_group,
-                &scalar_policy,
-                ring_challenge_config,
-                fold_challenge_shape_at_level,
-            );
-        }
+        let scalar_policy = policy.direct_only();
         return find_schedule(
             key.final_group,
             &scalar_policy,
@@ -494,16 +519,10 @@ pub fn find_group_batch_schedule(
                 .to_string(),
         ));
     }
-    let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
-    let fold_shape_at_level = &fold_challenge_shape_at_level;
+    let fold_shape_at_level = fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(
-        Option<usize>,
-        usize,
-        Vec<CandidateFoldStep>,
-        CandidateTerminalResponse,
-    )> = None;
+    let mut best: Option<CandidateScheduleChoice> = None;
 
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -537,6 +556,7 @@ pub fn find_group_batch_schedule(
         fold_challenge_shape_at_level: fold_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
+        setup_envelope_budget,
     };
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
@@ -613,21 +633,14 @@ pub fn find_group_batch_schedule(
             } else {
                 None
             };
-            let recursion_threshold_met = natural_len
-                .map(padded_setup_prefix_len)
-                .is_some_and(|n_prefix| n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN);
-            let child_suffix = derive_optimal_suffix_schedule(
+            let direct_child = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
                 SuffixState {
                     level: 1,
                     current_witness_len: output_witness_len,
                     current_lb: candidate_log_basis,
-                    incoming_setup_prefix: if recursion_threshold_met {
-                        natural_len
-                    } else {
-                        None
-                    },
+                    incoming_setup_prefix: None,
                 },
                 0,
             )?;
@@ -641,80 +654,162 @@ pub fn find_group_batch_schedule(
                 continue;
             };
 
-            let child_candidates = if recursion_threshold_met {
-                &child_suffix.best_fold_per_lb
-            } else {
-                &child_suffix.best_proof_fold_per_lb
-            };
-            for suffix_fold in child_candidates.values() {
-                let child_is_terminal = suffix_fold.folds.is_empty();
-                assert!(
-                    !(recursion_threshold_met && child_is_terminal),
-                    "recursive setup planning produced a terminal child suffix at level 1"
-                );
-                let suffix_fold = suffix_fold.clone();
-
-                let fold_candidate_params = candidate_params.clone();
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    challenge_field_bits,
-                    &fold_candidate_params,
-                    suffix_fold.first_fold_params.as_ref(),
-                    output_witness_len,
-                    Some(if child_is_terminal {
-                        akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                    } else {
-                        akita_types::NextWitnessBindingPolicy::OuterCommitment
-                    }),
-                )? + eor_bytes;
-                let total = root_proof_size + suffix_fold.total_bytes;
-                let first_direct_setup_field_len = if policy.recursive_setup_planning {
-                    Some(if recursion_threshold_met {
-                        suffix_fold.first_direct_setup_field_len
-                    } else {
-                        natural_len.expect(
-                            "recursive setup planning computes the root direct setup footprint",
-                        )
-                    })
-                } else {
-                    None
-                };
-                if best
-                    .as_ref()
-                    .is_none_or(|(best_setup_field_len, best_total, _, _)| {
-                        match (first_direct_setup_field_len, *best_setup_field_len) {
-                            (Some(setup_field_len), Some(best_setup_field_len)) => {
-                                (setup_field_len, total) < (best_setup_field_len, *best_total)
-                            }
-                            (None, None) => total < *best_total,
-                            _ => unreachable!("planner objective is fixed for one policy"),
+            let mut consider_children = |offloaded: bool,
+                                         child_candidates: &std::collections::BTreeMap<
+                u32,
+                crate::schedule_params::FoldSuffix,
+            >|
+             -> Result<(), AkitaError> {
+                for suffix_fold in child_candidates.values() {
+                    let child_is_terminal = suffix_fold.folds.is_empty();
+                    if offloaded {
+                        let Some(root_natural_len) = natural_len else {
+                            return Err(AkitaError::InvalidSetup(
+                                "offloaded root edge is missing its setup footprint".to_string(),
+                            ));
+                        };
+                        if child_is_terminal
+                            || suffix_fold.folds.len() == 1
+                            || suffix_fold.first_direct_setup_field_len >= root_natural_len
+                        {
+                            continue;
                         }
-                    })
-                {
-                    let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
-                    folds.push(CandidateFoldStep {
-                        params: fold_candidate_params,
-                        input_witness_len: root_input_witness_len,
+                    }
+                    let suffix_fold = suffix_fold.clone();
+                    let fold_candidate_params = candidate_params.clone();
+                    let root_direct_payload_bytes = level_proof_bytes(
+                        field_bits,
+                        challenge_field_bits,
+                        &fold_candidate_params,
+                        suffix_fold.first_fold_params.as_ref(),
                         output_witness_len,
-                        estimated_direct_payload_bytes: root_proof_size,
-                    });
-                    folds.extend(suffix_fold.folds.iter().cloned());
-                    best = Some((
-                        first_direct_setup_field_len,
-                        total,
-                        folds,
-                        suffix_fold.terminal.clone(),
-                    ));
+                        Some(if child_is_terminal {
+                            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                        } else {
+                            akita_types::NextWitnessBindingPolicy::OuterCommitment
+                        }),
+                    )?
+                    .checked_add(eor_bytes)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("root proof size overflow".to_string())
+                    })?;
+                    let root_stage3_payload_bytes = stage3_payload_bytes_for_successor(
+                        policy,
+                        suffix_fold.first_fold_params.as_ref(),
+                        output_witness_len,
+                    )?;
+                    if offloaded != (root_stage3_payload_bytes != 0) {
+                        return Err(AkitaError::InvalidSetup(
+                            "root setup edge topology disagrees with Stage-3 accounting"
+                                .to_string(),
+                        ));
+                    }
+                    let total = root_direct_payload_bytes
+                        .checked_add(root_stage3_payload_bytes)
+                        .and_then(|value| value.checked_add(suffix_fold.total_bytes))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("root proof size overflow".to_string())
+                        })?;
+                    let mut root_envelope = 1;
+                    akita_types::accumulate_matrix_envelope_for_level(
+                        &fold_candidate_params,
+                        &mut root_envelope,
+                    )?;
+                    let setup_envelope =
+                        root_envelope.max(suffix_fold.setup_envelope_ring_elements);
+                    if setup_envelope_budget.is_some_and(|budget| setup_envelope > budget) {
+                        continue;
+                    }
+                    let first_direct_setup_field_len =
+                        match (policy.recursive_setup_planning, offloaded, natural_len) {
+                            (false, _, _) => None,
+                            (true, true, _) => Some(suffix_fold.first_direct_setup_field_len),
+                            (true, false, Some(root_natural_len)) => Some(root_natural_len),
+                            (true, false, None) => {
+                                return Err(AkitaError::InvalidSetup(
+                                    "recursive root planning is missing its setup footprint"
+                                        .to_string(),
+                                ));
+                            }
+                        };
+                    let is_better = if let Some(best) = &best {
+                        match policy.selection_policy {
+                            crate::SelectionPolicyId::MinEstimatedProofPayload => {
+                                total < best.total_bytes
+                            }
+                            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
+                                let setup_field_len = first_direct_setup_field_len.ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "recursive candidate is missing its first direct setup footprint"
+                                            .to_string(),
+                                    )
+                                })?;
+                                let best_setup_field_len = best
+                                    .first_direct_setup_field_len
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "selected recursive candidate is missing its first direct setup footprint"
+                                                .to_string(),
+                                        )
+                                    })?;
+                                (setup_field_len, total)
+                                    < (best_setup_field_len, best.total_bytes)
+                            }
+                        }
+                    } else {
+                        true
+                    };
+                    if is_better {
+                        let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
+                        folds.push(CandidateFoldStep {
+                            params: fold_candidate_params,
+                            input_witness_len: root_input_witness_len,
+                            output_witness_len,
+                            estimated_direct_payload_bytes: root_direct_payload_bytes,
+                            estimated_stage3_payload_bytes: root_stage3_payload_bytes,
+                        });
+                        folds.extend(suffix_fold.folds.iter().cloned());
+                        best = Some(CandidateScheduleChoice {
+                            first_direct_setup_field_len,
+                            total_bytes: total,
+                            setup_envelope_ring_elements: setup_envelope,
+                            folds,
+                            terminal: suffix_fold.terminal.clone(),
+                        });
+                    }
                 }
+                Ok(())
+            };
+
+            consider_children(false, &direct_child.best_by_payload_per_lb)?;
+            if let Some(root_natural_len) = natural_len {
+                let offloaded_child = derive_optimal_suffix_schedule(
+                    &suffix_ctx,
+                    &mut memo,
+                    SuffixState {
+                        level: 1,
+                        current_witness_len: output_witness_len,
+                        current_lb: candidate_log_basis,
+                        incoming_setup_prefix: Some(root_natural_len),
+                    },
+                    0,
+                )?;
+                consider_children(true, &offloaded_child.best_by_first_direct_setup_per_lb)?;
             }
         }
     }
 
-    let Some((_, total_bytes, folds, terminal)) = best else {
+    let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no multi-group schedule with at least two folds for num_vars={}",
             key.final_group.num_vars()
         )));
     };
-    materialize_candidate_schedule(total_bytes, folds, terminal)
+    materialize_candidate_schedule(
+        best.total_bytes,
+        best.setup_envelope_ring_elements,
+        best.first_direct_setup_field_len,
+        best.folds,
+        best.terminal,
+    )
 }
