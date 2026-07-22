@@ -16,7 +16,7 @@ use akita_types::{
     OpeningClaimsLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
     SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, OnceLock};
 
 use super::slice_mle::compute_r_contribution;
 use super::validate_log_basis;
@@ -91,12 +91,6 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) log_basis: u32,
     pub(crate) eq_tau1: Arc<[F]>,
     pub(crate) flat_context: Option<FlatRelationContext>,
-    pub(crate) setup_plan_cache: Arc<Mutex<Option<CachedSetupContributionPlan<F>>>>,
-}
-
-pub(crate) struct CachedSetupContributionPlan<F: FieldCore> {
-    x_challenges: Vec<F>,
-    plan: SetupContributionPlan<F>,
 }
 
 #[derive(Clone)]
@@ -466,7 +460,6 @@ where
             opening_source_len: replay.opening_source_len,
             opening_ring_dim: replay.opening_ring_dim,
         }),
-        setup_plan_cache: Default::default(),
     })
 }
 
@@ -609,7 +602,6 @@ where
             opening_source_len,
             opening_ring_dim,
         }),
-        setup_plan_cache: Default::default(),
     })
 }
 
@@ -637,6 +629,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         setup: &AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
+        setup_plan_cell: &OnceLock<SetupContributionPlan<E>>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -658,8 +651,36 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     setup,
                     alpha,
                     setup_claim,
+                    setup_plan_cell,
                 )?);
         }
+        let prepared_point = prepared_relation_point::PreparedRelationPoint::new(
+            point,
+            alpha,
+            self.role_dims,
+            context.opening_ring_dim,
+            context.opening_source_len,
+        )?;
+        let setup_groups = self.setup_contribution_inputs();
+        let fold_gadget = shared_setup_fold_gadget::<F>(
+            &context.level_params,
+            &context.opening_batch,
+            &setup_groups,
+        );
+        let setup_plan = SetupContributionPlan::prepare::<F>(
+            &context.level_params,
+            &context.opening_batch,
+            self.eq_tau1.clone(),
+            &context.witness_layout,
+            context.opening_source_len,
+            &setup_groups,
+            prepared_point.address_point(),
+            fold_gadget.as_deref(),
+            self.role_dims,
+        )?;
+        setup_plan_cell.set(setup_plan).map_err(|_| {
+            AkitaError::InvalidSetup("stage-2 setup contribution plan captured twice".into())
+        })?;
         mixed_relation::evaluate_lane_factored_relation_at_point::<F, E>(
             self,
             point,
@@ -671,19 +692,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
 
     pub(crate) fn setup_contribution_inputs(&self) -> Vec<SetupContributionGroupInputs> {
         setup_contribution_group_inputs(&self.groups)
-    }
-
-    pub(crate) fn setup_contribution_fold_gadget<F>(&self) -> Result<Option<Vec<F>>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-    {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
-        Ok(shared_setup_fold_gadget(
-            &context.level_params,
-            &context.opening_batch,
-            &setup_groups,
-        ))
     }
 
     pub(crate) fn setup_contribution_plan<F>(
@@ -707,65 +715,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             x_challenges,
             fold_gadget,
             self.role_dims,
-        )
-    }
-
-    pub(crate) fn take_cached_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-    ) -> Result<Option<SetupContributionPlan<E>>, AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        let Some(cached) = cache.as_ref() else {
-            return Ok(None);
-        };
-        if cached.x_challenges.as_slice() != x_challenges {
-            return Ok(None);
-        }
-        Ok(cache.take().map(|cached| cached.plan))
-    }
-
-    fn cache_setup_contribution_plan(
-        &self,
-        x_challenges: &[E],
-        plan: SetupContributionPlan<E>,
-    ) -> Result<(), AkitaError> {
-        let mut cache = self.setup_plan_cache.lock().map_err(|_| {
-            AkitaError::InvalidSetup("setup contribution plan cache is poisoned".into())
-        })?;
-        *cache = Some(CachedSetupContributionPlan {
-            x_challenges: x_challenges.to_vec(),
-            plan,
-        });
-        Ok(())
-    }
-
-    pub(crate) fn setup_index_weight_evaluator<F>(
-        &self,
-        plan: &SetupContributionPlan<E>,
-        tau1: &[E],
-        x_challenges: &[E],
-        fold_gadget: &[F],
-        alpha: E,
-    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError>
-    where
-        F: FieldCore,
-        E: MulBase<F>,
-    {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
-        akita_types::SetupIndexWeightEvaluator::new::<F>(
-            plan,
-            &context.level_params,
-            &context.opening_batch,
-            &context.witness_layout,
-            context.opening_source_len,
-            &setup_groups,
-            tau1,
-            x_challenges,
-            fold_gadget,
-            alpha,
         )
     }
 
@@ -802,6 +751,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         setup: &AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
+        setup_plan_cell: &OnceLock<SetupContributionPlan<E>>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -814,6 +764,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             alpha,
             setup_claim,
             &alpha_pows_a,
+            setup_plan_cell,
         )
     }
 
@@ -825,6 +776,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         alpha: E,
         setup_claim: Option<E>,
         alpha_pows_a: &[E],
+        setup_plan_cell: &OnceLock<SetupContributionPlan<E>>,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -976,9 +928,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
-                    .group_column_eq_slices(group_index)
-                    .ok_or(AkitaError::InvalidProof)?;
+                let (e_eq_slice, t_eq_slice, z_slice) =
+                    setup_plan.materialize_group_eq_slices(group_index)?;
                 let (e_contribution, t_contribution) = {
                     let _span = tracing::info_span!("structured_group_et", group_index).entered();
                     evaluate_group_et_from_eq_slices::<F, E>(
@@ -987,8 +938,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         a_row_weights,
                         g_open_ext,
                         g_t_commit_ext,
-                        e_eq_slice,
-                        t_eq_slice,
+                        &e_eq_slice,
+                        &t_eq_slice,
                     )?
                 };
                 e_structured_contribution += e_contribution;
@@ -1044,7 +995,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             + z_structured_contribution
             + setup_contribution
             + r_contribution;
-        self.cache_setup_contribution_plan(x_challenges, setup_plan)?;
+        setup_plan_cell.set(setup_plan).map_err(|_| {
+            AkitaError::InvalidSetup("stage-2 setup contribution plan captured twice".into())
+        })?;
         Ok(relation_weight)
     }
 }

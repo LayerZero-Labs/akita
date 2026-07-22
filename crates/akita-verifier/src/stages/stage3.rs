@@ -1,7 +1,6 @@
 //! Verifier for the setup-product sumcheck — the verifier counterpart to the
 //! prover-side `AkitaStage3Prover`.
 
-use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
 use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 use akita_field::parallel::*;
@@ -14,7 +13,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
     AkitaVerifierSetup, BatchedStage3Geometry, CommittedGroupParams, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -26,7 +25,6 @@ use akita_types::{
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
-    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
     alpha_pows: Vec<E>,
     alpha: E,
     ring_bits: usize,
@@ -40,45 +38,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     /// Derives the setup evaluation plan (and thus the per-round shape) from
     /// the relation-matrix evaluation; must be called before
     /// [`verify_batched_stage3`](Self::verify_batched_stage3).
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new<F>(
-        relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
-        x_challenges: &[E],
-        tau1: &[E],
-        alpha: E,
-    ) -> Result<Self, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: ExtField<F>,
-    {
-        let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
-        let plan = relation_matrix_evaluator
-            .take_cached_setup_contribution_plan(x_challenges)?
-            .map_or_else(
-                || {
-                    relation_matrix_evaluator
-                        .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())
-                },
-                Ok,
-            )?;
+    pub(crate) fn new(plan: SetupContributionPlan<E>, alpha: E) -> Result<Self, AkitaError> {
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
-        let setup_index_weight_evaluator = fold_gadget
-            .as_deref()
-            .map(|fold_gadget| {
-                relation_matrix_evaluator.setup_index_weight_evaluator::<F>(
-                    &plan,
-                    tau1,
-                    x_challenges,
-                    fold_gadget,
-                    alpha,
-                )
-            })
-            .transpose()?;
 
         Ok(Self {
             plan,
-            setup_index_weight_evaluator,
             alpha_pows,
             alpha,
             ring_bits: geometry.ring_bits(),
@@ -250,17 +215,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             }
         };
         let setup_index_weight = {
-            let _span = tracing::info_span!(
-                "stage3_setup_index_weight_eval",
-                structured = self.setup_index_weight_evaluator.is_some()
-            )
-            .entered();
-            if let Some(evaluator) = &self.setup_index_weight_evaluator {
-                evaluator.evaluate(rho_setup_idx)?
-            } else {
-                self.plan
-                    .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
-            }
+            let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
+            self.plan
+                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = geometry.witness_lift_scale::<E>()?;

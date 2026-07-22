@@ -7,7 +7,6 @@ use akita_types::{
     CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 
-use super::evaluate_setup_contribution_direct;
 use crate::protocol::ring_switch::{
     FlatRelationContext, PreparedChallengeEvals, RelationMatrixEvaluator,
     RelationMatrixGroupEvaluator,
@@ -234,7 +233,6 @@ impl SetupContributionFixture {
                 opening_source_len,
                 opening_ring_dim: TEST_RING_DIM,
             }),
-            setup_plan_cache: Default::default(),
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
@@ -254,14 +252,18 @@ impl SetupContributionFixture {
     }
 
     fn compute_contribution(&self) -> TestField {
-        evaluate_setup_contribution_direct::<TestField, TestField, TEST_RING_DIM>(
-            &self.relation_matrix_evaluator,
-            &self.full_vec_randomness,
-            &self.alpha_pows,
-            &self.alpha_pows,
-            &self.alpha_pows,
-            &self.fold_gadget,
+        let plan = self
+            .relation_matrix_evaluator
+            .setup_contribution_plan::<TestField>(
+                &self.full_vec_randomness,
+                (!self.fold_gadget.is_empty()).then_some(self.fold_gadget.as_slice()),
+            )
+            .unwrap();
+        plan.evaluate_direct::<TestField>(
             &self.setup,
+            &self.alpha_pows,
+            &self.alpha_pows,
+            &self.alpha_pows,
         )
         .unwrap()
     }

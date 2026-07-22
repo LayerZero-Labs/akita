@@ -1,9 +1,9 @@
-use super::kernels::GroupSetupSegment;
 use crate::{
     CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout, SetupProjectionGeometry,
     WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
+use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
 
@@ -304,10 +304,13 @@ impl SetupContributionGroupInputs {
 }
 
 pub struct SetupContributionPlan<E: FieldCore> {
-    pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
+    pub(crate) groups: Vec<SetupContributionGroupPlan>,
+    pub(crate) eq_tau1: Arc<[E]>,
+    pub(crate) x_challenges: Arc<[E]>,
+    pub(crate) fold_gadget: Arc<[E]>,
+    pub(crate) d_row_start: usize,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
-    pub(crate) d_weights: Arc<[E]>,
     pub(crate) projection_geometry: SetupProjectionGeometry,
     pub(crate) eq_window: OffsetEqWindow<E>,
 }
@@ -319,37 +322,92 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self.eq_window
     }
 
-    /// Prepared D/B/A column equality slices for the group at `index` in plan
-    /// (witness relation) order.
-    ///
-    /// The D-role slice is laid out `(claim, block, opening_digit)`, the B-role
-    /// slice `(claim, block, A_row, opening_digit)`, and the A-role slice
-    /// `(position, commit_digit)` after contraction over units and fold digits.
-    /// The direct ring-switch verifier reuses all three instead of evaluating
-    /// the same opening equality addresses a second time.
-    #[must_use]
-    pub fn group_column_eq_slices(&self, index: usize) -> Option<(&[E], &[E], &[E])> {
-        self.groups.get(index).map(|group| {
-            (
-                group.e_eq_slice.as_slice(),
-                group.t_eq_slice.as_slice(),
-                group.z_eq_slice.as_slice(),
-            )
-        })
+    #[allow(clippy::type_complexity)]
+    pub fn materialize_group_eq_slices(
+        &self,
+        index: usize,
+    ) -> Result<(Vec<E>, Vec<E>, Vec<E>), AkitaError> {
+        let group = self.groups.get(index).ok_or(AkitaError::InvalidProof)?;
+        let e = cfg_into_iter!(0..group.d_col_range.len())
+            .map(|column| group.d_eq_at(column, &self.eq_window))
+            .collect::<Result<Vec<_>, _>>()?;
+        let t = cfg_into_iter!(0..group.t_cols)
+            .map(|column| group.b_eq_at(column, &self.eq_window))
+            .collect::<Result<Vec<_>, _>>()?;
+        let z = cfg_into_iter!(0..group.z_cols)
+            .map(|column| group.a_eq_at(column, &self.eq_window, &self.fold_gadget))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok((e, t, z))
     }
 }
 
-pub(crate) struct SetupContributionGroupPlan<E> {
+#[derive(Clone)]
+pub(crate) struct SetupContributionGroupPlan {
+    pub(crate) depth_fold: usize,
+    pub(crate) a_row_start: usize,
+    pub(crate) b_row_start: usize,
     pub(crate) d_col_range: Range<usize>,
     pub(crate) t_cols: usize,
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
-    pub(crate) required: usize,
-    pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
-    pub(crate) a_row_weights: Arc<[E]>,
-    pub(crate) b_weights: Arc<[E]>,
-    pub(crate) e_eq_slice: Vec<E>,
-    pub(crate) t_eq_slice: Vec<E>,
-    pub(crate) z_eq_slice: Vec<E>,
+    pub(crate) d_spans: Vec<(usize, usize, usize)>,
+    pub(crate) b_spans: Vec<(usize, usize, usize)>,
+    pub(crate) a_spans: Vec<(usize, usize, usize, usize)>,
+}
+
+impl SetupContributionGroupPlan {
+    pub(crate) fn d_eq_at<E: FieldCore>(
+        &self,
+        column: usize,
+        eq_window: &OffsetEqWindow<E>,
+    ) -> Result<E, AkitaError> {
+        if column >= self.d_col_range.len() {
+            return Err(AkitaError::InvalidProof);
+        }
+        for &(setup_start, witness_start, len) in &self.d_spans {
+            if column >= setup_start && column < setup_start + len {
+                return Ok(eq_window.eval(witness_start + column - setup_start));
+            }
+        }
+        Ok(E::zero())
+    }
+
+    pub(crate) fn b_eq_at<E: FieldCore>(
+        &self,
+        column: usize,
+        eq_window: &OffsetEqWindow<E>,
+    ) -> Result<E, AkitaError> {
+        if column >= self.t_cols {
+            return Err(AkitaError::InvalidProof);
+        }
+        for &(setup_start, witness_start, len) in &self.b_spans {
+            if column >= setup_start && column < setup_start + len {
+                return Ok(eq_window.eval(witness_start + column - setup_start));
+            }
+        }
+        Ok(E::zero())
+    }
+
+    pub(crate) fn a_eq_at<E: FieldCore>(
+        &self,
+        column: usize,
+        eq_window: &OffsetEqWindow<E>,
+        fold_gadget: &[E],
+    ) -> Result<E, AkitaError> {
+        if column >= self.z_cols {
+            return Err(AkitaError::InvalidProof);
+        }
+        let mut weight = E::zero();
+        for &(setup_start, witness_start, len, fold_digit) in &self.a_spans {
+            if column >= setup_start && column < setup_start + len {
+                let offset = column - setup_start;
+                let fold = *fold_gadget
+                    .get(fold_digit)
+                    .ok_or(AkitaError::InvalidProof)?;
+                weight -= eq_window.eval(witness_start + offset * self.depth_fold) * fold;
+            }
+        }
+        Ok(weight)
+    }
 }

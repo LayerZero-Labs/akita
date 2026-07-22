@@ -5,8 +5,6 @@
 //! resulting setup contribution. Internally, the shape is:
 //!
 //! - `prepare`: static and challenge-dependent plan construction.
-//! - `segments`: the packed D/B/A partition used by the specialized
-//!   single-group direct scanner.
 //! - `setup_index_weight`: the setup-index weight polynomial used by the
 //!   recursive stage-3 setup-product sumcheck.
 //! - `scan`: direct verifier evaluation of the setup matrix. Multi-group scans
@@ -18,10 +16,10 @@
 //! segment hot loop; a multi-group evaluation fuses overlapping group views into
 //! one base-dimension scan.
 
+#[allow(dead_code, unused_macros)]
 mod kernels;
 mod prepare;
 mod scan;
-mod segments;
 mod setup_index_weight;
 #[cfg(test)]
 mod test_oracle;
@@ -32,18 +30,12 @@ pub(crate) use types::{get_d_col_range, get_total_d, validate_setup_inputs};
 pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
-use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
 use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
-use crate::layout::{CommitmentRingDims, CommittedGroupParams, RingMatrixView};
+use crate::layout::{CommitmentRingDims, CommittedGroupParams};
 use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, WitnessLayout};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
-#[cfg(test)]
-use kernels::evaluate_weighted_setup_row;
-use kernels::{
-    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
-    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
-};
+use kernels::{role_projection, RoleProjection};

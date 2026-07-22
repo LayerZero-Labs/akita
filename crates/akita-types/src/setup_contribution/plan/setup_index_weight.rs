@@ -1,5 +1,5 @@
 use super::*;
-use akita_algebra::offset_eq::OffsetEqWindow;
+use akita_algebra::offset_eq::eval_compact_pair_eq;
 use akita_algebra::ring::scalar_powers;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -47,21 +47,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: rho_setup_idx.len(),
             });
         }
-        let scales = self.projection_scales(alpha);
-        // Share one bounded equality window across every packed setup position
-        // instead of recomputing a full-width equality product per index, and
-        // evaluate the (independent) per-position terms in parallel. This is the
-        // fallback used at the root level when groups do not share a fold gadget
-        // (e.g. multi-group with precommitted singletons), and it was the
-        // dominant recursive-mode verifier cost there.
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        let eq_window = OffsetEqWindow::new(rho_setup_idx)?;
-        let terms = cfg_into_iter!(0..geometry.required())
-            .map(|setup_idx| -> Result<E, AkitaError> {
-                Ok(eq_window.eval(setup_idx) * self.setup_index_weight_at(setup_idx, &scales)?)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(terms.into_iter().fold(E::zero(), |acc, value| acc + value))
+        let scales = self.projection_scales(alpha);
+        let mut acc = E::zero();
+        for group in &self.groups {
+            acc += self.evaluate_d_spans_at_point(group, rho_setup_idx, &scales[2])?;
+            acc += self.evaluate_b_spans_at_point(group, rho_setup_idx, &scales[1])?;
+            acc += self.evaluate_a_spans_at_point(group, rho_setup_idx, &scales[0])?;
+        }
+        Ok(acc)
     }
 
     fn projection_scales(&self, alpha: E) -> [Vec<E>; 3] {
@@ -102,9 +96,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
+                    let local_col = d_col
+                        .checked_sub(group.d_col_range.start)
+                        .ok_or(AkitaError::InvalidProof)?;
                     weight += scales[2][setup_idx % geometry.d_ratio()]
-                        * self.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.d_col_range.start];
+                        * self.eq_tau1[self.d_row_start + d_row]
+                        * group.d_eq_at(local_col, &self.eq_window)?;
                 }
             }
 
@@ -117,8 +114,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let b_col = b_idx % group.t_cols;
                 let b_row = b_idx / group.t_cols;
                 weight += scales[1][setup_idx % geometry.b_ratio()]
-                    * group.b_weights[b_row]
-                    * group.t_eq_slice[b_col];
+                    * self.eq_tau1[group.b_row_start + b_row]
+                    * group.b_eq_at(b_col, &self.eq_window)?;
             }
 
             let a_idx = setup_idx / geometry.a_ratio();
@@ -130,10 +127,161 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
                 weight += scales[0][setup_idx % geometry.a_ratio()]
-                    * group.a_row_weights[a_row]
-                    * group.z_eq_slice[a_col];
+                    * self.eq_tau1[group.a_row_start + a_row]
+                    * group.a_eq_at(a_col, &self.eq_window, &self.fold_gadget)?;
             }
         }
         Ok(weight)
     }
+
+    fn evaluate_d_spans_at_point(
+        &self,
+        group: &SetupContributionGroupPlan,
+        rho_setup_idx: &[E],
+        scales: &[E],
+    ) -> Result<E, AkitaError> {
+        if self.d_rows == 0 || self.d_physical_cols == 0 {
+            return Ok(E::zero());
+        }
+        let mut acc = E::zero();
+        for &(setup_start, witness_start, len) in &group.d_spans {
+            let setup_col = group
+                .d_col_range
+                .start
+                .checked_add(setup_start)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
+            for row in 0..self.d_rows {
+                let row_weight = *self
+                    .eq_tau1
+                    .get(self.d_row_start + row)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (lane, &scale) in scales.iter().enumerate() {
+                    let setup_index = projected_setup_offset(
+                        self.projection_geometry.d_ratio(),
+                        self.d_physical_cols,
+                        row,
+                        setup_col,
+                        lane,
+                    )?;
+                    let pair = eval_compact_pair_eq(
+                        rho_setup_idx,
+                        setup_index,
+                        self.projection_geometry.d_ratio(),
+                        &self.x_challenges,
+                        witness_start,
+                        1,
+                        len,
+                    )?;
+                    acc += row_weight * scale * pair;
+                }
+            }
+        }
+        Ok(acc)
+    }
+
+    fn evaluate_b_spans_at_point(
+        &self,
+        group: &SetupContributionGroupPlan,
+        rho_setup_idx: &[E],
+        scales: &[E],
+    ) -> Result<E, AkitaError> {
+        if group.n_b == 0 {
+            return Ok(E::zero());
+        }
+        let mut acc = E::zero();
+        for &(setup_start, witness_start, len) in &group.b_spans {
+            for row in 0..group.n_b {
+                let row_weight = *self
+                    .eq_tau1
+                    .get(group.b_row_start + row)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (lane, &scale) in scales.iter().enumerate() {
+                    let setup_index = projected_setup_offset(
+                        self.projection_geometry.b_ratio(),
+                        group.t_cols,
+                        row,
+                        setup_start,
+                        lane,
+                    )?;
+                    let pair = eval_compact_pair_eq(
+                        rho_setup_idx,
+                        setup_index,
+                        self.projection_geometry.b_ratio(),
+                        &self.x_challenges,
+                        witness_start,
+                        1,
+                        len,
+                    )?;
+                    acc += row_weight * scale * pair;
+                }
+            }
+        }
+        Ok(acc)
+    }
+
+    fn evaluate_a_spans_at_point(
+        &self,
+        group: &SetupContributionGroupPlan,
+        rho_setup_idx: &[E],
+        scales: &[E],
+    ) -> Result<E, AkitaError> {
+        if group.n_a == 0 {
+            return Ok(E::zero());
+        }
+        let mut acc = E::zero();
+        for &(setup_start, witness_start, len, fold_digit) in &group.a_spans {
+            let fold = *self
+                .fold_gadget
+                .get(fold_digit)
+                .ok_or(AkitaError::InvalidProof)?;
+            for row in 0..group.n_a {
+                let row_weight = *self
+                    .eq_tau1
+                    .get(group.a_row_start + row)
+                    .ok_or(AkitaError::InvalidProof)?;
+                for (lane, &scale) in scales.iter().enumerate() {
+                    let setup_index = projected_setup_offset(
+                        self.projection_geometry.a_ratio(),
+                        group.z_cols,
+                        row,
+                        setup_start,
+                        lane,
+                    )?;
+                    let pair = eval_compact_pair_eq(
+                        rho_setup_idx,
+                        setup_index,
+                        self.projection_geometry.a_ratio(),
+                        &self.x_challenges,
+                        witness_start,
+                        group.depth_fold,
+                        len,
+                    )?;
+                    acc -= row_weight * scale * fold * pair;
+                }
+            }
+        }
+        Ok(acc)
+    }
+}
+
+fn projected_setup_offset(
+    ratio: usize,
+    width: usize,
+    row: usize,
+    column: usize,
+    lane: usize,
+) -> Result<usize, AkitaError> {
+    if column >= width || lane >= ratio {
+        return Err(AkitaError::InvalidSetup(
+            "setup projected address out of range".into(),
+        ));
+    }
+    let logical = width
+        .checked_mul(row)
+        .and_then(|base| base.checked_add(column))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup role index overflow".into()))?;
+    ratio
+        .checked_mul(logical)
+        .and_then(|base| base.checked_add(lane))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup base index overflow".into()))
 }

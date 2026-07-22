@@ -1,7 +1,9 @@
 //! Shared per-fold verifier replay (EOR, stage-1/2/3, ring switch).
 
 use super::*;
-use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
+use akita_types::{
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, SetupContributionPlan,
+};
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -357,7 +359,7 @@ fn verify_stage2<F, E, T>(
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<(Vec<E>, SetupContributionPlan<E>), AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
@@ -395,7 +397,7 @@ fn verify_stage2_kernel<F, E, T, const D: usize>(
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
-) -> Result<Vec<E>, AkitaError>
+) -> Result<(Vec<E>, SetupContributionPlan<E>), AkitaError>
 where
     F: FieldCore + CanonicalField + HalvingField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
@@ -424,8 +426,9 @@ where
             sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
         })?
     };
+    let setup_plan = stage2_verifier.into_setup_plan()?;
     transcript.absorb_and_record_serde(ABSORB_STAGE2_NEXT_W_EVAL, &stage2.next_w_eval());
-    Ok(sumcheck_challenges)
+    Ok((sumcheck_challenges, setup_plan))
 }
 
 fn verify_stage3<F, E, T>(
@@ -433,6 +436,7 @@ fn verify_stage3<F, E, T>(
     transcript: &mut T,
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
+    setup_plan: SetupContributionPlan<E>,
     stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &CommittedGroupParams)>,
 ) -> Result<Option<FoldVerifyOutput<E>>, AkitaError>
@@ -451,21 +455,8 @@ where
                 actual: sumcheck_challenges.len(),
             });
         }
-        let setup_coefficient_bits = rs
-            .relation_matrix_evaluator
-            .role_dims
-            .d_a()
-            .trailing_zeros() as usize;
-        let setup_x_challenges = sumcheck_challenges
-            .get(setup_coefficient_bits..)
-            .ok_or(AkitaError::InvalidProof)?;
         let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-        let verifier = SetupSumcheckVerifier::new::<F>(
-            &rs.relation_matrix_evaluator,
-            setup_x_challenges,
-            &rs.tau1,
-            rs.alpha,
-        )?;
+        let verifier = SetupSumcheckVerifier::new(setup_plan, rs.alpha)?;
         let (rho_w, rho_setup) = verifier.verify_batched_stage3::<F, T>(
             setup,
             next_fold_level_params,
@@ -678,7 +669,7 @@ where
     drop(trace_preparation_span);
     let evaluation_trace_opening_claim = evaluation_trace_weight * prepared.evaluation_trace_claim;
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
-    let sumcheck_challenges = verify_stage2::<F, E, T>(
+    let (sumcheck_challenges, setup_plan) = verify_stage2::<F, E, T>(
         transcript,
         setup,
         stage2,
@@ -701,6 +692,7 @@ where
         transcript,
         &rs,
         &sumcheck_challenges,
+        setup_plan,
         stage2_next_w_eval,
         stage3,
     )?;

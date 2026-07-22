@@ -23,21 +23,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
             validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
-        let (d_rows, d_physical_cols, d_weights) = {
+        let (d_row_start, d_rows, d_physical_cols) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
             let d_rows = level_params.open_commit_matrix.output_rank();
             let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
                 AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
             })?;
             let d_physical_cols = get_total_d(level_params, opening_batch, groups)?;
-            let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
-                Vec::new().into()
-            } else {
-                checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?
-                    .to_vec()
-                    .into()
-            };
-            (d_rows, d_physical_cols, d_weights)
+            checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?;
+            (d_row_start, d_rows, d_physical_cols)
         };
         // Build the bounded equality window once and share it across every E/T/Z
         // column weight. Each canonical column address then costs one bounded
@@ -49,7 +43,33 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let _span = tracing::info_span!("setup_prepare_eq_window").entered();
             akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?
         };
-        let mut dynamic_groups = groups
+        let max_depth_fold = groups
+            .iter()
+            .map(|group| group.depth_fold)
+            .max()
+            .ok_or_else(|| AkitaError::InvalidSetup("setup groups are empty".into()))?;
+        let fold_gadget_storage;
+        let fold_gadget = if let Some(fold_gadget) = fold_gadget {
+            if fold_gadget.len() < max_depth_fold {
+                return Err(AkitaError::InvalidSize {
+                    expected: max_depth_fold,
+                    actual: fold_gadget.len(),
+                });
+            }
+            fold_gadget
+        } else {
+            let log_basis_open = groups[0].log_basis_open(level_params, opening_batch)?;
+            fold_gadget_storage = crate::gadget_row_scalars::<F>(max_depth_fold, log_basis_open);
+            &fold_gadget_storage
+        };
+        let fold_gadget: std::sync::Arc<[E]> = fold_gadget
+            .iter()
+            .copied()
+            .map(|fold| E::one().mul_base(fold))
+            .collect::<Vec<_>>()
+            .into();
+
+        let dynamic_groups = groups
             .iter()
             .map(|group| {
                 let geometry_span =
@@ -61,7 +81,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let depth_witness = group.depth_witness(level_params, opening_batch)?;
                 let depth_commit = group.depth_commit(level_params, opening_batch)?;
                 let depth_open = group.depth_open(level_params, opening_batch)?;
-                let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
                 let n_a = group.n_a(level_params, opening_batch)?;
                 let n_b = group.n_b(level_params, opening_batch)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
@@ -74,86 +93,121 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let z_cols = num_positions_per_block
                     .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let a_row_weights: std::sync::Arc<[E]> =
-                    checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
-                        .to_vec()
-                        .into();
-                let b_weights: std::sync::Arc<[E]> =
-                    checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
-                        .to_vec()
-                        .into();
-                drop(geometry_span);
-                let e_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_e_weights").entered();
-                    setup_e_col_weights::<E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_live_blocks,
-                        group.num_claims,
-                        depth_open,
-                        &eq_window,
-                    )?
-                };
-                let t_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_t_weights").entered();
-                    setup_t_col_weights::<E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_live_blocks,
-                        depth_commit,
-                        n_a,
-                        group.num_claims,
-                        &eq_window,
-                    )?
-                };
-                let fold_gadget_storage;
-                let fold_gadget = if let Some(fold_gadget) = fold_gadget {
-                    if fold_gadget.len() < group.depth_fold {
-                        return Err(AkitaError::InvalidSize {
-                            expected: group.depth_fold,
-                            actual: fold_gadget.len(),
-                        });
-                    }
-                    fold_gadget
-                } else {
-                    fold_gadget_storage =
-                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
-                    &fold_gadget_storage
-                };
-                let z_range = num_positions_per_block
-                    .checked_mul(depth_witness)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let mut z_eq_slice = vec![E::zero(); z_range];
-                {
-                    let _span = tracing::info_span!("setup_prepare_z_weights").entered();
-                    setup_z_col_weights::<F, E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_positions_per_block,
-                        depth_witness,
-                        group.depth_fold,
-                        &eq_window,
-                        fold_gadget,
-                        &mut z_eq_slice,
-                    )?;
+                checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?;
+                checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?;
+                if fold_gadget.len() < group.depth_fold {
+                    return Err(AkitaError::InvalidSize {
+                        expected: group.depth_fold,
+                        actual: fold_gadget.len(),
+                    });
                 }
+                let mut d_spans = Vec::new();
+                let mut b_spans = Vec::new();
+                let mut a_spans = Vec::new();
+                for unit in witness_layout.units_for_group(group.group_id)? {
+                    for claim in 0..group.num_claims {
+                        let d_setup_start = claim
+                            .checked_mul(num_live_blocks)
+                            .and_then(|base| base.checked_add(unit.global_block_start()))
+                            .and_then(|base| base.checked_mul(depth_open))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("setup D address overflow".into())
+                            })?;
+                        let d_witness_start = unit.e_index(
+                            group.num_claims,
+                            depth_open,
+                            claim,
+                            unit.global_block_start(),
+                            0,
+                        )?;
+                        let d_len =
+                            unit.num_live_blocks()
+                                .checked_mul(depth_open)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup("setup D span overflow".into())
+                                })?;
+                        validate_opening_span(
+                            opening_source_len,
+                            d_witness_start,
+                            d_len,
+                            1,
+                            "witness D address overflow",
+                        )?;
+                        validate_role_span(
+                            d_col_range.len(),
+                            d_setup_start,
+                            d_len,
+                            "setup D span overflow",
+                        )?;
+                        d_spans.push((d_setup_start, d_witness_start, d_len));
+
+                        let b_setup_start = claim
+                            .checked_mul(num_live_blocks)
+                            .and_then(|base| base.checked_add(unit.global_block_start()))
+                            .and_then(|base| base.checked_mul(n_a))
+                            .and_then(|base| base.checked_mul(depth_commit))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("setup B address overflow".into())
+                            })?;
+                        let b_witness_start = unit.t_index(
+                            group.num_claims,
+                            n_a,
+                            depth_commit,
+                            claim,
+                            unit.global_block_start(),
+                            0,
+                            0,
+                        )?;
+                        let b_len = unit
+                            .num_live_blocks()
+                            .checked_mul(n_a)
+                            .and_then(|len| len.checked_mul(depth_commit))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("setup B span overflow".into())
+                            })?;
+                        validate_opening_span(
+                            opening_source_len,
+                            b_witness_start,
+                            b_len,
+                            1,
+                            "witness B address overflow",
+                        )?;
+                        validate_role_span(t_cols, b_setup_start, b_len, "setup B span overflow")?;
+                        b_spans.push((b_setup_start, b_witness_start, b_len));
+                    }
+                    for fold_digit in 0..group.depth_fold {
+                        let a_witness_start = unit.z_index(
+                            num_positions_per_block,
+                            depth_witness,
+                            group.depth_fold,
+                            0,
+                            0,
+                            fold_digit,
+                        )?;
+                        validate_opening_span(
+                            opening_source_len,
+                            a_witness_start,
+                            z_cols,
+                            group.depth_fold,
+                            "witness A address overflow",
+                        )?;
+                        a_spans.push((0, a_witness_start, z_cols, fold_digit));
+                    }
+                }
+                drop(geometry_span);
 
                 Ok(SetupContributionGroupPlan {
+                    depth_fold: group.depth_fold,
+                    a_row_start: group.a_row_start,
+                    b_row_start: group.b_row_start,
                     d_col_range,
                     t_cols,
                     z_cols,
                     n_a,
                     n_b,
-                    required: 0,
-                    segments: Vec::new().into(),
-                    a_row_weights,
-                    b_weights,
-                    e_eq_slice,
-                    t_eq_slice,
-                    z_eq_slice,
+                    d_spans,
+                    b_spans,
+                    a_spans,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -179,21 +233,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_physical_cols,
             &projection_groups,
         )?;
-        for group in &mut dynamic_groups {
-            group.refresh_segments(
-                &d_weights,
-                d_rows,
-                d_physical_cols,
-                projection_geometry.a_ratio(),
-                projection_geometry.b_ratio(),
-                projection_geometry.d_ratio(),
-            )?;
-        }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
+            eq_tau1,
+            x_challenges: full_vec_randomness.to_vec().into(),
+            fold_gadget,
+            d_row_start,
             d_rows,
             d_physical_cols,
-            d_weights,
             projection_geometry,
             eq_window,
         })
@@ -210,6 +257,39 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
         self.projection_geometry
     }
+}
+
+fn validate_opening_span(
+    opening_source_len: usize,
+    base: usize,
+    len: usize,
+    stride: usize,
+    context: &'static str,
+) -> Result<(), AkitaError> {
+    if len == 0 {
+        return Ok(());
+    }
+    let max_address = stride
+        .checked_mul(len - 1)
+        .and_then(|delta| base.checked_add(delta))
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
+    crate::checked_opening_source_index(opening_source_len, max_address)?;
+    Ok(())
+}
+
+fn validate_role_span(
+    role_len: usize,
+    start: usize,
+    len: usize,
+    context: &'static str,
+) -> Result<(), AkitaError> {
+    let end = start
+        .checked_add(len)
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
+    if end > role_len {
+        return Err(AkitaError::InvalidSetup(context.into()));
+    }
+    Ok(())
 }
 
 fn validate_static_inputs<E: FieldCore>(

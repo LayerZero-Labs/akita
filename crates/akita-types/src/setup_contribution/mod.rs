@@ -13,18 +13,19 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
 mod plan;
-mod setup_index_weight_evaluator;
+#[cfg(test)]
+#[allow(dead_code)]
 mod weights;
 
 #[cfg(test)]
 mod tests;
 
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
+#[cfg(test)]
 pub(crate) use plan::get_d_col_range;
 #[cfg(test)]
 pub(crate) use plan::validate_setup_inputs;
 pub use plan::{SetupContributionGroupInputs, SetupContributionPlan};
-pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///

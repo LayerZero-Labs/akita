@@ -135,7 +135,7 @@ pub use schedule::{
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,
+    SetupContributionPlan, SetupProjectionGeometry,
 };
 pub use sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,
