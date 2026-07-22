@@ -141,6 +141,632 @@ The implementation MUST NOT remove the guard by replacing `log2(d_a)` with
 the A, B, and D setup weights have different native coefficient boundaries, so
 one Stage 3 slice cannot represent every role projection.
 
+## Prerequisite: optimize the current Stage 3 first
+
+The two-stage relocation MUST NOT begin from an unnecessarily dense Stage 3.
+The first implementation milestone is an optimization-only milestone. It keeps
+the current protocol equations, proof fields, stage placement, and transcript
+unchanged:
+
+```text
+Stage 1: current range tree
+Stage 2: current relation + evaluation trace + range-image refold
+Stage 3: setup product + linear Stage-2 witness-claim reduction
+```
+
+This milestone has two independent prover optimizations:
+
+1. a two-pass prefix/suffix prover for the **linear Stage 3 witness claim**;
+2. a rectangular prefix/suffix setup-product prover that preserves the setup
+   source in the base field and exploits the exact alpha/setup-index
+   factorization.
+
+It also evaluates one independent optimization of the current Stage 2:
+
+3. compile relation and evaluation-trace weights at the checked common
+   coefficient boundary, while retaining the current nonlinear range-image
+   sum-check and its two-round compact prefix.
+
+The witness optimization MUST NOT change the Stage 2 range-image term. The
+setup-product optimization MUST NOT be implemented by parameterizing the
+witness reducer: the two terms have different transparent weights, source
+representations, and profitable variable splits.
+
+The Stage 2 optimization MUST NOT move relation or evaluation trace into Stage
+1, move setup product into Stage 2, change the Stage 2 claim, or change the
+transcript. Those changes belong to the later two-stage protocol cutover.
+
+### Current setup-product algorithm
+
+Let
+
+```text
+d0 = min(d_a, d_b, d_d)
+L  = next_power_of_two(required common-base setup rows)
+N  = L * d0.
+```
+
+For common setup-row index `i` and coefficient index `j`, the claim is
+
+```text
+sigma_setup = sum_i sum_j Setup[i,j] * H[i] * A[j],
+A[j]         = alpha^j.
+```
+
+`build_setup_product_term` currently:
+
+1. prepares one `SetupContributionPlan`;
+2. materializes `H[0..L]` in the extension field;
+3. materializes `A[0..d0]`;
+4. copies and lifts all `N` base-field setup coefficients into an
+   extension-field table; and
+5. gives the three dense arrays to `FactoredProductTerm`.
+
+The current algorithm is therefore algebraically factored but not
+storage-factored. Its peak owned state is approximately
+
+```text
+N extension elements for Setup
++ L extension elements for H
++ d0 extension elements for A.
+```
+
+PR #318's `SetupIndexWeightEvaluator` evaluates `H~(rho_idx)` succinctly at
+the terminal point. It does not currently provide round messages for the
+prover and MUST NOT be described as a prover-side factorization.
+
+### Exact setup-weight factorization
+
+For role `R in {A,B,D}`, write `d_R = q_R d0`. A native role coefficient
+index decomposes as `k = lane * d0 + j`, hence
+
+```text
+alpha^k = alpha^(lane*d0) * alpha^j.
+```
+
+The common coefficient factor is exactly
+
+```text
+A[j] = alpha^j, 0 <= j < d0.
+```
+
+The remaining role-lane scale `alpha^(lane*d0)` belongs in `H[i]`. With the
+current packed layout, one group's index factor is the sum
+
+```text
+H_g[i] = H_D,g[i] + H_B,g[i] + H_A,g[i],
+```
+
+where, on each role's active projected footprint,
+
+```text
+H_D,g[i] = tau_D[row_D(i)] * alpha^(lane_D(i)*d0) * E_g[col_D(i)]
+H_B,g[i] = tau_B[row_B(i)] * alpha^(lane_B(i)*d0) * T_g[col_B(i)]
+H_A,g[i] = tau_A[row_A(i)] * alpha^(lane_A(i)*d0) * Z_g[col_A(i)].
+```
+
+Overlapping A/B/D and group footprints add their weights because the matrices
+are prefix views of the same setup. Zero padding has weight zero. These
+formulas are the single semantic definition; dense materialization, a
+round-message factorization, and the verifier's terminal evaluator MUST be
+differentially equal to them.
+
+### Setup-product implementation candidates
+
+The implementation MUST measure the following candidates against the same
+complete Stage 3 and end-to-end profiles.
+
+#### Candidate S0: current dense baseline
+
+Lift `N` setup coefficients once and run the existing dense factored product.
+This remains the differential and performance baseline until a replacement
+passes all gates.
+
+#### Candidate S1: delayed common-coefficient prefix
+
+Keep setup coefficients in `F`. Order the `log2(d0)` common coefficient
+variables before the setup-index variables. Delay `k` coefficient rounds by
+rescanning the base setup source, then materialize only the table remaining
+after those challenges:
+
+```text
+owned setup state = N / 2^k extension elements.
+```
+
+The first implementation SHOULD test `k = 2`, which is the direct analogue of
+the existing compact witness prefix, and `k = log2(d0)`, which materializes one
+alpha-evaluated setup value per common row. The latter costs one source scan per
+coefficient round but reduces the subsequent dense table to `L` elements.
+
+The implementation MUST report source passes, base-to-extension lifts,
+extension multiplications, allocation bytes, and peak RSS. It MUST NOT select
+`k` from an unpriced runtime heuristic.
+
+#### Candidate S2: rectangular prefix/suffix setup-product prover
+
+The existing rectangular factorization is sufficient for a two-pass
+prefix/suffix prover. It does not require a balanced split, and it does not
+require another factorization of `H`.
+
+Use the setup-index variables as the prefix and the common coefficient
+variables as the suffix. The first pass over the base-field setup source forms
+
+```text
+Q[i] = sum_j A[j] * Setup[i,j].
+```
+
+The prefix rounds prove
+
+```text
+sum_i H[i] * Q[i].
+```
+
+`Q` and `H` MUST remain separate multilinear factors. The prover MUST NOT fold
+their pointwise product as one multilinear table.
+
+After the sampled setup-index point `a` is known, the second pass over the
+base-field setup source forms
+
+```text
+Setup_a[j] = sum_i eq(a,i) * Setup[i,j].
+```
+
+The suffix rounds prove
+
+```text
+H(a) * sum_j A[j] * Setup_a[j].
+```
+
+The target owned extension-field state is
+
+```text
+L + d0
+```
+
+rather than `L * d0`. This candidate remains useful when the rectangle is
+unbalanced. A square-root split is not a requirement; the relevant condition
+is `L + d0 << L * d0`.
+
+Both setup passes MUST read `F` coefficients directly. The implementation MUST
+use `MulBase<F>` or `MulBaseUnreduced<F>` and MUST NOT lift the setup prefix into
+an `E` table. Delayed product accumulation MUST reduce only at an explicitly
+bounded, backend-safe boundary.
+
+#### Candidate S3: bounded-rank split inside the setup-index weight
+
+Splitting the setup-index variables themselves is permitted only if the
+`L`-element state in S2 remains a measured bottleneck and `H` is exposed as an
+exact bounded-rank prefix/suffix decomposition
+
+```text
+H(u,v) = sum_{t < T} P_t(u) * Q_t(v).
+```
+
+For a balanced split of the setup-index variables, phase 1 forms
+
+```text
+R_t[u] = sum_v Setup_alpha[u,v] * Q_t(v),
+```
+
+and proves
+
+```text
+sum_u sum_t P_t(u) * R_t(u)
+```
+
+while retaining `P_t` and `R_t` as separate multilinear factors. It MUST NOT
+fold their pointwise product as one multilinear table. After prefix challenges
+`a`, phase 2 makes one more setup-source pass to form
+
+```text
+Setup_alpha,a[v] = sum_u eq(a,u) * Setup_alpha[u,v]
+H_a[v]           = sum_t P_t(a) * Q_t(v),
+```
+
+then proves the suffix rounds as an ordinary degree-2 product sum-check.
+
+The current A/B/D weights are tensor products on aligned role rectangles, but
+physical offsets, partial spans, and the A-role fold-digit sum introduce carry
+states. The decomposition MAY reuse the finite carry states already embodied
+by `eval_compact_pair_eq`; it MUST state and enforce an explicit rank/work
+bound. Calling the final-point evaluator once per round is not this
+decomposition and is forbidden.
+
+S3 is retained only if its `T * sqrt(L)` state and repeated setup scans improve
+the complete prover over the best S0/S1/S2 candidate. No permanent runtime
+selector or losing implementation remains after selection.
+
+### Current linear witness claim
+
+The current Stage 3 witness term is exactly
+
+```text
+C_w = W~(r_old) = sum_x eq(r_old, x) * W(x).
+```
+
+The source is a compact signed-digit array. The current implementation delays
+two rounds and then materializes an extension-field table of size `N_w / 4`.
+The replacement MUST use the two-pass square-root algorithm from Jolt's
+`RegistersClaimReductionSumcheckProver`, adapted to Akita's checked LSB-first
+opening layout and verifier error contract.
+
+### Two-pass witness prefix/suffix algorithm
+
+Let `n = log2(N_w)`, choose
+
+```text
+p = floor(n / 2),
+s = n - p,
+x = u + 2^p v,
+r_old = (r_u, r_v),
+```
+
+with `u` occupying the first `p` LSB-first sum-check variables. The split MUST
+be derived from the checked opening domain, including zero padding; it MUST NOT
+be inferred from the live compact length.
+
+#### Pass 1 and prefix rounds
+
+Build
+
+```text
+Q[u] = sum_v small_mul(eq(r_v, v), W[u,v]).
+```
+
+This is one complete streaming pass over the compact witness. The prefix claim
+is
+
+```text
+C_w = sum_u eq(r_u, u) * Q[u].
+```
+
+The prover stores `Q` and an implicit equality factor `(r_u, scale=1)`; it does
+not need to materialize the equality table. It answers `p` degree-2 rounds by
+folding `Q` and the equality factor low-to-high. Let the sampled prefix point
+be `a`.
+
+#### Pass 2 and suffix rounds
+
+Make a second complete witness pass and build
+
+```text
+W_a[v] = sum_u small_mul(eq(a, u), W[u,v]).
+```
+
+After the prefix rounds, the claim is
+
+```text
+eq(r_u, a) * sum_v eq(r_v, v) * W_a[v].
+```
+
+The suffix state is therefore:
+
+```text
+table          = W_a[0..2^s]
+equality point = r_v
+equality scale = eq(r_u, a).
+```
+
+The prover answers the remaining `s` degree-2 rounds using the ordinary
+equality-times-table kernel. At suffix point `b`, the verifier checks
+
+```text
+eq(r_old, (a,b)) * W~(a,b).
+```
+
+The output opening is the genuine witness opening `W~(a,b)`.
+
+#### Witness complexity and invariants
+
+The target costs are:
+
+```text
+compact witness passes: exactly 2
+extension state:        O(2^p + 2^s) = O(sqrt(N_w))
+sum-check degree:       2
+proof bytes:            unchanged
+transcript:             unchanged
+```
+
+Temporary equality tables used while building either state count toward peak
+memory. `small_mul(weight, digit)` is mathematical notation for multiplying an
+extension-field equality weight by one compact signed digit. It MUST NOT lift
+or materialize the digit as an extension-field element, and it MUST NOT execute
+a general extension-field multiplication.
+
+The Stage 3 witness reducer accepts only the protocol's supported log bases
+`2..=6`; the wider representational capacity of `i8` is not protocol support.
+For accepted log basis `ell`, every digit MUST be validated against the exact
+asymmetric balanced interval
+
+```text
+[-2^(ell-1), 2^(ell-1) - 1].
+```
+
+The generic contraction kernel MUST accumulate
+
+```text
+positive += weight.mul_u64_unreduced(abs(digit))  when digit > 0
+negative += weight.mul_u64_unreduced(abs(digit))  when digit < 0
+```
+
+and call `reduce_signed_accum(positive, negative)` once per output. Before the
+kernel starts, the implementation MUST check that
+
+```text
+contraction_len * observed_max_abs_digit <= 2^64 - 1,
+```
+
+which is the conservative addition headroom of the narrow accumulators used by
+the native field backends.
+
+Log basis 2 admits exactly `{-2, -1, 0, 1}`. The first, column-oriented source
+pass uses a dedicated four-way kernel. For each equality weight it computes
+`unit = weight.mul_u64_unreduced(1)` once and applies:
+
+```text
+-2 => negative += unit; negative += unit
+-1 => negative += unit
+ 0 => no operation
+ 1 => positive += unit
+```
+
+The output tile is a physical kernel choice, not proof geometry. The pinned
+eight-thread A/B benchmark selects four adjacent outputs independently for both
+LB2 passes. This bounds the live state to four positive and four negative
+accumulators while reusing one `unit` across four compact digits. Against the
+generic 32-output kernel, LB2 tile 4 reduced the column contraction by about
+51% on dense digits and 30% on sparse digits, and reduced the row contraction
+by about 16% and 12%, respectively. Log bases 3 through 6 retain the generic
+32-output kernel; this slice does not add an unpriced density-based selector.
+
+Both source-pass Perfetto spans MUST record the selected kernel, log basis,
+certified digit bound, and observed digit bound. Implementations MUST preserve
+the canonical padded zeros and checked physical-to-opening address map.
+
+This algorithm is specific to the linear Stage 3 claim. It MUST NOT replace or
+reinterpret the nonlinear range-image refold in Stage 2.
+
+## Optimization-only Stage 2 relation and evaluation trace
+
+This milestone optimizes the current fused Stage 2 without changing its
+statement. Stage 2 continues to prove the existing batched identity containing:
+
+```text
+range image + relation + evaluation trace.
+```
+
+The nonlinear range-image term retains its current compact signed-digit source,
+two-round initial batch, transcript order, and folded suffix. Only the linear
+relation and evaluation-trace contractions change representation.
+
+### Common coefficient split
+
+Let
+
+```text
+C = common relation witness coefficient count
+K = padded relation-lane capacity.
+```
+
+The flat witness is indexed as `W[lane, coefficient]` with
+`0 <= coefficient < C`. The split is the same checked split used by
+`RelationRangeImagePlan`; implementations MUST NOT derive another coefficient
+boundary.
+
+The current production configurations usually have `C = 64`. The algorithm is
+generic over every checked power-of-two `C`.
+
+### Relation prefix/suffix factorization
+
+The relation weight already factors exactly as
+
+```text
+RelationWeight(lane, coefficient)
+    = M[lane] * A[coefficient],
+A[coefficient]
+    = alpha^coefficient.
+```
+
+During the initial compact-witness scan, form
+
+```text
+Q_relation[coefficient]
+    = sum_lane W[lane, coefficient] * M[lane].
+```
+
+The coefficient rounds prove
+
+```text
+sum_coefficient Q_relation[coefficient] * A[coefficient].
+```
+
+`Q_relation` and `A` MUST remain separate multilinear factors. Folding their
+pointwise product would prove the multilinear extension of the Boolean
+pointwise product, not the required product of their multilinear extensions.
+
+After the coefficient challenges `a`, the relation lane weight is
+
+```text
+A(a) * M[lane].
+```
+
+### Exact evaluation-trace rank at the common split
+
+For trace group `g`, let its source ring dimension be
+
+```text
+D_g = q_g * C.
+```
+
+Checked trace preparation MUST require `D_g` to be divisible by `C`, and every
+physical trace support interval MUST be aligned to `C`. An incompatible trace
+MUST be rejected rather than sent through a dense fallback.
+
+Split the group's inner trace into `q_g` common-coordinate factors:
+
+```text
+I_g,h[c] = inner_trace_g[h * C + c],
+0 <= h < q_g.
+```
+
+Compile claim coefficients, chunk placement, block weights, opening-digit
+weights, and overlapping support into sparse lane factors `F_g,h[lane]`. The
+complete trace weight is exactly
+
+```text
+TraceWeight(lane, c)
+    = sum_g sum_h F_g,h[lane] * I_g,h[c].
+```
+
+The algebraic trace rank is therefore bounded by
+
+```text
+T <= sum_g D_g / C.
+```
+
+Claims, chunks, blocks, and opening digits enlarge or overlap the sparse lane
+factors. They MUST NOT be counted as new coefficient-rank terms when they share
+the same group inner trace. In the uniform `D_g = C = 64` case, each group
+contributes at most one rank-one term.
+
+The factorization MUST be compiled from the semantic group trace parameters.
+It MUST NOT infer rank from the current expanded prepared-lane-term count,
+which can duplicate one inner trace across several claims.
+
+During the initial compact-witness scan, form
+
+```text
+Q_trace[g,h,c]
+    = sum_lane W[lane,c] * F_g,h[lane].
+```
+
+The coefficient rounds prove
+
+```text
+sum_g sum_h sum_c Q_trace[g,h,c] * I_g,h[c].
+```
+
+The target trace prefix state has
+
+```text
+C * T <= sum_g D_g
+```
+
+extension-field elements.
+
+At coefficient point `a`, evaluate each short coefficient factor once and form
+
+```text
+TraceWeight_a(lane)
+    = sum_g sum_h I_g,h(a) * F_g,h[lane].
+```
+
+### Reuse the range-image folded suffix
+
+The prefix/suffix linear terms MUST NOT trigger a second compact-witness scan.
+The nonlinear range-image prover already folds the same witness through every
+coefficient challenge. At the coefficient/lane boundary, its retained table is
+exactly
+
+```text
+W_a[lane] = sum_c eq(a,c) * W[lane,c].
+```
+
+The lane-round linear weight is therefore
+
+```text
+A(a) * M[lane] + TraceWeight_a(lane).
+```
+
+The lane rounds SHOULD fuse this linear weight with the existing range-image
+scan over `W_a`. No second witness table or second lane scan is required.
+
+### One specialized initial scan
+
+The candidate implementation SHOULD read each compact witness digit once and
+perform three logically separate accumulations:
+
+```text
+initial compact i8 scan
+    range image: build the current two-round nonlinear batch
+    relation:    build Q_relation
+    trace:       build Q_trace
+```
+
+The implementation MAY use one physical loop, but the three arithmetic kernels
+MUST retain separate types and independently testable oracles. A generic
+expression engine is out of scope.
+
+### Source-specialized arithmetic
+
+The setup source and witness source require different arithmetic.
+
+For setup coefficients in `F` and transparent weights in `E`, implementations
+MUST use extension-times-base operations:
+
+```text
+MulBase<F>
+MulBaseUnreduced<F>
+```
+
+They MUST NOT materialize setup coefficients in `E` solely to call a generic
+extension multiplication.
+
+For compact witness digits, implementations MUST preserve the `i8` source and
+use extension-times-small-signed-integer accumulation. Positive and negative
+products MUST use separate delayed accumulators and reduce at a checked safe
+boundary. Implementations MUST NOT lift every digit into `E`.
+
+For log basis 2, the exact balanced digit set is
+
+```text
+{-2, -1, 0, 1}.
+```
+
+The implementation SHOULD measure a dedicated four-way kernel against the
+generic small-scalar kernel. The `-2` case MUST use a canonical exact
+small-scalar operation or reduced field addition; it MUST NOT synthesize an
+unreduced multiple through an unaudited accumulator recurrence.
+
+For log bases 3 through 6, the implementation MUST measure at least:
+
+1. direct `mul_u64_unreduced(abs(digit))` accumulation; and
+2. reduced per-weight multiple tables when the same weight is reused across a
+   complete coefficient row.
+
+The retained implementation MAY specialize by certified or observed digit
+range only when the selection is transcript-independent, fully priced, and
+covered by the same dense differential oracle. Losing kernels and temporary
+runtime selectors MUST be removed after selection.
+
+### Required measurement
+
+The current fused two-round implementation remains the A baseline. The
+factorized-prefix implementation is the B candidate. Both MUST run the same
+complete Stage 2 and end-to-end profiles.
+
+Perfetto output MUST separately attribute at least:
+
+```text
+stage2_initial_compact_scan
+stage2_range_image_prefix_build
+stage2_relation_prefix_build
+stage2_trace_prefix_build
+stage2_range_image_coefficient_round
+stage2_linear_coefficient_round
+stage2_lane_round
+```
+
+Every profile MUST record `log_basis`, observed digit bounds, `C`, live lane
+count, trace rank, nonzero trace-lane terms, source passes, allocation bytes,
+and peak RSS where available.
+
+The B candidate is retained only if complete Stage 2 or end-to-end proving
+improves without exceeding the existing verifier, proof-size, transcript, or
+memory guardrails. The optimization milestone MUST NOT move any sum-check to a
+different stage.
+
 ## Shared geometry
 
 Let:
@@ -381,7 +1007,48 @@ exist for those combinations.
 
 ## Implementation sequence
 
-### Slice 1: checked equations and proof topology
+### Slice 0A: optimize the current linear witness carry
+
+- Replace only the current dense/delayed-prefix Stage 3 witness carry with the
+  two-pass prefix/suffix state machine above.
+- Add round-by-round differential tests against the existing dense witness
+  term, including uneven variable splits, padding, and malformed layouts.
+- Require exactly two source-pass spans in the profiling trace.
+- Preserve proof bytes, transcript labels, Stage 2, and the setup-product term.
+
+### Slice 0B: optimize the current setup product
+
+- Introduce a base-field setup source view; do not lift the complete setup
+  prefix eagerly.
+- Retain S0 as the dense differential and performance baseline.
+- Implement and measure S1 with `k=2` and `k=log2(d0)`.
+- Implement S2 directly from the existing `H[i] * A[j]` rectangular
+  factorization, with exactly two base-field setup-source passes.
+- Add dense-versus-factorized round-polynomial and terminal-point parity for
+  uniform and mixed `(128,64,32)` roles.
+- Implement S3 only if S2's `L`-element state remains a measured bottleneck
+  and the internal setup-index rank and work bound are explicit in code and
+  tests.
+- Keep one measured winner and delete losing kernels and selectors.
+
+### Slice 0C: optimize current Stage 2 linear terms
+
+- Compile the exact relation factorization at the checked common coefficient
+  count `C`.
+- Compile evaluation trace into at most `sum_g D_g / C` coefficient-rank
+  terms, merging claims, chunks, blocks, and digits into sparse lane factors.
+- Extend the existing initial compact-witness scan to build the range-image
+  two-round batch, `Q_relation`, and `Q_trace`.
+- Keep the nonlinear range-image state machine unchanged.
+- Reuse its coefficient-folded witness at the lane boundary; do not make a
+  second compact-witness pass.
+- Differentially compare every round polynomial and terminal evaluation with
+  the current fused Stage 2.
+- Run the required Perfetto A/B matrix across log bases 2 through 6, uniform and
+  mixed role dimensions, and representative trace ranks.
+- Preserve current proof bytes, transcript labels, claims, and stage placement.
+
+### Slice 1: checked two-stage equations and proof topology
 
 - Add dense-oracle tests for the offloaded Stage 1 and Stage 2 equations.
 - Record the exact proof variants, claims, points, and transcript order needed
@@ -399,8 +1066,10 @@ exist for those combinations.
 
 ### Slice 3: offloaded Stage 2
 
-- Reuse the current range-image/witness machinery for claim reduction.
-- Reuse the setup product table and structured setup-weight evaluator.
+- Reuse the current nonlinear range-image/witness machinery for claim
+  reduction without changing its equation.
+- Reuse the selected setup-product prover from Slice 0B and the structured
+  setup-weight evaluator.
 - Batch both terms over one padded cube.
 - Return the two projected openings directly to suffix state.
 
@@ -469,5 +1138,9 @@ temporary usability limitation.
 - `specs/batched-stage3-setup-opening.md`
 - `specs/setup-layout-repack.md`
 - `book/src/how/proving/sumcheck-stages.md`
+- Jolt legacy reference implementation:
+  `crates/jolt-prover-legacy/src/zkvm/claim_reductions/registers.rs`
+  in the sibling Jolt repository; only its linear two-pass witness reduction is
+  a reference for this spec.
 - Akita paper, “Verifier offloading,” especially “Protocol placement: the
   two-stage form”

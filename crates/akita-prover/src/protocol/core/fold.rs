@@ -889,7 +889,11 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + FromPrimitiveInt
+        + LiftBase<F>
+        + AkitaSerialize
+        + akita_field::unreduced::HasUnreducedOps,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
