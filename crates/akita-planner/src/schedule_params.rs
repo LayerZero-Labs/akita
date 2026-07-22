@@ -31,8 +31,6 @@ use akita_types::{
 
 use crate::PlannerPolicy;
 
-const NO_STAGE3_PAYLOAD_BYTES: usize = usize::MIN;
-
 mod candidate;
 mod suffix_dp;
 
@@ -81,7 +79,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
     output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
-        return Ok(NO_STAGE3_PAYLOAD_BYTES);
+        return Ok(0);
     };
     let n_prefix = prefix.n_prefix()?;
     if prefix.d_setup == 0 || !n_prefix.is_multiple_of(prefix.d_setup) {
