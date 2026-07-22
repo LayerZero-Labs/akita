@@ -173,11 +173,11 @@ mod tests {
             slots.len()
         );
 
-        let mut slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+        let mut slot_envelope = SetupMatrixEnvelope::minimum();
         for slot in &slots {
             let n_prefix = slot.n_prefix().expect("n_prefix");
             assert!(n_prefix >= slot.natural_len);
-            let mut one_slot_envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+            let mut one_slot_envelope = SetupMatrixEnvelope::minimum();
             inflate_envelope_for_setup_prefix_slot(&mut one_slot_envelope, slot, slot.d_setup)
                 .expect("inflate one slot");
             assert!(
