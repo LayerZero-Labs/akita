@@ -13,6 +13,9 @@ pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::DigitRangeProver;
 pub use relation_range_image::RelationRangeImageProver;
 
+#[cfg(test)]
+mod two_stage_offload_tests;
+
 // --- Shared helpers ------------------------------------------------------
 
 use akita_field::FieldCore;
