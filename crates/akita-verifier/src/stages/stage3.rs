@@ -234,21 +234,33 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         // directly at `rho_setup_idx` instead of building a dense equality
         // table for that factor.
         let eq_y = ring_eq_table::<E, D>(rho_y)?;
-        let setup_val = match setup_prefix_eval {
-            Some(value) => value,
-            None => setup_mle_at_eq_tables::<F, E, D>(
-                &setup.expanded,
-                required,
-                setup_eval_len,
-                rho_setup_idx,
-                &eq_y,
-            )?,
+        let setup_val = {
+            let _span =
+                tracing::info_span!("stage3_setup_prefix", cached = setup_prefix_eval.is_some())
+                    .entered();
+            match setup_prefix_eval {
+                Some(value) => value,
+                None => setup_mle_at_eq_tables::<F, E, D>(
+                    &setup.expanded,
+                    required,
+                    setup_eval_len,
+                    rho_setup_idx,
+                    &eq_y,
+                )?,
+            }
         };
-        let setup_index_weight = if let Some(evaluator) = &self.setup_index_weight_evaluator {
-            evaluator.evaluate(rho_setup_idx)?
-        } else {
-            self.plan
-                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
+        let setup_index_weight = {
+            let _span = tracing::info_span!(
+                "stage3_setup_index_weight_eval",
+                structured = self.setup_index_weight_evaluator.is_some()
+            )
+            .entered();
+            if let Some(evaluator) = &self.setup_index_weight_evaluator {
+                evaluator.evaluate(rho_setup_idx)?
+            } else {
+                self.plan
+                    .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
+            }
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let witness_scale = geometry.witness_lift_scale::<E>()?;

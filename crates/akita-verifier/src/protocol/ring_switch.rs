@@ -909,10 +909,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         // relation equality weights, so stage 2 can reuse them even when the
         // setup matrix contribution itself is supplied as a recursive claim.
         let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
-        let setup_plan = self.setup_contribution_plan::<F>(
-            x_challenges,
-            (!fold_gadget.is_empty()).then_some(fold_gadget),
-        )?;
+        let setup_plan = {
+            let _span = tracing::info_span!("setup_contribution_plan").entered();
+            self.setup_contribution_plan::<F>(
+                x_challenges,
+                (!fold_gadget.is_empty()).then_some(fold_gadget),
+            )?
+        };
 
         {
             let _span = tracing::info_span!("structured_chunks").entered();
@@ -976,15 +979,18 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                 let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
                     .group_column_eq_slices(group_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                let (e_contribution, t_contribution) = evaluate_group_et_from_eq_slices::<F, E>(
-                    group,
-                    consistency_weight,
-                    a_row_weights,
-                    g_open_ext,
-                    g_t_commit_ext,
-                    e_eq_slice,
-                    t_eq_slice,
-                )?;
+                let (e_contribution, t_contribution) = {
+                    let _span = tracing::info_span!("structured_group_et", group_index).entered();
+                    evaluate_group_et_from_eq_slices::<F, E>(
+                        group,
+                        consistency_weight,
+                        a_row_weights,
+                        g_open_ext,
+                        g_t_commit_ext,
+                        e_eq_slice,
+                        t_eq_slice,
+                    )?
+                };
                 e_structured_contribution += e_contribution;
                 t_structured_contribution += t_contribution;
 
