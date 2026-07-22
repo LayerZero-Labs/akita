@@ -18,9 +18,9 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
-    optimize_fold_challenge_shape, CandidateFoldStep, CandidateTerminalResponse,
-    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
+    derive_optimal_suffix_schedule, find_schedule, find_schedule_prioritizing_first_direct_setup,
+    materialize_candidate_schedule, optimize_fold_challenge_shape, CandidateFoldStep,
+    CandidateTerminalResponse, RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -470,8 +470,17 @@ pub fn find_group_batch_schedule(
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
+        let prioritize_first_direct_setup = policy.recursive_setup_planning;
         let mut scalar_policy = *policy;
         scalar_policy.recursive_setup_planning = false;
+        if prioritize_first_direct_setup {
+            return find_schedule_prioritizing_first_direct_setup(
+                key.final_group,
+                &scalar_policy,
+                ring_challenge_config,
+                fold_challenge_shape_at_level,
+            );
+        }
         return find_schedule(
             key.final_group,
             &scalar_policy,
@@ -489,7 +498,12 @@ pub fn find_group_batch_schedule(
     let fold_shape_at_level = &fold_challenge_shape_at_level;
     let field_bits = policy.decomposition.field_bits();
     let challenge_field_bits = field_bits * policy.chal_ext_degree as u32;
-    let mut best: Option<(usize, Vec<CandidateFoldStep>, CandidateTerminalResponse)> = None;
+    let mut best: Option<(
+        Option<usize>,
+        usize,
+        Vec<CandidateFoldStep>,
+        CandidateTerminalResponse,
+    )> = None;
 
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -594,18 +608,26 @@ pub fn find_group_batch_schedule(
                 continue;
             }
 
-            let natural_len = active_setup_field_len(&candidate_params, &opening_batch)?;
-            let n_prefix = padded_setup_prefix_len(natural_len);
-            let recursion_threshold_met =
-                policy.recursive_setup_planning && n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN;
-            let child_suffix_no_prefix = derive_optimal_suffix_schedule(
+            let natural_len = if policy.recursive_setup_planning {
+                Some(active_setup_field_len(&candidate_params, &opening_batch)?)
+            } else {
+                None
+            };
+            let recursion_threshold_met = natural_len
+                .map(padded_setup_prefix_len)
+                .is_some_and(|n_prefix| n_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN);
+            let child_suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
                 SuffixState {
                     level: 1,
                     current_witness_len: output_witness_len,
                     current_lb: candidate_log_basis,
-                    incoming_setup_prefix: None,
+                    incoming_setup_prefix: if recursion_threshold_met {
+                        natural_len
+                    } else {
+                        None
+                    },
                 },
                 0,
             )?;
@@ -619,43 +641,18 @@ pub fn find_group_batch_schedule(
                 continue;
             };
 
-            for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
+            let child_candidates = if recursion_threshold_met {
+                &child_suffix.best_fold_per_lb
+            } else {
+                &child_suffix.best_proof_fold_per_lb
+            };
+            for suffix_fold in child_candidates.values() {
                 let child_is_terminal = suffix_fold.folds.is_empty();
-                let suffix_fold = if child_is_terminal {
-                    suffix_fold.clone()
-                } else if recursion_threshold_met {
-                    let prefixed_child_suffix = derive_optimal_suffix_schedule(
-                        &suffix_ctx,
-                        &mut memo,
-                        SuffixState {
-                            level: 1,
-                            current_witness_len: output_witness_len,
-                            current_lb: candidate_log_basis,
-                            incoming_setup_prefix: Some(natural_len),
-                        },
-                        0,
-                    )?;
-                    let child_lb = suffix_fold
-                        .first_fold_params
-                        .as_ref()
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "nonterminal suffix has no first fold".to_string(),
-                            )
-                        })?
-                        .log_basis_open;
-                    let Some(prefixed_suffix_fold) =
-                        prefixed_child_suffix.best_fold_per_lb.get(&child_lb)
-                    else {
-                        continue;
-                    };
-                    if prefixed_suffix_fold.folds.is_empty() {
-                        continue;
-                    }
-                    prefixed_suffix_fold.clone()
-                } else {
-                    suffix_fold.clone()
-                };
+                assert!(
+                    !(recursion_threshold_met && child_is_terminal),
+                    "recursive setup planning produced a terminal child suffix at level 1"
+                );
+                let suffix_fold = suffix_fold.clone();
 
                 let fold_candidate_params = candidate_params.clone();
                 let root_proof_size = level_proof_bytes(
@@ -671,9 +668,28 @@ pub fn find_group_batch_schedule(
                     }),
                 )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
+                let first_direct_setup_field_len = if policy.recursive_setup_planning {
+                    Some(if recursion_threshold_met {
+                        suffix_fold.first_direct_setup_field_len
+                    } else {
+                        natural_len.expect(
+                            "recursive setup planning computes the root direct setup footprint",
+                        )
+                    })
+                } else {
+                    None
+                };
                 if best
                     .as_ref()
-                    .is_none_or(|(best_total, _, _)| total < *best_total)
+                    .is_none_or(|(best_setup_field_len, best_total, _, _)| {
+                        match (first_direct_setup_field_len, *best_setup_field_len) {
+                            (Some(setup_field_len), Some(best_setup_field_len)) => {
+                                (setup_field_len, total) < (best_setup_field_len, *best_total)
+                            }
+                            (None, None) => total < *best_total,
+                            _ => unreachable!("planner objective is fixed for one policy"),
+                        }
+                    })
                 {
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(CandidateFoldStep {
@@ -683,13 +699,18 @@ pub fn find_group_batch_schedule(
                         estimated_direct_payload_bytes: root_proof_size,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
-                    best = Some((total, folds, suffix_fold.terminal.clone()));
+                    best = Some((
+                        first_direct_setup_field_len,
+                        total,
+                        folds,
+                        suffix_fold.terminal.clone(),
+                    ));
                 }
             }
         }
     }
 
-    let Some((total_bytes, folds, terminal)) = best else {
+    let Some((_, total_bytes, folds, terminal)) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no multi-group schedule with at least two folds for num_vars={}",
             key.final_group.num_vars()

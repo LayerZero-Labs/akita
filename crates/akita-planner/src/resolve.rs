@@ -15,10 +15,11 @@ use akita_types::{
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::find_group_batch_schedule;
-use crate::find_schedule;
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
-use crate::schedule_params::validate_policy_witness_chunk;
+use crate::schedule_params::{
+    find_schedule_prioritizing_first_direct_setup, validate_policy_witness_chunk,
+};
 use crate::PlannerPolicy;
 
 /// Resolve the runtime [`FoldSchedule`] using an explicit optional catalog.
@@ -78,7 +79,7 @@ pub fn resolve_group_batch_schedule(
     if scalar_recursive_key {
         let mut scalar_policy = *policy;
         scalar_policy.recursive_setup_planning = false;
-        let planned = find_schedule(
+        let planned = find_schedule_prioritizing_first_direct_setup(
             key.final_group,
             &scalar_policy,
             ring_challenge_config,

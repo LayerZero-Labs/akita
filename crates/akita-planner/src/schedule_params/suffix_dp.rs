@@ -22,6 +22,7 @@ use super::{
 #[derive(Clone)]
 pub(crate) struct FoldSuffix {
     pub(crate) total_bytes: usize,
+    pub(crate) first_direct_setup_field_len: usize,
     pub(crate) first_fold_params: Option<CommittedGroupParams>,
     pub(crate) folds: Vec<CandidateFoldStep>,
     pub(crate) terminal: CandidateTerminalResponse,
@@ -35,9 +36,13 @@ pub(crate) struct FoldSuffix {
 ///   `log_basis`. An entry with no ordinary folds terminates directly on the
 ///   current witness; otherwise it consumes `incoming_setup_prefix` when one
 ///   is present.
+/// - `best_proof_fold_per_lb` — best fold-first schedule per first-fold
+///   `log_basis` after an earlier direct fold has already fixed the setup-size
+///   objective, so only proof bytes matter for the remaining suffix.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
     pub(crate) best_fold_per_lb: BTreeMap<u32, FoldSuffix>,
+    pub(crate) best_proof_fold_per_lb: BTreeMap<u32, FoldSuffix>,
 }
 
 impl SuffixResult {
@@ -141,6 +146,40 @@ pub(crate) fn terminal_direct_suffix_cost(
 
 pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), SuffixResult>;
 
+type CandidateSuffixChoice = (
+    usize,
+    usize,
+    Vec<CandidateFoldStep>,
+    CandidateTerminalResponse,
+);
+
+fn update_best_suffix_choices(
+    first_direct_setup_field_len: usize,
+    total_bytes: usize,
+    folds: Vec<CandidateFoldStep>,
+    terminal: CandidateTerminalResponse,
+    best_by_setup: &mut Option<CandidateSuffixChoice>,
+    best_by_proof: &mut Option<CandidateSuffixChoice>,
+) {
+    let candidate = (first_direct_setup_field_len, total_bytes, folds, terminal);
+    if best_by_setup
+        .as_ref()
+        .map(|(best_setup, best_total, _, _)| {
+            (first_direct_setup_field_len, total_bytes) < (*best_setup, *best_total)
+        })
+        .unwrap_or(true)
+    {
+        *best_by_setup = Some(candidate.clone());
+    }
+    if best_by_proof
+        .as_ref()
+        .map(|(_, best_total, _, _)| total_bytes < *best_total)
+        .unwrap_or(true)
+    {
+        *best_by_proof = Some(candidate);
+    }
+}
+
 /// DP-invariant inputs for the suffix search.
 ///
 /// `policy`, `ring_challenge_cfg`, and `num_vars` are constant across the whole
@@ -182,10 +221,9 @@ impl SuffixState {
 /// At each state, `best_fold_per_lb` keeps one candidate per `log_basis` (from
 /// [`derive_candidate_level_params`]). A candidate may terminate on the current
 /// witness when there is no incoming setup prefix, or fold again and consume
-/// `incoming_setup_prefix` when present. Fold-again edges always plan the child
-/// without an incoming prefix first, then mark the current fold `Recursive` only
-/// when the prefix threshold is met, the child suffix is nonterminal, and a
-/// compatible prefixed child exists.
+/// `incoming_setup_prefix` when present. Fold-again edges plan exactly one child
+/// state: recursive setup edges pass the outgoing setup prefix to the child,
+/// while direct edges plan the ordinary no-prefix child.
 pub(crate) fn derive_optimal_suffix_schedule(
     ctx: &SuffixCtx<'_>,
     memo: &mut ScheduleMemo,
@@ -220,12 +258,14 @@ pub(crate) fn derive_optimal_suffix_schedule(
     if depth > MAX_RECURSION_DEPTH {
         let result = SuffixResult {
             best_fold_per_lb: BTreeMap::new(),
+            best_proof_fold_per_lb: BTreeMap::new(),
         };
         memo.insert(memo_key, result.clone());
         return Ok(result);
     }
 
     let mut best_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
+    let mut best_proof_fold_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
     let (configured_min_log_basis, max_log_basis) = policy.basis_range;
     let min_log_basis = configured_min_log_basis
         .max(policy.decomposition.log_basis)
@@ -260,23 +300,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         };
 
-        let mut best_for_this_lb: Option<(
-            usize,
-            Vec<CandidateFoldStep>,
-            CandidateTerminalResponse,
-        )> = None;
-        let try_update = |total: usize,
-                          folds: Vec<CandidateFoldStep>,
-                          terminal: CandidateTerminalResponse,
-                          slot: &mut Option<(
-            usize,
-            Vec<CandidateFoldStep>,
-            CandidateTerminalResponse,
-        )>| {
-            if slot.as_ref().map(|(c, _, _)| total < *c).unwrap_or(true) {
-                *slot = Some((total, folds, terminal));
-            }
-        };
+        let mut best_for_this_lb: Option<CandidateSuffixChoice> = None;
+        let mut best_proof_for_this_lb: Option<CandidateSuffixChoice> = None;
 
         let current_opening_layout =
             suffix_opening_layout(current_witness_len, incoming_setup_prefix)?;
@@ -307,62 +332,47 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     })?;
                 let total = level_proof_size + suffix_cost;
                 direct_step.estimated_direct_payload_bytes = level_proof_size;
-                try_update(total, Vec::new(), direct_step, &mut best_for_this_lb);
+                update_best_suffix_choices(
+                    natural_len,
+                    total,
+                    Vec::new(),
+                    direct_step,
+                    &mut best_for_this_lb,
+                    &mut best_proof_for_this_lb,
+                );
             }
         }
 
-        let child_suffix_no_prefix = derive_optimal_suffix_schedule(
+        let child_suffix = derive_optimal_suffix_schedule(
             ctx,
             memo,
             SuffixState {
                 level: level + 1,
                 current_witness_len: next_witness_len,
                 current_lb: lb,
-                incoming_setup_prefix: None,
+                incoming_setup_prefix: recursion_threshold_met.then_some(natural_len),
             },
             depth + 1,
         )?;
-        // Branch B: suffix is a Fold at level+1. Plan the child without an
-        // incoming prefix first, then classify the edge from the child's
-        // topology: terminal children stay direct; nonterminal children recurse
-        // only when the prefix threshold is met and a compatible prefixed child
-        // exists.
-        for suffix_fold in child_suffix_no_prefix.best_fold_per_lb.values() {
+        // Branch B: suffix is a Fold at level+1. Recursive setup edges inherit
+        // the child's first direct setup size; direct edges fix it here and use
+        // the proof-optimal child suffix.
+        let objective_child_folds = if recursion_threshold_met {
+            &child_suffix.best_fold_per_lb
+        } else {
+            &child_suffix.best_proof_fold_per_lb
+        };
+        for suffix_fold in objective_child_folds.values() {
             let child_is_terminal = suffix_fold.folds.is_empty();
-            let suffix_fold = if child_is_terminal {
-                suffix_fold.clone()
-            } else if recursion_threshold_met {
-                let prefixed_child_suffix = derive_optimal_suffix_schedule(
-                    ctx,
-                    memo,
-                    SuffixState {
-                        level: level + 1,
-                        current_witness_len: next_witness_len,
-                        current_lb: lb,
-                        incoming_setup_prefix: Some(natural_len),
-                    },
-                    depth + 1,
-                )?;
-                let child_lb = suffix_fold
-                    .first_fold_params
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("nonterminal suffix has no first fold".to_string())
-                    })?
-                    .log_basis_open;
-                let Some(prefixed_suffix_fold) =
-                    prefixed_child_suffix.best_fold_per_lb.get(&child_lb)
-                else {
-                    continue;
-                };
-                if prefixed_suffix_fold.folds.len() == 1 {
-                    continue;
-                }
-                prefixed_suffix_fold.clone()
-            } else {
-                suffix_fold.clone()
-            };
-
+            assert!(
+                !(recursion_threshold_met && child_is_terminal),
+                "recursive setup planning produced a terminal child suffix at level {}",
+                level + 1
+            );
+            if recursion_threshold_met && suffix_fold.folds.len() == 1 {
+                continue;
+            }
+            let suffix_fold = suffix_fold.clone();
             let fold_candidate_params = candidate_params.clone();
             let level_proof_size = level_proof_bytes(
                 policy.decomposition.field_bits(),
@@ -385,20 +395,103 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 estimated_direct_payload_bytes: level_proof_size,
             });
             folds.extend(suffix_fold.folds.iter().cloned());
-            try_update(
+            let first_direct_setup_field_len = if recursion_threshold_met {
+                suffix_fold.first_direct_setup_field_len
+            } else {
+                natural_len
+            };
+            let candidate = (
+                first_direct_setup_field_len,
                 total,
                 folds,
                 suffix_fold.terminal.clone(),
-                &mut best_for_this_lb,
             );
+            if best_for_this_lb
+                .as_ref()
+                .map(|(best_setup, best_total, _, _)| {
+                    (first_direct_setup_field_len, total) < (*best_setup, *best_total)
+                })
+                .unwrap_or(true)
+            {
+                best_for_this_lb = Some(candidate);
+            }
         }
 
-        if let Some((total_bytes, folds, terminal)) = best_for_this_lb {
+        for suffix_fold in child_suffix.best_proof_fold_per_lb.values() {
+            let child_is_terminal = suffix_fold.folds.is_empty();
+            assert!(
+                !(recursion_threshold_met && child_is_terminal),
+                "recursive setup planning produced a terminal child suffix at level {}",
+                level + 1
+            );
+            if recursion_threshold_met && suffix_fold.folds.len() == 1 {
+                continue;
+            }
+            let suffix_fold = suffix_fold.clone();
+            let fold_candidate_params = candidate_params.clone();
+            let level_proof_size = level_proof_bytes(
+                policy.decomposition.field_bits(),
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                &fold_candidate_params,
+                suffix_fold.first_fold_params.as_ref(),
+                next_witness_len,
+                Some(if child_is_terminal {
+                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                } else {
+                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                }),
+            )? + eor_bytes;
+            let total = level_proof_size + suffix_fold.total_bytes;
+            if best_proof_for_this_lb
+                .as_ref()
+                .map(|(_, best_total, _, _)| total < *best_total)
+                .unwrap_or(true)
+            {
+                let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
+                folds.push(CandidateFoldStep {
+                    params: fold_candidate_params,
+                    input_witness_len: current_witness_len,
+                    output_witness_len: next_witness_len,
+                    estimated_direct_payload_bytes: level_proof_size,
+                });
+                folds.extend(suffix_fold.folds.iter().cloned());
+                let first_direct_setup_field_len = if recursion_threshold_met {
+                    suffix_fold.first_direct_setup_field_len
+                } else {
+                    natural_len
+                };
+                best_proof_for_this_lb = Some((
+                    first_direct_setup_field_len,
+                    total,
+                    folds,
+                    suffix_fold.terminal.clone(),
+                ));
+            }
+        }
+
+        if let Some((first_direct_setup_field_len, total_bytes, folds, terminal)) = best_for_this_lb
+        {
             let first_fold_params = folds.first().map(|fold| fold.params.clone());
             best_fold_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
+                    first_direct_setup_field_len,
+                    first_fold_params,
+                    folds,
+                    terminal,
+                },
+            );
+        }
+        if let Some((first_direct_setup_field_len, total_bytes, folds, terminal)) =
+            best_proof_for_this_lb
+        {
+            let first_fold_params = folds.first().map(|fold| fold.params.clone());
+            best_proof_fold_per_lb.insert(
+                lb,
+                FoldSuffix {
+                    total_bytes,
+                    first_direct_setup_field_len,
                     first_fold_params,
                     folds,
                     terminal,
@@ -407,7 +500,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
         }
     }
 
-    let result = SuffixResult { best_fold_per_lb };
+    let result = SuffixResult {
+        best_fold_per_lb,
+        best_proof_fold_per_lb,
+    };
     memo.insert(memo_key, result.clone());
     Ok(result)
 }

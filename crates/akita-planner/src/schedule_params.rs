@@ -1,4 +1,6 @@
-//! FoldSchedule planner that finds the global minimum proof size.
+//! FoldSchedule planner that finds the global minimum proof size. Recursive
+//! grouped scheduling additionally minimizes the first direct setup footprint
+//! before proof size.
 //!
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
@@ -17,14 +19,14 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
-    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
-    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
-    SETUP_OFFLOAD_D_SETUP,
+    active_setup_field_len, extension_opening_reduction_level_bytes,
+    intermediate_w_ring_element_count_for_chunks, level_proof_bytes, padded_setup_prefix_len,
+    AkitaScheduleInputs, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, RootSource, TerminalFoldParams, TerminalFoldStep,
+    TerminalResponseShape, WitnessLayout, WitnessPartition, SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -295,6 +297,22 @@ pub fn find_schedule(
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
+        false,
+    )
+}
+
+pub(crate) fn find_schedule_prioritizing_first_direct_setup(
+    key: PolynomialGroupLayout,
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+) -> Result<PlannedFoldSchedule, AkitaError> {
+    find_schedule_inner(
+        key,
+        policy,
+        ring_challenge_config,
+        fold_challenge_shape_at_level,
+        true,
     )
 }
 
@@ -303,6 +321,7 @@ fn find_schedule_inner(
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    prioritize_first_direct_setup: bool,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
@@ -330,8 +349,18 @@ fn find_schedule_inner(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
+    let root_opening_layout = if prioritize_first_direct_setup {
+        Some(OpeningClaimsLayout::from_groups(vec![key])?)
+    } else {
+        None
+    };
 
-    let mut best: Option<(usize, Vec<CandidateFoldStep>, CandidateTerminalResponse)> = None;
+    let mut best: Option<(
+        Option<usize>,
+        usize,
+        Vec<CandidateFoldStep>,
+        CandidateTerminalResponse,
+    )> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -400,6 +429,14 @@ fn find_schedule_inner(
             {
                 continue;
             }
+            let root_setup_field_len = if let Some(root_opening_layout) = &root_opening_layout {
+                Some(active_setup_field_len(
+                    &candidate_params,
+                    root_opening_layout,
+                )?)
+            } else {
+                None
+            };
 
             let suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
@@ -426,7 +463,7 @@ fn find_schedule_inner(
             };
 
             // A supported root must recurse into at least one suffix fold.
-            for suffix_fold in suffix.best_fold_per_lb.values() {
+            for suffix_fold in suffix.best_proof_fold_per_lb.values() {
                 let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
@@ -443,7 +480,15 @@ fn find_schedule_inner(
                 let total = root_proof_size + suffix_fold.total_bytes;
                 if best
                     .as_ref()
-                    .is_none_or(|(best_cost, _, _)| total < *best_cost)
+                    .is_none_or(|(best_setup_field_len, best_total, _, _)| {
+                        match (root_setup_field_len, *best_setup_field_len) {
+                            (Some(setup_field_len), Some(best_setup_field_len)) => {
+                                (setup_field_len, total) < (best_setup_field_len, *best_total)
+                            }
+                            (None, None) => total < *best_total,
+                            _ => unreachable!("scalar planner objective is fixed per call"),
+                        }
+                    })
                 {
                     let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                     folds.push(CandidateFoldStep {
@@ -453,13 +498,18 @@ fn find_schedule_inner(
                         estimated_direct_payload_bytes: root_proof_size,
                     });
                     folds.extend(suffix_fold.folds.iter().cloned());
-                    best = Some((total, folds, suffix_fold.terminal.clone()));
+                    best = Some((
+                        root_setup_field_len,
+                        total,
+                        folds,
+                        suffix_fold.terminal.clone(),
+                    ));
                 }
             }
         }
     }
 
-    let Some((total_bytes, folds, terminal)) = best else {
+    let Some((_, total_bytes, folds, terminal)) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),
