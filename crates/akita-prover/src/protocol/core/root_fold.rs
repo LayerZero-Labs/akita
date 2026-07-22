@@ -43,9 +43,7 @@ fn prepare_root<F, E, T, P, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
-    root_params: &LevelParams,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
-    terminal_tail_t_vectors: Option<usize>,
+    root_params: &CommittedGroupParams,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -111,8 +109,6 @@ where
         root_params,
         alpha_bits,
         basis,
-        relation_matrix_row_layout,
-        terminal_tail_t_vectors,
     )
 }
 
@@ -129,7 +125,7 @@ where
 /// ring-relation construction fails, or the folded-root prover fails.
 #[allow(clippy::too_many_arguments)]
 #[inline(never)]
-pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
+pub(crate) fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     expanded: &Arc<AkitaExpandedSetup<F>>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     stacks: &'stack impl LevelProveStacks<
@@ -142,7 +138,9 @@ pub fn prove_root<'stack, F, E, T, P, C, O, TS, R, Cfg>(
     >,
     transcript: &mut T,
     claims: ProverOpeningData<'_, E, P, F>,
-    scheduled: &ExecutionSchedule,
+    scheduled: &akita_types::RootFoldStep,
+    next_params: super::fold::FoldSuccessorParams<'_>,
+    next_witness_binding: akita_types::NextWitnessBindingPolicy,
     basis: BasisMode,
 ) -> Result<ProveLevelOutput<F, E>, AkitaError>
 where
@@ -184,7 +182,7 @@ where
     let stack = stacks.prove_stack_at_level(0);
     let opening_batch = claims.opening_layout::<F>()?;
     let num_claims = opening_batch.num_total_polynomials();
-    let root_params = &scheduled.params;
+    let root_params = &scheduled.params.final_group.commitment;
 
     if claims.flat_polys().len() != num_claims {
         return Err(AkitaError::InvalidInput(
@@ -197,16 +195,9 @@ where
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
     claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
 
-    let prepared_fold = prepare_root::<F, E, T, P, C, O, TS, R>(
-        stack,
-        transcript,
-        claims,
-        root_params,
-        RelationMatrixRowLayout::WithDBlock,
-        None,
-        basis,
-    )
-    .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
+    let prepared_fold =
+        prepare_root::<F, E, T, P, C, O, TS, R>(stack, transcript, claims, root_params, basis)
+            .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
@@ -214,11 +205,11 @@ where
         stack,
         transcript,
         0,
-        scheduled,
+        root_params,
+        Some(next_params),
+        Some(scheduled.output_witness_len),
+        Some(next_witness_binding),
         prepared_fold,
-        false,
-        None,
     )
-    .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))?
-    .get_intermediate()
+    .map_err(|err| AkitaError::InvalidInput(format!("prove root fold failed: {err:?}")))
 }

@@ -8,7 +8,7 @@
 //! challenge point, while the direct verifier scans the packed setup with the
 //! same segment partition.
 
-use crate::{LevelParams, OpeningClaimsLayout};
+use crate::{CommittedGroupParams, OpeningClaimsLayout};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
@@ -32,7 +32,7 @@ pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
 /// `gadget[..group.depth_fold]`. All fresh folded-response digits use the root
 /// opening basis.
 pub fn shared_setup_fold_gadget<F: FieldCore + CanonicalField>(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Option<Vec<F>> {

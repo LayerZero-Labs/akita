@@ -9,7 +9,7 @@ use akita_types::{AkitaScheduleInputs, AkitaScheduleLookupKey};
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::generated::walk::walk_generated_schedule_entry;
-use crate::generated::{GeneratedScheduleTable, GeneratedScheduleTableEntry};
+use crate::generated::{GeneratedFoldScheduleEntry, GeneratedScheduleTable};
 use crate::PlannerPolicy;
 
 /// Validate every generated row in a catalog against a public policy.
@@ -40,7 +40,7 @@ pub fn validate_generated_schedule_table(
 
 /// Validate one generated schedule row without running planner search.
 pub fn validate_generated_schedule_entry(
-    entry: &GeneratedScheduleTableEntry,
+    entry: &GeneratedFoldScheduleEntry,
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,

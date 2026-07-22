@@ -1,10 +1,13 @@
 #![allow(missing_docs)]
 
 pub use akita_planner::generated::{
-    GeneratedFold, GeneratedFoldStep, GeneratedFoldStepWithSetupMetadata,
-    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedScheduleTableEntry,
-    GeneratedSetupPrefixGroup, PolynomialGroupLayout, PrecommittedGroupParams,
-    SetupContributionMode, SisModulusProfileId, SisTableDigest,
+    GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
+    GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
+    GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
+    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
+    GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedSetupPrefixInput,
+    GeneratedTerminalFold, GeneratedWitnessPartition, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, SisModulusProfileId, SisTableDigest,
 };
 pub use akita_planner::{
     ChunkedWitnessCfg, DecompositionParams, SisSecurityPolicyId, TensorChallengeShape,

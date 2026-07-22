@@ -9,7 +9,7 @@ use super::stage2::{
 use super::TraceWeightLayout;
 use super::{eval_trace_terms_closed, TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm};
 use crate::{
-    lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, LevelParams,
+    lagrange_weights, reduce_inner_opening_to_ring_element, BasisMode, CommittedGroupParams,
     OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
@@ -20,7 +20,7 @@ const D: usize = 8;
 
 fn layout() -> TraceWeightLayout {
     let group_id = 0;
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         1,

@@ -20,12 +20,13 @@
 //! - **regenerated** via `family.regen` / `family.regen_group_batch`, which runs
 //!   the pure DP from scratch.
 //!
-//! The comparison is over the *fully resolved* [`Schedule`] — every step's
-//! expanded [`LevelParams`] (SIS buckets + derived matrix widths,
-//! which the compact 7-tuple drops), step kinds / witness shapes, and total
-//! proof bytes. This is strictly stronger than diffing the compact
+//! The comparison is over the *fully resolved* [`FoldSchedule`] — every step's
+//! expanded [`CommittedGroupParams`] (SIS buckets + derived matrix widths),
+//! typed root/recursive/terminal topology, and witness lengths. Planner byte
+//! estimates are deliberately not protocol schedule state. This is strictly
+//! stronger than diffing the compact
 //! generated fold tuples: it catches any drift where the table-hit
-//! expansion would carry a different `a_key.coeff_linf_bound()` (or width, or
+//! expansion would carry a different `inner_commit_matrix.coeff_linf_bound()` (or width, or
 //! rank) than the DP used, not just a different stored tuple.
 //!
 //! When this test fails the panic message lists per-family mismatch counts,
@@ -39,16 +40,15 @@ use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
-use akita_types::{
-    AkitaScheduleLookupKey, FoldStep, PolynomialGroupLayout, Schedule, TerminalWitnessPlan,
-};
+use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
 use akita_planner::generated::table_entry;
 #[cfg(feature = "all-schedules")]
 use akita_planner::{
-    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_generated_schedule_table,
+    catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
+    validate_generated_schedule_table,
 };
 
 #[test]
@@ -133,6 +133,21 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
     );
     assert_table_hit(module_name, &catalog, keys);
     catalog
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_rejects_non_v1_protocol_epoch() {
+    let mut catalog = fp128::D64Full::schedule_catalog().expect("shipped catalog");
+    catalog.identity.protocol_epoch -= 1;
+    let error = validate_catalog_identity(
+        &catalog,
+        &policy_of::<fp128::D64Full>(),
+        fp128::D64Full::ring_challenge_config,
+        fp128::D64Full::fold_challenge_shape_at_level,
+    )
+    .expect_err("non-v1 protocol epoch must not validate");
+    assert!(error.to_string().contains("catalog identity mismatch"));
 }
 
 #[cfg(feature = "all-schedules")]
@@ -244,7 +259,7 @@ fn table_backed_group_batch_schedule(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     if let Some(entry) = table_entry(catalog, key) {
         return schedule_from_entry(
             entry,
@@ -260,7 +275,7 @@ fn table_backed_group_batch_schedule(
 #[cfg(not(feature = "all-schedules"))]
 fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     Cfg::runtime_schedule(key.clone())
 }
 
@@ -269,7 +284,7 @@ fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     table_backed_group_batch_schedule(family, catalog, key)
 }
 
@@ -277,7 +292,7 @@ fn resolve_family_group_batch_schedule(
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
     key: &AkitaScheduleLookupKey,
-) -> Result<Schedule, AkitaError> {
+) -> Result<FoldSchedule, AkitaError> {
     match family.module_name {
         "fp128_d128_full" => table_backed_group_batch_schedule::<fp128::D128Full>(key),
         "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(key),
@@ -306,7 +321,7 @@ fn table_backed_expanded(
     family: &GeneratedFamily,
     catalog: akita_planner::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
-) -> Result<Schedule, akita_field::AkitaError> {
+) -> Result<FoldSchedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
     if let Some(entry) = table_entry(catalog, &lookup_key) {
         return schedule_from_entry(
@@ -337,43 +352,13 @@ impl Mismatch {
     }
 }
 
-/// Canonical string form of a fully resolved schedule: total proof bytes
-/// plus the `Debug` of every step (which includes each level's expanded
-/// `LevelParams` — collision buckets, matrix widths, ranks — and the direct
-/// witness shapes).
-fn render_schedule(schedule: &Schedule) -> String {
-    format!(
-        "total_bytes={} folds={:?} terminal={:?}",
-        schedule.total_bytes, schedule.folds, schedule.terminal
-    )
+/// Canonical diagnostic form of the fully resolved typed schedule.
+fn render_schedule(schedule: &FoldSchedule) -> String {
+    format!("{schedule:?}")
 }
 
-fn fold_steps_equal(left: &FoldStep, right: &FoldStep) -> bool {
-    left.current_w_len == right.current_w_len
-        && left.next_w_len == right.next_w_len
-        && left.level_bytes == right.level_bytes
-        && left.params == right.params
-}
-
-fn direct_steps_equal(left: &TerminalWitnessPlan, right: &TerminalWitnessPlan) -> bool {
-    left.current_w_len == right.current_w_len
-        && left.witness_shape == right.witness_shape
-        && left.terminal_bytes == right.terminal_bytes
-}
-
-fn schedules_equal(left: &Schedule, right: &Schedule) -> bool {
-    if left.total_bytes != right.total_bytes {
-        return false;
-    }
-    if left.folds.len() != right.folds.len() {
-        return false;
-    }
-    for (l, r) in left.folds.iter().zip(right.folds.iter()) {
-        if !fold_steps_equal(l, r) {
-            return false;
-        }
-    }
-    direct_steps_equal(&left.terminal, &right.terminal)
+fn schedules_equal(left: &FoldSchedule, right: &FoldSchedule) -> bool {
+    left == right
 }
 
 fn worker_count() -> usize {
@@ -386,8 +371,8 @@ fn worker_count() -> usize {
 fn compare_schedule_results(
     family: &GeneratedFamily,
     key: PolynomialGroupLayout,
-    table_backed: Result<Schedule, AkitaError>,
-    regenerated: Result<Schedule, AkitaError>,
+    table_backed: Result<FoldSchedule, AkitaError>,
+    regenerated: Result<FoldSchedule, AkitaError>,
 ) -> Option<Mismatch> {
     match (table_backed, regenerated) {
         (Ok(table_backed), Ok(regenerated)) => {

@@ -8,7 +8,7 @@
 //! schedule-table representation it consumes.
 
 use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{DigitRangePlan, LevelParams, RelationMatrixRowLayout};
+use crate::{CommittedGroupParams, DigitRangePlan};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -35,8 +35,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
         + elem_bytes
 }
 
-/// Header-stripped byte size of one folded proof level, parametrized by
-/// [`RelationMatrixRowLayout`].
+/// Header-stripped byte size of one non-terminal folded proof level.
 ///
 /// Ring-valued objects (`y`, `v`, next-witness commitment) serialize over
 /// the base SIS field. Sumcheck objects and scalar evaluations serialize
@@ -58,7 +57,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 ///
 /// `next_lp` is required only for an intermediate outer-commitment binding
 /// (it sizes the next-level witness commitment shipped on the wire). It is
-/// unused for a terminal-inner binding and on terminal layouts.
+/// unused for a terminal-inner binding.
 ///
 /// # Errors
 ///
@@ -67,52 +66,49 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 pub fn level_proof_bytes(
     base_field_bits: u32,
     challenge_field_bits: u32,
-    lp: &LevelParams,
-    next_lp: Option<&LevelParams>,
-    next_w_len: usize,
-    layout: RelationMatrixRowLayout,
+    lp: &CommittedGroupParams,
+    next_lp: Option<&CommittedGroupParams>,
+    output_witness_len: usize,
     next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
 ) -> Result<usize, AkitaError> {
     let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
-    match layout {
-        RelationMatrixRowLayout::WithoutCommitmentBlocks => Ok(FOLD_GRIND_NONCE_BYTES),
-        RelationMatrixRowLayout::WithDBlock => {
-            let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
-            let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-            let v_bytes =
-                proof_ring_vec_bytes(lp.d_key.row_len(), lp.role_dims().d_d(), base_elem_bytes);
-            let next_commit_bytes = match next_witness_binding {
-                Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
-                    let next_lp = next_lp.ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "outer-commitment level proof is missing successor params".to_string(),
-                        )
-                    })?;
-                    proof_ring_vec_bytes(
-                        next_lp.b_key.row_len(),
-                        next_lp.role_dims().d_b(),
-                        base_elem_bytes,
-                    )
-                }
-                Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
-                None => {
-                    return Err(AkitaError::InvalidSetup(
-                        "intermediate level is missing an outgoing witness binding".to_string(),
-                    ))
-                }
-            };
-            let next_eval_bytes = challenge_elem_bytes;
-            let b = 1usize << lp.log_basis_open;
-            let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
-            Ok(v_bytes
-                + FOLD_GRIND_NONCE_BYTES
-                + stage1_bytes
-                + sumcheck
-                + next_commit_bytes
-                + next_eval_bytes)
+    let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
+    let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
+    let v_bytes = proof_ring_vec_bytes(
+        lp.open_commit_matrix.output_rank(),
+        lp.role_dims().d_d(),
+        base_elem_bytes,
+    );
+    let next_commit_bytes = match next_witness_binding {
+        Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
+            let next_lp = next_lp.ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "outer-commitment level proof is missing successor params".to_string(),
+                )
+            })?;
+            proof_ring_vec_bytes(
+                next_lp.outer_commit_matrix.output_rank(),
+                next_lp.role_dims().d_b(),
+                base_elem_bytes,
+            )
         }
-    }
+        Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
+        None => {
+            return Err(AkitaError::InvalidSetup(
+                "intermediate level is missing an outgoing witness binding".to_string(),
+            ))
+        }
+    };
+    let next_eval_bytes = challenge_elem_bytes;
+    let b = 1usize << lp.log_basis_open;
+    let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
+    Ok(v_bytes
+        + FOLD_GRIND_NONCE_BYTES
+        + stage1_bytes
+        + sumcheck
+        + next_commit_bytes
+        + next_eval_bytes)
 }
 
 /// Header-stripped byte size of the recursive-mode stage-3 setup-product
@@ -129,7 +125,7 @@ pub fn level_proof_bytes(
 /// product sumcheck. Stage 3 fuses the setup-product term with the carried
 /// witness term, so the serialized round count is the max of the setup domain
 /// rounds (`log2(D) + log2(next_pow2(setup_ring_len))`) and the witness domain
-/// rounds (`sumcheck_rounds(D, next_w_len)`).
+/// rounds (`sumcheck_rounds(D, output_witness_len)`).
 ///
 /// `ring_dimension` and the next-power-of-two of `setup_ring_len` must be
 /// powers of two; this offline helper is not on the verifier path.
@@ -137,13 +133,13 @@ pub fn stage3_setup_product_bytes(
     challenge_field_bits: u32,
     ring_dimension: usize,
     setup_ring_len: usize,
-    next_w_len: usize,
+    output_witness_len: usize,
 ) -> usize {
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let ring_bits = ring_dimension.trailing_zeros() as usize;
     let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
     let setup_rounds = ring_bits + lambda_bits;
-    let witness_rounds = sumcheck_rounds(ring_dimension, next_w_len);
+    let witness_rounds = sumcheck_rounds(ring_dimension, output_witness_len);
     let rounds = setup_rounds.max(witness_rounds);
     // Claimed setup contribution + carried setup-prefix opening + carried
     // next-witness opening + degree-2 fused setup/carry sumcheck rounds.
@@ -169,24 +165,24 @@ mod tests {
     use crate::golomb_rice::golomb_rice_encode_vec;
     use crate::tail_golomb_rice_z_params;
     use crate::{
-        segment_typed_witness_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-        FoldLevelProof, RingVec, SegmentTypedWitness, SegmentTypedWitnessShape, SetupSumcheckProof,
-        SisModulusProfileId, TerminalLevelProof, SETUP_SUMCHECK_DEGREE,
+        terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
+        FoldLevelProof, RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
+        TerminalResponse, TerminalResponseShape, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
 
-    fn segment_typed_final_witness(
-        lp: &LevelParams,
+    fn terminal_response_fixture(
+        lp: &CommittedGroupParams,
         num_claims: usize,
-    ) -> (SegmentTypedWitness<F>, SegmentTypedWitnessShape) {
+    ) -> (TerminalResponse<F>, TerminalResponseShape) {
         let field_bits = F::modulus_bits();
-        let shape = SegmentTypedWitnessShape::from_groups(
+        let shape = TerminalResponseShape::from_groups(
             lp,
             field_bits,
             [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
         )
-        .expect("segment-typed witness shape");
+        .expect("terminal response shape");
         let layout = shape.layout.clone();
         let group = layout.groups[0];
         let (rice_low_bits, zigzag_w) =
@@ -194,7 +190,7 @@ mod tests {
         let z_payload =
             golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
                 .expect("encode zero z segment");
-        let witness = SegmentTypedWitness {
+        let witness = TerminalResponse {
             layout: layout.clone(),
             z_payloads: vec![z_payload],
             e_fields: RingVec::from_coeffs(vec![F::zero(); group.e_field_elems]),
@@ -249,12 +245,12 @@ mod tests {
     fn dummy_stage3_proof<F: FieldCore>(
         d: usize,
         setup_ring_len: usize,
-        next_w_len: usize,
+        output_witness_len: usize,
     ) -> SetupSumcheckProof<F> {
         let ring_bits = d.trailing_zeros() as usize;
         let lambda_bits = setup_ring_len.next_power_of_two().trailing_zeros() as usize;
         let setup_rounds = ring_bits + lambda_bits;
-        let witness_rounds = sumcheck_rounds(d, next_w_len);
+        let witness_rounds = sumcheck_rounds(d, output_witness_len);
         let rounds = setup_rounds.max(witness_rounds);
         SetupSumcheckProof {
             claim: F::zero(),
@@ -271,27 +267,27 @@ mod tests {
     }
 
     fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
-        lp: &LevelParams,
-        next_lp: &LevelParams,
-        next_w_len: usize,
+        lp: &CommittedGroupParams,
+        next_lp: &CommittedGroupParams,
+        output_witness_len: usize,
         stage3_setup_ring_len: Option<usize>,
         next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
         let current_coeffs = lp
-            .d_key
-            .row_len()
+            .open_commit_matrix
+            .output_rank()
             .checked_mul(lp.role_dims().d_d())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
         let next_commit_coeffs = next_lp
-            .b_key
-            .row_len()
+            .outer_commit_matrix
+            .output_rank()
             .checked_mul(next_lp.role_dims().d_b())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
             })?;
-        let rounds = sumcheck_rounds(lp.ring_dimension, next_w_len);
+        let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
         let b = 1usize << lp.log_basis_open;
 
         let proof = FoldLevelProof {
@@ -315,7 +311,7 @@ mod tests {
                 next_w_eval: F::zero(),
             },
             stage3_sumcheck_proof: stage3_setup_ring_len.map(|setup_ring_len| {
-                dummy_stage3_proof::<F>(lp.ring_dimension, setup_ring_len, next_w_len)
+                dummy_stage3_proof::<F>(lp.d_a(), setup_ring_len, output_witness_len)
             }),
         };
         Ok(proof.serialized_size(Compress::No))
@@ -325,7 +321,7 @@ mod tests {
     fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp = LevelParams::params_only(
+        let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             2,
@@ -334,10 +330,10 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
 
         for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
+            let lp = CommittedGroupParams::params_only(
                 SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
@@ -354,15 +350,14 @@ mod tests {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
-                    RelationMatrixRowLayout::WithDBlock,
+                    output_witness_len,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(
                     &lp,
                     &next_lp,
-                    next_w_len,
+                    output_witness_len,
                     None,
                     crate::NextWitnessBindingPolicy::OuterCommitment,
                 )
@@ -376,7 +371,7 @@ mod tests {
     fn planned_level_bytes_use_native_d_and_successor_b_dimensions() {
         const D_A: usize = 128;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let mut lp = LevelParams::params_only(
+        let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D_A,
             4,
@@ -387,29 +382,26 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
-        lp.b_key = crate::AjtaiKeyParams::new_unchecked(
-            lp.b_key.security_policy(),
-            lp.b_key.sis_table_key().table_digest,
-            lp.b_key.sis_modulus_profile(),
-            crate::sis::SisMatrixRole::B,
-            lp.b_key.row_len(),
-            lp.b_key.col_len() * 2,
-            lp.b_key.coeff_linf_bound(),
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            lp.outer_commit_matrix.security_policy(),
+            lp.outer_commit_matrix.sis_table_key().table_digest,
+            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer_commit_matrix.output_rank(),
+            lp.outer_commit_matrix.input_width() * 2,
+            lp.outer_commit_matrix.coeff_linf_bound(),
             64,
         );
-        lp.d_key = crate::AjtaiKeyParams::new_unchecked(
-            lp.d_key.security_policy(),
-            lp.d_key.sis_table_key().table_digest,
-            lp.d_key.sis_modulus_profile(),
-            crate::sis::SisMatrixRole::D,
-            lp.d_key.row_len(),
-            lp.d_key.col_len() * 4,
-            lp.d_key.coeff_linf_bound(),
+        lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            lp.open_commit_matrix.security_policy(),
+            lp.open_commit_matrix.sis_table_key().table_digest,
+            lp.open_commit_matrix.sis_modulus_profile(),
+            lp.open_commit_matrix.output_rank(),
+            lp.open_commit_matrix.input_width() * 4,
+            lp.open_commit_matrix.coeff_linf_bound(),
             32,
         );
-        lp.stamp_role_dims_from_keys();
 
-        let mut next_lp = LevelParams::params_only(
+        let mut next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D_A,
             2,
@@ -418,43 +410,39 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        next_lp.b_key = crate::AjtaiKeyParams::new_unchecked(
-            next_lp.b_key.security_policy(),
-            next_lp.b_key.sis_table_key().table_digest,
-            next_lp.b_key.sis_modulus_profile(),
-            crate::sis::SisMatrixRole::B,
-            next_lp.b_key.row_len(),
-            next_lp.b_key.col_len() * 2,
-            next_lp.b_key.coeff_linf_bound(),
+        next_lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            next_lp.outer_commit_matrix.security_policy(),
+            next_lp.outer_commit_matrix.sis_table_key().table_digest,
+            next_lp.outer_commit_matrix.sis_modulus_profile(),
+            next_lp.outer_commit_matrix.output_rank(),
+            next_lp.outer_commit_matrix.input_width() * 2,
+            next_lp.outer_commit_matrix.coeff_linf_bound(),
             64,
         );
-        next_lp.d_key = crate::AjtaiKeyParams::new_unchecked(
-            next_lp.d_key.security_policy(),
-            next_lp.d_key.sis_table_key().table_digest,
-            next_lp.d_key.sis_modulus_profile(),
-            crate::sis::SisMatrixRole::D,
-            next_lp.d_key.row_len(),
-            next_lp.d_key.col_len() * 2,
-            next_lp.d_key.coeff_linf_bound(),
+        next_lp.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+            next_lp.open_commit_matrix.security_policy(),
+            next_lp.open_commit_matrix.sis_table_key().table_digest,
+            next_lp.open_commit_matrix.sis_modulus_profile(),
+            next_lp.open_commit_matrix.output_rank(),
+            next_lp.open_commit_matrix.input_width() * 2,
+            next_lp.open_commit_matrix.coeff_linf_bound(),
             64,
         );
-        next_lp.stamp_role_dims_from_keys();
 
-        let next_w_len = D_A * 8;
+        let output_witness_len = D_A * 8;
         let planned = level_proof_bytes(
             128,
             128,
             &lp,
             Some(&next_lp),
-            next_w_len,
-            RelationMatrixRowLayout::WithDBlock,
+            output_witness_len,
             Some(crate::NextWitnessBindingPolicy::OuterCommitment),
         )
         .unwrap();
         let serialized = exact_level_proof_bytes::<F>(
             &lp,
             &next_lp,
-            next_w_len,
+            output_witness_len,
             None,
             crate::NextWitnessBindingPolicy::OuterCommitment,
         )
@@ -466,7 +454,7 @@ mod tests {
     fn terminal_inner_binding_removes_exactly_the_outer_commitment_bytes() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let lp = LevelParams::params_only(
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             4,
@@ -477,7 +465,7 @@ mod tests {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap();
-        let next_lp = LevelParams::params_only(
+        let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             2,
@@ -486,15 +474,14 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
 
         let outer = level_proof_bytes(
             128,
             128,
             &lp,
             Some(&next_lp),
-            next_w_len,
-            RelationMatrixRowLayout::WithDBlock,
+            output_witness_len,
             Some(crate::NextWitnessBindingPolicy::OuterCommitment),
         )
         .unwrap();
@@ -503,20 +490,22 @@ mod tests {
             128,
             &lp,
             None,
-            next_w_len,
-            RelationMatrixRowLayout::WithDBlock,
+            output_witness_len,
             Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .unwrap();
-        let expected_outer_commitment =
-            proof_ring_vec_bytes(next_lp.b_key.row_len(), D, field_bytes(128));
+        let expected_outer_commitment = proof_ring_vec_bytes(
+            next_lp.outer_commit_matrix.output_rank(),
+            D,
+            field_bytes(128),
+        );
         assert_eq!(outer - terminal_inner, expected_outer_commitment);
         assert_eq!(
             terminal_inner,
             exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 None,
                 crate::NextWitnessBindingPolicy::TerminalInnerState,
             )
@@ -527,7 +516,7 @@ mod tests {
     #[test]
     fn level_proof_bytes_rejects_incomplete_intermediate_schedule() {
         const D: usize = 64;
-        let lp = LevelParams::params_only(
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             4,
@@ -545,7 +534,6 @@ mod tests {
             &lp,
             None,
             D * 8,
-            RelationMatrixRowLayout::WithDBlock,
             Some(crate::NextWitnessBindingPolicy::OuterCommitment),
         );
         assert!(matches!(
@@ -553,15 +541,7 @@ mod tests {
             Err(AkitaError::InvalidSetup(_))
         ));
 
-        let missing_binding = level_proof_bytes(
-            128,
-            128,
-            &lp,
-            None,
-            D * 8,
-            RelationMatrixRowLayout::WithDBlock,
-            None,
-        );
+        let missing_binding = level_proof_bytes(128, 128, &lp, None, D * 8, None);
         assert!(matches!(missing_binding, Err(AkitaError::InvalidSetup(_))));
     }
 
@@ -569,23 +549,23 @@ mod tests {
     fn stage3_setup_product_bytes_match_serialized_payload() {
         // The recursive stage-3 payload is priced separately from the direct
         // planner bytes. Check the formula against the real serialized
-        // SetupSumcheckProof across representative (D, setup_ring_len, next_w_len)
+        // SetupSumcheckProof across representative (D, setup_ring_len, output_witness_len)
         // shapes, including non-power-of-two setup lengths that exercise lambda
         // padding and witness-longer shapes that exercise the fused round count.
         const CHALLENGE_BITS: u32 = 128;
         for &d in &[32usize, 64, 128] {
             for &setup_ring_len in &[1usize, 3, 8, 17, 64, 100] {
-                for &next_w_len in &[d, d * 8, d * 256] {
-                    let proof = dummy_stage3_proof::<F>(d, setup_ring_len, next_w_len);
+                for &output_witness_len in &[d, d * 8, d * 256] {
+                    let proof = dummy_stage3_proof::<F>(d, setup_ring_len, output_witness_len);
                     let serialized = proof.claim.serialized_size(Compress::No)
                         + proof.setup_prefix_eval.serialized_size(Compress::No)
                         + proof.next_w_eval.serialized_size(Compress::No)
                         + proof.sumcheck.serialized_size(Compress::No);
                     assert_eq!(
-                        stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len, next_w_len),
+                        stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len, output_witness_len),
                         serialized,
                         "stage3 formula must match the serialized SetupSumcheckProof \
-                         at D={d}, setup_ring_len={setup_ring_len}, next_w_len={next_w_len}"
+                         at D={d}, setup_ring_len={setup_ring_len}, output_witness_len={output_witness_len}"
                     );
                 }
             }
@@ -600,7 +580,7 @@ mod tests {
         // `stage3_setup_product_bytes`, with no other field affected.
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_lp = LevelParams::params_only(
+        let next_lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             2,
@@ -609,12 +589,12 @@ mod tests {
             2,
             fold_challenge_config,
         );
-        let next_w_len = D * 8;
+        let output_witness_len = D * 8;
         // 100 is not a power of two, so the verifier pads lambda to 128.
         let setup_ring_len = 100usize;
 
         for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
+            let lp = CommittedGroupParams::params_only(
                 SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
@@ -629,7 +609,7 @@ mod tests {
             let terminal_bytes = exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 None,
                 crate::NextWitnessBindingPolicy::OuterCommitment,
             )
@@ -637,7 +617,7 @@ mod tests {
             let recursive_bytes = exact_level_proof_bytes::<F>(
                 &lp,
                 &next_lp,
-                next_w_len,
+                output_witness_len,
                 Some(setup_ring_len),
                 crate::NextWitnessBindingPolicy::OuterCommitment,
             )
@@ -649,8 +629,7 @@ mod tests {
                     128,
                     &lp,
                     Some(&next_lp),
-                    next_w_len,
-                    RelationMatrixRowLayout::WithDBlock,
+                    output_witness_len,
                     Some(crate::NextWitnessBindingPolicy::OuterCommitment),
                 )
                 .unwrap(),
@@ -659,7 +638,7 @@ mod tests {
             );
             assert_eq!(
                 recursive_bytes - terminal_bytes,
-                stage3_setup_product_bytes(128, D, setup_ring_len, next_w_len),
+                stage3_setup_product_bytes(128, D, setup_ring_len, output_witness_len),
                 "stage-3 payload must be additive over the direct level bytes at log_basis={log_basis}"
             );
         }
@@ -669,11 +648,10 @@ mod tests {
     fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-        let next_w_len = D * 8;
         let num_claims = 3;
 
         for log_basis in 2..=6 {
-            let lp = LevelParams::params_only(
+            let lp = CommittedGroupParams::params_only(
                 SisModulusProfileId::Q128OffsetA7F7,
                 D,
                 log_basis,
@@ -685,37 +663,30 @@ mod tests {
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap();
 
-            let (final_witness, witness_shape) = segment_typed_final_witness(&lp, num_claims);
-            let final_witness_bytes_runtime = final_witness.serialized_size(Compress::No);
+            let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
+            let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
             let terminal_proof = TerminalLevelProof::<F, F>::new_with_extension_opening_reduction(
                 None,
-                final_witness,
+                terminal_response,
                 0,
             );
 
             let serialized_without_witness =
-                terminal_proof.serialized_size(Compress::No) - final_witness_bytes_runtime;
+                terminal_proof.serialized_size(Compress::No) - terminal_response_bytes_runtime;
 
+            // A direct terminal level carries only the `fold_grind_nonce`
+            // (plus any extension-opening reduction, absent from this
+            // fixture); this mirrors the planner's terminal-direct accounting.
             assert_eq!(
-                level_proof_bytes(
-                    128,
-                    128,
-                    &lp,
-                    None,
-                    next_w_len,
-                    RelationMatrixRowLayout::WithoutCommitmentBlocks,
-                    None,
-                )
-                .unwrap(),
-                serialized_without_witness,
+                FOLD_GRIND_NONCE_BYTES, serialized_without_witness,
                 "planned terminal-level bytes should match the serialized terminal body \
-                 (less final_witness) at log_basis={log_basis}"
+                 (less terminal_response) at log_basis={log_basis}"
             );
 
-            let scheduled_bytes = segment_typed_witness_bytes(128, &witness_shape);
+            let scheduled_bytes = terminal_response_bytes(128, &witness_shape);
             assert!(
-                scheduled_bytes >= final_witness_bytes_runtime,
-                "scheduled direct witness budget must cover serialized segment-typed witness \
+                scheduled_bytes >= terminal_response_bytes_runtime,
+                "scheduled direct witness budget must cover serialized terminal response \
                  at log_basis={log_basis}"
             );
         }

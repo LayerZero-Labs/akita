@@ -48,7 +48,7 @@ pub use compute::{
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};
 pub use protocol::{
-    batched_prove, build_relation_weight_events, commit_w, prove, prove_root, prove_suffix,
+    batched_prove, build_relation_weight_events, commit_terminal_w, commit_w, prove, prove_suffix,
     ProveLevelOutput, RecursiveSuffixOutcome, RelationSetupSource, RelationWeightContribution,
     RelationWeightEvent, RelationWeightEventInputs, RelationWeightEvents,
     RelationWeightFactorization, RingSwitchOutput, SuffixProverState,

@@ -12,7 +12,7 @@ use super::build::{
 use super::trace_table::TraceTable;
 use super::{TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout};
 use crate::{
-    dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
+    dispatch_for_field, embed_ring_subfield_scalar, BasisMode, CommittedGroupParams, FpExtEncoding,
     OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
 
@@ -72,7 +72,7 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
 /// by the trace term. Recursive singleton folds use `lp.num_live_blocks`; batched
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     witness_layout: &WitnessLayout,
     opening_source_len: usize,
     col_bits: usize,
@@ -84,7 +84,7 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight block count must be non-zero".to_string(),
         ));
     }
-    if ring_bits != lp.ring_dimension.trailing_zeros() as usize {
+    if ring_bits != lp.d_a().trailing_zeros() as usize {
         return Err(AkitaError::InvalidInput(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));
@@ -176,7 +176,7 @@ where
 }
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
-    /// M-matrix block count per claim (`LevelParams::num_live_blocks`, extracted by
+    /// M-matrix block count per claim (`CommittedGroupParams::num_live_blocks`, extracted by
     /// the caller — trace-weight construction must not read schedule types).
     num_live_blocks: usize,
     opening_batch: &'a OpeningClaimsLayout,
@@ -329,7 +329,7 @@ where
 }
 
 /// Slice the fold-axis opening out of a root opening point.
-pub(super) fn root_trace_block_opening<X: FieldCore>(
+pub fn root_trace_block_opening<X: FieldCore>(
     opening_point: &[X],
     num_positions_per_block: usize,
     num_live_blocks: usize,
@@ -370,7 +370,7 @@ pub(super) fn root_trace_block_opening<X: FieldCore>(
 /// per-claim terms instead of materialized block weights.
 #[allow(clippy::too_many_arguments)]
 pub fn trace_terms_root<F, E, const D: usize>(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
@@ -407,7 +407,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
@@ -444,7 +444,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
@@ -591,7 +591,7 @@ pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
     witness_layout: &WitnessLayout,
     opening_source_len: usize,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
@@ -714,7 +714,7 @@ where
 /// fold. The fold-axis opening follows the physical digit-innermost order.
 pub fn trace_terms_recursive<F, E, const D: usize>(
     prepared: &PreparedOpeningPoint<F, E>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     basis: BasisMode,
     scale: E,
 ) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>

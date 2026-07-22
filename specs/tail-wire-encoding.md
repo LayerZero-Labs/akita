@@ -98,7 +98,7 @@ Encoding slice (#190):
 - [x] `fold_witness_linf_cap_for_claims` and the deterministic cap→low-bits rules (`cap_rice_low_bits`, `wire_rice_low_bits`) return integers pinned against reference calculations; prover and verifier derive the same wire low bits for `z`.
 - [x] The transparent terminal `final_witness` serializes as segment-typed
   payloads (`z` length-prefixed Golomb bytes, then raw `e`/`t` fields);
-  `SegmentTypedWitnessShape::admits_realized` accepts exact `z` payloads up to the
+  `TerminalResponseShape::admits_realized` accepts exact `z` payloads up to the
   schedule upper bound.
 - [x] Non-zk shipped schedule tables regenerated under segment-typed terminal sizing; `generated_schedule_tables_match_find_schedule` passes for affected families.
 - [x] Net `z` entropy win on cited `onehot_fp128_d64` cells (Golomb at `wire_rice_low_bits(cap)` beats legacy `PackedDigits`); profile emits structured tail breakdown (`proof tail summary`, Golomb vs packed `z` stats).
@@ -162,14 +162,14 @@ The unifying classification: every tail wire object is in exactly one bucket, an
 
 Affected surfaces:
 
-- `akita-types`: the codec, the `SegmentTypedWitness` representation and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/low-bits accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims` and `tail_golomb_rice_low_bits`), and the descriptor policy fields.
+- `akita-types`: the codec, the `TerminalResponse` representation and its shape, `direct_witness_bytes` / `proof_size.rs` tail accounting, the `cap`/low-bits accessors on `LevelParams` (via `fold_witness_linf_cap_for_claims` and `tail_golomb_rice_low_bits`), and the descriptor policy fields.
 - `akita-prover`: emit the tail as typed segments (Golomb `z` on centered
   fold-response integers; `RawField` for `e_folded`/`t`), send terminal `t` as
   the next-state payload at the last recursive transition, and skip parent `u`.
 - `akita-verifier`: decode typed segments (no-panic), expand `z` to digit planes and decompose `e`/`t` field segments to digit planes for row checks, verify terminal A rows against transcript-bound state.
 - `akita-planner`/`akita-config`: codec-aware tail byte accounting, regenerate shipped tables under the new tail policy, bind the policy in the descriptor.
 
-The transparent tail always uses `SegmentTypedWitness`. References below to a
+The transparent tail always uses `TerminalResponse`. References below to a
 retained ZK `PackedDigits` arm are historical.
 
 ### Terminal `t`-state / u-elision
@@ -261,8 +261,8 @@ Segments appear in wire order `z ‖ e ‖ t`. Terminal quotient rows and their 
 Multipoint layouts scale `z_coords` with `num_z_segments`.
 
 This mirrors the existing headerless, shape-driven decode (the shape supplies
-counts and the `z` payload upper bound). `SegmentTypedWitnessShape` and
-`SegmentTypedWitness` descend from the typed representation shipped in #190.
+counts and the `z` payload upper bound). `TerminalResponseShape` and
+`TerminalResponse` descend from the typed representation shipped in #190.
 
 The verifier decodes `z` via Golomb–Rice into centered ring elements and
 decodes `e`/`t` as raw field coefficients. It always checks consistency and A
@@ -299,7 +299,7 @@ Tail encoding uses three layers:
 | Layer | Source | Carries |
 |-------|--------|---------|
 | **Policy** | `AkitaInstanceDescriptor` schedule and level descriptors | codec/cap rules, terminal topology, row and witness parameters |
-| **Layout** | `SegmentTypedWitnessShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
+| **Layout** | `TerminalResponseShape` / `TerminalLevelProofShape` (S3) | per-segment element counts (and byte length once entropy-coded) |
 | **Derived** | both sides at runtime | `cap`, `wire_rice_low_bits`, segment order (`z ‖ e ‖ t`), decode bounds and outgoing binding |
 
 The tail-encoding policy is bound in the canonical instance descriptor:
@@ -371,7 +371,7 @@ Remaining audit/measurement items:
 - PR #174 / `specs/fold-linf-rejection.md` (closed spec PR; implementation #189): the `t*` threshold and fold `‖z‖_inf` cap; Golomb `z` sizing uses the same cap as `num_digits_fold`, not the level variance envelope.
 - `specs/terminal-fold-cutover.md` (PR #88): the D-role drop whose transcript-binding discipline the terminal `t`-state cutover reuses.
 - `specs/weak-binding-norm-fix.md`: the weak-binding object the tail extraction recovers.
-- `crates/akita-types/src/proof/direct_witness.rs` (`SegmentTypedWitness`),
+- `crates/akita-types/src/proof/direct_witness.rs` (`TerminalResponse`),
   `crates/akita-types/src/proof/tail_segments.rs` (segment layout and transcript
   slicing), and `crates/akita-types/src/proof/levels.rs` (`TerminalLevelProof`).
 - `crates/akita-types/src/proof_size.rs:72-106` and `crates/akita-types/src/layout/proof_size.rs` (proof-byte and witness accounting).

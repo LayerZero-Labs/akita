@@ -1,13 +1,15 @@
 //! Shared setup-matrix envelope accumulation helpers.
 
 use akita_field::AkitaError;
-use akita_types::{LevelParams, SetupMatrixEnvelope, SetupPrefixSlotId};
+use akita_types::{
+    CommittedGroupParams, SetupMatrixEnvelope, SetupPrefixSlotId, TerminalCommittedGroupParams,
+};
 
 /// Extend `max_setup_len` with the full per-level setup footprint.
 ///
 /// Includes the level's own A/B/D matrices, precommitted group-local A/B
 /// matrices, and setup-prefix materialization when the level consumes one. The
-/// shared D matrix is accounted through `LevelParams::d_matrix_width()`: planner
+/// shared D matrix is accounted through `CommittedGroupParams::d_matrix_width()`: planner
 /// materialization includes every precommitted/setup-prefix D segment in that
 /// single width.
 ///
@@ -15,47 +17,47 @@ use akita_types::{LevelParams, SetupMatrixEnvelope, SetupPrefixSlotId};
 ///
 /// Returns [`AkitaError::InvalidSetup`] on overflow.
 pub(crate) fn accumulate_matrix_envelope_for_level(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     max_setup_len: &mut usize,
 ) -> Result<(), AkitaError> {
     include_matrix_len(
         max_setup_len,
-        lp.a_key.row_len(),
+        lp.inner_commit_matrix.output_rank(),
         lp.inner_width(),
-        lp.a_key.sis_table_key().ring_dimension as usize,
+        lp.inner_commit_matrix.ring_dimension(),
         lp.d_a(),
         "A setup",
     )?;
     include_matrix_len(
         max_setup_len,
-        lp.b_key.row_len(),
+        lp.outer_commit_matrix.output_rank(),
         lp.outer_width(),
-        lp.b_key.sis_table_key().ring_dimension as usize,
+        lp.outer_commit_matrix.ring_dimension(),
         lp.d_a(),
         "B setup",
     )?;
     include_matrix_len(
         max_setup_len,
-        lp.d_key.row_len(),
+        lp.open_commit_matrix.output_rank(),
         lp.d_matrix_width(),
-        lp.d_key.sis_table_key().ring_dimension as usize,
+        lp.open_commit_matrix.ring_dimension(),
         lp.d_a(),
         "D setup",
     )?;
     for group in &lp.precommitted_groups {
         include_matrix_len(
             max_setup_len,
-            group.a_key.row_len(),
+            group.inner_commit_matrix.output_rank(),
             group.inner_width(),
-            group.a_key.sis_table_key().ring_dimension as usize,
+            group.inner_commit_matrix.ring_dimension(),
             lp.d_a(),
             "precommitted A setup",
         )?;
         include_matrix_len(
             max_setup_len,
-            group.b_key.row_len(),
+            group.outer_commit_matrix.output_rank(),
             group.outer_width(),
-            group.b_key.sis_table_key().ring_dimension as usize,
+            group.outer_commit_matrix.ring_dimension(),
             lp.d_a(),
             "precommitted B setup",
         )?;
@@ -68,6 +70,20 @@ pub(crate) fn accumulate_matrix_envelope_for_level(
         *max_setup_len = envelope.max_setup_len;
     }
     Ok(())
+}
+
+pub(crate) fn accumulate_terminal_matrix_envelope(
+    params: &TerminalCommittedGroupParams,
+    max_setup_len: &mut usize,
+) -> Result<(), AkitaError> {
+    include_matrix_len(
+        max_setup_len,
+        params.inner_commit_matrix.output_rank(),
+        params.inner_width(),
+        params.inner_commit_matrix.ring_dimension(),
+        params.d_a(),
+        "terminal A setup",
+    )
 }
 
 fn include_matrix_len(
@@ -95,7 +111,7 @@ fn include_matrix_len(
 /// Include the padded prefix storage and A/B footprints for one setup-prefix slot.
 ///
 /// The D footprint is not slot-local: it uses the consuming fold's shared
-/// `d_key` over the main group plus every precommitted/setup-prefix `e_hat`
+/// `open_commit_matrix` over the main group plus every precommitted/setup-prefix `e_hat`
 /// segment, and is accounted for by `accumulate_matrix_envelope_for_level`.
 ///
 /// # Errors
@@ -123,17 +139,17 @@ pub(crate) fn inflate_envelope_for_setup_prefix_slot(
     envelope.max_setup_len = envelope.max_setup_len.max(prefix_ring_len);
     include_matrix_len(
         &mut envelope.max_setup_len,
-        params.a_key.row_len(),
+        params.inner_commit_matrix.output_rank(),
         params.inner_width(),
-        params.a_key.sis_table_key().ring_dimension as usize,
+        params.inner_commit_matrix.ring_dimension(),
         envelope_ring_dim,
         "setup-prefix A",
     )?;
     include_matrix_len(
         &mut envelope.max_setup_len,
-        params.b_key.row_len(),
+        params.outer_commit_matrix.output_rank(),
         params.outer_width(),
-        params.b_key.sis_table_key().ring_dimension as usize,
+        params.outer_commit_matrix.ring_dimension(),
         envelope_ring_dim,
         "setup-prefix B",
     )

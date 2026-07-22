@@ -13,8 +13,8 @@ use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
+    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
     SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout, WitnessUnitLayout,
 };
 use std::sync::Arc;
@@ -96,11 +96,10 @@ pub struct RelationMatrixEvaluator<F: FieldCore> {
 
 #[derive(Clone)]
 pub(crate) struct FlatRelationContext {
-    pub(crate) level_params: LevelParams,
+    pub(crate) level_params: CommittedGroupParams,
     pub(crate) opening_batch: OpeningClaimsLayout,
     pub(crate) witness_layout: Arc<WitnessLayout>,
     pub(crate) opening_source_len: usize,
-    pub(crate) relation_matrix_row_layout: RelationMatrixRowLayout,
     pub(crate) opening_ring_dim: usize,
 }
 
@@ -128,7 +127,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub setup: &'a AkitaExpandedSetup<F>,
     pub relation: &'a RingRelationInstance<F>,
     pub row_coefficients: &'a [E],
-    pub lp: &'a LevelParams,
+    pub lp: &'a CommittedGroupParams,
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
 }
@@ -141,7 +140,6 @@ pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RingSwitchVerifyOutput<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling,
@@ -234,8 +232,7 @@ where
         0
     };
     let num_sc_vars = col_bits + ring_bits;
-    let num_i =
-        lp.relation_row_index_num_vars_for_layout(relation_matrix_row_layout, opening_batch)?;
+    let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
     let (tau0, tau1) = {
         let _span = tracing::info_span!(
@@ -244,14 +241,11 @@ where
             tau1_len = num_i
         )
         .entered();
-        let tau0 = match relation_matrix_row_layout {
-            RelationMatrixRowLayout::WithDBlock => Some(
-                (0..num_sc_vars)
-                    .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
-                    .collect(),
-            ),
-            RelationMatrixRowLayout::WithoutCommitmentBlocks => None,
-        };
+        let tau0 = Some(
+            (0..num_sc_vars)
+                .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU0))
+                .collect(),
+        );
         let tau1 = (0..num_i)
             .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_TAU1))
             .collect::<Vec<_>>();
@@ -303,10 +297,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let opening_batch = relation.opening_batch();
-    let rows = lp.relation_matrix_row_count_for(
-        opening_batch.num_groups(),
-        relation.relation_matrix_row_layout(),
-    )?;
+    let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
             replay, alpha, tau1, layout, rows,
@@ -325,7 +316,6 @@ where
         tau1,
         opening_batch,
         replay.row_coefficients,
-        relation.relation_matrix_row_layout(),
         layout,
         replay.opening_source_len,
         replay.opening_ring_dim,
@@ -430,16 +420,8 @@ where
             .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
             .collect::<Result<Vec<_>, _>>()?;
 
-        let a_range = lp.a_row_range(
-            opening_batch,
-            group_index,
-            relation.relation_matrix_row_layout(),
-        )?;
-        let b_range = lp.commitment_row_range(
-            opening_batch,
-            group_index,
-            relation.relation_matrix_row_layout(),
-        )?;
+        let a_range = lp.a_row_range(opening_batch, group_index)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a || b_range.len() != n_b {
             return Err(AkitaError::InvalidSetup(
                 "multi-group row ranges do not match group matrix heights".to_string(),
@@ -477,7 +459,6 @@ where
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
             opening_source_len: replay.opening_source_len,
-            relation_matrix_row_layout: relation.relation_matrix_row_layout(),
             opening_ring_dim: replay.opening_ring_dim,
         }),
     })
@@ -535,11 +516,10 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     challenges: &Challenges,
     ring_multiplier_point: &RingMultiplierOpeningPoint<F>,
     alpha: E,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     tau1: &[E],
     opening_batch: &OpeningClaimsLayout,
     gamma: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     layout: WitnessLayout,
     opening_source_len: usize,
     opening_ring_dim: usize,
@@ -549,7 +529,7 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
-    validate_role_dispatch::<D>(lp.role_dims, RingRole::Inner)?;
+    validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)?;
     let num_polys = opening_batch.num_total_polynomials();
     let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
     let alpha_pows = scalar_powers(alpha, D);
@@ -578,7 +558,7 @@ where
         });
     }
     let num_positions_per_block = lp.num_positions_per_block;
-    let n_a = lp.a_key.row_len();
+    let n_a = lp.inner_commit_matrix.output_rank();
 
     let c_alphas = prepare_challenge_evals::<F, E, D>(
         challenges,
@@ -612,7 +592,7 @@ where
     let eq_tau1: std::sync::Arc<[E]> = EqPolynomial::evals_prefix(tau1, rows)?.into();
 
     Ok(RelationMatrixEvaluator {
-        role_dims: lp.role_dims,
+        role_dims: lp.role_dims(),
         groups,
         log_basis: log_basis_open,
         eq_tau1,
@@ -621,7 +601,6 @@ where
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
             opening_source_len,
-            relation_matrix_row_layout,
             opening_ring_dim,
         }),
     })
@@ -714,7 +693,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         SetupContributionPlan::prepare::<F>(
             &context.level_params,
             &context.opening_batch,
-            context.relation_matrix_row_layout,
             self.eq_tau1.clone(),
             &context.witness_layout,
             context.opening_source_len,
@@ -743,7 +721,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             plan,
             &context.level_params,
             &context.opening_batch,
-            context.relation_matrix_row_layout,
             &context.witness_layout,
             context.opening_source_len,
             &setup_groups,
@@ -756,10 +733,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
 
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        context.level_params.relation_matrix_row_count_for(
-            context.opening_batch.num_groups(),
-            context.relation_matrix_row_layout,
-        )
+        context
+            .level_params
+            .relation_matrix_row_count(context.opening_batch.num_groups())
     }
 
     pub(crate) fn opening_source_len(&self) -> Result<usize, AkitaError> {

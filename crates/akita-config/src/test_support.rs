@@ -10,7 +10,7 @@
 //! directly and never need this module.
 
 use akita_field::AkitaError;
-use akita_types::{AkitaScheduleLookupKey, LevelParams, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
 use crate::CommitmentConfig;
 
@@ -36,17 +36,16 @@ use crate::CommitmentConfig;
 pub fn akita_batched_root_layout<Cfg>(
     num_vars: usize,
     num_polynomials: usize,
-) -> Result<LevelParams, AkitaError>
+) -> Result<CommittedGroupParams, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
     let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
-    let layout = schedule.root_fold()?.params.clone();
+    let layout = schedule.root.params.final_group.commitment.clone();
     tracing::info!(
         num_vars,
         num_polynomials,
-        total_bytes = schedule.total_bytes,
         root_m = layout.position_index_bits(),
         root_r = layout.block_index_bits(),
         root_lb_inner = layout.log_basis_inner,

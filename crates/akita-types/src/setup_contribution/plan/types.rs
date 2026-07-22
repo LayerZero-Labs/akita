@@ -1,7 +1,7 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    LevelParams, LevelParamsLike, OpeningClaimsLayout, RelationMatrixRowLayout,
-    SetupProjectionGeometry, WitnessLayout,
+    CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout, SetupProjectionGeometry,
+    WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
@@ -17,9 +17,8 @@ pub struct SetupContributionGroupInputs {
 }
 
 pub(crate) fn validate_setup_inputs(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_layout: &WitnessLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Result<(), AkitaError> {
@@ -49,7 +48,7 @@ pub(crate) fn validate_setup_inputs(
         ));
     }
     for group in groups {
-        group.validate_against(level_params, opening_batch, relation_matrix_row_layout)?;
+        group.validate_against(level_params, opening_batch)?;
         validate_group_witness_layout(
             witness_layout,
             group.group_id,
@@ -60,7 +59,7 @@ pub(crate) fn validate_setup_inputs(
 }
 
 pub(crate) fn get_d_col_range(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
     group_id: usize,
@@ -80,7 +79,7 @@ pub(crate) fn get_d_col_range(
 }
 
 pub(crate) fn get_total_d(
-    level_params: &LevelParams,
+    level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[SetupContributionGroupInputs],
 ) -> Result<usize, AkitaError> {
@@ -143,7 +142,7 @@ fn validate_group_witness_layout(
 impl SetupContributionGroupInputs {
     fn group_params_for<'a>(
         &self,
-        level_params: &'a LevelParams,
+        level_params: &'a CommittedGroupParams,
         opening_batch: &'a OpeningClaimsLayout,
     ) -> Result<&'a dyn LevelParamsLike, AkitaError> {
         level_params.group_params(opening_batch, self.group_id)
@@ -151,9 +150,8 @@ impl SetupContributionGroupInputs {
 
     fn validate_against(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        relation_matrix_row_layout: RelationMatrixRowLayout,
     ) -> Result<(), AkitaError> {
         let group_layout = opening_batch.group_layout(self.group_id)?;
         if self.num_claims != group_layout.num_polynomials() {
@@ -162,14 +160,9 @@ impl SetupContributionGroupInputs {
             ));
         }
         let n_a = self.n_a_for(level_params, opening_batch)?;
-        let n_b = self.n_b(level_params, opening_batch, relation_matrix_row_layout)?;
-        let a_range =
-            level_params.a_row_range(opening_batch, self.group_id, relation_matrix_row_layout)?;
-        let b_range = level_params.commitment_row_range(
-            opening_batch,
-            self.group_id,
-            relation_matrix_row_layout,
-        )?;
+        let n_b = self.n_b(level_params, opening_batch)?;
+        let a_range = level_params.a_row_range(opening_batch, self.group_id)?;
+        let b_range = level_params.commitment_row_range(opening_batch, self.group_id)?;
         if a_range.start != self.a_row_start || a_range.len() != n_a {
             return Err(AkitaError::InvalidSetup(
                 "setup group A row range disagrees with level params".into(),
@@ -185,7 +178,7 @@ impl SetupContributionGroupInputs {
 
     fn num_live_blocks_for(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -195,7 +188,7 @@ impl SetupContributionGroupInputs {
 
     fn n_a_for(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -205,7 +198,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn num_live_blocks(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -215,7 +208,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn num_positions_per_block(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -225,7 +218,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn depth_witness(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -235,7 +228,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn depth_commit(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -245,7 +238,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn depth_open(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -255,7 +248,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn log_basis_open(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<u32, AkitaError> {
         Ok(self
@@ -265,7 +258,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn n_a(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         Ok(self
@@ -275,22 +268,17 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn n_b(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        relation_matrix_row_layout: RelationMatrixRowLayout,
     ) -> Result<usize, AkitaError> {
-        if LevelParams::has_commitment_block(relation_matrix_row_layout) {
-            Ok(self
-                .group_params_for(level_params, opening_batch)?
-                .b_rows_len())
-        } else {
-            Ok(0)
-        }
+        Ok(self
+            .group_params_for(level_params, opening_batch)?
+            .b_rows_len())
     }
 
     pub(crate) fn t_vector_width(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         let n_a = self.n_a(level_params, opening_batch)?;
@@ -303,7 +291,7 @@ impl SetupContributionGroupInputs {
 
     pub(crate) fn d_active_cols(
         &self,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<usize, AkitaError> {
         let num_live_blocks = self.num_live_blocks(level_params, opening_batch)?;

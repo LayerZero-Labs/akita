@@ -17,8 +17,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, EmitSpec, PlannerPolicy};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams, Schedule,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, FoldSchedule, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor,
 };
 
 use crate::conservative_commitment::conservative_commit_params;
@@ -41,7 +41,7 @@ pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
 #[derive(Clone, Copy)]
 pub struct GeneratedFamily {
     /// On-disk module file name (without `.rs`) and the basename used
-    /// to derive the static `&[GeneratedScheduleTableEntry]` const name.
+    /// to derive the static `&[GeneratedFoldScheduleEntry]` const name.
     pub module_name: &'static str,
     /// On-disk const name for the table entries array.
     pub const_name: &'static str,
@@ -57,9 +57,9 @@ pub struct GeneratedFamily {
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any shipped table
     /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
-    pub regen: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
+    pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any shipped table.
-    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<Schedule, AkitaError>,
+    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
     /// Whether this family ships multi-group-root rows in its generated table.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
@@ -67,7 +67,7 @@ pub struct GeneratedFamily {
     /// `Cfg::runtime_schedule(key)` — the table fast path when an entry
     /// exists, falling through to the DP otherwise. Used by diagnostic
     /// comparisons against the shipped table.
-    pub table_backed: fn(PolynomialGroupLayout) -> Result<Schedule, AkitaError>,
+    pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -100,34 +100,36 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
 }
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
-fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
-    let schedule = find_group_batch_schedule(
+fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    let planned = find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(key),
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    schedule.validate_structure()?;
-    Ok(schedule)
+    planned.schedule.validate_structure()?;
+    Ok(planned.schedule)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the shipped table.
 fn regen_group_batch<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
-) -> Result<Schedule, AkitaError> {
-    let schedule = find_group_batch_schedule(
+) -> Result<FoldSchedule, AkitaError> {
+    let planned = find_group_batch_schedule(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
-    schedule.validate_structure()?;
-    Ok(schedule)
+    planned.schedule.validate_structure()?;
+    Ok(planned.schedule)
 }
 
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
 /// the DP fallback baked into `runtime_schedule`.
-fn table_backed<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<Schedule, AkitaError> {
+fn table_backed<Cfg: CommitmentConfig>(
+    key: PolynomialGroupLayout,
+) -> Result<FoldSchedule, AkitaError> {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
 }
 
@@ -176,7 +178,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
                     break;
                 }
             };
-            precommitteds.push(PrecommittedGroupParams::from_params(pre_key, &params));
+            precommitteds.push(PrecommittedGroupDescriptor::from_params(pre_key, &params));
         }
         if !supported {
             continue;
@@ -205,7 +207,7 @@ fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, Ak
         ConservativeCommitmentConfig<fp128::D64OneHot>,
     >(&precommitted_group)?;
     let precommitted =
-        PrecommittedGroupParams::from_params(precommitted_group, &precommitted_params);
+        PrecommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![precommitted, precommitted],
@@ -251,12 +253,17 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     let mut keys = Vec::new();
     if let Some(catalog) = Cfg::schedule_catalog() {
         for entry in catalog.entries {
-            if entry.precommitteds.is_empty() {
+            if entry.root.precommitted_groups.is_empty() {
                 continue;
             }
             let candidate = AkitaScheduleLookupKey {
-                final_group: entry.final_group,
-                precommitteds: entry.precommitteds.to_vec(),
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
             };
             if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
                 push_unique_schedule_key(&mut keys, candidate);

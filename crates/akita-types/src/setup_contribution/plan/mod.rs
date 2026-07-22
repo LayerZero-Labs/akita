@@ -35,7 +35,7 @@ use super::geometry::SetupProjectionGroupGeometry;
 use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
 use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
-use crate::layout::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingMatrixView};
+use crate::layout::{CommitmentRingDims, CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
 use crate::{OpeningClaimsLayout, WitnessLayout};
 use akita_field::parallel::*;

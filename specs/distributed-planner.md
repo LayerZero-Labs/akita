@@ -626,13 +626,13 @@ levels. Extend for multi-chunk layout:
 
 **v1 planner approach (recommended):** add
 `terminal_direct_witness_shape_chunked(...)` parallel to
-`SegmentTypedWitnessShape::from_groups`, producing `SegmentTypedWitnessShape`
+`TerminalResponseShape::from_groups`, producing `TerminalResponseShape`
 with per-chunk multiplicities encoded in `TailSegmentLayout` (may require adding
 `num_chunks: usize` to the layout struct — coordinate with verifier spec Stage 8).
 
 Until that lands, the planner **must still** price the correct byte count using
 an upper-bound helper mirroring chunked ring count × `field_bytes` for the
-non-`z` segments plus `segment_typed_z_payload_bytes` called with replicated
+non-`z` segments plus `terminal_response_z_payload_bytes` called with replicated
 `z_coords = num_chunks · z_unit`.
 
 #### Step 6 — Table expansion path (`resolve.rs` / `schedule_from_entry`)

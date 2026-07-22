@@ -164,7 +164,7 @@ fn fp128_degree_one_batched_proof_roundtrip_is_stable() {
 #[test]
 fn folded_payload_commitments_and_digits_stay_base_field() {
     fn assert_base_flat_ring_vec(_: &RingVec<F>) {}
-    fn assert_base_direct_witness(_: &akita_types::SegmentTypedWitness<F>) {}
+    fn assert_base_direct_witness(_: &akita_types::TerminalResponse<F>) {}
 
     let (_, _, proof, _, _, _) = make_verify_fixture(16);
     let root = &proof.root;
@@ -179,7 +179,7 @@ fn folded_payload_commitments_and_digits_stay_base_field() {
             assert_base_flat_ring_vec(commitment);
         }
     }
-    assert_base_direct_witness(proof.final_witness());
+    assert_base_direct_witness(proof.terminal_response());
 }
 
 #[test]

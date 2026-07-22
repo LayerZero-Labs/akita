@@ -4,10 +4,7 @@ use akita_field::{AkitaError, CanonicalField};
 
 use crate::sis::compute_num_digits_full_field;
 use crate::PolynomialGroupLayout;
-use crate::{
-    LevelParams, RelationMatrixRowLayout, SegmentTypedWitnessShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
-};
+use crate::{CommittedGroupParams, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -25,8 +22,8 @@ pub fn packed_digits_bytes(num_elems: usize, bits_per_elem: u32) -> usize {
 }
 
 /// Serialized byte size for a terminal direct witness shape.
-pub fn segment_typed_witness_bytes(field_bits: u32, shape: &SegmentTypedWitnessShape) -> usize {
-    crate::proof::segment_typed_witness_upper_bound_bytes(
+pub fn terminal_response_bytes(field_bits: u32, shape: &TerminalResponseShape) -> usize {
+    crate::proof::terminal_response_upper_bound_bytes(
         field_bits,
         &shape.layout,
         shape.layout.z_payload_bytes(),
@@ -97,7 +94,7 @@ pub fn extension_opening_reduction_level_bytes(
     extension_opening_width: usize,
     fold_level: usize,
     key: PolynomialGroupLayout,
-    current_w_len: usize,
+    input_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     if extension_opening_width <= 1 {
         return Ok(0);
@@ -110,7 +107,7 @@ pub fn extension_opening_reduction_level_bytes(
     } else {
         (
             extension_opening_width,
-            padded_boolean_opening_vars(current_w_len)?,
+            padded_boolean_opening_vars(input_witness_len)?,
         )
     };
     extension_opening_reduction_proof_bytes(
@@ -124,7 +121,7 @@ pub fn extension_opening_reduction_level_bytes(
 /// Planned recursive witness size in ring elements for a singleton fold.
 pub fn planned_w_ring_element_count<F: CanonicalField>(
     field_bits: u32,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
     let _field_marker = core::marker::PhantomData::<F>;
     let e_hat_count = lp
@@ -133,7 +130,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("planned W width overflow".to_string()))?;
     let t_hat_count = lp
         .num_live_blocks
-        .checked_mul(lp.a_key.row_len())
+        .checked_mul(lp.inner_commit_matrix.output_rank())
         .and_then(|n| n.checked_mul(lp.num_digits_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("planned T width overflow".to_string()))?;
     let z_pre_count = lp
@@ -141,7 +138,7 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .checked_mul(lp.num_digits_fold(1, field_bits)?)
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
-        .relation_matrix_row_count_for(1, RelationMatrixRowLayout::WithDBlock)?
+        .relation_matrix_row_count(1)?
         .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis_open))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
 
@@ -153,19 +150,19 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
 }
 
 /// Planned recursive witness size in field elements for a singleton fold.
-pub fn planned_next_w_len<F: CanonicalField>(
+pub fn planned_output_witness_len<F: CanonicalField>(
     field_bits: u32,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
 ) -> Result<usize, AkitaError> {
     planned_w_ring_element_count::<F>(field_bits, lp)?
-        .checked_mul(lp.ring_dimension)
+        .checked_mul(lp.d_a())
         .ok_or_else(|| AkitaError::InvalidSetup("planned next witness length overflow".to_string()))
 }
 
 /// Total sumcheck rounds (`col_bits + ring_bits`) for one fold level.
-pub fn sumcheck_rounds(level_d: usize, next_w_len: usize) -> usize {
+pub fn sumcheck_rounds(level_d: usize, output_witness_len: usize) -> usize {
     let ring_bits = level_d.trailing_zeros() as usize;
-    let num_ring_elems = next_w_len / level_d;
+    let num_ring_elems = output_witness_len / level_d;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     col_bits + ring_bits
 }

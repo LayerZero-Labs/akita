@@ -1,8 +1,8 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire-preservation epoch captured from baseline commit
-//! `bc959ef34572aee143ba0114094b0b4212b4e111`.
+//! Complete-fold wire fixture for the in-development descriptor v1: typed fold
+//! topology plus the direct terminal response.
 
 mod common;
 
@@ -41,16 +41,16 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 12,
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
-        proof_len: 57_250,
-        proof_digest: "3a155ec04047e9942f2eb1685e778e50",
-        event_count: 164,
-        event_digest: "57046ae9d1a2a2b0a63e1ecd34bc6dea",
-        terminal_len: 54_286,
-        terminal_digest: "5a26d324461406760daa77a6e3009858",
+        proof_len: 54_176,
+        proof_digest: "c8df00cc15d665229ada8dc337ec702c",
+        event_count: 165,
+        event_digest: "99c0a238e991d558a25863ddd2de890d",
+        terminal_len: 51_212,
+        terminal_digest: "e646145c3e9a49414f3f48bbc0eaa8f7",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "b7886ed83f5fb59999120c97cc9cd7db",
+            payload_digest: "c1cabdaab7dff2ceedac0f2e0a5a31af",
         }],
     },
     FoldProtocolEpoch {
@@ -58,27 +58,32 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 74_231,
-        proof_digest: "7caa4641e201f1be5a6437f5fa3e7535",
-        event_count: 677,
-        event_digest: "6fa3d54d166f79a4c4fe7054c5d4ed84",
-        terminal_len: 57_707,
-        terminal_digest: "dd68f68783534944dad6c7a213866d45",
+        proof_len: 80_829,
+        proof_digest: "0e0cbcc8fb998256e21301cceb0b0f51",
+        event_count: 876,
+        event_digest: "821366da0c45c42a717952fa73c07b76",
+        terminal_len: 58_525,
+        terminal_digest: "d79746542ccdfb3b6c963d7eb4242e91",
         digit_range_levels: &[
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "5995ceb94140360728b8f7c494d22199",
+                payload_digest: "a81664c5d991abf197c2beb0fd145439",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "0802c2c4dfa4b51a5208dc136b768a54",
+                payload_digest: "e85486acc8992dbfd0988a2ddf37a126",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "98996e2c69f54673049516b58df8f384",
+                payload_digest: "21eb1b2448c7b4bc39642a60d9a25f13",
+            },
+            DigitRangeLevelEpoch {
+                basis: 64,
+                payload_len: 2_896,
+                payload_digest: "db7b5bcb6453f76939812aab7d7d56f2",
             },
         ],
     },
@@ -140,7 +145,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
     ))
     .expect("generated schedule");
     assert_eq!(
-        schedule.folds.len(),
+        schedule.num_fold_levels(),
         expected.digit_range_levels.len() + 1,
         "{} schedule must end in exactly one terminal fold",
         expected.name
@@ -151,14 +156,22 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         "{} non-terminal level count",
         expected.name
     );
+    let scheduled_nonterminal = std::iter::once(&schedule.root.params.final_group.commitment)
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|step| &step.params.witness),
+        );
+    let mut stage1_digests = Vec::with_capacity(expected.digit_range_levels.len());
     for ((level, scheduled), level_expected) in proof
         .nonterminal_folds()
-        .zip(schedule.folds.iter())
+        .zip(scheduled_nonterminal)
         .zip(expected.digit_range_levels)
     {
         let bytes = serialize_stage1_payload(level.stage1());
         assert_eq!(
-            1usize << scheduled.params.log_basis,
+            1usize << scheduled.log_basis_open,
             level_expected.basis,
             "{} scheduled range basis",
             expected.name
@@ -169,12 +182,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
             "{} Stage 1 payload length",
             expected.name
         );
-        assert_eq!(
-            protocol_epoch_digest::<F>(&bytes),
-            level_expected.payload_digest,
-            "{} Stage 1 payload changed",
-            expected.name
-        );
+        stage1_digests.push(protocol_epoch_digest::<F>(&bytes));
     }
 
     let mut proof_bytes = Vec::new();
@@ -187,17 +195,10 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         .serialize_compressed(&mut terminal_bytes)
         .expect("serialize terminal proof");
     let event_bytes = serialize_transcript_events(&prover_events);
-
     assert_eq!(
         proof_bytes.len(),
         expected.proof_len,
         "{} proof",
-        expected.name
-    );
-    assert_eq!(
-        protocol_epoch_digest::<F>(&proof_bytes),
-        expected.proof_digest,
-        "{} complete proof changed",
         expected.name
     );
     assert_eq!(
@@ -207,22 +208,31 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         expected.name
     );
     assert_eq!(
-        protocol_epoch_digest::<F>(&event_bytes),
-        expected.event_digest,
-        "{} transcript events changed",
-        expected.name
-    );
-    assert_eq!(
         terminal_bytes.len(),
         expected.terminal_len,
         "{} terminal payload length",
         expected.name
     );
+    let expected_stage1_digests = expected
+        .digit_range_levels
+        .iter()
+        .map(|level| level.payload_digest.to_string())
+        .collect::<Vec<_>>();
     assert_eq!(
-        protocol_epoch_digest::<F>(&terminal_bytes),
-        expected.terminal_digest,
-        "{} terminal payload changed",
-        expected.name
+        (
+            stage1_digests,
+            protocol_epoch_digest::<F>(&proof_bytes),
+            protocol_epoch_digest::<F>(&event_bytes),
+            protocol_epoch_digest::<F>(&terminal_bytes),
+        ),
+        (
+            expected_stage1_digests,
+            expected.proof_digest.to_string(),
+            expected.event_digest.to_string(),
+            expected.terminal_digest.to_string(),
+        ),
+        "{} protocol digests changed",
+        expected.name,
     );
 }
 

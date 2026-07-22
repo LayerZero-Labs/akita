@@ -11,8 +11,8 @@ use akita_transcript::{
     ext_limb_label, labels, AkitaTranscript, LoggingTranscript, Transcript, TranscriptEvent,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaBatchedProofShape, NextWitnessBinding, RingVec, SegmentTypedWitness,
-    SegmentTypedWitnessShape,
+    AkitaBatchedProof, AkitaBatchedProofShape, NextWitnessBinding, RingVec, TerminalResponse,
+    TerminalResponseShape,
 };
 use common::*;
 
@@ -211,8 +211,8 @@ fn terminal_event_order_rejects_malformed_windows() {
     }
 }
 
-fn final_witness_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut SegmentTypedWitness<F> {
-    proof.terminal.final_witness_mut()
+fn terminal_response_mut(proof: &mut AkitaBatchedProof<F, F>) -> &mut TerminalResponse<F> {
+    proof.terminal.terminal_response_mut()
 }
 
 #[derive(Clone, Copy)]
@@ -230,24 +230,24 @@ impl ProofTamper {
     fn apply(self, proof: &mut AkitaBatchedProof<F, F>) {
         match self {
             Self::EHatDigit => {
-                let witness = final_witness_mut(proof);
+                let witness = terminal_response_mut(proof);
                 let mut coeffs = witness.e_fields.coeffs().to_vec();
                 let first = coeffs
                     .first_mut()
-                    .expect("segment-typed terminal must carry e field coeffs");
+                    .expect("terminal response must carry e field coeffs");
                 *first += F::one();
                 witness.e_fields = RingVec::from_coeffs(coeffs);
             }
-            Self::RemainderDigit => final_witness_mut(proof).z_payloads[0][0] ^= 1,
+            Self::RemainderDigit => terminal_response_mut(proof).z_payloads[0][0] ^= 1,
             Self::WitnessLen => {
-                let witness = final_witness_mut(proof);
+                let witness = terminal_response_mut(proof);
                 witness.layout.logical_num_elems =
                     witness.layout.logical_num_elems.saturating_sub(1);
             }
             Self::PackedPayload => {
-                final_witness_mut(proof).z_payloads[0].pop();
+                terminal_response_mut(proof).z_payloads[0].pop();
             }
-            Self::ExtraZPayload => final_witness_mut(proof).z_payloads.push(vec![0]),
+            Self::ExtraZPayload => terminal_response_mut(proof).z_payloads.push(vec![0]),
             Self::OversizedRootV => {
                 let mut coeffs = proof.root.v.coeffs().to_vec();
                 coeffs.push(F::zero());
@@ -345,10 +345,10 @@ fn malformed_proof_carriers_reject_before_replay() {
     }
 }
 
-fn terminal_shape_final_witness_mut(
+fn terminal_shape_terminal_response_mut(
     shape: &mut AkitaBatchedProofShape,
-) -> &mut SegmentTypedWitnessShape {
-    &mut shape.terminal.final_witness
+) -> &mut TerminalResponseShape {
+    &mut shape.terminal.terminal_response
 }
 
 #[test]
@@ -390,7 +390,7 @@ fn terminal_direct_witness_shape_mismatch_rejects_deserialization() {
             .serialize_compressed(&mut bytes)
             .expect("serialize proof");
         let mut bad_shape = proof.shape();
-        let shape = terminal_shape_final_witness_mut(&mut bad_shape);
+        let shape = terminal_shape_terminal_response_mut(&mut bad_shape);
         // Segment-typed tails admit exact `z` payloads up to the scheduled
         // upper bound; a *tighter* budget than the encoded payload must reject.
         shape.layout.groups[0].z_payload_bytes = 0;

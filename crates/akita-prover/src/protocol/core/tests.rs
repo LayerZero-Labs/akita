@@ -61,11 +61,7 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
     let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
-    let root_params = schedule
-        .root_fold()
-        .expect("multi-group root fold")
-        .params
-        .clone();
+    let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {
         assert_eq!(precommitted.layout.group, PolynomialGroupLayout::new(16, 1));

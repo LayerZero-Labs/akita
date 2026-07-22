@@ -3,9 +3,8 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AjtaiKeyParams, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    FlatMatrix, LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SisModulusProfileId,
-    WitnessLayout,
+    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 
 use super::evaluate_setup_contribution_direct;
@@ -42,7 +41,6 @@ struct SetupContributionShape {
     n_d: usize,
     n_b: usize,
     num_polys_per_group: Vec<usize>,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 }
 
 impl SetupContributionShape {
@@ -59,7 +57,6 @@ impl SetupContributionShape {
             n_d: 1,
             n_b: 2,
             num_polys_per_group: vec![1],
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
     }
 
@@ -76,14 +73,7 @@ impl SetupContributionShape {
             n_d: 2,
             n_b: 2,
             num_polys_per_group: vec![3],
-            relation_matrix_row_layout: RelationMatrixRowLayout::WithDBlock,
         }
-    }
-
-    fn terminal_relation_only() -> Self {
-        let mut shape = Self::root_single_point();
-        shape.relation_matrix_row_layout = RelationMatrixRowLayout::WithoutCommitmentBlocks;
-        shape
     }
 
     fn dense_non_pow2_z() -> Self {
@@ -132,7 +122,7 @@ impl SetupContributionFixture {
         let n_cols_e = shape.num_claims * shape.num_live_blocks * shape.depth_open;
         let n_cols_t = shape.num_polys_per_group.iter().copied().max().unwrap() * cols_per_poly_t;
 
-        let mut lp = LevelParams::params_only(
+        let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             TEST_RING_DIM,
             shape.log_basis,
@@ -159,15 +149,14 @@ impl SetupContributionFixture {
             .and_then(|width| width.checked_mul(shape.depth_open))
             .and_then(|width| width.checked_mul(shape.num_live_blocks))
             .expect("setup contribution fixture B width");
-        if lp.b_key.col_len() < expected_b_width {
-            lp.b_key = AjtaiKeyParams::new_unchecked(
-                lp.b_key.security_policy(),
-                lp.b_key.sis_table_key().table_digest,
-                lp.b_key.sis_modulus_profile(),
-                lp.b_key.sis_table_key().role,
-                lp.b_key.row_len(),
+        if lp.outer_commit_matrix.input_width() < expected_b_width {
+            lp.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+                lp.outer_commit_matrix.security_policy(),
+                lp.outer_commit_matrix.sis_table_key().table_digest,
+                lp.outer_commit_matrix.sis_modulus_profile(),
+                lp.outer_commit_matrix.output_rank(),
                 expected_b_width,
-                lp.b_key.coeff_linf_bound(),
+                lp.outer_commit_matrix.coeff_linf_bound(),
                 TEST_RING_DIM,
             );
         }
@@ -243,7 +232,6 @@ impl SetupContributionFixture {
                 opening_batch,
                 witness_layout: layout,
                 opening_source_len,
-                relation_matrix_row_layout: shape.relation_matrix_row_layout,
                 opening_ring_dim: TEST_RING_DIM,
             }),
         };
@@ -369,12 +357,6 @@ fn setup_index_weight_mle_matches_materialized() {
         .assert_setup_index_weight_mle_matches_materialized();
     SetupContributionFixture::from_shape(&SetupContributionShape::recursive_multi_group())
         .assert_setup_index_weight_mle_matches_materialized();
-}
-
-#[test]
-fn setup_contribution_matches_materialized_on_terminal_fixture() {
-    SetupContributionFixture::from_shape(&SetupContributionShape::terminal_relation_only())
-        .assert_direct_matches_materialized();
 }
 
 #[test]

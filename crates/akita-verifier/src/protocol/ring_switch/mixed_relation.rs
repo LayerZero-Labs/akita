@@ -292,14 +292,11 @@ where
     let inner_lane_alpha_powers = prepared_point.inner().lane_powers.as_ref();
     let outer_lane_alpha_powers = prepared_point.outer().lane_powers.as_ref();
     let opening_lane_alpha_powers = prepared_point.opening().lane_powers.as_ref();
-    let rows = context.level_params.relation_matrix_row_count_for(
-        context.opening_batch.num_groups(),
-        context.relation_matrix_row_layout,
-    )?;
-
-    let active_d_rows = context
+    let rows = context
         .level_params
-        .n_d_active_for(context.relation_matrix_row_layout);
+        .relation_matrix_row_count(context.opening_batch.num_groups())?;
+
+    let active_d_rows = context.level_params.open_commit_matrix.output_rank();
     let d_row_start = rows
         .checked_sub(active_d_rows)
         .ok_or(AkitaError::InvalidProof)?;
@@ -393,11 +390,7 @@ where
         let units = context.witness_layout.units_for_group(group.group_id)?;
         let b_row_end = context
             .level_params
-            .commitment_row_range(
-                &context.opening_batch,
-                group.group_id,
-                context.relation_matrix_row_layout,
-            )?
+            .commitment_row_range(&context.opening_batch, group.group_id)?
             .end;
         let b_row_weights = evaluator
             .eq_tau1
@@ -574,26 +567,19 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let rows = context.level_params.relation_matrix_row_count_for(
-        context.opening_batch.num_groups(),
-        context.relation_matrix_row_layout,
-    )?;
+    let rows = context
+        .level_params
+        .relation_matrix_row_count(context.opening_batch.num_groups())?;
     let levels = r_decomp_levels::<F>(evaluator.log_basis);
     let quotient_gadget = gadget_row_scalars::<F>(levels, evaluator.log_basis);
     let d_row_start = rows
-        .checked_sub(
-            context
-                .level_params
-                .n_d_active_for(context.relation_matrix_row_layout),
-        )
+        .checked_sub(context.level_params.open_commit_matrix.output_rank())
         .ok_or(AkitaError::InvalidProof)?;
     let b_row_ranges = (0..context.opening_batch.num_groups())
         .map(|group| {
-            context.level_params.commitment_row_range(
-                &context.opening_batch,
-                group,
-                context.relation_matrix_row_layout,
-            )
+            context
+                .level_params
+                .commitment_row_range(&context.opening_batch, group)
         })
         .collect::<Result<Vec<_>, _>>()?;
     let mut evaluation = E::zero();

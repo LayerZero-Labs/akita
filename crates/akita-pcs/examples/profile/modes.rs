@@ -18,7 +18,8 @@ use akita_field::{
 };
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
-    AkitaScheduleLookupKey, FpExtEncoding, LevelParams, MultiChunkProfileId, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
+    PolynomialGroupLayout,
 };
 
 type F = fp128::Field;
@@ -596,7 +597,7 @@ pub(crate) fn run_all_profile_modes(nv: usize) {
     }
 }
 
-fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> LevelParams {
+fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> CommittedGroupParams {
     Cfg::get_params_for_batched_commitment(
         &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
     )

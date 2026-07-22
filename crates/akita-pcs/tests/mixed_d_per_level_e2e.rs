@@ -26,8 +26,8 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, NextWitnessBinding, OpeningClaimsLayout,
-    RingVec, Schedule,
+    validate_schedule_ring_dims, AkitaBatchedProof, FoldSchedule, NextWitnessBinding,
+    OpeningClaimsLayout, RingVec,
 };
 use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
@@ -85,7 +85,9 @@ impl akita_config::CommitmentConfig for MixedD128To64 {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         mixed_d_per_level_schedule::<Envelope, Suffix>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
@@ -131,7 +133,9 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         let mut schedule = mixed_d_per_level_schedule::<Envelope, Suffix>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
@@ -139,8 +143,18 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         )?;
         // Corrupt the first suffix fold level: 96 does not divide the
         // setup's gen_ring_dim (128) and is not a power of two.
-        if let Some(fold) = schedule.folds.get_mut(MIXED_D_SWITCH_FOLD) {
-            fold.params.ring_dimension = 96;
+        if let Some(fold) = schedule.recursive_folds.get_mut(MIXED_D_SWITCH_FOLD - 1) {
+            let matrix = &fold.params.witness.inner_commit_matrix;
+            fold.params.witness.inner_commit_matrix =
+                akita_types::InnerCommitMatrixParams::new_unchecked(
+                    matrix.security_policy(),
+                    matrix.sis_table_key().table_digest,
+                    matrix.sis_modulus_profile(),
+                    matrix.output_rank(),
+                    matrix.input_width(),
+                    matrix.coeff_linf_bound(),
+                    96,
+                );
         }
         Ok(schedule)
     }
@@ -153,27 +167,32 @@ fn make_envelope_dense_poly(nv: usize, seed: u64) -> DensePoly<F> {
     DensePoly::<F>::from_field_evals(nv, ENVELOPE_D, &evals).expect("dense poly")
 }
 
-fn mixed_schedule() -> Schedule {
+fn mixed_schedule() -> FoldSchedule {
     mixed_d_per_level_schedule::<Envelope, Suffix>(NUM_VARS, 1, MIXED_D_SWITCH_FOLD)
         .expect("mixed-D schedule")
 }
 
-fn assert_mixed_d_fixture_schedule(schedule: &Schedule) {
-    let folds: Vec<_> = schedule.fold_steps().collect();
+fn assert_mixed_d_fixture_schedule(schedule: &FoldSchedule) {
+    let dims = std::iter::once(schedule.root.params.final_group.commitment.d_a())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|step| step.params.witness.d_a()),
+        )
+        .chain(std::iter::once(schedule.terminal.params.witness.d_a()))
+        .collect::<Vec<_>>();
     assert!(
-        folds.len() > MIXED_D_SWITCH_FOLD,
+        dims.len() > MIXED_D_SWITCH_FOLD,
         "fixture must reach suffix levels at D={SUFFIX_D}"
     );
-    for (level, fold) in folds.iter().enumerate() {
+    for (level, actual_d) in dims.into_iter().enumerate() {
         let expected_d = if level < MIXED_D_SWITCH_FOLD {
             ENVELOPE_D
         } else {
             SUFFIX_D
         };
-        assert_eq!(
-            fold.params.ring_dimension, expected_d,
-            "fold level {level} ring_dimension"
-        );
+        assert_eq!(actual_d, expected_d, "fold level {level} ring_dimension");
     }
 }
 
@@ -274,30 +293,25 @@ fn truncate_ring_vec(rv: &mut RingVec<F>, new_len: usize) {
 fn mixed_d_schedule_shape_and_ring_dim_validation() {
     let schedule = mixed_schedule();
     assert_mixed_d_fixture_schedule(&schedule);
-    assert_eq!(schedule.num_fold_levels(), 4);
 
     init_rayon_pool();
     run_on_large_stack(|| {
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
         let schedule = mixed_schedule();
         validate_schedule_ring_dims(&schedule, setup.expanded.seed()).expect("ring dims valid");
-        for (level, expected_d) in [
-            (0, ENVELOPE_D),
-            (1, ENVELOPE_D),
-            (2, SUFFIX_D),
-            (3, SUFFIX_D),
-        ] {
-            let step = &schedule.folds[level];
-            assert_eq!(step.params.d_a(), expected_d, "level {level} d_a");
-        }
+        assert_mixed_d_fixture_schedule(&schedule);
         let mut unique = std::collections::BTreeSet::new();
-        for level in 0..schedule.num_fold_levels() {
-            let step = &schedule.folds[level];
-            let dims = step.params.role_dims;
+        let root_dims = schedule.root.params.final_group.commitment.role_dims();
+        unique.insert(root_dims.inner);
+        unique.insert(root_dims.outer);
+        unique.insert(root_dims.opening);
+        for step in &schedule.recursive_folds {
+            let dims = step.params.witness.role_dims();
             unique.insert(dims.inner);
             unique.insert(dims.outer);
             unique.insert(dims.opening);
         }
+        unique.insert(schedule.terminal.params.witness.d_a());
         assert_eq!(
             unique.into_iter().collect::<Vec<_>>(),
             vec![SUFFIX_D, ENVELOPE_D]
@@ -439,7 +453,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // from the cleartext terminal witness (which lives at D = 64 here).
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             witness.z_payloads[0].pop();
             verify_mixed(&fixture, &proof, &fixture.commitment)
                 .expect_err("wrong-length terminal witness must be rejected");
@@ -448,7 +462,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Terminal witness digit-field (e_fields) length.
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             let len = witness.e_fields.coeffs().len();
             truncate_ring_vec(&mut witness.e_fields, len.saturating_sub(1));
             verify_mixed(&fixture, &proof, &fixture.commitment)
@@ -459,7 +473,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // linked to the response by the direct A relation.
         {
             let mut proof = fixture.proof.clone();
-            let witness = proof.terminal.final_witness_mut();
+            let witness = proof.terminal.terminal_response_mut();
             let mut coeffs = witness.t_fields.coeffs().to_vec();
             coeffs[0] += F::one();
             witness.t_fields = RingVec::from_coeffs(coeffs);

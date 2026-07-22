@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, BatchedStage3Geometry, LevelParams, SetupContributionPlan,
+    AkitaVerifierSetup, BatchedStage3Geometry, CommittedGroupParams, SetupContributionPlan,
     SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -87,7 +87,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn verify_batched_stage3<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
+        next_fold_level_params: &CommittedGroupParams,
         proof: &SetupSumcheckProof<E>,
         stage2_next_w_eval: E,
         stage2_challenges: &[E],
@@ -145,7 +145,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     fn setup_eval_len<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
-        next_fold_level_params: &LevelParams,
+        next_fold_level_params: &CommittedGroupParams,
         ring_d: usize,
         setup_len: usize,
         transcript: &mut T,

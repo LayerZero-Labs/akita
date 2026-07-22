@@ -75,9 +75,9 @@ pub fn gadget_row_scalars<F: FieldCore + CanonicalField>(levels: usize, log_basi
 /// # Return value
 ///
 /// `(position_index_bits, block_index_bits, n_a)` — the chosen split plus its
-/// per-candidate SIS-secure A-rank. Callers building a `LevelParams` should use
+/// per-candidate SIS-secure A-rank. Callers building a `CommittedGroupParams` should use
 /// this `n_a` so the
-/// derived `b_key.col_len` matches the cost the optimizer scored.
+/// derived outer-matrix input width matches the cost the optimizer scored.
 ///
 /// # Fallback
 ///
@@ -153,7 +153,7 @@ pub fn optimal_block_geometry_split(
                 policy,
                 table_digest: crate::sis::SisTableDigest::CURRENT,
                 modulus_profile: sis_modulus_profile,
-                role: crate::sis::SisMatrixRole::A,
+                role: crate::sis::SisMatrixRole::Inner,
                 ring_dimension: d,
                 coeff_linf_bound: a_collision,
             },

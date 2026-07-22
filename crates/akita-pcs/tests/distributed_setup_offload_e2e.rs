@@ -14,7 +14,7 @@
 
 mod common;
 
-use akita_types::SetupContributionMode;
+use akita_types::{FoldSchedule, SetupContributionMode};
 use common::*;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
@@ -26,17 +26,22 @@ const TRANSCRIPT_DOMAIN: &[u8] = b"distributed_setup_offload_e2e/w8r2";
 /// level-0/level-1 mode swap, only one mixed leading fold, and a missing/extra
 /// setup-prefix handoff — none of which a bare "any chunked recursive fold" check
 /// would detect. `D64OneHot` (single-chunk) also fails this on levels 0/1.
-fn assert_w8r2_profile_shape(schedule: &Schedule) {
+fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
     assert!(
-        schedule.folds.len() >= 3,
+        schedule.recursive_folds.len() >= 2,
         "W8R2 profile must have at least three fold levels, got {}",
-        schedule.folds.len()
+        1 + schedule.recursive_folds.len()
     );
 
     // Levels 0 and 1: both chunked W8R2 (8 chunks over 2 leading levels) AND both
     // running the Stage-3 setup-product sum-check (`Recursive`).
-    for level in [0usize, 1usize] {
-        let params = &schedule.folds[level].params;
+    for (level, params) in [
+        &schedule.root.params.final_group.commitment,
+        &schedule.recursive_folds[0].params.witness,
+    ]
+    .into_iter()
+    .enumerate()
+    {
         assert_eq!(
             params.witness_chunk.num_chunks, 8,
             "level {level} must be chunked with num_chunks == 8 (W8R2)"
@@ -45,37 +50,45 @@ fn assert_w8r2_profile_shape(schedule: &Schedule) {
             params.witness_chunk.num_activated_levels, 2,
             "level {level} must carry num_activated_levels == 2 (W8R2)"
         );
+    }
+
+    for (producer_level, consumer) in schedule.recursive_folds[..2].iter().enumerate() {
         assert_eq!(
-            params.setup_contribution_mode,
+            consumer.params.predecessor_setup_contribution_mode(),
             SetupContributionMode::Recursive,
-            "level {level} must run the recursive setup-offload path"
+            "level {producer_level} must run the recursive setup-offload path"
         );
     }
 
     // Level 0 produces the first setup prefix (no incoming prefix); level 1
     // consumes it and produces its own.
     assert!(
-        schedule.folds[0].params.setup_prefix.is_none(),
-        "root fold (level 0) must not carry an incoming setup prefix"
-    );
-    assert!(
-        schedule.folds[1].params.setup_prefix.is_some(),
+        schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .is_some(),
         "level 1 must consume the level-0 setup prefix"
     );
 
     // Level 2 is the single-chunk `Direct` fold that consumes the level-1 prefix.
-    let level2 = &schedule.folds[2].params;
+    let level2 = &schedule.recursive_folds[1].params;
     assert_eq!(
-        level2.witness_chunk.num_chunks, 1,
+        level2.witness.witness_chunk.num_chunks, 1,
         "level 2 must be single-chunk (chunking activates only levels 0 and 1)"
     );
+    let level2_mode = schedule
+        .recursive_folds
+        .get(2)
+        .map_or(SetupContributionMode::Direct, |consumer| {
+            consumer.params.predecessor_setup_contribution_mode()
+        });
     assert_eq!(
-        level2.setup_contribution_mode,
+        level2_mode,
         SetupContributionMode::Direct,
         "level 2 must be Direct (no Stage-3 sum-check after the activated window)"
     );
     assert!(
-        level2.setup_prefix.is_some(),
+        level2.incoming_setup_prefix.is_some(),
         "level 2 must consume the level-1 setup prefix"
     );
 }

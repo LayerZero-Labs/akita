@@ -11,16 +11,15 @@ pub(super) use akita_prover::OneHotPoly;
 pub(super) use akita_prover::ProverOpeningData;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
-pub(super) use akita_types::LevelParams;
-pub(super) use akita_types::Schedule;
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
     BasisMode, Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupParams,
+    PrecommittedGroupDescriptor,
 };
+pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
 pub(super) use rand::{Rng, SeedableRng};
 use std::sync::Once;
@@ -197,7 +196,7 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
 pub(super) fn opening_from_poly<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
 ) -> F
 where
     P: RootOpeningSource<F, D> + RootPolyShape<F, D>,
@@ -209,7 +208,7 @@ where
 pub(super) fn opening_from_poly_with_basis<'a, const D: usize, P>(
     poly: &'a P,
     point: &[F],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis_mode: BasisMode,
 ) -> F
 where
@@ -254,7 +253,7 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
-pub(super) fn make_onehot_poly(layout: &LevelParams, seed: u64) -> OneHotPoly<F, u8> {
+pub(super) fn make_onehot_poly(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<F, u8> {
     // `2^nv = (num_live_blocks · num_positions_per_block) · D` field elements, grouped into
     // `2^nv / K` one-hot chunks of size `K`.
     let total_field = layout.num_live_blocks * layout.num_positions_per_block * ONEHOT_D;
@@ -290,18 +289,15 @@ pub(super) fn dense_field_evals(nv: usize, seed: u64) -> Vec<F> {
     out
 }
 
-fn multi_group_root_params(schedule: &Schedule) -> &LevelParams {
-    &schedule
-        .root_fold()
-        .expect("generated profile root fold")
-        .params
+fn multi_group_root_params(schedule: &FoldSchedule) -> &CommittedGroupParams {
+    &schedule.root.params.final_group.commitment
 }
 
-fn schedule_uses_setup_prefix(schedule: &Schedule) -> bool {
+fn schedule_uses_setup_prefix(schedule: &FoldSchedule) -> bool {
     schedule
-        .folds
+        .recursive_folds
         .iter()
-        .any(|fold| fold.params.setup_prefix.is_some())
+        .any(|fold| fold.params.incoming_setup_prefix.is_some())
 }
 
 fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
@@ -322,7 +318,7 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
 pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
-    on_schedule: fn(&Schedule),
+    on_schedule: fn(&FoldSchedule),
 ) where
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
@@ -344,7 +340,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
             )
             .expect("conservative precommit params");
-        let pre_frozen = PrecommittedGroupParams::from_params(pre_key, &pre_layout);
+        let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             precommitteds: vec![pre_frozen, pre_frozen],

@@ -3,7 +3,7 @@
 //! Opening-side notation (paper §§3--5): pre-digit ring openings are `e_folded`;
 //! per-block opening digits are `e_hat` (`e_i = ⟨a, f_i⟩`, `ê_i = G^{-1}(e_i)`).
 //! The full next-level recursive witness stays `w` (`next_w_commitment`,
-//! `final_witness`, `num_w_vectors`, `build_w_coeffs`).
+//! `terminal_response`, `num_w_vectors`, `build_w_coeffs`).
 
 //! Proof, commitment, setup, and claim data shapes.
 
@@ -82,15 +82,14 @@ pub use stage1::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
 };
 pub use tail_segments::{
-    build_segment_typed_witness_from_groups, decode_terminal_z_golomb_payload,
-    decode_terminal_z_golomb_payload_with_cap, emit_witness_e_planes, emit_witness_r_planes,
-    emit_witness_t_planes, emit_witness_z_planes, raw_field_segment_bytes,
-    segment_typed_witness_upper_bound_bytes, segment_typed_z_payload_bytes,
-    tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
-    tail_segment_multiplicities_from_layout_for_params, terminal_golomb_grind_tail_t_vectors,
-    validate_segment_typed_z_payload, z_fold_decoded_from_segment,
-    z_fold_encoding_stats_from_segment, SegmentTypedWitness, SegmentTypedWitnessGroupParts,
-    SegmentTypedWitnessShape, TailSegmentGroupLayout, TailSegmentLayout,
+    build_terminal_response, build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
+    emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
+    raw_field_segment_bytes, tail_golomb_rice_z_params, tail_segment_multiplicities_from_layout,
+    tail_segment_multiplicities_from_layout_for_params, terminal_response_upper_bound_bytes,
+    terminal_response_z_payload_bytes, validate_terminal_response_z_payload,
+    z_fold_decoded_from_terminal_response, z_fold_encoding_stats_from_terminal_response,
+    TailSegmentGroupLayout, TailSegmentLayout, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape,
 };
 pub use terminal_witness::TerminalWitnessTranscriptParts;
 

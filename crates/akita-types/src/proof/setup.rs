@@ -586,12 +586,11 @@ mod tests {
 
     fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
         crate::PrecommittedLevelParams {
-            layout: crate::PrecommittedGroupParams {
+            layout: crate::PrecommittedGroupDescriptor {
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
-                fold_challenge_shape: akita_challenges::TensorChallengeShape::Flat,
                 log_basis_inner: 1,
                 log_basis_outer: 1,
                 n_a: 1,
@@ -599,21 +598,19 @@ mod tests {
                 n_b: 1,
                 b_coeff_linf_bound: 1,
             },
-            a_key: crate::AjtaiKeyParams::new_unchecked(
+            inner_commit_matrix: crate::InnerCommitMatrixParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
                 crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::A,
                 1,
                 1,
                 1,
                 d_setup,
             ),
-            b_key: crate::AjtaiKeyParams::new_unchecked(
+            outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
                 crate::sis::DEFAULT_SIS_SECURITY_POLICY,
                 crate::sis::SisTableDigest::CURRENT,
                 crate::sis::SisModulusProfileId::Q128OffsetA7F7,
-                crate::sis::SisMatrixRole::B,
                 1,
                 1,
                 1,

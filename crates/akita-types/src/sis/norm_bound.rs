@@ -60,6 +60,41 @@ pub fn weak_binding_inf_norm(
         .checked_mul(z_inf_norm)
 }
 
+/// Complete A-role collision price for two accepted folded responses.
+///
+/// Both the fold challenge and the raw response may differ between two valid
+/// openings. Their exact symmetric difference intervals contribute one factor
+/// of two each; [`weak_binding_inf_norm`] contributes the lemma's outer factor
+/// of two.
+pub fn role_a_collision_inf_norm_for_response_bound(
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+    response_linf_bound: u128,
+) -> Option<u128> {
+    weak_binding_inf_norm(
+        challenge_l1_norm.checked_mul(2)?,
+        ring_subfield_norm_bound,
+        response_linf_bound.checked_mul(2)?,
+    )
+}
+
+/// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.
+///
+/// This is the exact integer inverse of
+/// [`role_a_collision_inf_norm_for_response_bound`].
+pub fn max_response_linf_for_role_a_collision(
+    collision_linf_capacity: u128,
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+) -> Option<u128> {
+    let price_per_unit = role_a_collision_inf_norm_for_response_bound(
+        challenge_l1_norm,
+        ring_subfield_norm_bound,
+        1,
+    )?;
+    collision_linf_capacity.checked_div(price_per_unit)
+}
+
 /// A-role committed-level coefficient-`L∞` collision bucket.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
@@ -127,7 +162,7 @@ pub fn rounded_up_role_a_inf_norm(
         policy,
         SisTableDigest::CURRENT,
         sis_modulus_profile,
-        SisMatrixRole::A,
+        SisMatrixRole::Inner,
         d as u32,
         collision_linf,
     )
@@ -230,6 +265,59 @@ pub fn fold_witness_digit_plan(
     witness: FoldWitnessNorms,
     cap_config: &FoldWitnessLinfCapConfig,
 ) -> Result<(usize, u128), AkitaError> {
+    let (mut inf_norm_bound, rademacher_inf_norm_bound) = fold_witness_unsnapped_linf_cap(
+        num_live_blocks,
+        num_claims,
+        challenge,
+        witness,
+        cap_config,
+    )?;
+    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
+    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
+
+    // Optional digit snap-down: walk `δ_fold` downward while the symmetric
+    // honest-prover digit envelope at `δ-1` still clears
+    // `retain_num/retain_den · t*`.
+    if let (
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
+        Some(rademacher_inf_norm_bound),
+    ) = (cap_config.policy, rademacher_inf_norm_bound)
+    {
+        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
+            && fold_decomposed_digits > 1
+            && rademacher_inf_norm_bound > 0
+        {
+            let floor =
+                (rademacher_inf_norm_bound.saturating_mul(u128::from(
+                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
+                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
+                .max(1);
+            while fold_decomposed_digits > 1 {
+                let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
+                if positive_lower < floor {
+                    break;
+                }
+                fold_decomposed_digits -= 1;
+                inf_norm_bound = inf_norm_bound.min(positive_lower);
+            }
+        }
+    }
+    Ok((fold_decomposed_digits, inf_norm_bound))
+}
+
+/// Honest folded-response infinity-norm cap before any digit-boundary snap.
+///
+/// Terminal responses are encoded as raw centered integers, so their
+/// completeness and codec sizing use this exact cap rather than a gadget
+/// boundary selected for recursive witnesses.
+pub fn fold_witness_unsnapped_linf_cap(
+    num_live_blocks: usize,
+    num_claims: usize,
+    challenge: FoldChallengeNorms,
+    witness: FoldWitnessNorms,
+    cap_config: &FoldWitnessLinfCapConfig,
+) -> Result<(u128, Option<u128>), AkitaError> {
     if num_live_blocks == 0 {
         return Err(AkitaError::InvalidSetup(
             "fold_witness_digit_plan: num_live_blocks must be positive".to_string(),
@@ -274,45 +362,39 @@ pub fn fold_witness_digit_plan(
             )
         }
     };
-    let log_cap = (128 - inf_norm_bound.leading_zeros()).saturating_add(1);
-    let mut fold_decomposed_digits = num_digits_for_bound(log_cap, field_bits, log_basis);
-
-    // Optional digit snap-down: walk `δ_fold` downward while the symmetric
-    // honest-prover digit envelope at `δ-1` still clears
-    // `retain_num/retain_den · t*`.
-    if let (
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
-        Some(rademacher_inf_norm_bound),
-    ) = (cap_config.policy, rademacher_inf_norm_bound)
-    {
-        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
-            && fold_decomposed_digits > 1
-            && rademacher_inf_norm_bound > 0
-        {
-            // Integer retain floor `⌊retain_num/retain_den · t*⌋`, clamped to at least 1.
-            let floor =
-                (rademacher_inf_norm_bound.saturating_mul(u128::from(
-                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
-                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
-                .max(1);
-            while fold_decomposed_digits > 1 {
-                let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
-                if positive_lower < floor {
-                    break;
-                }
-                fold_decomposed_digits -= 1;
-                inf_norm_bound = inf_norm_bound.min(positive_lower);
-            }
-        }
-    }
-    Ok((fold_decomposed_digits, inf_norm_bound))
+    Ok((inf_norm_bound, rademacher_inf_norm_bound))
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::ajtai_key::DEFAULT_SIS_SECURITY_POLICY;
     use super::*;
+
+    #[test]
+    fn raw_terminal_response_bound_uses_the_complete_difference_interval() {
+        let challenge_l1 = 41;
+        let subfield_norm = 2;
+        let response_bound = 7;
+        let price = role_a_collision_inf_norm_for_response_bound(
+            challenge_l1,
+            subfield_norm,
+            response_bound,
+        )
+        .expect("collision price");
+        assert_eq!(
+            price,
+            8 * challenge_l1 * u128::from(subfield_norm) * response_bound
+        );
+        let unit_price = price / response_bound;
+        assert_eq!(
+            max_response_linf_for_role_a_collision(
+                price + unit_price - 1,
+                challenge_l1,
+                subfield_norm,
+            ),
+            Some(response_bound)
+        );
+    }
 
     #[test]
     fn fold_witness_digit_plan_beta_picks_min_ring_product_side() {
@@ -440,7 +522,7 @@ mod tests {
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
-            SisMatrixRole::A,
+            SisMatrixRole::Inner,
             d as u32,
             collision_linf,
         )
@@ -536,7 +618,7 @@ mod tests {
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q64Offset59,
-            SisMatrixRole::A,
+            SisMatrixRole::Inner,
             d as u32,
             8u128
                 .checked_mul(challenge.l1_norm)
@@ -679,7 +761,7 @@ mod tests {
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
-                SisMatrixRole::A,
+                SisMatrixRole::Inner,
                 d as u32,
                 8 * challenge.l1_norm * z_bound
             )

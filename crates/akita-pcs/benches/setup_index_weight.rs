@@ -3,8 +3,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, CommitmentRingDims, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, SetupContributionGroupInputs, SetupContributionPlan,
+    gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
+    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan,
     SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
@@ -50,7 +50,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let level_params = LevelParams::params_only(
+    let level_params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         log_basis,
@@ -100,7 +100,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
         eq_tau1,
         &layout,
         opening_source_len,
@@ -114,7 +113,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         &plan,
         &level_params,
         &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
         &layout,
         opening_source_len,
         &groups,

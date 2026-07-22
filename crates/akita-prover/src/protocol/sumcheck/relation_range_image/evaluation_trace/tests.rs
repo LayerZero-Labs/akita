@@ -7,7 +7,7 @@ use akita_types::{
     basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
     ring_opening_point_from_field, BasisMode, DigitRangePlan, EvaluationTraceInputs,
     FlatBooleanDomain, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationMatrixRowLayout, RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
+    RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
 };
 
 type Cfg = fp128::D128Full;
@@ -73,12 +73,7 @@ where
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
     let level_params = Cfg::get_params_for_batched_commitment(&opening_batch).unwrap();
-    let rhs_layout = relation_rhs_layout_for(
-        &level_params,
-        &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
-    )
-    .unwrap();
+    let rhs_layout = relation_rhs_layout_for(&level_params, &opening_batch).unwrap();
     let witness_layout = WitnessLayout::new(
         &level_params,
         &opening_batch,

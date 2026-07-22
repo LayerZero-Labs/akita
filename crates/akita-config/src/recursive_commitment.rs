@@ -5,7 +5,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    OpeningClaimsLayout, Schedule, SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -90,7 +91,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
 
     fn runtime_schedule(
         key: akita_types::AkitaScheduleLookupKey,
-    ) -> Result<akita_types::Schedule, AkitaError> {
+    ) -> Result<akita_types::FoldSchedule, AkitaError> {
         if Cfg::D != SETUP_OFFLOAD_D_SETUP {
             return Err(AkitaError::InvalidSetup(
                 "recursive setup planning requires D64".to_string(),
@@ -108,7 +109,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         )
     }
 
-    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
         Self::runtime_schedule(recursive_schedule_key::<Cfg>(layout)?)
     }
 }

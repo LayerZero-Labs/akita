@@ -3,8 +3,7 @@
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::{
-    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, OpeningClaimsLayout,
-    PolynomialGroupLayout, Schedule,
+    dispatch_for_field, ntt_cache_requires_i16_tail, AkitaVerifierSetup, FoldSchedule,
 };
 
 pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
@@ -12,46 +11,29 @@ pub(super) const TERMINAL_I16_LOG_BASIS: u32 = 16;
 /// Warm every exact terminal i16 representation selected by a validated schedule.
 pub(super) fn warm_for_schedule<F: FieldCore + CanonicalField>(
     setup: &AkitaVerifierSetup<F>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> Result<(), AkitaError> {
-    let terminal_params = &schedule
-        .folds
-        .last()
-        .ok_or_else(|| AkitaError::InvalidSetup("schedule has no terminal fold".into()))?
-        .params;
-    let precommitteds = terminal_params
-        .precommitted_group_iter()
-        .map(|params| params.layout.group)
-        .collect::<Vec<_>>();
-    let opening_batch = OpeningClaimsLayout::from_root_groups(
-        &precommitteds,
-        PolynomialGroupLayout::new(terminal_params.recursive_opening_num_vars()?, 1),
-    )?;
-    let ring_d = terminal_params.role_dims().d_a();
+    let terminal_params = &schedule.terminal.params.witness;
+    let ring_d = terminal_params.d_a();
     dispatch_for_field!(
         akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
         F,
         ring_d,
         |D| {
-            let mut base_prefix_len = 0usize;
-            let mut tail_prefix_len = 0usize;
-            let mut max_width = 0usize;
-            for group_index in 0..opening_batch.num_groups() {
-                let params = terminal_params.group_params(&opening_batch, group_index)?;
-                let width = params.a_col_len();
-                let prefix_len =
-                    params
-                        .a_rows_len()
-                        .checked_mul(width)
-                        .ok_or(AkitaError::InvalidSetup(
-                            "terminal A cache prefix length overflow".into(),
-                        ))?;
-                base_prefix_len = base_prefix_len.max(prefix_len);
-                max_width = max_width.max(width);
-                if ntt_cache_requires_i16_tail::<F, D>(width, TERMINAL_I16_LOG_BASIS)? {
-                    tail_prefix_len = tail_prefix_len.max(prefix_len);
-                }
-            }
+            let max_width = terminal_params.inner_width();
+            let base_prefix_len = terminal_params
+                .inner_commit_matrix
+                .output_rank()
+                .checked_mul(max_width)
+                .ok_or(AkitaError::InvalidSetup(
+                    "terminal A cache prefix length overflow".into(),
+                ))?;
+            let tail_prefix_len =
+                if ntt_cache_requires_i16_tail::<F, D>(max_width, TERMINAL_I16_LOG_BASIS)? {
+                    base_prefix_len
+                } else {
+                    0
+                };
             if base_prefix_len > 0 {
                 setup.prepared_verifier_ntt_prefix::<D>(
                     base_prefix_len,
@@ -122,7 +104,7 @@ mod tests {
     use akita_field::{Prime128Offset275 as F, Prime32Offset99 as F32};
     use akita_types::{
         max_safe_crt_accumulation_width, select_crt_ntt_params, AkitaExpandedSetup,
-        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, LevelParamsLike, PolynomialGroupLayout,
+        AkitaScheduleLookupKey, AkitaSetupSeed, FlatMatrix, PolynomialGroupLayout,
         ProtocolCrtNttParams, SetupPrefixVerifierRegistry,
     };
     use std::sync::Arc;
@@ -263,10 +245,11 @@ mod tests {
         let group = PolynomialGroupLayout::new(15, 1);
         let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
             .expect("D64 schedule");
-        let params = &schedule.folds.last().expect("terminal fold").params;
+        let params = &schedule.terminal.params.witness;
         let prefix_len = params
-            .a_rows_len()
-            .checked_mul(params.a_col_len())
+            .inner_commit_matrix
+            .output_rank()
+            .checked_mul(params.inner_width())
             .expect("terminal prefix");
         let matrix = vec![CyclotomicRing::<F, D>::zero(); prefix_len];
         let setup = verifier_setup(&matrix);

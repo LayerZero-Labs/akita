@@ -282,7 +282,7 @@ PR #311 removed quotient-backed terminal layouts. The current terminal is the
 structural `WithoutCommitmentBlocks` clear witness and contains only typed
 `z | e | t` segments checked by direct consistency/A and trace equations.
 Chunked/grouped terminal geometry is not currently accepted; this proposal must
-extend `SegmentTypedWitnessShape` and the terminal checker before enabling a `W > 1`
+extend `TerminalResponseShape` and the terminal checker before enabling a `W > 1`
 terminal predecessor. It must not price or reconstruct a `WithoutDBlock`
 quotient tail.
 

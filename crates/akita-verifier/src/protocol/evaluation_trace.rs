@@ -186,7 +186,7 @@ mod tests {
     use akita_types::{
         basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
         ring_opening_point_from_field, BasisMode, DigitRangePlan, FlatBooleanDomain,
-        OpeningClaimsLayout, PreparedOpeningPoint, RelationMatrixRowLayout, RelationRangeImagePlan,
+        OpeningClaimsLayout, PreparedOpeningPoint, RelationRangeImagePlan,
         RingMultiplierOpeningPoint, WitnessLayout,
     };
 
@@ -202,12 +202,8 @@ mod tests {
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
         let level_params =
             Cfg::get_params_for_batched_commitment(&opening_batch).expect("level parameters");
-        let rhs_layout = relation_rhs_layout_for(
-            &level_params,
-            &opening_batch,
-            RelationMatrixRowLayout::WithDBlock,
-        )
-        .expect("relation RHS layout");
+        let rhs_layout =
+            relation_rhs_layout_for(&level_params, &opening_batch).expect("relation RHS layout");
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,

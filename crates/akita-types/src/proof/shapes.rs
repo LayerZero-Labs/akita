@@ -78,7 +78,7 @@ pub struct TerminalLevelProofShape {
     /// Shape of the optional extension-opening reduction payload.
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Shape of the terminal cleartext witness.
-    pub final_witness: SegmentTypedWitnessShape,
+    pub terminal_response: TerminalResponseShape,
 }
 
 /// Shape-selected outgoing witness binding for an intermediate fold.
@@ -175,7 +175,7 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
 //
 // These impls let callers bundle proof shapes alongside proofs (e.g. when
 // shipping verifier inputs to a Jolt guest program), so that the proof can be
-// deserialized in environments that don't reconstruct a `Schedule` first.
+// deserialized in environments that don't reconstruct a `FoldSchedule` first.
 
 fn deserialize_shape_vec<T, R: Read>(
     reader: &mut R,
@@ -415,7 +415,7 @@ impl Valid for TerminalLevelProofShape {
         if let Some(reduction) = &self.extension_opening_reduction {
             reduction.check()?;
         }
-        self.final_witness.check()?;
+        self.terminal_response.check()?;
         Ok(())
     }
 }
@@ -437,7 +437,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                 .sumcheck
                 .serialize_with_mode(&mut writer, compress)?;
         }
-        self.final_witness
+        self.terminal_response
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
@@ -451,7 +451,7 @@ impl AkitaSerialize for TerminalLevelProofShape {
                     reduction.partials.serialized_size(compress)
                         + reduction.sumcheck.serialized_size(compress)
                 });
-        reduction_size + self.final_witness.serialized_size(compress)
+        reduction_size + self.terminal_response.serialized_size(compress)
     }
 }
 
@@ -472,11 +472,11 @@ impl AkitaDeserialize for TerminalLevelProofShape {
         } else {
             None
         };
-        let final_witness =
-            SegmentTypedWitnessShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let terminal_response =
+            TerminalResponseShape::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let out = Self {
             extension_opening_reduction,
-            final_witness,
+            terminal_response,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

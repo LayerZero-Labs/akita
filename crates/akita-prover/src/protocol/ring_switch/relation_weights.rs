@@ -12,8 +12,8 @@ use akita_field::{
 };
 use akita_types::{
     checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
-    AkitaExpandedSetup, CommitmentRingDims, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    RelationMatrixRowLayout, RingRelationInstance, SetupProjectionGeometry,
+    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, RingRelationInstance, SetupProjectionGeometry,
 };
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -74,10 +74,9 @@ pub struct RelationWeightEventInputs<'a, F: FieldCore, E: FieldCore> {
     pub setup: RelationSetupSource<'a, F>,
     pub instance: &'a RingRelationInstance<F>,
     pub alpha: E,
-    pub level_params: &'a LevelParams,
+    pub level_params: &'a CommittedGroupParams,
     pub relation_row_point: &'a [E],
     pub claim_coefficients: &'a [E],
-    pub relation_matrix_row_layout: RelationMatrixRowLayout,
     pub opening_source_len: usize,
     pub opening_ring_dim: usize,
 }
@@ -359,7 +358,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
 }
 
 fn relation_d_group_width(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     group_index: usize,
 ) -> Result<usize, AkitaError> {
@@ -372,7 +371,7 @@ fn relation_d_group_width(
 }
 
 fn relation_d_column_ranges(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
 ) -> Result<Vec<Range<usize>>, AkitaError> {
     let mut cursor = 0usize;
@@ -418,7 +417,6 @@ where
         level_params: lp,
         relation_row_point: tau1,
         claim_coefficients: gamma,
-        relation_matrix_row_layout,
         opening_source_len,
         opening_ring_dim,
     } = inputs;
@@ -440,8 +438,7 @@ where
     let alpha_pows_a = scalar_powers(alpha, d_a);
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     let eq_tau1 = SplitEqEvals::new(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -449,7 +446,7 @@ where
             actual: eq_tau1.len(),
         });
     }
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
+    let n_d_active = lp.open_commit_matrix.output_rank();
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
     let witness_layout = instance.segment_layout(lp, None)?;
     let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
@@ -502,16 +499,16 @@ where
         let e_total = d_physical_columns
             .checked_mul(d_ratio)
             .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
-        Some(
-            setup
-                .shared_matrix
-                .ring_view_dyn(lp.d_key.row_len(), e_total, d_d)?,
-        )
+        Some(setup.shared_matrix.ring_view_dyn(
+            lp.open_commit_matrix.output_rank(),
+            e_total,
+            d_d,
+        )?)
     } else {
         None
     };
     let d_rows = if let Some(d_view) = &d_view {
-        (0..lp.d_key.row_len())
+        (0..lp.open_commit_matrix.output_rank())
             .map(|row| d_view.row_flat(row))
             .collect::<Result<Vec<_>, _>>()?
     } else {
@@ -606,9 +603,8 @@ where
         } else {
             (Vec::new(), Vec::new())
         };
-        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
-        let b_range =
-            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
             return Err(AkitaError::InvalidProof);
         }
@@ -831,7 +827,7 @@ where
             Ok::<_, AkitaError>(
                 found
                     || lp
-                        .commitment_row_range(opening_batch, group, relation_matrix_row_layout)?
+                        .commitment_row_range(opening_batch, group)?
                         .contains(&row),
             )
         })?;
