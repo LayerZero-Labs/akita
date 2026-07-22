@@ -12,6 +12,7 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime128OffsetA7F7;
 
+mod fused_scan;
 mod prepare;
 
 type F = Prime128OffsetA7F7;
@@ -1267,6 +1268,7 @@ fn packed_direct_matches_row_fallback_with_nested_role_dims() {
         .unwrap();
     assert_eq!(got, expected);
 }
+
 #[test]
 fn packed_direct_rejects_non_decomposable_role_alpha_pows() {
     const D_A: usize = 64;

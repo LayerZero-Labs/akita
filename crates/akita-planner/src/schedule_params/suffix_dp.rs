@@ -158,17 +158,17 @@ struct CandidateSuffixChoice {
 }
 
 fn level_setup_envelope(params: &CommittedGroupParams) -> Result<usize, AkitaError> {
-    let mut envelope = 1;
-    akita_types::accumulate_matrix_envelope_for_level(params, &mut envelope)?;
-    Ok(envelope)
+    let mut envelope = akita_types::SetupMatrixEnvelope::minimum();
+    akita_types::accumulate_matrix_envelope_for_level(params, &mut envelope.max_setup_len)?;
+    Ok(envelope.max_setup_len)
 }
 
 fn terminal_setup_envelope(
     params: &akita_types::TerminalCommittedGroupParams,
 ) -> Result<usize, AkitaError> {
-    let mut envelope = 1;
-    akita_types::accumulate_terminal_matrix_envelope(params, &mut envelope)?;
-    Ok(envelope)
+    let mut envelope = akita_types::SetupMatrixEnvelope::minimum();
+    akita_types::accumulate_terminal_matrix_envelope(params, &mut envelope.max_setup_len)?;
+    Ok(envelope.max_setup_len)
 }
 
 fn update_best_suffix_choices(
