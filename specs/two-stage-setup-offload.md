@@ -6,7 +6,7 @@
 | Created | 2026-07-22 |
 | Status | proposed |
 | Branch | `quang/stage3-setup-contribution-refactor` |
-| Base | PR #317 head `5fbb2b75` |
+| Base | PR #318 integration head `1275bc63` (including PR #317) |
 | Supersedes | The recursive path in `setup-product-sumcheck.md` and `batched-stage3-setup-opening.md` after cutover |
 | Superseded-by | |
 | Book-chapter | |
@@ -111,6 +111,23 @@ mirror, to select the protocol.
 
 The terminal successor MUST NOT request an incoming setup prefix because no
 later committed fold can consume the carried prefix opening.
+
+## Prepared setup authority from PR #318
+
+PR #318 makes `SetupContributionPlan` the canonical prepared setup-weight
+authority in both direct and deferred setup modes. Stage 2 constructs the plan
+while evaluating the relation, uses its prepared E/T/Z equality slices, and
+caches the challenge-bound plan for the existing Stage 3 verifier.
+
+The two-stage cutover MUST reuse this plan and its role-native setup geometry.
+It MUST NOT add another setup-weight builder, equality-table representation, or
+projection API solely for the relocated setup product. Once Stage 3 is deleted,
+the plan passes directly from offloaded Stage 1 relation evaluation into the
+new Stage 2 setup-product verifier instead of through the Stage 3 cache.
+
+PR #318 also changes recursive schedule selection to prioritize the first
+remaining direct setup footprint before proof bytes. That planner policy is
+part of this spec's baseline but is not changed by the protocol cutover.
 
 ## Current boundary
 
