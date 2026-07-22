@@ -9,6 +9,9 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
         estimated_recursive_stage3_payload_bytes: vec![22, 0],
         estimated_terminal_direct_payload_bytes: 400,
         estimated_terminal_response_payload_bytes: 350,
+        estimated_setup_envelope_ring_elements: 512,
+        first_direct_setup_field_len: Some(1_024),
+        selected_offload_edges: 2,
     };
 
     assert_eq!(

@@ -24,6 +24,7 @@ const MIN_OFFLOADED_WITNESS_CONTRACTION: usize = 3;
 #[derive(Clone)]
 pub(crate) struct FoldSuffix {
     pub(crate) total_bytes: usize,
+    pub(crate) setup_envelope_ring_elements: usize,
     pub(crate) first_direct_setup_field_len: usize,
     pub(crate) first_fold_params: Option<CommittedGroupParams>,
     pub(crate) folds: Vec<CandidateFoldStep>,
@@ -148,26 +149,50 @@ pub(crate) fn terminal_direct_suffix_cost(
 
 pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), SuffixResult>;
 
-type CandidateSuffixChoice = (
-    usize,
-    usize,
-    Vec<CandidateFoldStep>,
-    CandidateTerminalResponse,
-);
+#[derive(Clone)]
+struct CandidateSuffixChoice {
+    first_direct_setup_field_len: usize,
+    total_bytes: usize,
+    setup_envelope_ring_elements: usize,
+    folds: Vec<CandidateFoldStep>,
+    terminal: CandidateTerminalResponse,
+}
+
+fn level_setup_envelope(params: &CommittedGroupParams) -> Result<usize, AkitaError> {
+    let mut envelope = 1;
+    akita_types::accumulate_matrix_envelope_for_level(params, &mut envelope)?;
+    Ok(envelope)
+}
+
+fn terminal_setup_envelope(
+    params: &akita_types::TerminalCommittedGroupParams,
+) -> Result<usize, AkitaError> {
+    let mut envelope = 1;
+    akita_types::accumulate_terminal_matrix_envelope(params, &mut envelope)?;
+    Ok(envelope)
+}
 
 fn update_best_suffix_choices(
     first_direct_setup_field_len: usize,
     total_bytes: usize,
+    setup_envelope_ring_elements: usize,
     folds: Vec<CandidateFoldStep>,
     terminal: CandidateTerminalResponse,
     best_by_setup: &mut Option<CandidateSuffixChoice>,
     best_by_proof: &mut Option<CandidateSuffixChoice>,
 ) {
-    let candidate = (first_direct_setup_field_len, total_bytes, folds, terminal);
+    let candidate = CandidateSuffixChoice {
+        first_direct_setup_field_len,
+        total_bytes,
+        setup_envelope_ring_elements,
+        folds,
+        terminal,
+    };
     if best_by_setup
         .as_ref()
-        .map(|(best_setup, best_total, _, _)| {
-            (first_direct_setup_field_len, total_bytes) < (*best_setup, *best_total)
+        .map(|best| {
+            (first_direct_setup_field_len, total_bytes)
+                < (best.first_direct_setup_field_len, best.total_bytes)
         })
         .unwrap_or(true)
     {
@@ -175,7 +200,7 @@ fn update_best_suffix_choices(
     }
     if best_by_proof
         .as_ref()
-        .map(|(_, best_total, _, _)| total_bytes < *best_total)
+        .map(|best| total_bytes < best.total_bytes)
         .unwrap_or(true)
     {
         *best_by_proof = Some(candidate);
@@ -185,11 +210,18 @@ fn update_best_suffix_choices(
 fn offloaded_witness_contracts(
     input_witness_len: usize,
     input_log_basis: u32,
+    setup_prefix_field_len: usize,
+    field_bits: u32,
     output_witness_len: usize,
     output_log_basis: u32,
 ) -> Result<bool, AkitaError> {
     let input_bits = input_witness_len
         .checked_mul(input_log_basis as usize)
+        .and_then(|bits| {
+            setup_prefix_field_len
+                .checked_mul(field_bits as usize)
+                .and_then(|prefix_bits| bits.checked_add(prefix_bits))
+        })
         .ok_or_else(|| AkitaError::InvalidSetup("input witness bit length overflow".to_string()))?;
     let minimum_input_bits = output_witness_len
         .checked_mul(output_log_basis as usize)
@@ -208,6 +240,7 @@ struct ChildEdge<'a> {
     natural_setup_field_len: usize,
     eor_bytes: usize,
     offloaded: bool,
+    setup_envelope_budget: Option<usize>,
 }
 
 fn consider_child_suffixes(
@@ -257,6 +290,14 @@ fn consider_child_suffixes(
             .checked_add(stage3_payload_bytes)
             .and_then(|value| value.checked_add(suffix.total_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
+        let setup_envelope_ring_elements =
+            level_setup_envelope(edge.candidate_params)?.max(suffix.setup_envelope_ring_elements);
+        if edge
+            .setup_envelope_budget
+            .is_some_and(|budget| setup_envelope_ring_elements > budget)
+        {
+            continue;
+        }
         let first_direct_setup_field_len = if edge.offloaded {
             suffix.first_direct_setup_field_len
         } else {
@@ -271,26 +312,26 @@ fn consider_child_suffixes(
             estimated_stage3_payload_bytes: stage3_payload_bytes,
         });
         folds.extend(suffix.folds.iter().cloned());
-        let candidate = (
+        let candidate = CandidateSuffixChoice {
             first_direct_setup_field_len,
             total_bytes,
+            setup_envelope_ring_elements,
             folds,
-            suffix.terminal.clone(),
-        );
+            terminal: suffix.terminal.clone(),
+        };
 
         if update_setup_choice
-            && best_by_setup
-                .as_ref()
-                .is_none_or(|(best_setup, best_total, _, _)| {
-                    (first_direct_setup_field_len, total_bytes) < (*best_setup, *best_total)
-                })
+            && best_by_setup.as_ref().is_none_or(|best| {
+                (first_direct_setup_field_len, total_bytes)
+                    < (best.first_direct_setup_field_len, best.total_bytes)
+            })
         {
             *best_by_setup = Some(candidate.clone());
         }
         if update_proof_choice
             && best_by_proof
                 .as_ref()
-                .is_none_or(|(_, best_total, _, _)| total_bytes < *best_total)
+                .is_none_or(|best| total_bytes < best.total_bytes)
         {
             *best_by_proof = Some(candidate);
         }
@@ -311,6 +352,7 @@ pub(crate) struct SuffixCtx<'a> {
         &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
+    pub(crate) setup_envelope_budget: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -354,6 +396,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         fold_challenge_shape_at_level,
         num_vars,
         key,
+        setup_envelope_budget,
     } = *ctx;
     let SuffixState {
         level,
@@ -408,10 +451,18 @@ pub(crate) fn derive_optimal_suffix_schedule(
         else {
             continue;
         };
-        if incoming_setup_prefix.is_some()
-            && !offloaded_witness_contracts(current_witness_len, current_lb, next_witness_len, lb)?
-        {
-            continue;
+        if let Some(natural_prefix_len) = incoming_setup_prefix {
+            let padded_prefix_len = akita_types::padded_setup_prefix_len(natural_prefix_len);
+            if !offloaded_witness_contracts(
+                current_witness_len,
+                current_lb,
+                padded_prefix_len,
+                policy.decomposition.field_bits(),
+                next_witness_len,
+                lb,
+            )? {
+                continue;
+            }
         }
         let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
             policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
@@ -456,6 +507,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 update_best_suffix_choices(
                     natural_len,
                     total,
+                    terminal_setup_envelope(&direct_step.params)?,
                     Vec::new(),
                     direct_step,
                     &mut best_for_this_lb,
@@ -483,6 +535,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             natural_setup_field_len: natural_len,
             eor_bytes,
             offloaded: false,
+            setup_envelope_budget,
         };
         consider_child_suffixes(
             &direct_edge,
@@ -527,13 +580,20 @@ pub(crate) fn derive_optimal_suffix_schedule(
             )?;
         }
 
-        if let Some((first_direct_setup_field_len, total_bytes, folds, terminal)) = best_for_this_lb
-        {
+        if let Some(choice) = best_for_this_lb {
+            let CandidateSuffixChoice {
+                first_direct_setup_field_len,
+                total_bytes,
+                setup_envelope_ring_elements,
+                folds,
+                terminal,
+            } = choice;
             let first_fold_params = folds.first().map(|fold| fold.params.clone());
             best_fold_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
+                    setup_envelope_ring_elements,
                     first_direct_setup_field_len,
                     first_fold_params,
                     folds,
@@ -541,14 +601,20 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 },
             );
         }
-        if let Some((first_direct_setup_field_len, total_bytes, folds, terminal)) =
-            best_proof_for_this_lb
-        {
+        if let Some(choice) = best_proof_for_this_lb {
+            let CandidateSuffixChoice {
+                first_direct_setup_field_len,
+                total_bytes,
+                setup_envelope_ring_elements,
+                folds,
+                terminal,
+            } = choice;
             let first_fold_params = folds.first().map(|fold| fold.params.clone());
             best_proof_fold_per_lb.insert(
                 lb,
                 FoldSuffix {
                     total_bytes,
+                    setup_envelope_ring_elements,
                     first_direct_setup_field_len,
                     first_fold_params,
                     folds,
@@ -572,13 +638,19 @@ mod tests {
 
     #[test]
     fn offloaded_contraction_accepts_exact_threefold_boundary() {
-        assert!(offloaded_witness_contracts(300, 2, 100, 2).unwrap());
-        assert!(!offloaded_witness_contracts(299, 2, 100, 2).unwrap());
+        assert!(offloaded_witness_contracts(300, 2, 0, 128, 100, 2).unwrap());
+        assert!(!offloaded_witness_contracts(299, 2, 0, 128, 100, 2).unwrap());
     }
 
     #[test]
     fn offloaded_contraction_prices_changed_digit_basis() {
-        assert!(offloaded_witness_contracts(900, 2, 100, 6).unwrap());
-        assert!(!offloaded_witness_contracts(899, 2, 100, 6).unwrap());
+        assert!(offloaded_witness_contracts(900, 2, 0, 128, 100, 6).unwrap());
+        assert!(!offloaded_witness_contracts(899, 2, 0, 128, 100, 6).unwrap());
+    }
+
+    #[test]
+    fn offloaded_contraction_includes_full_field_setup_prefix() {
+        assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4).unwrap());
+        assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4).unwrap());
     }
 }

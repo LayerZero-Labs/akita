@@ -881,9 +881,14 @@ pub struct PlannedFoldSchedule {
 
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
+    pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
+    pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
+    pub estimated_setup_envelope_ring_elements: usize,
+    pub first_direct_setup_field_len: Option<usize>,
+    pub selected_offload_edges: usize,
 }
 ```
 
@@ -1376,25 +1381,25 @@ derived results. The emitter also writes a human-readable audit artifact or
 test snapshot containing derived values so parameter changes can be reviewed
 without reverse-engineering Rust constants.
 
-### Objectives and Pareto output
+### Current bounded objective and future Pareto output
 
-The core search does not hard-code one scalar objective. The cutover implements
-and requires this initial cost-model identity:
+The topology cutover binds the exact quantities its current scalar policies
+use and audit:
 
 ```rust
 pub enum PlannerCostModelId {
-    PayloadEstimateAndStorage,
+    ExactPayloadAndSetupEnvelope,
 }
 ```
 
-`PayloadEstimateAndStorage` uses exactly this dominance vector:
+`ExactPayloadAndSetupEnvelope` materializes and equality-checks:
 
 ```text
-next recursive witness bytes
 estimated direct proof payload bytes
-maximum individual setup matrix bytes
-total setup matrix bytes
-total offloaded setup-prefix contribution to successor witnesses
+exact Stage-3 payload bytes
+maximum supported setup envelope
+first later direct setup scan
+selected offload-edge count
 ```
 
 It reports root prover, later-fold prover, and verifier matrix-evaluation
@@ -1403,32 +1408,28 @@ selection. There is no unspecified work weight in the cutover. Adding work to
 dominance later requires a new `PlannerCostModelId` with reviewed formulas and
 units; changing the vector under the existing ID is invalid.
 
-All current-main catalog families explicitly bind the initial selection policy:
+Catalog families explicitly bind one of the current policies:
 
 ```rust
 pub enum SelectionPolicyId {
-    MinEstimatedDirectPayload,
+    MinEstimatedProofPayload,
+    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
 }
 ```
 
-`MinEstimatedDirectPayload` selects from the retained frontier using this
-total lexicographic order:
+`MinEstimatedProofPayload` is the ordinary direct-only proof-byte policy.
+`MinFirstDirectSetupThenPayloadWithinSupportedEnvelope` rejects recursive
+candidates beyond `MAX_SETUP_MATRIX_FIELD_ELEMENTS`, then compares:
 
-1. estimated direct proof payload bytes;
-2. next recursive witness bytes;
-3. maximum individual setup matrix bytes;
-4. total setup matrix bytes;
-5. total offloaded setup-prefix contribution to successor witnesses; and
-6. canonical encoded generated-schedule decisions, bytewise, as the final
-   deterministic tie breaker.
+1. first later direct setup scan;
+2. exact estimated proof payload, including Stage 3; and
+3. the existing deterministic candidate ordering for ties.
 
-There is no library-default policy and no dependence on candidate enumeration
-order. A catalog family must supply and identity-bind its policy, but the
-cutover assignment is no longer an open decision: every family shipped on
-current main supplies `MinEstimatedDirectPayload`. The selected entry and
-every frontier point rejected by the policy are written to the audit report.
-Future catalog families can introduce another reviewed policy ID without
-changing this one's ordering.
+This is deliberately not the final Pareto planner. In particular, it does not
+claim that an offloaded schedule preserves the independently optimized direct
+schedule's storage envelope. A later cost-model identity must retain and expose
+the full frontier across recursive witness bytes, proof bytes, individual and
+total matrix storage, prefix contribution, and prover/verifier work.
 
 ### Explicitly deferred surfaces
 
@@ -1652,10 +1653,9 @@ and SIS contract exist. The schedule topology does not change again.
       digit depths, collision bounds, SIS buckets, widths, and bytes.
 - [ ] `FoldSchedule` contains no planner byte estimate. Estimates live in
       `FoldScheduleEstimate` and are absent from the instance descriptor.
-- [ ] Every current-main catalog family identity-binds
-      `PayloadEstimateAndStorage` and `MinEstimatedDirectPayload`; frontier
-      selection follows the specified total order and is invariant under
-      candidate enumeration order.
+- [ ] Every catalog family identity-binds `ExactPayloadAndSetupEnvelope` and
+      its explicit direct or recursive selection policy; recursive candidates
+      cannot exceed the supported setup envelope.
 - [ ] Candidate comparison reads an incrementally maintained planner-private
       aggregate in O(1); final estimate derivation equality-checks that cache
       against the per-fold component sum.

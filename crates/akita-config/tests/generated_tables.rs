@@ -151,6 +151,23 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 }
 
 #[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_rejects_planner_policy_changes() {
+    let policy = policy_of::<fp128::D64Full>();
+    let mut catalog = fp128::D64Full::schedule_catalog().expect("shipped catalog");
+    catalog.identity.selection_policy =
+        akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
+    let error = validate_catalog_identity(
+        &catalog,
+        &policy,
+        fp128::D64Full::ring_challenge_config,
+        fp128::D64Full::fold_challenge_shape_at_level,
+    )
+    .expect_err("selection-policy mismatch must not validate");
+    assert!(error.to_string().contains("catalog identity mismatch"));
+}
+
+#[cfg(feature = "all-schedules")]
 fn family_catalog(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],

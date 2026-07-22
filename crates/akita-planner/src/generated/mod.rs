@@ -123,6 +123,8 @@ impl GeneratedFoldScheduleEntry {
 pub struct GeneratedScheduleCatalogIdentity {
     pub family_name: &'static str,
     pub protocol_epoch: u32,
+    pub cost_model: crate::PlannerCostModelId,
+    pub selection_policy: crate::SelectionPolicyId,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: akita_types::SisSecurityPolicyId,
     pub sis_table_digest: akita_types::SisTableDigest,
@@ -155,6 +157,7 @@ pub struct GeneratedScheduleTable {
 pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
+pub use crate::{PlannerCostModelId, SelectionPolicyId};
 pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};

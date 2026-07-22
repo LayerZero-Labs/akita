@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn selected_recursive_keys_yield_exact_prefix_slots() {
-        use crate::matrix_envelope::inflate_envelope_for_setup_prefix_slot;
+        use akita_types::inflate_envelope_for_setup_prefix_slot;
         use akita_types::SetupMatrixEnvelope;
 
         let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(32, 4).expect("slots");
@@ -203,6 +203,16 @@ mod tests {
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
+        let envelope =
+            akita_types::setup_matrix_envelope_for_schedule(&schedule).expect("setup envelope");
+        let envelope_field_elements = envelope
+            .max_setup_len
+            .checked_mul(schedule.root.params.final_group.commitment.d_a())
+            .expect("setup envelope field length");
+        assert!(
+            envelope_field_elements <= akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            "selected recursive schedule exceeds the supported setup envelope"
+        );
         let ids = extract_setup_prefix_slot_ids_from_schedule(
             &schedule,
             &key.opening_layout().expect("layout"),
