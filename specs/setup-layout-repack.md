@@ -9,22 +9,32 @@
 |-----------|-------|
 | Author(s) | Quang Dao |
 | Created   | 2026-05-27 |
-| Status    | proposed |
+| Status    | implemented |
 | Suggested branch | `setup-layout-repack` |
-| PR         | #112 |
+| PR         | #112, implemented by #132; verifier reuse revised by #318 |
 
-## Scope
+## Revision authority
 
-This PR is a spec-only cleanup PR. It records the target packed setup layout
+The packed overlapping-prefix layout in this document is implemented and
+remains authoritative. The original setup-offloading rollout values
+`D_setup = 32`, `N_min = 2^23`, and “root plus at most the first recursive
+level” are preserved below only as archival design history. They do not select
+offload depth in the current target.
+
+Current offload selection is specified by
+[`setup-offloading-planner.md`](setup-offloading-planner.md): the planner
+compares direct and offloaded successors at every supported nonterminal edge,
+uses the exact active prefix dictated by packed setup geometry, and may select
+zero, one, or several offloaded levels.
+
+## Original layout-branch scope (archival)
+
+PR #112 was a spec-only cleanup PR. It recorded the target packed setup layout
 and names the downstream setup-claim-offloading constraints that the layout
 must not obstruct. It does not change Rust code, proof bytes, setup
 serialization, generated tables, or benchmarks.
 
-The next implementation branch should re-implement from current `main` using
-this spec, not continue the older prototype commits that used to live on this
-branch.
-
-The next implementation branch is a pure layout branch. It must not introduce
+The corresponding implementation branch was a pure layout branch. It did not introduce
 setup-prefix commitments, setup-claim delegation, a setup product sumcheck, or
 new proof objects. It may touch existing prover/verifier paths only where those
 paths already consume A/B/D setup rows and therefore must be taught the packed
@@ -476,8 +486,8 @@ This is important: preprocessing can commit to `S`, but it cannot commit to
 
 Do not force the verifier to pay for `S_full` if the active shape is smaller.
 
-Later setup offloading commits to power-of-two flat coefficient prefixes of
-`S`. A full ladder is one useful policy:
+Setup offloading commits to power-of-two flat coefficient prefixes of `S`. A
+full ladder remains one possible artifact policy:
 
 ```text
 N_min <= N <= N_max
@@ -489,28 +499,38 @@ At runtime:
 N_prefix = 2^ceil(log2(N_active^F))
 ```
 
-Delegate only if:
+`N_prefix` determines the committed object, not whether or at which level to
+offload it. For each supported edge, the planner compares:
 
 ```text
-N_prefix >= N_min
+Direct:    evaluate the producer's active setup prefix locally
+Offloaded: commit N_prefix and carry its opening into the successor
 ```
 
-Do not round a smaller active claim up to `N_min`; below the threshold, the
-verifier should use the direct setup computation.
+The selected offloaded edge must satisfy the contraction and direct-setup
+reduction rules in [`setup-offloading-planner.md`](setup-offloading-planner.md).
+No global `N_min` or fold-index window determines the decision. An artifact
+policy may still decline to materialize a candidate prefix, in which case that
+offloaded candidate is infeasible and the direct alternative remains.
 
-Initial choices:
+The setup ring dimension is a capability of the catalog family and selected
+commitment parameters. A mismatch rejects the offloaded candidate; it does not
+change the mathematical prefix length or silently round to another artifact.
+
+#### Initial fixed gate (archival)
+
+The original rollout proposed:
 
 ```text
 D_setup = 32
 N_min = 2^23 field coefficients
+delegate iff N_prefix >= N_min
+eligible levels = root and at most the first recursive level
 ```
 
-If a proof level has `D != D_setup`, setup delegation is rejected at that level
-and direct setup verification is used.
-
-The first offloading implementation should make only the root and, at most, the
-first recursive level eligible; the prefix gate decides whether delegation
-actually fires.
+Below the gate, direct setup verification was used; a ring-dimension mismatch
+also fell back to direct evaluation. These values bounded the first integration
+but are not current planner rules.
 
 The prefix object is not just the public commitment. A prover-ready prefix slot
 must contain enough witness material to batch the selected setup opening claim
@@ -852,7 +872,43 @@ That specification supersedes the implementation-specific evaluator ownership
 described by the archival rollout slices below: one compact semantic plan feeds
 both the direct and recursive execution paths.
 
-## Downstream Parallel Work Slices
+## Current verifier evaluation reuse
+
+PR #318 prepares one `SetupContributionPlan` for each relation-matrix
+evaluation, in both direct and offloaded modes. The plan is the single checked
+description of:
+
+- packed A/B/D role projection geometry;
+- the active setup-prefix length;
+- the equality window over relation columns;
+- each group's prepared `e`, `t`, and `z` equality slices;
+- the setup-index-weight evaluator used by Stage 3.
+
+Stage 2 consumes the prepared group slices when evaluating the structured
+relation terms. In direct mode, the same plan evaluates the active setup prefix
+against the structured setup weight. In offloaded mode, Stage 2 substitutes the
+transcript-bound setup claim but still uses the same prepared slices for the
+non-setup relation terms. The plan is then cached on the relation evaluator and
+consumed by Stage 3; Stage 3 may rebuild it only when no matching cached plan is
+available.
+
+This reuse is semantic, not merely an optimization. Direct evaluation,
+offloaded Stage 3 verification, and relation-column weighting must read the
+same checked projection geometry. A second setup-layout formula or separately
+materialized equality table would reintroduce split authority.
+
+The cache is verifier-private and does not change proof equations, transcript
+ordering, or descriptor bytes. Missing or poisoned cached state falls back to
+checked reconstruction or returns `AkitaError`; verifier-reachable code must not
+panic.
+
+## Downstream parallel work slices (archival rollout)
+
+The lanes below record the original sequencing plan from the layout spec. They
+explain how the implementation was decomposed, but they do not define current
+offload eligibility, depth, or selection policy. In particular, any `N_min`
+gate or root/L1 window below is historical; the current planner policy is in
+[`setup-offloading-planner.md`](setup-offloading-planner.md).
 
 The setup-layout repack is the shared foundation. After it lands, the rest of
 setup offloading should be developed as parallel lanes, then integrated.
@@ -1070,7 +1126,7 @@ variance is visible in the logs.
 - No change to the physical `w_hat || t_hat || z_hat || r_hat` witness segment
   order beyond selecting role-column views that match the current folding step.
 
-## Open Questions
+## Open questions from the original rollout (archival)
 
 1. Where should role-view helpers live: `akita-types` near `FlatMatrix`, or
    prover/verifier-facing modules that know the prepared runtime shape?
@@ -1090,7 +1146,7 @@ variance is visible in the logs.
 7. After the common padded recursive carry works, is heterogeneous-domain
    carried-opening batching worth the extra verifier and scheduler complexity?
 
-## Acceptance Criteria for This Spec PR
+## Acceptance criteria for the original spec PR (archival)
 
 - The PR diff contains only durable planning/spec documents.
 - The spec states that later committed setup offloading uses `S`, not

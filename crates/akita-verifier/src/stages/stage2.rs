@@ -8,8 +8,9 @@ use akita_field::{
     MulBaseUnreduced,
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
-use akita_types::{AkitaExpandedSetup, FpExtEncoding};
+use akita_types::{AkitaExpandedSetup, FpExtEncoding, SetupContributionPlan};
 use std::marker::PhantomData;
+use std::sync::OnceLock;
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: usize> {
@@ -26,6 +27,7 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore, const D: u
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
     evaluation_trace_opening_claim: E,
+    setup_plan: OnceLock<SetupContributionPlan<E>>,
     _marker: PhantomData<([F; D], E)>,
 }
 
@@ -77,7 +79,14 @@ where
             evaluation_trace,
             evaluation_trace_row_weight,
             evaluation_trace_opening_claim,
+            setup_plan: OnceLock::new(),
             _marker: PhantomData,
+        })
+    }
+
+    pub(crate) fn into_setup_plan(self) -> Result<SetupContributionPlan<E>, AkitaError> {
+        self.setup_plan.into_inner().ok_or_else(|| {
+            AkitaError::InvalidSetup("stage-2 setup contribution plan was not captured".into())
         })
     }
 }
@@ -115,8 +124,14 @@ where
                 self.setup,
                 self.alpha,
                 self.setup_claim,
+                &self.setup_plan,
             )?
         };
+        if self.setup_plan.get().is_none() {
+            return Err(AkitaError::InvalidSetup(
+                "stage-2 setup contribution plan capture is missing".into(),
+            ));
+        }
         let relation_oracle = w_eval * relation_weight;
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();

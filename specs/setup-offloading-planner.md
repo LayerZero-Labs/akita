@@ -2,13 +2,29 @@
 
 | Field         | Value                                      |
 |---------------|--------------------------------------------|
-| Author(s)     |                                            |
+| Author(s)     | Amirhossein Khajehpour, Quang Dao          |
 | Created       | 2026-07-10                                 |
-| Status        | proposed                                   |
-| PR            |                                            |
-| Supersedes    |                                            |
+| Status        | active                                     |
+| PR            | #301; revised by #318                      |
+| Supersedes    | Fixed two-level rollout in this document   |
 | Superseded-by |                                            |
 | Book-chapter  | book/src/roadmap/verifier-offloading.md    |
+
+## Revision authority
+
+The current target is the planner-selected policy in this revision. It
+supersedes the original rollout rule that forced setup offloading at fold
+levels 0 and 1 above a fixed prefix threshold. That original rule is preserved
+under [Legacy fixed-window rollout (archival)](#legacy-fixed-window-rollout-archival)
+for review history only. It is not a current schedule invariant, generated-row
+validation rule, or verifier acceptance condition.
+
+This revision is intentionally narrower than the future multi-objective
+planner. It specifies the remediation that can land with PR #318: exact
+recursive proof accounting, explicit direct/offloaded alternatives, a minimum
+recursive-witness contraction, and a verifier-first schedule comparator. It
+does not add mixed ring dimensions, independent role bases, commitment slicing,
+or a full Pareto frontier.
 
 ## Summary
 
@@ -24,28 +40,41 @@ This design adds `RecursiveCommitmentConfig<Cfg>`, parallel to
 direct-only schedule. Selecting the recursion adapter activates setup
 offloading only for the planner's genuine multi-group path. Scalar/singular
 keys continue through the ordinary direct planner and ordinary generated
-catalog, even under the recursion adapter. For a multi-group key, fold levels 0
-and 1 use `SetupContributionMode::Recursive` when that fold's setup prefix is
-larger than `2^10`; every later fold is direct. The recursive multi-group
-planner rejects candidate edges whose successor cannot commit a required
-prefix, then uses the existing planner comparison to select the smallest
-remaining proof. Recursive successors use the existing multi-group
-representation with the setup prefix as a precommitted group and the folded
-witness as the final group. Recursive multi-group generated schedules are
-stored separately from ordinary schedules. The design reuses `SetupPrefixSlotId`,
-`SetupPrefixSlot`, `SetupPrefixVerifierSlot`, `OpeningClaims`, and the existing
-grouped `LevelParams` machinery rather than adding parallel requirement,
-geometry, or carried-claim models.
+catalog, even under the recursion adapter.
+
+For each supported nonterminal edge on the genuine multi-group path, the
+planner considers two transitions:
+
+```text
+Direct:    successor receives [W]
+Offloaded: successor receives [S_prefix, W]
+```
+
+An offloaded transition is feasible only when the successor can commit the
+exact prefix, the complete successor witness contracts the entering balanced
+witness by at least threefold, and the resulting suffix strictly reduces the
+first remaining direct setup scan. The planner may select zero, one, or several
+offloaded levels. No fold index, contiguity rule, or prefix-size threshold
+decides the count.
+
+The selected schedule minimizes the first remaining direct setup footprint and
+uses exact estimated proof bytes, including Stage 3, as its tie-breaker.
+Recursive successors use the existing multi-group representation with the setup
+prefix as a precommitted group and the folded witness as the final group.
+Recursive multi-group generated schedules are stored separately from ordinary
+schedules. The design reuses `SetupPrefixSlotId`, `SetupPrefixSlot`,
+`SetupPrefixVerifierSlot`, `OpeningClaims`, and the existing grouped commitment
+machinery rather than adding parallel requirement, geometry, or carried-claim
+models.
 
 ## Intent
 
 ### Goal
 
 Provide an explicit recursion config that activates offloading only for
-multi-group batches, makes that planner path enforce recursive setup on
-threshold-qualified fold levels 0 and 1, guarantees every recursive edge has a
-compatible preprocessed setup-prefix commitment, and leaves singular planning
-direct-only.
+multi-group batches, makes offload depth a planner decision, guarantees every
+selected recursive edge has a compatible preprocessed setup-prefix commitment,
+and leaves singular planning direct-only.
 
 ### Invariants
 
@@ -55,25 +84,37 @@ direct-only.
 - **Singular planning never offloads.** `AkitaScheduleLookupKey` values with no
   precommitted groups use the existing scalar planner and direct catalog. Every
   level is `Direct`, including under `RecursiveCommitmentConfig<Cfg>`.
-- **The recursion window is fixed.** Only fold levels 0 and 1 may be recursive.
-  Fold levels 2 and above are always direct.
-- **Threshold-qualified recursion is mandatory.** In a recursion config, a
-  fold at level 0 or 1 whose successor is also nonterminal and whose
-  `N_prefix > 2^10` must be recursive. If its successor cannot commit the
-  prefix, that candidate edge is infeasible; the planner may not turn that edge
-  direct as a fallback.
-- **Per-level mode is authoritative after config selection.** Every
-  `LevelParams` records
-  `SetupContributionMode`. Prover, verifier, generated-table replay, setup
-  preprocessing, descriptor hashing, and proof-size accounting use that field.
+- **The planner chooses offload depth.** Every supported nonterminal edge has a
+  direct alternative and may also have an offloaded alternative. The planner
+  may select any number of feasible offloaded edges within the ordinary
+  recursion-depth bound.
+- **Offloading is never mandatory by level or prefix size.** A large prefix
+  makes offloading potentially valuable, but does not determine the transition.
+  If an offloaded successor is incompatible or fails the viability rules, the
+  direct alternative remains available.
+- **The successor edge is authoritative.** A recursive fold's
+  `incoming_setup_prefix` identifies the setup prefix produced by its
+  predecessor. Prover, verifier, generated-table replay, setup preprocessing,
+  descriptor hashing, and proof-size accounting derive the predecessor's
+  offload action from that successor-owned edge.
+- **Offloaded edges must contract the balanced witness.** Let `W_in` be the
+  ordinary balanced-digit witness entering the successor, excluding the raw
+  full-field setup prefix, and let `W_out` be the complete balanced-digit witness
+  emitted after folding both groups. A selected offloaded edge satisfies
+  `bits(W_in) / bits(W_out) >= 3`.
+- **Offloaded suffixes must reduce direct verifier setup work.** Relative to
+  evaluating the producer setup directly, the first later direct setup scan in
+  the selected suffix is strictly smaller in natural field coefficients.
+- **Proof accounting is complete.** Candidate proof bytes include the direct
+  fold payload, extension-opening reduction, terminal payload, and every Stage
+  3 setup-product payload induced by offloaded edges.
 - **Recursive means an actual carried setup opening.** A recursive fold runs
   Stage 3, exposes `S_i(rho_setup)`, and passes the matching prefix slot into the
   successor's opening batch. It may not silently revert to a local setup scan.
-- **Mode and successor shape are equivalent.** When fold `i` has a successor,
-  it is `Recursive` if and only if fold `i + 1` contains exactly one setup-prefix
-  precommitted group beside its witness group. It is `Direct` if and only if fold
-  `i + 1` contains only its witness group. Generated replay, proving, and
-  verification enforce both directions.
+- **The successor shape is the mode.** Fold `i` offloads if and only if recursive
+  fold `i + 1` has `incoming_setup_prefix = Some(...)` and contains the matching
+  setup-prefix group beside its witness group. There is no independent
+  producer-side mode bit.
 - **Direct means no outgoing setup group.** A direct fold may consume an
   incoming setup group, but it creates no setup claim for its successor.
 - **Terminal folds are scalar and direct.** A terminal fold has no successor
@@ -86,26 +127,30 @@ direct-only.
 - **One setup-prefix identity.** `SetupPrefixSlotId` remains the canonical
   identity. `natural_len` and `n_prefix` identify the prefix domain;
   `level_params_digest` identifies the exact commitment params, including
-  `log_basis`, `position_index_bits`, `block_index_bits`, group params, and per-level mode.
+  `log_basis`, `position_index_bits`, `block_index_bits`, group params, and the
+  successor-owned incoming-prefix edge.
 - **One total-prefix calculation.** `active_setup_field_len` is the canonical
   challenge-free calculation of active setup coefficients. Planner,
   preprocessing, prover, and verifier do not maintain separate formulas.
-- **Shared D remains shared.** Multi-group folds use one D relation over the
+- **The opening matrix remains shared.** Multi-group folds use one opening
+  relation over the
   concatenation of all groups' opening segments. This design does not introduce
-  per-group D commitments. `LevelParams::d_key`/generated `n_d` are shared by
-  the final witness group and every precommitted setup-prefix group.
+  per-group opening commitments. The recursive fold's
+  `open_commit_matrix` is shared by the final witness group and every
+  precommitted setup-prefix group.
 - **Existing group model is canonical.** The setup prefix is represented by the
-  existing precommitted-group fields in `LevelParams`; the next witness is the
-  final group. The setup-prefix group has its own A/B matrices and block
-  geometry. It does not borrow the successor witness group's A/B column
+  successor's existing precommitted-group fields; the next witness is the final
+  group. The setup-prefix group has its own inner/outer matrices and block
+  geometry. It does not borrow the successor witness group's matrix-column
   capacities. `OpeningClaimsLayout::root_group_order` determines proof order.
-- **Local minimization remains bounded.** Recursive suffix candidate generation
-  continues to retain one locally smallest next-witness candidate per basis.
-  Prefix compatibility filters candidates but does not create an exponential
+- **Local minimization remains bounded in PR #318.** Recursive suffix candidate
+  generation continues to retain one locally smallest next-witness candidate
+  per basis. Direct/offloaded alternatives and proof-only/setup-first suffixes
+  are retained, but this remediation does not create the future full Pareto
   frontier.
-- **Generated and fallback schedules agree.** A generated row stores the same
-  per-level mode chosen by dynamic planning, and the canonical row walker
-  recomputes every incoming-prefix transition and grouped witness length.
+- **Generated and fallback schedules agree.** A generated row stores the exact
+  incoming-prefix topology chosen by dynamic planning, and the canonical row
+  walker recomputes every prefix transition and grouped witness length.
 - **Generated catalogs do not alias.** Direct and recursive schedules are
   emitted into separate generated tables. The recursion adapter never reads the
   ordinary config's direct table.
@@ -130,6 +175,8 @@ direct-only.
 - Setup offloading at ring dimensions other than the supported uniform D64
   shape.
 - Globally enumerating every suffix `(log_basis, m, r)` combination.
+- The future Pareto planner over proof bytes, verifier work, outgoing witness
+  bits, prover work, setup storage, preprocessing, and communication.
 - Backward compatibility for old generated rows, descriptors, setup artifacts,
   or proof bytes.
 - Full-ladder setup artifact policy. This design materializes the exact slots
@@ -139,34 +186,77 @@ direct-only.
 
 ### Per-Fold Eligibility
 
-Add:
-
-```rust
-pub const SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN: usize = 1 << 10;
-```
-
-A fold is required to be marked `Recursive` exactly when:
+An offloaded candidate exists when:
 
 ```text
 recursive config is selected
 the root schedule key is genuinely multi-group (precommitteds is nonempty)
-fold level is 0 or 1
-the successor is a nonterminal Fold, itself followed by another Fold
-all active role dimensions equal SETUP_OFFLOAD_D_SETUP = 64
-the level does not use distributed/multi-chunk witness layout
-N_prefix > SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN
+the producer has a nonterminal recursive successor
+the successor can commit the exact padded setup prefix
+the active role dimensions and witness partition are supported
+the successor can consume the prefix and still emit a supported witness
 ```
 
-The strict comparison is intentional: a prefix of exactly `2^10`
-coefficients remains direct. Fold levels 2 and above remain direct regardless
-of prefix size.
+The fold index and prefix length do not select the mode. For every supported
+edge, the planner retains the ordinary direct successor and may retain an
+offloaded successor. It discards the offloaded alternative unless:
 
-Successor fit is a candidate-feasibility condition, not another mode gate. When
-the rules above require recursion, retain a proposed edge only if the successor
-is nonterminal and can carry `N_prefix` as an independently derived setup-prefix
-precommitted group.
-The planner tries its normal alternative parameters and suffixes, then chooses
-the smallest feasible proof with the existing comparator.
+```text
+balanced_witness_bits_entering_successor
++ padded_setup_prefix_field_elements * field_bits
+    >= 3 * complete_witness_bits_leaving_successor
+
+first_later_direct_setup_field_len
+    < producer_direct_setup_field_len
+```
+
+The contraction numerator includes both sources consumed by the successor:
+the balanced-digit recursive witness and the padded full-field setup prefix.
+Omitting the prefix biases the planner toward artificially inflating the
+producer witness solely to pass the heuristic. The denominator includes every
+balanced-digit output produced from both successor groups, including relation
+or commitment suffixes represented in the current witness format.
+
+Successor fit and contraction are candidate-feasibility conditions. They are
+not verifier security assumptions. Security continues to follow from the exact
+prefix commitment, descriptor binding, Stage 3 verification, and the SIS
+parameters of the selected commitment matrices.
+
+Among feasible complete schedules, the PR #318 policy compares:
+
+```text
+(
+    first_direct_setup_field_len,
+    exact_estimated_proof_bytes,
+)
+```
+
+where `exact_estimated_proof_bytes` includes every Stage 3 payload. The future
+Pareto planner may replace this policy, but generated catalogs must bind whichever
+selection policy produced them.
+
+The recursive search also rejects candidates whose exact setup-matrix envelope
+exceeds `PlannerPolicy::max_setup_envelope_field_elements`. The shipped policy
+sets this field to `MAX_SETUP_MATRIX_FIELD_ELEMENTS`. The contraction threshold
+is likewise explicit as `PlannerPolicy::min_offloaded_witness_contraction`, with
+a shipped value of three. Both values are candidate-feasibility inputs, so the
+generated catalog identity binds them alongside the selection policy. They are
+not hidden constants whose changes can silently reinterpret an existing table.
+
+The envelope limit is a supported-runtime ceiling, not a claim that offloading
+has no storage cost relative to the independently optimized direct schedule.
+Comparing the direct and offloaded envelope–proof frontiers is explicitly
+deferred to the multi-objective planner.
+
+The generated catalog binds:
+
+```text
+cost model      = ExactPayloadAndSetupEnvelope
+direct policy   = MinEstimatedProofPayload
+recursive policy = MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+maximum setup envelope = policy.max_setup_envelope_field_elements
+minimum offload contraction = policy.min_offloaded_witness_contraction
+```
 
 The planner does not use artifact registry contents to decide mode. Registry
 contents are setup-instance state and could differ between prover and verifier.
@@ -190,18 +280,18 @@ properties to `Cfg`. It differs in schedule planning:
 ordinary Cfg:
   planner recursion flag = false
   schedule catalog = Cfg::schedule_catalog()
-  every emitted LevelParams mode = Direct
+  every recursive fold has incoming_setup_prefix = None
 
 RecursiveCommitmentConfig<Cfg>:
   scalar key:
     delegate to Cfg::runtime_schedule(key)
     use Cfg::schedule_catalog()
-    every level is Direct
+    every recursive fold has incoming_setup_prefix = None
   genuine multi-group key:
     planner recursion flag = true
     use Cfg::recursive_multi_group_schedule_catalog()
-    levels 0 and 1 recurse exactly when N_prefix > 2^10
-    levels 2 and above are Direct
+    enumerate direct and feasible offloaded transitions at every nonterminal edge
+    let the selected suffix determine the number of offloaded levels
 ```
 
 Add a default-disabled config hook:
@@ -247,17 +337,20 @@ resolve_group_batch_schedule(
 )
 ```
 
-The adapter should reject unsupported base configs before planning a
-multi-group key:
+The adapter rejects unsupported base configurations before planning a
+multi-group key. Under the current implementation, recursive offloading still
+requires the configured setup-offload ring dimension. Distributed support is
+capability-specific; the shipped W8R2 family is governed by
+[`distributed-setup-offloading.md`](distributed-setup-offloading.md).
+
+For example, an unsupported ring dimension is rejected by:
 
 ```text
 Cfg::D != SETUP_OFFLOAD_D_SETUP
-Cfg::chunked_witness_cfg().uses_multi_chunk()
 ```
 
-Levels 0 and 1 apply the prefix threshold. When the threshold requires
-recursion, successor fit filters candidate edges before the existing proof-size
-comparison.
+No adapter field specifies an offload count. The planner derives that count by
+choosing direct or offloaded transitions in the schedule search.
 
 The public scheme/config choice therefore determines the planner family:
 
@@ -294,8 +387,8 @@ where `S_{i-1}` is precommitted and `W_i` is the final/new group. Existing
 [W_i, S_{i-1}]
 ```
 
-If fold `i` is recursive, Stage 3 produces a setup-prefix opening and fold
-`i + 1` receives:
+If fold `i` has an offloaded successor, Stage 3 produces a setup-prefix opening
+and fold `i + 1` receives:
 
 ```text
 [S_i, W_{i+1}] in storage order
@@ -305,81 +398,59 @@ If fold `i` is recursive, Stage 3 produces a setup-prefix opening and fold
 Fold `i + 1` must be nonterminal. The planner must not create this transition
 when `i + 1` would be the last fold.
 
-If fold `i` is direct, fold `i + 1` receives only `[W_{i+1}]`, even when fold
-`i` itself consumed two groups. This allows an initial recursive prefix of the
-schedule followed by direct suffix levels.
+If fold `i` has a direct successor, fold `i + 1` receives only `[W_{i+1}]`, even
+when fold `i` itself consumed two groups. A later edge remains structurally free
+to offload again. Under the setup-first comparator such a transition is normally
+dominated after the first direct setup scan, but this is a selection consequence,
+not a schedule-validation rule.
 
-## Existing Types and Required Changes
+## Typed ownership and required changes
 
-### `LevelParams`
+### Successor-owned setup-prefix edge
 
-Add to `akita_types::LevelParams`:
+The current typed topology is authoritative:
 
 ```rust
-pub setup_contribution_mode: SetupContributionMode,
+pub struct RecursiveFoldParams {
+    pub witness: CommittedGroupParams,
+    pub open_commit_matrix: OpenCommitMatrixParams,
+    pub incoming_setup_prefix: Option<SetupPrefixSlotId>,
+    pub witness_partition: WitnessPartition,
+}
 ```
 
-The field participates in:
-
-- `LevelParams` validation and descriptor bytes;
-- `digest_level_params`;
-- generated schedule expansion;
-- effective schedule digest;
-- setup-prefix `level_params_digest`;
-- proof-shape and schedule drift tests.
-
-`ExecutionSchedule` does not duplicate it; runtime reads
-`exec.params.setup_contribution_mode`.
-
-Remove the call-wide `SetupContributionMode` prove/verify argument. The selected
-config chooses direct versus recursion-aware planning, and the resulting
-schedule chooses each fold's mode. Keeping a second call-time selector would
-allow the proof request to disagree with committed/generated params.
+`incoming_setup_prefix` determines whether the predecessor offloads. Runtime
+code may temporarily mirror this identity inside `witness.setup_prefix` for
+layout compatibility, but canonical validation must require equality and the
+mirror must eventually be derived or removed. No call-wide or producer-side
+`SetupContributionMode` may choose a different proof shape.
 
 ### Generated Rows
 
-Add `setup_contribution_mode` to `GeneratedFoldStep`. Generated rows explicitly
-store the planner's decision instead of re-running policy after generation.
-Generated row bytes, emitted tables, and schedule catalog identity consequently
-change.
-
-Ordinary generated rows contain only `Direct`. Recursive generated rows may
-mark only levels 0 and 1 recursive; every row at level 2 or above is direct.
-
-Generated rows must also store the compact setup-prefix group params for folds
-that **consume** an incoming setup prefix:
+Generated rows store the selected successor topology rather than a duplicated
+producer-side mode. A recursive fold consumes an offloaded prefix exactly when
+`incoming_setup_prefix` is present:
 
 ```rust
-pub struct GeneratedSetupPrefixGroup {
-    pub position_index_bits: u32,
-    pub block_index_bits: u32,
-    pub n_a: u32,
-    pub n_b: u32,
+pub struct GeneratedSetupPrefixInput {
+    pub natural_len: u64,
+    pub d_setup: u32,
+    pub commitment: GeneratedCommittedGroup,
 }
 
-pub struct GeneratedFoldStep {
-    pub ring_d: u32,
-    pub log_basis: u32,
-    pub position_index_bits: u32,
-    pub block_index_bits: u32,
-    pub n_a: u32,
-    pub n_b: u32,
-    pub n_d: u32,
-    pub setup_prefix_group: Option<GeneratedSetupPrefixGroup>,
-    pub setup_contribution_mode: SetupContributionMode,
+pub struct GeneratedRecursiveFold {
+    pub witness: GeneratedCommittedGroup,
+    pub open_commit_matrix: GeneratedOpenCommitMatrix,
+    pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
+    pub witness_partition: GeneratedWitnessPartition,
 }
 ```
 
-`position_index_bits/block_index_bits/n_a/n_b` on `GeneratedFoldStep` describe the final folded-witness
-group. `setup_prefix_group` describes the offloaded setup-prefix precommitted
-group. `log_basis` is shared across all groups in that fold and is stored only on
-`GeneratedFoldStep`. `n_d` is also shared and stored only on `GeneratedFoldStep`.
-Do not add per-group `log_basis` or per-group `n_d` to the generated row.
-
-`setup_prefix_group` is `Some(...)` exactly when the fold consumes an incoming
-setup prefix. It may appear on a fold whose own `setup_contribution_mode` is
-`Direct`, because a direct fold can prove an incoming setup-prefix opening and
-then stop forwarding setup.
+The generated row records whichever offload count the planner selected. Replay
+must not derive that count from the fold index, a prefix-size threshold, or the
+artifact registry. It expands the exact stored successor edge and validates its
+prefix length, commitment parameters, shared opening matrix, witness size, and
+descriptor binding.
 
 ### Setup-Prefix Slots
 
@@ -434,16 +505,22 @@ APIs.
 
 ### Stage-3 Proof
 
-Add one challenge-field element to `SetupSumcheckProof`:
+An offloaded edge uses the existing fused proof:
 
 ```rust
-pub setup_prefix_opening: F,
+pub struct SetupSumcheckProof<E> {
+    pub claim: E,
+    pub setup_prefix_eval: E,
+    pub next_w_eval: E,
+    pub sumcheck: SumcheckProof<E>,
+}
 ```
 
-The offloaded verifier cannot derive `S_i(rho_setup)` by scanning the setup
-matrix. Stage 3 verifies this supplied value in its terminal relation, binds it
-to the transcript, and carries it with the selected verifier slot into the
-successor fold.
+The offloaded verifier does not derive `setup_prefix_eval` by scanning the setup
+matrix. Stage 3 verifies it in the fused setup-product and carried-witness
+relation, binds it to the transcript, and carries it with the selected verifier
+slot into the successor fold. The planner's exact proof estimate includes all
+three field claims and the complete degree-two sumcheck.
 
 ## Canonical Setup-Prefix Size
 
@@ -586,16 +663,10 @@ incorrect.
 The current memo key is:
 
 ```text
-(level, current_witness_len, current_witness_len_terminal, current_lb)
+(level, current_witness_len, current_lb, incoming_setup_prefix_or_zero)
 ```
 
-Extend it with one raw integer:
-
-```text
-incoming_n_prefix_or_zero
-```
-
-and pass `incoming_n_prefix: Option<usize>` to
+Pass `incoming_setup_prefix: Option<usize>` to
 `derive_candidate_level_params`.
 
 This value is necessary because equal-length main witnesses may arrive with
@@ -610,8 +681,8 @@ Retain the current algorithm: for each `log_basis`,
 with the smallest outgoing witness.
 
 The scalar `find_schedule` path never computes or forwards an outgoing setup
-prefix, every candidate mode is `Direct`, and its current DP behavior is
-preserved. It does not accept `incoming_n_prefix`.
+prefix, and its current DP behavior is preserved. It does not accept an
+incoming setup prefix.
 
 Only `find_group_batch_schedule` with a genuinely multi-group key and
 `policy.recursive_setup_planning == true` uses the edge logic below. Its suffix
@@ -623,11 +694,11 @@ For each existing `block_index_bits` candidate:
 
 1. Derive main-group block geometry, A key, B key, digit depths, norms, and
    chunk metadata as today.
-2. Assemble provisional main-group `LevelParams`.
-3. When `incoming_n_prefix` is present, derive an independent setup-prefix
+2. Assemble provisional main-group `CommittedGroupParams`.
+3. When `incoming_setup_prefix` is present, derive an independent setup-prefix
    precommitted group:
-   - `group = PolynomialGroupLayout::singleton(log2(incoming_n_prefix))`;
-   - `num_live_blocks_prefix * num_positions_per_block_prefix = incoming_n_prefix / D_setup`;
+   - `group = PolynomialGroupLayout::singleton(log2(n_prefix))`;
+   - `num_live_blocks_prefix * num_positions_per_block_prefix = n_prefix / D_setup`;
    - `log_basis`, digit depths, fold shape, and ring dimension are shared with
      the current fold candidate;
    - `n_a_prefix`, `n_b_prefix`, `A_prefix`, and `B_prefix` are derived for the
@@ -636,8 +707,8 @@ For each existing `block_index_bits` candidate:
    ranks.
 5. Store the derived setup-prefix group in `candidate.precommitted_groups`.
 6. Compute the main and setup groups' opening-segment widths.
-7. Derive one SIS-secure D key over their concatenation and store it on
-   `candidate.d_key`.
+7. Derive one SIS-secure opening matrix over their concatenation and store it
+   on the recursive fold.
 8. Compute the grouped intermediate witness length. Compute a terminal witness
    length only after confirming that the candidate has one group.
 9. Keep only the smallest outgoing witness for this basis.
@@ -650,9 +721,8 @@ introduced.
 
 For a fold-then-direct branch:
 
-- require `incoming_n_prefix = None`;
+- require `incoming_setup_prefix = None`;
 - require the current opening layout to contain exactly one witness group;
-- set `setup_contribution_mode = Direct`;
 - use the scalar terminal row layout;
 - create no outgoing setup prefix;
 - derive the terminal witness shape from the scalar opening layout.
@@ -669,28 +739,20 @@ For a fold-then-fold branch:
 
 1. Derive `natural_len` from the current candidate's actual groups.
 2. Compute `n_prefix = padded_setup_prefix_len(natural_len)`.
-3. Validate the recursion config's D64 and non-chunked invariants.
-4. Set:
+3. Validate the recursion config's supported ring-dimension and witness-partition
+   capabilities.
+4. Plan the direct child with `incoming_setup_prefix = None`.
+5. When the child is nonterminal, independently plan the offloaded child with
+   `incoming_setup_prefix = Some(natural_len)`.
+6. Discard the offloaded alternative if prefix derivation, successor fit, the
+   threefold contraction rule, or strict direct-setup reduction fails.
+7. Add the current direct payload, extension-opening reduction, applicable
+   Stage 3 payload, and child suffix payload.
+8. Retain setup-first and proof-only choices per successor basis.
 
-   ```text
-   must_recurse =
-       level <= 1
-       && n_prefix > 2^10
-       && child has another Fold successor
-   ```
-
-5. If `must_recurse`, mark the current candidate `Recursive` and recursively
-   plan the child with `incoming_n_prefix = Some(n_prefix)`. If no compatible
-   child first fold exists, discard this fold-again candidate.
-6. Otherwise mark the current candidate `Direct` and plan the child with
-   `incoming_n_prefix = None`.
-7. Price the resulting current level and suffix, then compare the
-   existing direct/fold suffix alternatives.
-
-Keep `SuffixResult.best_direct` and `best_fold_per_lb`; do not add a candidate
-frontier. The setup rule only filters candidate edges; the existing comparator
-still selects the smallest feasible proof. Search remains bounded by the
-existing recursion cap.
+The search remains bounded by the existing recursion cap and local
+one-layout-per-basis minimization. PR #318 does not retain the future full
+candidate frontier.
 
 ## Generalizing Existing Grouped Layout Methods
 
@@ -775,39 +837,34 @@ validation even if a row key happens to match. Scalar delegation through
 
 ### Canonical Replay
 
-The canonical generated walker tracks:
+The canonical generated walker expands the successor-owned edge directly. It
+tracks:
 
 ```rust
-let mut incoming_n_prefix: Option<usize>;
+let mut incoming_setup_prefix: Option<GeneratedSetupPrefixInput>;
 ```
 
 For each fold it:
 
-1. Expands the main params and stored mode.
-2. If an incoming prefix exists, reconstructs the existing precommitted group
-   from the generated `setup_prefix_group` fields and the shared fold
-   `log_basis`. It must derive the prefix group's own A/B keys, not clone the
-   final witness group's A/B keys.
-3. Recomputes and validates shared D rank, M rows, next witness length, and
-   proof bytes.
-4. For a non-terminal fold, recomputes `natural_len`, `n_prefix`, and:
+1. Expands the root, recursive folds, and terminal step from the generated row.
+2. If a recursive fold has `incoming_setup_prefix`, reconstructs that prefix
+   group's own inner and outer commitment matrices. It must not clone the
+   ordinary witness group's matrix parameters.
+3. Recomputes the predecessor's `natural_len` and padded prefix length and
+   validates them against the stored input.
+4. Recomputes and validates the shared opening-matrix rank, relation rows,
+   complete next-witness length, Stage 3 bytes, and total proof bytes.
+5. Validates that the generated incoming prefix is compatible with the
+   predecessor setup envelope, successor group geometry, commitment params,
+   witness partition, and supported ring dimensions.
+6. Forwards the exact stored prefix edge to the next recursive fold. Absence of
+   `incoming_setup_prefix` means the predecessor evaluates setup directly.
+7. Rejects a terminal step carrying an incoming setup prefix.
 
-   ```text
-   expected_mode =
-     if multi_group_path
-        && recursive policy
-        && level <= 1
-        && n_prefix > 2^10
-        && successor is a nonterminal Fold
-     then Recursive
-     else Direct
-   ```
-
-5. Rejects when the stored mode differs from `expected_mode`.
-6. For `Recursive`, validates that the generated successor is nonterminal, has
-   a compatible `setup_prefix_group`, and forwards the prefix.
-7. For `Direct`, forwards no prefix.
-8. Rejects a terminal fold marked recursive or carrying an incoming prefix.
+Replay does not re-run the selection policy and does not derive an expected
+offload count from fold indices or prefix lengths. The generated row is the
+selected topology; replay proves that this topology is internally consistent
+and recomputes the policy metrics used for audit output.
 
 `schedule_from_entry`, proof-byte estimation, and public generated-row
 validation already share this walker; no second replay implementation is
@@ -830,7 +887,8 @@ the same deterministic genuine multi-group schedule keys selected under
 populate offloading slots. Do not introduce a second `SetupScheduleCase`
 representation.
 
-For every selected schedule and every edge whose current mode is `Recursive`:
+For every selected schedule and every recursive successor whose
+`incoming_setup_prefix` is present:
 
 1. Derive the current opening layout.
 2. Compute `natural_len` with `active_setup_field_len`.
@@ -856,10 +914,10 @@ n_prefix / setup_generation_ring_dimension
 
 ## Prover and Verifier Flow
 
-### Recursive Fold
+### Fold With an Offloaded Successor
 
 1. Require a recursion-config schedule derived from a genuinely multi-group
-   root key and resolve `exec.params.setup_contribution_mode`.
+   root key and resolve the successor's `incoming_setup_prefix`.
 2. Run stages 1 and 2.
 3. Derive the exact prefix slot selected by current geometry and successor
    params.
@@ -884,19 +942,24 @@ n_prefix / setup_generation_ring_dimension
 
 Reject:
 
-- a recursive fold with no successor fold;
-- a recursive fold whose successor is terminal;
-- a recursive fold from the scalar/singular planner path;
-- a recursive fold outside uniform D64;
-- a recursive chunked/distributed fold;
-- a recursive fold with `n_prefix <= 2^10`;
-- a recursive fold whose successor has no compatible setup-prefix group;
+- an incoming setup prefix on the terminal step or without a predecessor fold;
+- an incoming setup prefix on the scalar/singular planner path;
+- an incoming setup prefix outside the capabilities bound by the selected
+  catalog family, including unsupported ring-dimension or witness-partition
+  combinations;
+- an incoming setup prefix whose natural or padded length differs from the
+  predecessor's active setup envelope;
+- an incoming setup prefix whose commitment params or group geometry are
+  incompatible with the successor;
 - a missing required prefix slot;
 - a slot whose ID, lengths, commitment params, or commitment rows differ;
-- an incoming-prefix presence that disagrees with the predecessor mode;
-- any `Direct` step or terminal fold with more than one group;
-- a generated row mode that differs from dynamically derived eligibility;
+- duplicated prefix authorities that disagree with the successor-owned edge;
 - malformed group order, row count, point projection, or setup opening.
+
+The verifier does not re-evaluate the planner's threefold contraction heuristic
+or compare alternative schedules. Those are deterministic selection rules bound
+by catalog identity. The verifier enforces only the selected schedule's exact
+topology, commitment security, transcript binding, and setup-opening equations.
 
 ### Rejection Ownership
 
@@ -905,8 +968,8 @@ The same invariant is enforced at each boundary for a different reason:
 1. The planner discards grouped direct and grouped terminal candidates. If no
    supported candidate remains, planning returns `AkitaError::InvalidSetup`.
 2. Canonical schedule validation rejects stale generated rows and manually
-   constructed schedules whose mode, successor group, or terminal shape does not
-   match this policy.
+   constructed schedules whose successor prefix, group geometry, or terminal
+   shape is inconsistent.
 3. Setup preprocessing must materialize every exact slot required by the selected
    schedules. A missing or mismatched slot is `AkitaError::InvalidSetup`; it is
    never repaired by truncation or direct evaluation.
@@ -924,7 +987,7 @@ selection, while schedule validation owns the canonical structural rule.
 Keep existing proof-size APIs and generalize only arguments that currently
 hard-code one suffix group.
 
-For `Recursive`, include:
+For every offloaded edge, include:
 
 ```text
 existing direct-mode level bytes
@@ -943,43 +1006,56 @@ max(setup-domain rounds, witness-domain rounds)
 For `Direct`, preserve current bytes. Prefix commitments live in setup metadata
 and are not per-proof bytes.
 
+The DP comparator and `FoldScheduleEstimate` use the same complete accounting.
+Stage 3 is not appended only after schedule selection: its setup claim, carried
+witness opening, sumcheck messages, and setup-prefix opening value are part of
+the candidate score that decides whether and how long to offload.
+
 ## Evaluation
 
 ### Acceptance Criteria
 
-- [ ] Ordinary `Cfg` schedules are direct-only.
-- [ ] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP only for
+- [x] Ordinary `Cfg` schedules are direct-only.
+- [x] `RecursiveCommitmentConfig<Cfg>` activates recursion-aware DP only for
       genuine multi-group keys.
-- [ ] Scalar keys under `RecursiveCommitmentConfig<Cfg>` delegate to the
+- [x] Scalar keys under `RecursiveCommitmentConfig<Cfg>` delegate to the
       ordinary scalar planner/catalog and contain only direct levels.
-- [ ] `LevelParams` and generated rows carry a per-fold setup mode.
-- [ ] In a recursion config, only levels 0 and 1 are recursive when their
-      prefixes exceed `2^10` and their successor is nonterminal; levels 2 and
-      above are always direct.
-- [ ] A required-recursive edge with incompatible successor params is discarded
-      instead of downgraded to direct.
-- [ ] After applying those constraints, the existing planner comparator selects
-      the smallest feasible proof.
-- [ ] Recursive successors use two existing opening groups; direct successors
+- [x] Every supported nonterminal edge considers a direct successor and may
+      consider an offloaded successor; no fixed fold count or prefix threshold
+      selects the mode.
+- [x] The planner may select zero, one, or several offloaded edges,
+      bounded only by ordinary recursion depth and capability constraints; it
+      does not impose contiguity as a structural rule.
+- [x] Every selected offloaded edge contracts the entering balanced witness by
+      at least threefold after counting both the recursive witness and padded
+      full-field prefix inputs, and strictly reduces the first remaining direct
+      setup scan.
+- [x] The selected schedule lexicographically minimizes first direct setup
+      footprint and exact estimated proof bytes within the supported setup
+      envelope.
+- [x] The materialized estimate reports the exact setup envelope and selected
+      offload-edge count, and recomputation agrees with the cached DP value.
+- [x] Exact proof accounting includes every Stage 3 payload before candidate
+      comparison.
+- [x] Recursive successors use two existing opening groups; direct successors
       use one.
-- [ ] Every fold that consumes an incoming setup prefix is nonterminal; direct
-      steps and terminal folds consume exactly one group.
-- [ ] Generated recursive rows store `setup_prefix_group` for every fold that
-      consumes an incoming setup prefix.
-- [ ] `setup_prefix_group.{position_index_bits,block_index_bits,n_a,n_b}` describe the prefix group's
-      own A/B matrices and never duplicate or capacity-check against the final
-      witness group.
-- [ ] `active_setup_field_len` retains scalar arithmetic parity and agrees with
+- [x] Every fold that consumes an incoming setup prefix is nonterminal, and the
+      successor-owned `incoming_setup_prefix` is the sole topology authority.
+- [x] Generated recursive rows store the exact setup-prefix commitment params
+      for every fold that consumes an incoming prefix.
+- [x] Setup-prefix commitment params describe the prefix group's own inner and
+      outer matrices and never clone the ordinary witness group's matrices.
+- [x] `active_setup_field_len` retains scalar arithmetic parity and agrees with
       runtime setup use for grouped-root and witness-plus-prefix suffix layouts;
       scalar parity does not enable scalar offloading.
-- [ ] Every selected recursive edge has an exact preprocessed slot.
-- [ ] The recursive verifier no longer scans setup to obtain the terminal
+- [x] Every selected recursive edge has an exact preprocessed slot.
+- [x] The recursive verifier no longer scans setup to obtain the terminal
       prefix opening.
-- [ ] Generated table replay and DP fallback produce identical modes, params,
-      witness lengths, and proof-byte totals.
-- [ ] Direct and recursive generated catalogs are separate and reject
+- [x] Generated table replay and DP fallback produce identical topology,
+      params, witness lengths, Stage 3 bytes, and proof-byte totals.
+- [x] Direct and recursive generated catalogs are separate and reject
       cross-catalog identity mismatches.
-- [ ] Terminal, unsupported, malformed, or missing-slot cases reject without
+- [x] Terminal, unsupported, malformed, or missing-slot cases reject without
       panic.
 
 ### Testing Strategy
@@ -990,25 +1066,25 @@ and are not per-proof bytes.
 - grouped `[1,3]` size with per-group A/B maxima and concatenated shared D;
 - two-group `[witness, setup-prefix]` size;
 - existing `m_row_count_for` includes each A/`A*Z`, B, and shared D block;
-- descriptor and slot digest changes when per-level mode changes;
-- threshold boundary at `2^10`.
+- descriptor and slot digest changes when successor prefix topology changes;
+- malformed or terminal incoming-prefix edges reject without panic.
 
 `akita-planner`:
 
 - scalar `find_schedule` never forwards an incoming prefix and emits only
-  direct modes;
-- multi-group recursion policy activates edge-aware mode selection;
+  direct transitions;
+- multi-group recursion policy enumerates direct and offloaded alternatives;
 - incoming prefix participates in memo identity;
 - incompatible local candidates are filtered before minimum selection;
-- local minimization and the existing proof comparator remain deterministic and
-  bounded;
-- exact level-0/level-1 threshold rule;
-- required-recursive successor-fit rejection rather than direct fallback;
+- threefold contraction boundary and strict direct-setup-reduction boundary;
+- exact Stage 3 accounting can change the selected suffix;
+- local minimization and the setup-first/proof-only comparator remain
+  deterministic and bounded;
+- incompatible offloaded successor rejection preserves the direct alternative;
 - independent prefix-group A/B derivation for incoming prefixes;
-- terminal mode is always direct;
 - terminal candidates with an incoming prefix are infeasible;
-- grouped direct roots and grouped terminal folds reject;
-- level 2 and later are always direct;
+- schedules with more than two feasible offloaded edges are representable and
+  replay exactly;
 - generated-row and DP parity;
 - direct/recursive catalog identity mismatch rejection.
 
@@ -1020,12 +1096,12 @@ and are not per-proof bytes.
 - recursion adapter selects the recursive companion catalog only for genuine
   multi-group keys;
 - ordinary config selects only the direct catalog;
-- unsupported D or multi-chunk recursion adapters reject multi-group keys while
-  scalar keys still delegate directly;
+- unsupported capability combinations reject multi-group offloaded candidates
+  while scalar keys still delegate directly;
 - scalar/direct and multi-group/recursive table misses invoke the matching
   planner path and policy bit.
 - recursive generated catalog materializes table hits with nonempty
-  `precommitted_groups` whenever `setup_prefix_group` is present.
+  `precommitted_groups` whenever `incoming_setup_prefix` is present.
 
 `akita-setup`:
 
@@ -1040,8 +1116,7 @@ Prover/verifier end to end:
 - scalar root under both ordinary and recursion-adapter configs remains
   one-group/direct;
 - grouped root to two-group suffix;
-- zero, one, and two recursive levels according to the two threshold checks;
-- level 2 and later remain direct even when their prefix exceeds the threshold;
+- zero, one, two, and more offloaded levels when chosen by the planner;
 - a two-group direct fold returning to a one-group successor;
 - rejection when that two-group fold would be terminal;
 - tampering with setup commitment, opening, point, slot ID, or group order;
@@ -1055,29 +1130,58 @@ Track:
 - generated row count and table bytes;
 - setup-prefix preprocessing time and artifact bytes;
 - proof bytes per fold by mode;
+- Stage 3 bytes per offloaded edge;
+- balanced-witness contraction for every selected offloaded edge;
+- first remaining direct setup footprint;
+- number of selected offloaded edges;
 - verifier cycles saved by eliminating the setup scan;
-- transition level where `n_prefix` falls to `2^10`.
+- exact selected proof bytes against the direct-only schedule.
 
 The local-minimum suffix heuristic must remain within the existing recursion
 bound. The planner must not enumerate a full split frontier.
 
 ## Execution
 
-1. Add `RecursiveCommitmentConfig<Cfg>`, scalar-versus-multi-group routing,
-   recursion policy plumbing, and the separate recursive multi-group catalog
-   hook.
-2. Add per-level mode to `LevelParams` and generated rows.
-3. Generalize total setup-prefix sizing using existing group views.
-4. Generalize existing grouped `LevelParams` methods for nonterminal folds while
-   keeping terminal-layout methods scalar.
-5. Extend local suffix candidate derivation with incoming `n_prefix`.
-6. Implement edge-aware mode selection in the existing DP.
-7. Update generated replay; emit `setup_prefix_group`; regenerate separate
-   direct and recursive tables.
-8. Reuse the existing setup-envelope scan for complete slot materialization.
-9. Add the Stage-3 setup opening and optional setup state.
-10. Generalize suffix proving/verifying and remove recursive-group guards.
-11. Add tests, profiling, and durable documentation.
+1. Remove the fixed level window and prefix-threshold mode rule from the
+   recursive multi-group DP.
+2. Enumerate direct and offloaded successors at every supported nonterminal
+   edge.
+3. Price the exact Stage 3 payload before comparing suffixes.
+4. Enforce threefold balanced-witness contraction and strict reduction of the
+   first remaining direct setup scan.
+5. Store the exact successor-owned setup-prefix topology in generated rows and
+   replay it without re-running selection.
+6. Reuse the existing setup-envelope scan for complete slot materialization.
+7. Regenerate recursive catalogs and add topology, accounting, and malformed
+   schedule tests.
+8. Add profiling and audit output for the selected offload count and every
+   comparator component.
+
+## Legacy fixed-window rollout (archival)
+
+This section preserves the original PR #301 rollout decision for historical
+review. It is not normative after the PR #318 revision above.
+
+The first implementation used a deliberately rigid rule:
+
+```text
+eligible fold levels = 0 and 1
+mandatory offload when padded prefix > 2^10
+fold levels >= 2 are always direct
+```
+
+If a threshold-qualified edge could not construct a compatible successor, the
+candidate was discarded rather than downgraded to direct. Generated rows stored
+a producer-side `SetupContributionMode`, replay recomputed the same threshold
+rule, and the existing proof-only comparator selected the smallest surviving
+schedule. Distributed recursion was rejected wholesale and recursive setup
+required uniform D64.
+
+That policy was valuable as a bounded integration path: it established Stage 3,
+prefix slots, carried setup openings, and generated recursive catalogs without
+requiring a broader scheduler. It is superseded because the fixed window can
+offload an unproductive edge, cannot choose a useful later edge, and omits the
+setup footprint and Stage 3 payload from the actual planning tradeoff.
 
 ## Alternatives Considered
 
@@ -1090,8 +1194,9 @@ duplicate internal arithmetic without serving the protocol.
 ### Call-Wide Setup Mode
 
 Rejected. A call-time mode does not select the matching generated catalog and
-cannot bind which individual folds recurse. Config selection chooses the planner
-family; per-level mode in `LevelParams` binds the exact transition point.
+cannot bind which individual folds offload. Config selection chooses the planner
+family; each recursive successor's `incoming_setup_prefix` binds the exact
+transition point.
 
 ### Scalar-Path Offloading
 
