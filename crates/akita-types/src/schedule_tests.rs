@@ -368,7 +368,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 }
 
 #[test]
-fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -405,7 +405,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }
@@ -463,7 +463,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 }
 
 #[test]
-fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -517,7 +517,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }
