@@ -15,8 +15,8 @@
 
 The offline schedule planner chooses per-fold `log_basis` (digit base
 \(b = 2^{\text{log\_basis}}\)) to minimize proof size subject to candidate,
-setup, and SIS validation. The proof-optimized policy already declares the
-supported range as `basis_range = (2, 6)`. This spec makes that existing policy
+setup, and SIS validation. The proof-optimized policy declares the supported
+range as `basis_range = (3, 6)`. This spec makes that existing policy
 authoritative:
 
 - the root fold uses `basis_range.0` exactly;
@@ -26,7 +26,15 @@ authoritative:
 
 There is no separate root-basis configuration field or catalog-identity field.
 All shipped fp128, fp64, and fp32 proof-optimized families therefore use root
-`log_basis = 2`.
+`log_basis = 3`.
+
+**Shipped root is `3`, not `2`.** The empirical study below evaluated `root=2`
+as the byte-optimal choice, but `root=2` fails to plan a valid schedule for the
+dense presets at the top of the supported `nv` range. The team therefore ships
+`root=3`, which every family supports across the full `nv` range and which the
+**unpinned planner already favors at the root for fp128 at large `nv`** (see
+[§ Matching main at root=3](#matching-main-at-root3)). The `root=2` analysis is
+retained as the design rationale for pinning the root at all.
 
 **Self-contained document.** All methodology, tables, schedule anatomy, and
 root-cause analysis live here in [§ Empirical study](#empirical-study); there is
@@ -34,9 +42,10 @@ no separate empirical appendix.
 
 ### TL;DR outcome
 
-- **`root=2`** (recommended) — power-of-two root (64 balanced digits @ L0),
-  runtime proof **−0.2%** and aggregate planner bytes **−0.4%** vs unpinned, for
-  **~+15% prover time** (commit-dominated). Verify is flat.
+- **`root=2`** (byte-optimal, **not shipped** — fails dense presets at high
+  `nv`; see Summary) — power-of-two root (64 balanced digits @ L0), runtime proof
+  **−0.2%** and aggregate planner bytes **−0.4%** vs unpinned, for **~+15% prover
+  time** (commit-dominated). Verify is flat.
 - **`root=4`** — power-of-two (32 digits) and prover-competitive, but the
   **largest proof** (**+2.3%**, fat cleartext tail). It *should* be the fastest to
   prove (smallest witness) but is not, because of a **stage-1 range-check
@@ -341,6 +350,43 @@ planner-chosen.
 > decomposition-default floor. The non-decreasing rule still ensures that a
 > basis-4 root prevents later levels from selecting a smaller basis.
 
+### Matching main at root=3
+
+The shipped `root=3` pin was validated against `main` (which does **not** pin
+the root). The requirement was precise: fp128 schedules must be **exactly what
+`main`'s free planner produces, with only the root `log_basis` fixed** — the
+block split `m`, ranks `r`, deeper levels, and terminal all brute-forced
+identically to `main`.
+
+**At large `nv` (`≥ 30`) `main`'s free planner already selects root
+`log_basis = 3` for `fp128_d64_onehot`.** So pinning to `3` should reproduce
+`main` byte-for-byte there, and it does — every single-poly entry at
+`nv = 30…43` is byte-identical, except `nv = 31` where `main` freely chose
+`lb = 4` and the pin deliberately uses `lb = 3` (same block geometry). Remaining
+diffs vs `main` are exactly the intended pin effect: small-`nv` roots and the
+precommitted-group bases in multi-group entries.
+
+**A transient regression was traced to the cost model, not the pin.** During
+this work, pinned `fp128_d64_onehot` at `nv = 32` diverged from `main` (root
+block split `32768 × 2048`, an extra fold level, and one deeper level at
+`lb = 4`, vs `main`'s `65536 × 1024`). Isolation proved the pin was not
+responsible — `main`'s planner with the root pinned to `3` reproduces
+`65536 × 1024` exactly. The divergence came from a change to the fold-L∞
+tail-cap tightness in `crates/akita-types/src/sis/fold_linf_cap.rs`:
+
+```text
+FOLD_LINF_SNAP_MIN_TSTAR_RETAIN:  1/2 (main)  →  2/3
+```
+
+The retain ratio bounds how far `δ_fold` may snap below the sub-Gaussian tail
+`t*`. Raising it from `1/2` to `2/3` keeps a higher digit floor, which inflates
+`n_a`/geometry and flips the DP to the larger split. It feeds the planner cost
+model, the prover, and the verifier through
+`FoldLinfProtocolBinding::CURRENT`, so it is not confined to any one family.
+**This spec restores the `main` value `1/2`**, and all 16 tables are regenerated
+under it. With that restored, `root=3` fp128 large-`nv` schedules match `main`
+exactly (subject only to the intended root pin).
+
 ### Headline results (nv = 36, np = 1)
 
 | Policy | Root | Planner bytes | **Runtime proof** | Commit | Prove | Verify | **C+P+V** |
@@ -620,8 +666,8 @@ regeneration.
 - [x] `policy_of::<Cfg>()` derives `basis_range` from `CommitmentConfig`.
 - [x] Level 0 returns the singleton `(basis_range.0, basis_range.0)`.
 - [x] Levels ≥ 1 return the full `basis_range`.
-- [x] fp128, fp64, and fp32 policy tests all resolve root basis 2.
-- [x] `PrecommittedCommitmentConfig` freezes exact basis-2 metadata without
+- [x] fp128, fp64, and fp32 policy tests all resolve root basis 3.
+- [x] `PrecommittedCommitmentConfig` freezes exact basis-3 metadata without
       conservative rank widening.
 - [x] The W8R2 recursive multi-group catalog regenerates with exact precommits.
 - [x] All shipped tables regenerated.
@@ -673,7 +719,8 @@ Run CI-relevant checks per `AGENTS.md`: `cargo test`, `cargo clippy`,
 
 ### Phase 3 — Catalog regeneration (implemented)
 
-1. Regenerate all 16 shipped families with root basis 2.
+1. Regenerate all 16 shipped families with root basis 3, under the `main`
+   fold-L∞ tail cap (`FOLD_LINF_SNAP_MIN_TSTAR_RETAIN = 1/2`).
 2. Regenerate the W8R2 recursive family with exact frozen precommits.
 3. Refresh generated module wiring.
 

@@ -18,9 +18,9 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM: u32 = 1;
 pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
 /// Minimum retained fraction of `t*` when snapping `δ_fold` downward after tail sizing.
-/// Retain `2/3` of `t*` (at most 1/3 reduction vs the tail cap).
-pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 2;
-pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 3;
+/// Retain `1/2` of `t*` (at most 50% reduction vs the tail cap).
+pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
+pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 
 /// Whether [`crate::sis::fold_witness_digit_plan`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.
