@@ -62,6 +62,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         &[],
         None,
         CommitmentRingDims::uniform(D),
+        D,
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
         Err(err) => err,
@@ -164,6 +165,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         &x_challenges,
         Some(&fold_gadget),
         CommitmentRingDims::uniform(D),
+        D,
     )
     .unwrap();
     let (e_eq_slice, t_eq_slice, _) = setup_plan.group_column_eq_slices(0).unwrap();

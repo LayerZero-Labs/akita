@@ -1,6 +1,6 @@
 use crate::{
-    checked_opening_source_index, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
-    SetupProjectionGeometry, WitnessLayout,
+    CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout, SetupProjectionGeometry,
+    WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
@@ -309,6 +309,11 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) eq_tau1: Arc<[E]>,
     pub(crate) x_challenges: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
+    pub(crate) outgoing_ring_dim: usize,
+    pub(crate) common_coeff_count: usize,
+    pub(crate) inner_lane_count: usize,
+    pub(crate) outer_lane_count: usize,
+    pub(crate) opening_lane_count: usize,
     pub(crate) d_row_start: usize,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
@@ -360,10 +365,11 @@ impl SetupContributionSpan {
         fold_digit: Option<usize>,
         setup_len: usize,
         witness_len: usize,
+        witness_width: usize,
     ) -> Result<Self, AkitaError> {
-        if setup_stride == 0 || witness_stride == 0 {
+        if setup_stride == 0 || witness_stride == 0 || witness_width == 0 {
             return Err(AkitaError::InvalidSetup(
-                "setup contribution span stride must be positive".into(),
+                "setup contribution span stride and witness width must be positive".into(),
             ));
         }
         if len != 0 {
@@ -374,7 +380,16 @@ impl SetupContributionSpan {
                 ));
             }
             let last_witness = checked_span_index(witness_start, witness_stride, len)?;
-            checked_opening_source_index(witness_len, last_witness)?;
+            let witness_end = last_witness
+                .checked_add(witness_width)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup contribution witness span overflow".into())
+                })?;
+            if witness_end > witness_len {
+                return Err(AkitaError::InvalidSetup(
+                    "setup contribution span exceeds relation address domain".into(),
+                ));
+            }
         }
         Ok(Self {
             setup_start,
@@ -429,7 +444,9 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
     pub(crate) d_col_range: Range<usize>,
+    pub(crate) d_native_col_range: Range<usize>,
     pub(crate) t_cols: usize,
+    pub(crate) b_native_cols: usize,
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,

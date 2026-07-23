@@ -114,6 +114,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         &[],
         None,
         CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
     )
     .is_ok());
 }

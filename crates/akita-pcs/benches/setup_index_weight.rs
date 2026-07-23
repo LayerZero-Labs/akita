@@ -106,6 +106,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         &full_vec_randomness,
         Some(&fold_gadget),
         CommitmentRingDims::uniform(D),
+        D,
     )
     .unwrap();
     let rho_bits = plan.required().next_power_of_two().trailing_zeros() as usize;

@@ -677,6 +677,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             prepared_point.address_point(),
             fold_gadget.as_deref(),
             self.role_dims,
+            context.opening_ring_dim,
         )?;
         setup_plan_cell.set(setup_plan).map_err(|_| {
             AkitaError::InvalidSetup("stage-2 setup contribution plan captured twice".into())
@@ -715,6 +716,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             x_challenges,
             fold_gadget,
             self.role_dims,
+            context.opening_ring_dim,
         )
     }
 

@@ -561,6 +561,7 @@ where
         x_challenges,
         fold_gadget.as_deref(),
         relation.role_dims(),
+        relation.role_dims().d_a(),
     )?;
     Ok(plan)
 }

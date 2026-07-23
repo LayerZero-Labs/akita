@@ -252,6 +252,7 @@ fn prepare_test_plan(
         full_vec_randomness,
         fold_gadget,
         role_dims,
+        role_dims.d_a(),
     )
 }
 fn finalize_test_plan(
@@ -293,6 +294,11 @@ fn finalize_test_plan(
         eq_tau1: eq_tau1.into(),
         x_challenges: Vec::new().into(),
         fold_gadget: Vec::new().into(),
+        outgoing_ring_dim: role_dims.d_a(),
+        common_coeff_count: role_dims.d_a(),
+        inner_lane_count: 1,
+        outer_lane_count: 1,
+        opening_lane_count: 1,
         d_row_start: 0,
         d_rows,
         d_physical_cols,
@@ -328,8 +334,10 @@ fn test_group_plan(
         group_id: 0,
         a_row_start: 0,
         b_row_start: n_a,
+        d_native_col_range: d_col_range.clone(),
         d_col_range,
         t_cols,
+        b_native_cols: t_cols,
         z_cols,
         n_a,
         n_b,
