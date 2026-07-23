@@ -122,23 +122,17 @@ where
             )?
         };
         let setup_product_claim = setup_term.input_claim();
-        if !logical_w.len().is_multiple_of(next_fold_level_params.d_a()) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let opening_source_len = logical_w.len() / next_fold_level_params.d_a();
         let witness_term = {
             let _span = tracing::info_span!("stage3_witness_term_prepare").entered();
             build_witness_carry_term::<E>(
                 logical_w,
-                opening_source_len,
-                next_fold_level_params.d_a(),
+                next_fold_level_params,
                 live_x_cols,
                 col_bits,
                 ring_bits,
                 level,
                 stage2_challenges,
                 stage2_next_w_eval,
-                lp.log_basis_open,
             )?
         };
         let setup_rounds = setup_term.num_rounds();
@@ -404,19 +398,23 @@ where
 #[allow(clippy::too_many_arguments)]
 fn build_witness_carry_term<'a, E>(
     logical_w: &'a [i8],
-    opening_source_len: usize,
-    opening_ring_dim: usize,
+    next_fold_level_params: &CommittedGroupParams,
     live_x_cols: usize,
     col_bits: usize,
     ring_bits: usize,
     level: usize,
     stage2_challenges: &[E],
     stage2_next_w_eval: E,
-    log_basis: u32,
 ) -> Result<WitnessClaimReductionTerm<'a, E>, AkitaError>
 where
     E: FieldCore + FromPrimitiveInt + HasUnreducedOps,
 {
+    let opening_ring_dim = next_fold_level_params.d_a();
+    if opening_ring_dim == 0 || !logical_w.len().is_multiple_of(opening_ring_dim) {
+        return Err(AkitaError::InvalidProof);
+    }
+    let opening_source_len = logical_w.len() / opening_ring_dim;
+    let log_basis = next_fold_level_params.log_basis_open;
     let num_vars = col_bits
         .checked_add(ring_bits)
         .ok_or_else(|| AkitaError::InvalidSetup("witness carry variable count overflow".into()))?;
@@ -436,7 +434,6 @@ where
         .checked_mul(opening_ring_dim)
         .ok_or(AkitaError::InvalidProof)?;
     if opening_source_len == 0
-        || opening_ring_dim == 0
         || !logical_w.len().is_multiple_of(opening_ring_dim)
         || logical_w.len() > physical_capacity
     {
@@ -607,4 +604,41 @@ where
         relation.role_dims(),
     )?;
     Ok(plan)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::poly::multilinear_eval;
+    use akita_challenges::SparseChallengeConfig;
+    use akita_field::Prime128Offset275;
+    use akita_types::SisModulusProfileId;
+
+    type TestF = Prime128Offset275;
+
+    fn successor_params(log_basis_open: u32) -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            2,
+            log_basis_open,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        )
+    }
+
+    #[test]
+    fn witness_carry_uses_successor_opening_log_basis() {
+        let logical_w = [-2, 0, 0, 0];
+        let point = [TestF::zero(), TestF::zero()];
+        let dense_witness = logical_w
+            .iter()
+            .map(|&digit| TestF::from_i64(i64::from(digit)))
+            .collect::<Vec<_>>();
+        let claim = multilinear_eval(&dense_witness, &point).expect("valid witness opening");
+
+        build_witness_carry_term(&logical_w, &successor_params(2), 2, 1, 1, 0, &point, claim)
+            .expect("the successor's balanced log-basis-2 range includes -2");
+    }
 }
