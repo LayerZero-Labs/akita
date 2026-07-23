@@ -1,20 +1,5 @@
 use super::*;
 
-struct PreparedGroupShape {
-    num_live_blocks: usize,
-    num_positions_per_block: usize,
-    depth_witness: usize,
-    depth_commit: usize,
-    depth_open: usize,
-    n_a: usize,
-    n_b: usize,
-    t_cols: usize,
-    z_cols: usize,
-    d_col_range: std::ops::Range<usize>,
-    d_active_cols: usize,
-    ownership_units: usize,
-}
-
 impl<E: FieldCore> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
@@ -51,67 +36,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .into();
             (d_row_start, d_rows, d_physical_cols, d_weights)
         };
-        let group_shapes = groups
-            .iter()
-            .map(|group| {
-                let _span =
-                    tracing::info_span!("setup_prepare_group_geometry", group_id = group.group_id)
-                        .entered();
-                let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
-                let num_positions_per_block =
-                    group.num_positions_per_block(level_params, opening_batch)?;
-                let depth_witness = group.depth_witness(level_params, opening_batch)?;
-                let depth_commit = group.depth_commit(level_params, opening_batch)?;
-                let depth_open = group.depth_open(level_params, opening_batch)?;
-                let n_a = group.n_a(level_params, opening_batch)?;
-                let n_b = group.n_b(level_params, opening_batch)?;
-                let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
-                let d_col_range =
-                    get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
-                let t_cols = group
-                    .num_claims
-                    .checked_mul(t_vector_width)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
-                let z_cols = num_positions_per_block
-                    .checked_mul(depth_witness)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                Ok(PreparedGroupShape {
-                    num_live_blocks,
-                    num_positions_per_block,
-                    depth_witness,
-                    depth_commit,
-                    depth_open,
-                    n_a,
-                    n_b,
-                    t_cols,
-                    z_cols,
-                    d_col_range,
-                    d_active_cols: group.d_active_cols(level_params, opening_batch)?,
-                    ownership_units: witness_layout.units_for_group(group.group_id)?.len(),
-                })
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let projection_groups = group_shapes
-            .iter()
-            .zip(groups)
-            .map(|(shape, group)| SetupProjectionGroupGeometry {
-                a_rows: shape.n_a,
-                a_cols: shape.z_cols,
-                b_rows: shape.n_b,
-                b_cols: shape.t_cols,
-                d_active_cols: shape.d_active_cols,
-                ownership_units: shape.ownership_units,
-                depth_fold: group.depth_fold,
-            })
-            .collect::<Vec<_>>();
-        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
-            role_dims,
-            d_rows,
-            d_physical_cols,
-            &projection_groups,
-        )?;
-        projection_geometry.ensure_evaluation_budget()?;
-
         // Build the bounded equality window once and share it across every E/T/Z
         // column weight. Each canonical column address then costs one bounded
         // low-table lookup plus a short high evaluation instead of a full
@@ -150,21 +74,28 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         let mut dynamic_groups = groups
             .iter()
-            .zip(group_shapes)
-            .map(|(group, shape)| {
-                let PreparedGroupShape {
-                    num_live_blocks,
-                    num_positions_per_block,
-                    depth_witness,
-                    depth_commit,
-                    depth_open,
-                    n_a,
-                    n_b,
-                    t_cols,
-                    z_cols,
-                    d_col_range,
-                    ..
-                } = shape;
+            .map(|group| {
+                let geometry_span =
+                    tracing::info_span!("setup_prepare_group_geometry", group_id = group.group_id)
+                        .entered();
+                let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
+                let num_positions_per_block =
+                    group.num_positions_per_block(level_params, opening_batch)?;
+                let depth_witness = group.depth_witness(level_params, opening_batch)?;
+                let depth_commit = group.depth_commit(level_params, opening_batch)?;
+                let depth_open = group.depth_open(level_params, opening_batch)?;
+                let n_a = group.n_a(level_params, opening_batch)?;
+                let n_b = group.n_b(level_params, opening_batch)?;
+                let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
+                let d_col_range =
+                    get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
+                let t_cols = group
+                    .num_claims
+                    .checked_mul(t_vector_width)
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
+                let z_cols = num_positions_per_block
+                    .checked_mul(depth_witness)
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
                 let a_row_weights: std::sync::Arc<[E]> =
                     checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
                         .to_vec()
@@ -179,6 +110,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         actual: fold_gadget_base.len(),
                     });
                 }
+                drop(geometry_span);
                 let e_eq_slice = {
                     let _span = tracing::info_span!("setup_prepare_e_weights").entered();
                     setup_e_col_weights::<E>(
@@ -334,6 +266,29 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
+        let projection_groups = dynamic_groups
+            .iter()
+            .zip(groups)
+            .map(|(planned, group)| {
+                let d_active_cols = group.d_active_cols(level_params, opening_batch)?;
+                Ok(SetupProjectionGroupGeometry {
+                    a_rows: planned.n_a,
+                    a_cols: planned.z_cols,
+                    b_rows: planned.n_b,
+                    b_cols: planned.t_cols,
+                    d_active_cols,
+                    ownership_units: witness_layout.units_for_group(group.group_id)?.len(),
+                    depth_fold: group.depth_fold,
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let projection_geometry = crate::SetupProjectionGeometry::from_groups(
+            role_dims,
+            d_rows,
+            d_physical_cols,
+            &projection_groups,
+        )?;
+        projection_geometry.ensure_evaluation_budget()?;
         for group in &mut dynamic_groups {
             group.refresh_segments(
                 &d_weights,
