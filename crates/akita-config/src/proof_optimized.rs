@@ -4,14 +4,13 @@
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
 use super::CommitmentConfig;
-use crate::matrix_envelope::{
-    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
-};
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
+    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
+    setup_matrix_envelope_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -119,7 +118,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
 ) -> Result<SetupMatrixEnvelope, AkitaError> {
     let layouts = setup_envelope_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut saw_supported_shape = false;
-    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
+    let mut envelope = SetupMatrixEnvelope::minimum();
     for layout in &layouts {
         let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
             continue;
@@ -213,20 +212,6 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     }
 
     Ok(layouts)
-}
-
-fn setup_matrix_envelope_for_schedule(
-    schedule: &FoldSchedule,
-) -> Result<SetupMatrixEnvelope, AkitaError> {
-    let mut envelope = SetupMatrixEnvelope { max_setup_len: 1 };
-    for params in setup_level_params_from_schedule(schedule) {
-        accumulate_matrix_envelope_for_level(&params, &mut envelope.max_setup_len)?;
-    }
-    accumulate_terminal_matrix_envelope(
-        &schedule.terminal.params.witness,
-        &mut envelope.max_setup_len,
-    )?;
-    Ok(envelope)
 }
 
 /// Extract setup-level params from a `FoldSchedule`.

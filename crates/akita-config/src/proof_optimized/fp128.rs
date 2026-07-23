@@ -222,7 +222,7 @@ where
         (
             selection
                 .estimate
-                .estimated_direct_proof_payload_bytes()
+                .estimated_proof_payload_bytes()
                 .unwrap_or(usize::MAX),
             selection.preset.ring_dimension(),
         )
