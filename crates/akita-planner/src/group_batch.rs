@@ -3,7 +3,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    compute_num_digits_full_field, decomposed_s_block_ring_count, decomposed_t_ring_count,
+    compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
     decomposed_w_ring_count, fold_witness_digit_plan, num_digits_inner, num_digits_open,
     rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
     FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
@@ -302,7 +302,7 @@ fn multi_group_root_next_w_len(
         opening_batch,
         params.witness_chunk.num_chunks,
         relation_rows,
-        compute_num_digits_full_field(field_bits, params.log_basis_open),
+        compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
     witness_layout
         .total_len()

@@ -6,7 +6,7 @@
 //! Two polynomial representations are covered:
 //!
 //! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
-//! * **Dense**   — `fp128::D128Full`   (D = 128, full-field coefficients).
+//! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
 //!
 //! Variable counts:
 //!
@@ -112,7 +112,7 @@ fn run_single_onehot(nv: usize) {
 // Dense helpers (D = 128)
 // ---------------------------------------------------------------------------
 
-type DenseCfg = fp128::D128Full;
+type DenseCfg = fp128::D128Dense;
 const DENSE_D: usize = DenseCfg::D;
 
 fn run_single_dense(nv: usize) {

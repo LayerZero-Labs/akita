@@ -12,7 +12,7 @@ use super::{
 };
 
 #[rustfmt::skip]
-pub(crate) static FP64_D128_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
+pub(crate) static FP64_D128_DENSE_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(13, 1), source: GeneratedRootSource::Dense { coefficient_bits: 64 }, challenge: GeneratedRootFinalChallenge::Flat,
@@ -610,7 +610,7 @@ pub(crate) static FP64_D128_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
-    family_name: "fp64_d128",
+    family_name: "fp64_d128_dense",
     protocol_epoch: 1,
     sis_modulus_profile: SisModulusProfileId::Q64Offset59,
     sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
