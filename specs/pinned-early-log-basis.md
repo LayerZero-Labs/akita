@@ -597,16 +597,17 @@ bytes**, and **prover latency**.
 
 ### Shipped scope (implemented)
 
-Every proof-optimized preset uses `basis_range = (2, 6)`, so every shipped root
-uses `log_basis = 2`.
+Every proof-optimized preset uses `basis_range = (3, 6)`, so every shipped root
+uses `log_basis = 3` — strong enough that every family supports the full `nv`
+range, and matching the value the unpinned planner already favored at the root.
 
 | Preset family | Root | Recursive search | Notes |
 |---------------|------|------------------|-------|
-| fp128 one-hot, dense, tensor, and chunked families | 2 | 2…6 | `fp128::{D64Dense,D64DenseMultiChunk}` cap at `nv = 48` because their basis-2 root cannot produce a valid schedule beyond that. |
-| fp64 dense and one-hot families | 2 | 2…6 | No field-specific floor. |
-| fp32 one-hot families | 2 | 2…6 | No field-specific floor. |
-| `RecursiveCommitmentConfig<…>` | 2 | 2…6 | Inherits the base policy and retains recursion-specific catalog identity. |
-| `PrecommittedCommitmentConfig<…>` | 2 | singleton probe at 2 | Freezes exact root metadata; no conservative widening. |
+| fp128 one-hot, dense, tensor, and chunked families | 3 | 3…6 | Full `nv` range supported (no cap). |
+| fp64 dense and one-hot families | 3 | 3…6 | No field-specific floor. |
+| fp32 one-hot families | 3 | 3…6 | No field-specific floor. |
+| `RecursiveCommitmentConfig<…>` | 3 | 3…6 | Inherits the base policy and retains recursion-specific catalog identity. |
+| `PrecommittedCommitmentConfig<…>` | 3 | singleton probe at 3 | Freezes exact root metadata; no conservative widening. |
 
 All 16 shipped tables are regenerated from this rule. Catalog identity already
 contains `basis_range`, so changing the policy range still requires

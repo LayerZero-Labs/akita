@@ -598,15 +598,10 @@ mod fp128_policy_tests {
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
     const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
 
-    /// Dense `D64Dense` pins the root to `log_basis = 2`, whose weak shrink cannot
-    /// produce a valid schedule past `nv = 48`, so its table caps there. Spot-check
-    /// its own table max instead of `50`.
-    const CI_SIS_WIDTH_NUM_VARS_D64_DENSE: &[usize] = &[13, 16, 28, 30, 44, 48];
-
     #[test]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths() {
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(
-            CI_SIS_WIDTH_NUM_VARS_D64_DENSE,
+            CI_SIS_WIDTH_NUM_VARS,
         );
     }
 
@@ -620,8 +615,7 @@ mod fp128_policy_tests {
     #[test]
     #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths_full_range() {
-        // `D64Dense` root=2 supports up to `nv = 48` (see `CI_SIS_WIDTH_NUM_VARS_D64_DENSE`).
-        let num_vars: Vec<usize> = (13..=48).collect();
+        let num_vars: Vec<usize> = (13..=50).collect();
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(&num_vars);
     }
 
@@ -715,8 +709,9 @@ mod precommit_tests {
             precommitted,
             akita_types::PrecommittedGroupDescriptor::from_params(group, root)
         );
-        assert_eq!(precommitted.log_basis_inner, 2);
-        assert_eq!(precommitted.log_basis_outer, 2);
+        let root_basis = fp128::D64OneHot::basis_range().0;
+        assert_eq!(precommitted.log_basis_inner, root_basis);
+        assert_eq!(precommitted.log_basis_outer, root_basis);
         assert!(
             precommitted.num_live_blocks >= 8,
             "the frozen nv=16 precommit must remain distributable at a W8R2 root"

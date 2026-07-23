@@ -473,14 +473,12 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
     ),
-    // Dense `D64`: the basis-2 root shrinks weakest, so no valid >=2-fold schedule
-    // exists past `nv = 48`; cap the family there (the unsupported `nv` are removed).
     family_row!(
         "fp128_d64_dense",
         "FP128_D64_DENSE_SCHEDULES",
         "fp128-d64-dense",
         1,
-        48,
+        50,
         fp128::D64Dense
     ),
     family_row!(
@@ -519,14 +517,12 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHotMultiChunkW4R2
     ),
-    // Dense `D64` chunked companion: same basis-2 root limit as `D64Dense`; the
-    // supported range caps at `nv = 48`.
     family_row!(
         "fp128_d64_dense_multi_chunk",
         "FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES",
         "fp128-d64-dense-multi-chunk",
         1,
-        48,
+        50,
         fp128::D64DenseMultiChunk
     ),
     family_row!(

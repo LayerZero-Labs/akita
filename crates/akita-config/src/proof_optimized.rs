@@ -17,7 +17,13 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 /// Minimum proof-optimized log-basis.
-pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 2;
+///
+/// This is also the fixed **root-fold** basis: `log_basis_search_range_at_level(0)`
+/// collapses the root to `basis_range.0`. Pinning the root to `3` (rather than the
+/// smallest reachable `2`) keeps the shrink strong enough that every preset — dense
+/// and small-field included — supports the full `nv` range, and matches the value
+/// the unpinned planner already favored at the root.
+pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 
