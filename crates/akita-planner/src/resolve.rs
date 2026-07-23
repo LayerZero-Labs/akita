@@ -15,11 +15,10 @@ use akita_types::{
 
 use crate::catalog_identity::validate_catalog_identity;
 use crate::find_group_batch_schedule;
-use crate::find_schedule;
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
-use crate::schedule_params::validate_policy_witness_chunk;
-use crate::PlannerPolicy;
+use crate::schedule_params::validate_policy;
+use crate::{find_schedule, PlannerPolicy};
 
 /// Resolve the runtime [`FoldSchedule`] using an explicit optional catalog.
 pub fn resolve_schedule(
@@ -47,7 +46,7 @@ pub fn resolve_group_batch_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
     key.validate()?;
-    validate_policy_witness_chunk(policy)?;
+    validate_policy(policy)?;
     let scalar_recursive_key = key.precommitteds.is_empty() && policy.recursive_setup_planning;
     if !scalar_recursive_key {
         if let Some(table) = catalog {
@@ -76,8 +75,7 @@ pub fn resolve_group_batch_schedule(
         }
     }
     if scalar_recursive_key {
-        let mut scalar_policy = *policy;
-        scalar_policy.recursive_setup_planning = false;
+        let scalar_policy = policy.direct_only();
         let planned = find_schedule(
             key.final_group,
             &scalar_policy,
@@ -140,5 +138,5 @@ pub fn estimate_proof_bytes(
     )?
     .planned_schedule
     .estimate
-    .estimated_direct_proof_payload_bytes()
+    .estimated_proof_payload_bytes()
 }
