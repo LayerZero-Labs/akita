@@ -40,6 +40,51 @@ pub use resolve::{
 };
 pub use schedule_params::{find_schedule, suffix_opening_layout};
 
+/// Quantities materialized and checked by the current bounded planner cost model.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlannerCostModelId {
+    ExactPayloadAndSetupEnvelope,
+}
+
+impl PlannerCostModelId {
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::ExactPayloadAndSetupEnvelope => 1,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ExactPayloadAndSetupEnvelope => "ExactPayloadAndSetupEnvelope",
+        }
+    }
+}
+
+/// Deterministic schedule-selection policy bound into generated catalogs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SelectionPolicyId {
+    MinEstimatedProofPayload,
+    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+}
+
+impl SelectionPolicyId {
+    pub const fn tag(self) -> u32 {
+        match self {
+            Self::MinEstimatedProofPayload => 1,
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+        }
+    }
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
+                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
+            }
+        }
+    }
+}
+
 /// Plain-value brute-force inputs the planner DP needs.
 ///
 /// This is the `Cfg`-free projection of a `CommitmentConfig` preset that
@@ -47,6 +92,20 @@ pub use schedule_params::{find_schedule, suffix_opening_layout};
 /// its `policy_of::<Cfg>()` bridge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PlannerPolicy {
+    pub cost_model: PlannerCostModelId,
+    pub selection_policy: SelectionPolicyId,
+    /// Maximum supported setup-matrix envelope in base-field elements.
+    ///
+    /// This is a candidate-feasibility input, so generated catalogs bind it
+    /// alongside the selection policy that consumes it.
+    pub max_setup_envelope_field_elements: usize,
+    /// Minimum whole-number contraction required when a successor consumes an
+    /// offloaded setup prefix.
+    ///
+    /// The input price includes the balanced recursive witness and the padded
+    /// full-field prefix. The output price includes the complete balanced
+    /// successor witness.
+    pub min_offloaded_witness_contraction: usize,
     /// Ring degree `D` (`Cfg::D`).
     pub ring_dimension: usize,
     /// Gadget base + coefficient bounds (`Cfg::decomposition()`).
@@ -88,6 +147,15 @@ pub struct PlannerPolicy {
 }
 
 impl PlannerPolicy {
+    /// Direct-only counterpart used when resolving a scalar schedule through
+    /// the proof-payload policy.
+    pub fn direct_only(self) -> Self {
+        Self {
+            recursive_setup_planning: false,
+            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            ..self
+        }
+    }
     /// Chunk count of fold level `fold_level`'s own fold: the number of
     /// per-chunk folded responses `zᵢ` this level produces, hence the chunk
     /// count of the witness it emits. `build_w_coeffs` lays that witness out as

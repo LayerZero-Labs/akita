@@ -35,7 +35,9 @@
 
 #![allow(missing_docs)]
 
-use akita_config::generated_families::{family_keys, GeneratedFamily, ALL_GENERATED_FAMILIES};
+use akita_config::generated_families::{
+    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
@@ -103,6 +105,9 @@ fn assert_table_hit(
     catalog: &akita_planner::GeneratedScheduleTable,
     keys: &[PolynomialGroupLayout],
 ) {
+    if keys.is_empty() {
+        return;
+    }
     let hit = keys
         .iter()
         .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
@@ -148,6 +153,58 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
     )
     .expect_err("non-v1 protocol epoch must not validate");
     assert!(error.to_string().contains("catalog identity mismatch"));
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn catalog_identity_rejects_planner_policy_changes() {
+    let policy = policy_of::<fp128::D64Full>();
+    let catalog = fp128::D64Full::schedule_catalog().expect("shipped catalog");
+    let assert_rejected = |label: &str, mutated: akita_planner::GeneratedScheduleTable| {
+        let error = validate_catalog_identity(
+            &mutated,
+            &policy,
+            fp128::D64Full::ring_challenge_config,
+            fp128::D64Full::fold_challenge_shape_at_level,
+        )
+        .expect_err("planner-policy mismatch must not validate");
+        assert!(
+            error.to_string().contains("catalog identity mismatch"),
+            "{label} mutation returned the wrong error: {error}"
+        );
+    };
+
+    let mut mutated = catalog;
+    mutated.identity.selection_policy =
+        akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
+    assert_rejected("selection policy", mutated);
+
+    let mut mutated = catalog;
+    mutated.identity.max_setup_envelope_field_elements -= 1;
+    assert_rejected("setup envelope ceiling", mutated);
+
+    let mut mutated = catalog;
+    mutated.identity.min_offloaded_witness_contraction += 1;
+    assert_rejected("offloaded witness contraction", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn recursive_companion_catalogs_contain_only_grouped_keys() {
+    for family in ALL_GENERATED_FAMILIES {
+        if !(family.policy)().recursive_setup_planning {
+            continue;
+        }
+        let catalog = family_catalog(family, &[]);
+        assert!(
+            catalog
+                .entries
+                .iter()
+                .all(|entry| !entry.root.precommitted_groups.is_empty()),
+            "recursive companion family {} contains an unreachable scalar row",
+            family.module_name
+        );
+    }
 }
 
 #[cfg(feature = "all-schedules")]
@@ -649,7 +706,7 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
         return;
     }
 
-    let keys: Vec<PolynomialGroupLayout> = family_keys(family)
+    let keys: Vec<PolynomialGroupLayout> = emitted_scalar_keys(family)
         .unwrap_or_else(|e| panic!("family {} key enumeration failed: {e}", family.module_name));
 
     #[cfg(feature = "all-schedules")]
