@@ -23,6 +23,7 @@ mod prepare;
 mod scan;
 mod segments;
 mod setup_index_weight;
+mod structured;
 #[cfg(test)]
 mod test_oracle;
 mod types;

@@ -332,6 +332,16 @@ fn test_group_plan(
     let e_cols = d_col_range.len();
     SetupContributionGroupPlan {
         group_id: 0,
+        num_claims: 1,
+        num_live_blocks: 1,
+        num_positions_per_block: z_cols,
+        depth_witness: 1,
+        depth_commit: 1,
+        depth_open: 1,
+        depth_fold: 1,
+        log_basis_inner: 1,
+        log_basis_outer: 1,
+        log_basis_open: 1,
         a_row_start: 0,
         b_row_start: n_a,
         d_native_col_range: d_col_range.clone(),

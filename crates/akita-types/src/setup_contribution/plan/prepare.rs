@@ -122,6 +122,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let num_live_blocks = group.num_live_blocks(level_params, opening_batch)?;
                 let num_positions_per_block =
                     group.num_positions_per_block(level_params, opening_batch)?;
+                let group_params =
+                    level_params.group_params(opening_batch, group.group_id)?;
                 let depth_witness = group.depth_witness(level_params, opening_batch)?;
                 let depth_commit = group.depth_commit(level_params, opening_batch)?;
                 let depth_open = group.depth_open(level_params, opening_batch)?;
@@ -385,6 +387,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 }
                 Ok(SetupContributionGroupPlan {
                     group_id: group.group_id,
+                    num_claims: group.num_claims,
+                    num_live_blocks,
+                    num_positions_per_block,
+                    depth_witness,
+                    depth_commit,
+                    depth_open,
+                    depth_fold: group.depth_fold,
+                    log_basis_inner: group_params.log_basis_inner(),
+                    log_basis_outer: group_params.log_basis_outer(),
+                    log_basis_open: group_params.log_basis_open(),
                     a_row_start: group.a_row_start,
                     b_row_start: group.b_row_start,
                     d_col_range,
