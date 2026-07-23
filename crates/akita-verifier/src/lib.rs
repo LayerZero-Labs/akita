@@ -26,7 +26,6 @@
 mod protocol;
 mod stages;
 
-pub use akita_types::CommitmentVerifier;
 pub use protocol::{
     batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };

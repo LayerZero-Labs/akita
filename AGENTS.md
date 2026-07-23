@@ -73,6 +73,8 @@ Verifier-reachable code must reject malformed input with `AkitaError` or `Serial
 Do not add verifier-reachable `panic!`, `assert!`, `unwrap`, unchecked indexing, or unbounded allocation without prior validation at a boundary.
 Full contract: [`book/src/how/verification.md`](book/src/how/verification.md) and [`docs/verifier-contract.md`](docs/verifier-contract.md).
 
+Verifier module map, pipeline shape, and refactor conventions (size/naming/no-glob/no-wrapper rules): [`docs/verifier-conventions.md`](docs/verifier-conventions.md).
+
 ## Single source of truth (no wrapper slop)
 
 Follow the [#244](https://github.com/LayerZero-Labs/akita/pull/244) cutover: **one canonical function per concept**; call it directly.

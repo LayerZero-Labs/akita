@@ -246,36 +246,6 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Evaluate the `a[idx]` multiplier at the supplied ring powers.
-    ///
-    /// # Errors
-    ///
-    /// Returns an invalid proof error if `idx` is out of range.
-    pub fn eval_position_at<const D: usize, E>(
-        &self,
-        idx: usize,
-        alpha_pows: &[E],
-    ) -> Result<E, AkitaError>
-    where
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
-        match self {
-            Self::Base(point) => point
-                .position_weights
-                .get(idx)
-                .copied()
-                .map(E::lift_base)
-                .ok_or(AkitaError::InvalidProof),
-            Self::Ring {
-                position_weights, ..
-            } => position_weights
-                .as_ring_slice::<D>()?
-                .get(idx)
-                .map(|value| eval_ring_at_pows_fast(value, alpha_pows))
-                .ok_or(AkitaError::InvalidProof),
-        }
-    }
-
     /// Evaluate `coefficient * b[idx]` at the supplied ring powers.
     ///
     /// Base multipliers stay in the scalar field; ring multipliers require the
@@ -318,9 +288,10 @@ impl<F: FieldCore> RingMultiplierOpeningPoint<F> {
         }
     }
 
-    /// Runtime-dimension form of [`Self::eval_position_at`]: the ring dimension is
-    /// `alpha_pows.len()` and ring multipliers are read as flat coefficient
-    /// chunks.
+    /// Evaluate the `a[idx]` multiplier at the supplied ring powers.
+    ///
+    /// The ring dimension is `alpha_pows.len()` and ring multipliers are read as
+    /// flat coefficient chunks.
     ///
     /// # Errors
     ///

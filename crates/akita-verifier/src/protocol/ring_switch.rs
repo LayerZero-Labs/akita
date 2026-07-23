@@ -573,7 +573,7 @@ where
         lp.num_live_blocks,
     )?;
     let opening_a_evals = (0..num_positions_per_block)
-        .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &alpha_pows))
+        .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows))
         .collect::<Result<Vec<_>, _>>()?;
     let group = RelationMatrixGroupEvaluator {
         c_alphas,

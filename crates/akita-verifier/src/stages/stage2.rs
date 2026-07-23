@@ -103,10 +103,7 @@ where
 
     #[tracing::instrument(skip_all, name = "stage2_expected_output_claim")]
     fn expected_output_claim(&self, challenges: &[E]) -> Result<E, AkitaError> {
-        let w_eval = {
-            let _span = tracing::info_span!("stage2_witness_eval").entered();
-            self.witness_eval
-        };
+        let w_eval = self.witness_eval;
 
         let relation_weight = {
             let _span = tracing::info_span!("stage2_relation_weight").entered();
