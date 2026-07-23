@@ -144,21 +144,37 @@ Preserve all of these; each names the mechanism that protects it.
       bytes, 6/6). Retired at Phase-3 end (commit removing `akita-verifier-legacy`).
 - [ ] CI builds `akita-verifier` standalone and for the guest target; a
       dependency-allowlist check fails on any new/heavy dependency.
-- [ ] No function in `akita-verifier/src` exceeds ~80 lines; no struct exceeds
-      ~10 fields without a builder/borrowed-context; no `use super::*` glob.
+- [~] Struct/glob sub-criteria met (no >10-field struct without a bundle/borrowed
+      context; no production `use super::*`). The ~80-line function budget is
+      **treated as a guide, not a hard rule**: a few single linear replay flows
+      still exceed it by design (`ring_switch::eval_at_point` ~237,
+      `suffix::prepare_fold_replay` ~231, `verify_recursive_fold` 102,
+      `verify_fold` 92) — splitting them purely to hit 80 would add call
+      indirection without a genuine logical boundary. Extractions landed only where
+      they created a real boundary (e.g. `verify_recursive_fold` making the
+      terminal/recursive dispatch symmetric).
 - [ ] Extension-field generics are named `E`, base-field `F` (no
       `RelationMatrixEvaluator<F>`-style misnomers).
-- [ ] No `#[cfg(test)]` harness code remains in shipped `src/` (moved to `tests/`
-      or a `test-support` feature).
-- [~] Total verifier logic LOC decreases materially — **not yet met for the
-      crate itself.** `akita-verifier/src` is 6,911 LOC vs 6,722 at the #312
-      branch point (+189): the de-glob (explicit imports) and Phase-3
-      decomposition (function/struct boundaries + docs) improved auditability
-      but added lines. The path to a net decrease is item 3 (relocate the
-      472-line `slice_mle/setup_contribution` test module out of `src/`) plus the
-      const-`D` `eval_position_at` deletion; the mega-function breakups (item 2)
-      are LOC-neutral. Separately, retiring the temporary scaffolding removed
-      **7,369 LOC** repo-wide (6,722 legacy crate + 647 differential test).
+- [~] No `#[cfg(test)]` harness code remains in shipped `src/` — **won't-do
+      (idiomatic)**, see Phase-3 item #3. A `#[cfg(test)]` internal characterization
+      test is idiomatic Rust and never enters release/guest/dependency builds; a
+      `tests/`/`test-support` move would expose the evaluator's ~28 private fields
+      for no runtime benefit. The oversized 472-line `tests.rs` was instead split
+      into three small `#[cfg(test)]` files (`fixtures`/`oracle`/`tests`) to address
+      the file-size concern without any public-surface change.
+- [~] Total verifier logic LOC decreases materially — **not met for the crate
+      itself, by design.** `akita-verifier/src` is ~6,937 LOC vs 6,722 at the #312
+      branch point: the de-glob (explicit imports), Phase-3 decomposition
+      (function/struct boundaries + docs), the `verify_recursive_fold` extraction,
+      and the `setup_contribution` test split all *added* lines in service of
+      auditability. The one genuine reduction from this cycle — deleting the
+      const-`D` `eval_position_at` (−29 LOC) — landed in `akita-types`, not the
+      verifier crate. Item 3's expected src/ reduction did not materialize: the
+      test module was kept in `src/` (idiomatic `#[cfg(test)]`) by owner decision,
+      only reorganized. Conclusion: this criterion is superseded by the
+      auditability goal for the verifier crate; the material repo-wide reduction
+      came from retiring the temporary scaffolding (**−7,369 LOC**: 6,722 legacy
+      crate + 647 differential test).
 - [x] The temporary `akita-verifier-legacy` crate (the frozen legacy monolith)
       is removed at the end of Phase 3 (after full-matrix parity held).
 
@@ -399,7 +415,9 @@ mismatch out so each caller could keep a distinct legacy error variant is gone;
 with legacy retired, that distinction was incidental and made no production
 contract.
 
-Of the three items, #1 is **DONE**; #2 and #3 remain, in execution order.
+Of the three items, all are now addressed: #1 and #2 landed (#2 scoped down);
+#3 resolved by an explicit owner scoping decision (kept idiomatic, split for
+readability). Details below.
 
 1. **Close the fp32 differential cell, then retire legacy — DONE.** Added a
    self-contained fp32 one-hot fixture (`fp32_onehot_fixture`, option (b)):
@@ -413,35 +431,63 @@ Of the three items, #1 is **DONE**; #2 and #3 remain, in execution order.
    `verifier-differential` CI job + the differential wiring were deleted
    (−7,369 LOC repo-wide).
 
-2. **Auditability breakups (LOC-neutral; now unblocked).** The remaining
-   mega-functions — `ring_switch::eval_at_point` (~204) / `eval_flat_at_point`,
-   `suffix::prepare_fold_replay` (~212), the `verify_fold` recursive tail — still
-   exceed the ~80-line budget. Also the `_multi_group`/`_inner` eval-path
-   convergence + const-`D` `eval_position_at` deletion (~30 LOC), which is blocked
-   only by legacy still calling that `akita-types` method.
-   **Sequencing tension:** these are the most soundness-sensitive changes, yet
-   retiring legacy in item 1 removes the byte-exact differential net *before* they
-   land. After B4 they rely on the `akita-pcs` scheme roundtrip tests +
-   `profile/akita-recursion` e2e + `mixed_d_rejections` (which catch accept/reject
-   regressions but not a transcript-order divergence that still verifies). The
-   safer ordering is to do these breakups *before* B4, while the differential
-   still exists; doing B4 first (per the current directive) is a deliberate
-   trade of that net for getting the legacy crate out sooner.
+2. **Auditability breakups — DONE (scoped down).** Two changes landed, each
+   re-verified against the `akita-pcs` scheme roundtrip suite +
+   `profile/akita-recursion` e2e + `mixed_d_rejections` (the byte-exact
+   differential net is gone; see the sequencing note):
+   - **`eval_position_at` convergence + const-`D` deletion (genuine −29 LOC,
+     mostly in `akita-types`).** Single-group `prepare_relation_matrix_evaluator_inner`
+     was the last caller of the const-`D`
+     `RingMultiplierOpeningPoint::eval_position_at`; the multi-group path already
+     used the runtime-dimension `eval_position_at_dyn`. At the call site
+     `alpha_pows.len() == D`, so the two are byte-identical (`as_ring_slice::<D>()`
+     reinterprets the same flat coeffs via `#[repr(transparent)]`, and both eval
+     helpers share one fold body). `inner` now uses `eval_position_at_dyn` and the
+     const-`D` method is deleted from `akita-types`.
+   - **`verify_recursive_fold` extraction (symmetric fold dispatch).** `verify_fold`
+     already delegated the terminal payload arm to `verify_terminal_fold` but
+     sprawled the ~85-line recursive arm inline, so the two payload variants sat at
+     different altitudes. The recursive replay (bind next-level witness → inner
+     ring-switch → stages 1/2/3) is now `verify_recursive_fold`, the sibling of
+     `verify_terminal_fold`; `verify_fold` is a clean dispatcher: shared prefix
+     (validate + derive stage-1 challenges + build relation instance) then a 2-arm
+     match that delegates both payloads (the six recursive fields move into a
+     `RecursiveFoldStages` bundle mirroring `PreparedFoldPayload::Recursive`). Pure
+     extract-method — statement order, transcript absorbs, and dispatch are
+     byte-identical.
+   The originally-listed `ring_switch::eval_at_point` (~237) and
+   `suffix::prepare_fold_replay` (~231) breakups were **deliberately dropped**
+   (owner call): each is a single linear replay flow, and splitting it purely to
+   hit the ~80-line budget would add call indirection (more jumping around) with
+   no genuine logical boundary — a net-negative for auditability. The ~80-line
+   budget is a guide, not a hard rule. `verify_recursive_fold` (unlike those) was
+   worth extracting because it made the terminal/recursive dispatch *symmetric*, a
+   real altitude fix rather than a line count.
+   **Sequencing note:** these are soundness-sensitive, and they landed *after*
+   legacy retirement removed the byte-exact differential net, so they relied on the
+   `akita-pcs` e2e suite + `mixed_d_rejections` (which catch accept/reject
+   regressions but not a transcript-order divergence that still verifies). Both
+   changes are structure-only and preserve statement/absorb order, so the residual
+   risk that class of net would have added is minimal here.
 
-3. **Relocate test-only code out of shipped `src/`.** `slice_mle/setup_contribution`
-   is a whole `#[cfg(test)]` submodule (~17 KB of tests + a naive oracle) shipped
-   in `src/`. **Still open, and thornier than first scoped.** The tests hand-build
-   `RelationMatrixEvaluator` / `FlatRelationContext` / `RelationMatrixGroupEvaluator`
-   via full struct literals (~28 private fields) plus the
-   `PreparedChallengeEvals::Flat` variant, so neither a move to `tests/` nor a
-   `test-support` feature actually "keeps the surface minimal" — both expose the
-   evaluator's *entire* internal representation (a `test-support` feature merely
-   gates that exposure behind a flag rather than avoiding it). The honest options
-   are (a) accept a feature-gated-public internal representation, or (b) rewrite
-   the characterization tests to drive the evaluator through its public
-   constructor + a small `test-support`-gated accessor surface. Until one is
-   chosen, this acceptance criterion stays unmet and the module stays
-   `#[cfg(test)]` in `src/` — a deliberate hold, not an oversight.
+3. **Relocate test-only code out of shipped `src/` — RESOLVED (kept idiomatic
+   `#[cfg(test)]`, split for readability).** As the item's own analysis showed,
+   the tests hand-build `RelationMatrixEvaluator` / `FlatRelationContext` /
+   `RelationMatrixGroupEvaluator` via full struct literals (~28 private fields)
+   plus the `PreparedChallengeEvals::Flat` variant, so both a move to `tests/` and
+   a `test-support` feature would expose the evaluator's *entire* internal
+   representation — the feature only gates that exposure, it doesn't avoid it.
+   **Owner decision:** a `#[cfg(test)]` unit test of crate internals is idiomatic
+   Rust and is **never compiled into release / zkVM-guest / dependency builds**
+   (the "shipped in `src/`" concern is source-tree footprint, not runtime), so the
+   module stays `#[cfg(test)]` with no `test-support` machinery and no
+   public-surface change. To address the file-size half of the concern, the
+   472-line `tests.rs` was split by concern into three small `#[cfg(test)]` files
+   under `slice_mle/setup_contribution/` — `fixtures.rs` (shape catalog + fixture
+   builder + assertions), `oracle.rs` (the naive reference), `tests.rs` (the
+   `#[test]` cases) — sharing visibility via `pub(super)`. This acceptance-criterion
+   line ("no `#[cfg(test)]` harness in shipped `src/`") is therefore intentionally
+   recorded as **won't-do (idiomatic)** rather than met.
 
 ## Known gaps & follow-ups (as of P0/P1 on #312)
 
