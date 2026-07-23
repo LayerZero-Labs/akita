@@ -7,8 +7,8 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
+    run_on_compute_pool, ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
 };
 use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
@@ -65,12 +65,14 @@ where
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
         let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-            akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
-                max_num_vars,
-                max_num_polys_per_commitment_group,
-            )
+        run_on_compute_pool(|| {
+            dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
+                validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+                akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            })
         })
     }
 
@@ -82,7 +84,7 @@ where
     pub fn setup_verifier(
         setup: &AkitaProverSetup<Cfg::Field>,
     ) -> Result<AkitaVerifierSetup<Cfg::Field>, AkitaError> {
-        setup.verifier_setup()
+        run_on_compute_pool(|| setup.verifier_setup())
     }
 
     /// Validate the field tower against the config schedule policy ring dimension.
@@ -131,7 +133,9 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        run_on_compute_pool(|| {
+            akita_prover::commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        })
     }
 
     /// Commit the polynomial bundle used by a batched prove.
@@ -152,7 +156,9 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::batched_commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        run_on_compute_pool(|| {
+            akita_prover::batched_commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        })
     }
 
     /// Commit one standalone one-hot commitment group.
@@ -174,7 +180,9 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        run_on_compute_pool(|| {
+            akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        })
     }
 
     /// Commit the final polynomial bundle for a multi-group root commitment.
@@ -197,12 +205,14 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit_final_group::<Cfg, P, B>(
-            polys,
-            setup.expanded.as_ref(),
-            stack,
-            precommitteds,
-        )
+        run_on_compute_pool(|| {
+            akita_prover::commit_final_group::<Cfg, P, B>(
+                polys,
+                setup.expanded.as_ref(),
+                stack,
+                precommitteds,
+            )
+        })
     }
 
     /// Produce a fused batched opening proof for one shared opening point.
@@ -215,14 +225,14 @@ where
     pub fn batched_prove<'a, T, P, B>(
         setup: &AkitaProverSetup<Cfg::Field>,
         claims: ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>,
-        stacks: &'a impl LevelProveStacks<
+        stacks: &'a (impl LevelProveStacks<
             'a,
             Cfg::Field,
             Commit = B,
             Opening = B,
             Tensor = B,
             RingSwitch = B,
-        >,
+        > + Sync),
         transcript: &mut T,
         basis: BasisMode,
     ) -> Result<AkitaBatchedProof<Cfg::Field, Cfg::ExtField>, AkitaError>
@@ -238,14 +248,16 @@ where
     {
         let t_prove_total = Instant::now();
         Self::validate_policy_ring_dim(setup)?;
-        let proof = akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
-            &setup.expanded,
-            &setup.prefix_slots,
-            stacks,
-            claims,
-            transcript,
-            basis,
-        )?;
+        let proof = run_on_compute_pool(|| {
+            akita_prover::batched_prove::<Cfg, T, P, B, B, B, B>(
+                &setup.expanded,
+                &setup.prefix_slots,
+                stacks,
+                claims,
+                transcript,
+                basis,
+            )
+        })?;
 
         tracing::info!(
             levels = proof.num_fold_levels(),
@@ -270,7 +282,9 @@ where
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
-        batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
+        run_on_compute_pool(|| {
+            batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
+        })
     }
 
     /// Protocol identifier.
