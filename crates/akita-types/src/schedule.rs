@@ -870,9 +870,19 @@ fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &Wi
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
+    pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
+    pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
+    /// Maximum setup-matrix envelope, in ring elements at the active level's
+    /// inner ring dimension.
+    pub estimated_setup_envelope_ring_elements: usize,
+    /// Natural (unpadded) setup length at the first direct edge, when the
+    /// recursive setup planner is active.
+    pub first_direct_setup_field_len: Option<usize>,
+    /// Number of recursive successors that consume an offloaded setup prefix.
+    pub selected_offload_edges: usize,
 }
 
 impl FoldScheduleEstimate {
@@ -885,6 +895,22 @@ impl FoldScheduleEstimate {
                 })
             })?
             .checked_add(self.estimated_terminal_direct_payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
+    }
+
+    pub fn estimated_stage3_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_recursive_stage3_payload_bytes
+            .iter()
+            .try_fold(self.estimated_root_stage3_payload_bytes, |sum, value| {
+                sum.checked_add(*value).ok_or_else(|| {
+                    AkitaError::InvalidSetup("fold schedule estimate overflow".to_string())
+                })
+            })
+    }
+
+    pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_direct_proof_payload_bytes()?
+            .checked_add(self.estimated_stage3_payload_bytes()?)
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

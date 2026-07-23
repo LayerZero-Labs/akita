@@ -99,6 +99,21 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
     Ok(keys)
 }
 
+/// Scalar keys physically emitted into `family`'s catalog.
+///
+/// Recursive companion catalogs contain only genuine multi-group keys. Their
+/// adapter delegates scalar resolution to the base config and therefore must
+/// not carry a second, unreachable copy of the ordinary scalar table.
+pub fn emitted_scalar_keys(
+    family: &GeneratedFamily,
+) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
+    if (family.policy)().recursive_setup_planning {
+        Ok(Vec::new())
+    } else {
+        family_keys(family)
+    }
+}
+
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     let planned = find_group_batch_schedule(
@@ -391,13 +406,14 @@ pub fn emit_spec_for_family(
     output_dir: std::path::PathBuf,
     generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
+    let policy = (family.policy)();
     Ok(EmitSpec {
         module_name: family.module_name,
         const_name: family.const_name,
         family_name: family.module_name,
         schedule_feature: family.schedule_feature,
-        policy: (family.policy)(),
-        keys: family_keys(family)?,
+        policy,
+        keys: emitted_scalar_keys(family)?,
         group_batch_keys: (family.group_batch_keys)(family)?,
         emit_group_batch: family.emit_group_batch,
         output_dir,

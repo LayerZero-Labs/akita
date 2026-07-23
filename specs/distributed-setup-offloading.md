@@ -66,12 +66,16 @@ batch — exactly as the generated table
   `recursive_setup_planning() == true` (from the adapter) and
   `chunked_witness_cfg() == W8R2` (delegated from the base
   `D64OneHotMultiChunk`). `D == SETUP_OFFLOAD_D_SETUP == 64`.
-- **Cutover aligns recursion and chunking.** `num_activated_levels = R = 2`
-  chunks fold levels `0, 1`; the recursion window (`level <= 1`) also covers
-  levels `0, 1`. Level `2` and beyond are single-chunk and, once no later fold
-  can absorb a carried prefix, direct. There is no chunked terminal fold
-  (`try_terminal_direct_suffix_cost` / `make_terminal_direct_step` reject
-  `num_chunks > 1`).
+- **Chunk activation and offload depth are independent.**
+  `num_activated_levels = R = 2` chunks fold levels `0, 1`. The setup-offloading
+  planner independently compares direct and offloaded successors at every
+  supported nonterminal edge; it does not inherit a two-level recursion window
+  from the chunk profile. Consequently, a selected W8R2 schedule may offload
+  zero, one, two, or more levels while only levels `0, 1` are chunked. There is
+  no chunked terminal fold (`try_terminal_direct_suffix_cost` /
+  `make_terminal_direct_step` reject `num_chunks > 1`). The former rule that
+  both leading levels were unconditionally recursive is archival rollout
+  context, not a current schedule invariant.
 - **Uniform ring dimension.** Every role dimension is `D = 64`, so
   `reject_mixed_d_multi_chunk` (the one hard multi-chunk/roles guard) always
   passes. The mix is defined only for the uniform-D64 one-hot shape.

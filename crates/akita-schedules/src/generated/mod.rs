@@ -6,8 +6,8 @@ pub use akita_planner::generated::{
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
     GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
     GeneratedScheduleCatalogIdentity, GeneratedScheduleTable, GeneratedSetupPrefixInput,
-    GeneratedTerminalFold, GeneratedWitnessPartition, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, SisModulusProfileId, SisTableDigest,
+    GeneratedTerminalFold, GeneratedWitnessPartition, PlannerCostModelId, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, SelectionPolicyId, SisModulusProfileId, SisTableDigest,
 };
 pub use akita_planner::{
     ChunkedWitnessCfg, DecompositionParams, SisSecurityPolicyId, TensorChallengeShape,

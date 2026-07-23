@@ -41,6 +41,15 @@ pub struct SetupMatrixEnvelope {
     pub max_setup_len: usize,
 }
 
+impl SetupMatrixEnvelope {
+    /// Smallest non-empty shared setup envelope.
+    pub const fn minimum() -> Self {
+        Self {
+            max_setup_len: std::num::NonZeroUsize::MIN.get(),
+        }
+    }
+}
+
 /// Seed-only stage for deterministic setup expansion.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaSetupSeed {

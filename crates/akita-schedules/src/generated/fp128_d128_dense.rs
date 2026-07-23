@@ -6,9 +6,9 @@ use super::{
     GeneratedOuterCommitMatrix, GeneratedRecursiveFold, GeneratedRootFinalChallenge,
     GeneratedRootFinalGroup, GeneratedRootFold, GeneratedRootPrecommittedGroup,
     GeneratedRootSource, GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput,
-    GeneratedTerminalFold, GeneratedWitnessPartition, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
-    TensorChallengeShape,
+    GeneratedTerminalFold, GeneratedWitnessPartition, PlannerCostModelId, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId,
+    SisTableDigest, TensorChallengeShape,
 };
 
 #[rustfmt::skip]
@@ -1269,6 +1269,10 @@ pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[128];
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
     family_name: "fp128_d128_dense",
     protocol_epoch: 1,
+    cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+    selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+    max_setup_envelope_field_elements: 67108864,
+    min_offloaded_witness_contraction: 3,
     sis_modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
     sis_security_policy: SisSecurityPolicyId::Quantum128BitADPS16,
     sis_table_digest: SisTableDigest([0xb4, 0x65, 0x7f, 0x62, 0x90, 0x61, 0x5c, 0xf3, 0x58, 0x55, 0x77, 0xd7, 0xad, 0x51, 0x9f, 0x9d, 0xc5, 0x5d, 0x4b, 0x8d, 0xcc, 0x63, 0x16, 0x11, 0x1b, 0x26, 0x70, 0x42, 0xac, 0x3b, 0x92, 0x94]),
