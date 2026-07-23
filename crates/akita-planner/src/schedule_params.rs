@@ -39,9 +39,7 @@ pub(crate) use candidate::{
     derive_candidate_level_params, planned_next_witness_len,
     scalar_root_fold_level_params_candidate,
 };
-pub(crate) use suffix_dp::{
-    derive_optimal_suffix_schedule, FoldSuffix, ScheduleMemo, SuffixCtx, SuffixState,
-};
+pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -404,6 +402,7 @@ fn find_schedule_inner(
         num_vars: key.num_vars(),
         key,
         setup_envelope_budget: None,
+        root_lookup_key: None,
     };
 
     if policy.recursive_setup_planning {
