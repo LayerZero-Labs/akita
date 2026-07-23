@@ -26,9 +26,6 @@ const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 /// Ring dimension used when delegating setup claims to a flat coefficient prefix.
 pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 
-/// Minimum padded setup-prefix field length for recursive setup offloading.
-pub const SETUP_OFFLOAD_MIN_PREFIX_FIELD_LEN: usize = 1 << 10;
-
 /// Identity for one committed setup-prefix slot.
 ///
 /// `natural_len` distinguishes exact prefixes that share the padded commitment
