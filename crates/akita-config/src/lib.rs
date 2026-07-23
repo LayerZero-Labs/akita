@@ -73,9 +73,6 @@ macro_rules! impl_multi_chunk_companion {
             fn onehot_chunk_size() -> usize {
                 <$base as $crate::CommitmentConfig>::onehot_chunk_size()
             }
-            fn root_log_basis() -> Option<u32> {
-                <$base as $crate::CommitmentConfig>::root_log_basis()
-            }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }
@@ -101,8 +98,8 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod conservative_commitment;
 pub mod generated_families;
+pub mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -111,7 +108,7 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
-pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use precommitted_commitment::PrecommittedCommitmentConfig;
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
@@ -129,7 +126,7 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// Build the canonical schedule key for a root opening batch under `Cfg`.
 ///
 /// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
-/// freeze each earlier group through the conservative commit adapter.
+/// freeze each earlier group through the exact precommit adapter.
 pub fn opening_schedule_key<Cfg: CommitmentConfig>(
     layout: &OpeningClaimsLayout,
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
@@ -156,33 +153,10 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        root_log_basis: root_log_basis_override().unwrap_or_else(Cfg::root_log_basis),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
-}
-
-/// Benchmark/experiment hook: parse `AKITA_ROOT_LOG_BASIS` into a
-/// [`PlannerPolicy::root_log_basis`] override.
-///
-/// The outer `Option` distinguishes "variable unset" (returns `None`, so
-/// `policy_of` falls back to the preset's `Cfg::root_log_basis()`) from an
-/// explicit override:
-///
-/// - unset → `None` (use the preset default)
-/// - `unpinned` / `none` / empty → `Some(None)` (force unpinned root)
-/// - `2` → `Some(Some(2))` (pin the root fold to `log_basis = 2`)
-///
-/// This lets the profile harness and planner sweeps exercise every root pin
-/// from a single build (the pin is otherwise a compile-time preset constant).
-fn root_log_basis_override() -> Option<Option<u32>> {
-    let raw = std::env::var("AKITA_ROOT_LOG_BASIS").ok()?;
-    let raw = raw.trim();
-    if raw.is_empty() || raw.eq_ignore_ascii_case("none") || raw.eq_ignore_ascii_case("unpinned") {
-        return Some(None);
-    }
-    Some(raw.parse::<u32>().ok())
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -311,17 +285,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// Pin for the root-fold (level 0) `log_basis`.
-    ///
-    /// `Some(lb)` forces the offline DP to use `log_basis = lb` at the root fold
-    /// (clamped into [`Self::basis_range`]); `None` leaves the root to the
-    /// ordinary search. Fold levels `≥ 1` are never pinned. The default `None` is
-    /// unpinned and reproduces the historical schedules byte-for-byte. Copied
-    /// into [`PlannerPolicy::root_log_basis`] by `policy_of::<Cfg>()`.
-    fn root_log_basis() -> Option<u32> {
-        None
-    }
-
     /// One-hot chunk size `K` of the committed witnesses under this config.
     ///
     /// Bounds the committed one-hot witness L1 mass per ring element as
@@ -368,7 +331,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Whether multi-group `commit_final_group` may run under this config adapter.
     ///
-    /// Conservative precommit adapters return `false`; multi-group final commits
+    /// Precommit adapters return `false`; multi-group final commits
     /// require the regular preset config.
     fn supports_multi_group_final_commit() -> bool {
         true
@@ -726,30 +689,50 @@ mod fp128_policy_tests {
 }
 
 #[cfg(test)]
-mod conservative_precommit_tests {
+mod precommit_tests {
     use super::proof_optimized::fp128;
     use super::*;
 
     #[test]
-    fn conservative_precommit_params_freeze_standalone_metadata() {
-        let precommitted = conservative_commitment::conservative_precommitted_group_params::<
-            fp128::D64OneHot,
-        >(PolynomialGroupLayout::new(16, 1))
-        .expect("precommitted group params");
-        assert_eq!(precommitted.group, PolynomialGroupLayout::new(16, 1));
-        assert_ne!(precommitted.log_basis_outer, 0);
+    fn exact_precommit_params_freeze_standalone_metadata() {
+        let group = PolynomialGroupLayout::new(16, 1);
+        let precommitted =
+            precommitted_commitment::precommitted_group_params::<fp128::D64OneHot>(group)
+                .expect("precommitted group params");
+        let mut policy = policy_of::<fp128::D64OneHot>();
+        policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
+        policy.witness_chunk = ChunkedWitnessCfg::default();
+        let planned = akita_planner::find_group_batch_schedule(
+            &AkitaScheduleLookupKey::single(group),
+            &policy,
+            fp128::D64OneHot::ring_challenge_config,
+            fp128::D64OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("singleton-basis planning probe");
+        let root = &planned.schedule.root.params.final_group.commitment;
+
+        assert_eq!(
+            precommitted,
+            akita_types::PrecommittedGroupDescriptor::from_params(group, root)
+        );
+        assert_eq!(precommitted.log_basis_inner, 2);
+        assert_eq!(precommitted.log_basis_outer, 2);
+        assert!(
+            precommitted.num_live_blocks >= 8,
+            "the frozen nv=16 precommit must remain distributable at a W8R2 root"
+        );
         assert_ne!(precommitted.n_a, 0);
         assert_ne!(precommitted.n_b, 0);
     }
 
     #[test]
-    fn conservative_config_rejects_prove_schedule() {
+    fn precommit_config_rejects_prove_schedule() {
         let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
         let err =
-            <ConservativeCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
+            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
                 &layout,
             )
-            .expect_err("conservative config must not prove");
+            .expect_err("precommit config must not prove");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }

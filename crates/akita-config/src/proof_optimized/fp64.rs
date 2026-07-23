@@ -38,8 +38,7 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q64Offset59,
     64,
     64,
-    64,
-    root_log_basis = 5
+    64
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -48,8 +47,7 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q64Offset59,
     64,
     64,
-    1,
-    root_log_basis = 5
+    1
 );
 impl_proof_optimized_preset!(
     D128Full,
@@ -59,7 +57,6 @@ impl_proof_optimized_preset!(
     128,
     64,
     64,
-    root_log_basis = 5,
     schedules = ("schedules-fp64-d128", "fp64_d128", fp64_d128_table)
 );
 impl_proof_optimized_preset!(
@@ -70,7 +67,6 @@ impl_proof_optimized_preset!(
     128,
     64,
     1,
-    root_log_basis = 5,
     schedules = (
         "schedules-fp64-d128-onehot",
         "fp64_d128_onehot",
@@ -84,8 +80,7 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q64Offset59,
     256,
     64,
-    64,
-    root_log_basis = 5
+    64
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -95,7 +90,6 @@ impl_proof_optimized_preset!(
     256,
     64,
     1,
-    root_log_basis = 5,
     schedules = (
         "schedules-fp64-d256-onehot",
         "fp64_d256_onehot",

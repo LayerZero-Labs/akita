@@ -1,10 +1,10 @@
-# Spec: Pinned root `log_basis` for proof-optimized presets
+# Spec: Fixed root `log_basis` for proof-optimized presets
 
 | Field         | Value |
 |---------------|-------|
 | Author(s)     | (experiment owners) |
 | Created       | 2026-07-20 |
-| Updated       | 2026-07-22 |
+| Updated       | 2026-07-23 |
 | Status        | proposed |
 | PR            | |
 | Supersedes    | |
@@ -14,17 +14,19 @@
 ## Summary
 
 The offline schedule planner chooses per-fold `log_basis` (digit base
-\(b = 2^{\text{log\_basis}}\)) to minimize proof size subject to SIS floors. Left
-free, the planner **might pick** a non-power-of-two value at the root fold (e.g.
-`3` at `nv = 36`), and — more importantly — the root basis is **not known ahead of
-time**. That forces precommitted polynomials to assume a **conservative rank**,
-complicates verifier digit geometry, and widens the planner search.
+\(b = 2^{\text{log\_basis}}\)) to minimize proof size subject to candidate,
+setup, and SIS validation. The proof-optimized policy already declares the
+supported range as `basis_range = (2, 6)`. This spec makes that existing policy
+authoritative:
 
-This spec defines **root pinning**: fixing `log_basis` at the **root fold
-(absolute level 0)** to a **preset constant** (intended to be a power of two: `2`
-or `4`), while leaving **all deeper fold levels (≥ 1)** to the DP search. The pin
-flows `CommitmentConfig` → `PlannerPolicy` → DP / catalog emit / runtime
-resolution, and is part of **catalog identity**.
+- the root fold uses `basis_range.0` exactly;
+- recursive folds search the full `basis_range`, subject to the
+  non-decreasing-basis rule;
+- field width and `decomposition.log_basis` impose no additional planner floor.
+
+There is no separate root-basis configuration field or catalog-identity field.
+All shipped fp128, fp64, and fp32 proof-optimized families therefore use root
+`log_basis = 2`.
 
 **Self-contained document.** All methodology, tables, schedule anatomy, and
 root-cause analysis live here in [§ Empirical study](#empirical-study); there is
@@ -44,35 +46,24 @@ no separate empirical appendix.
 
 ## Motivation
 
-Root pinning is primarily a **precommit / security simplification**, and
+The fixed root is primarily a **precommit / security simplification**, and
 secondarily a **verifier** and **planner** simplification. All three are unlocked
-by the same fact: making the root-fold `log_basis` a **known compile-time
-constant** instead of a per-`nv` planner choice.
+by deriving the root-fold `log_basis` from an existing preset policy input
+instead of making it a per-`nv` planner choice.
 
 ### 1. Precommitted polynomials no longer need a conservative rank (primary)
 
-Staggered / multi-group workflows **precommit** polynomials *before* the final
-root-fold geometry is planned. Because the root `log_basis` is unknown at precommit
-time, `ConservativeCommitmentConfig` sizes those precommits against a
-**conservative rank** envelope — a worst-case A/B-role rank that stays secure no
-matter which root basis the later schedule ends up choosing
-([`conservative_commitment.rs`](../crates/akita-config/src/conservative_commitment.rs)).
-That envelope inflates the setup-matrix width and commit rows relative to what any
-single concrete basis actually needs.
+Staggered and multi-group workflows precommit polynomials before the final group
+is known. `PrecommittedCommitmentConfig` plans that standalone commitment under
+the singleton range `(basis_range.0, basis_range.0)` and freezes the resulting
+root layout. The adapter keeps the exact A/B ranks and norm bounds selected for
+that basis. It does not widen them across alternative opening bases.
 
-Pinning the root makes its `log_basis` a **compile-time constant**. A precommitted
-group formed under the preset then knows exactly the digit width the final root
-path will use, so it can commit and prove with the **same** `log_basis` — and the
-conservative-rank envelope is no longer needed to cover an unknown future basis.
-This is the main reason to land the pin.
-
-> **Explicitly not done in this spec.** This spec lands the *mechanism* (a known
-> root basis). It does **not** remove the conservative-rank path yet:
-> `ConservativeCommitmentConfig` still clears the pin and continues to size
-> precommits with conservative ranks. **Replacing the conservative rank with the
-> pinned root basis is the next implementation step** (see
-> [Non-Goals](#non-goals) and the [Phase 6 follow-on](#phase-6--ship)); this spec
-> is a prerequisite for it.
+The singleton planning probe also prevents a hypothetical higher-basis suffix
+from changing the frozen root block geometry. This matters for distributed
+consumers: each precommitted group at a W8R2 root needs at least eight live
+blocks. Only the probe is single-basis; ordinary recursive schedules remain
+free to search the configured range.
 
 ### 2. Improved verifier: power-of-two digit counts for the ê and t̂ components
 
@@ -141,90 +132,69 @@ and **−0.4% on aggregate planner bytes over `nv = 30…43`**; even the worst p
 (`root=4`) is at most +1.4% aggregate ([§ Empirical study](#empirical-study),
 [§ Trade-offs and recommendations](#trade-offs-and-recommendations)).
 
-## Goal — the pin surface
+## Goal
 
-Ship a **single, coherent root-pin surface** for proof-optimized presets:
+Use existing planner policy as the only basis authority:
 
-1. **Config hook** — `CommitmentConfig::root_log_basis() -> Option<u32>`, default
-   `None` (unpinned).
-2. **Planner hook** — `PlannerPolicy::root_log_basis` constrains the DP search at
-   the root fold (level 0) only, via `PlannerPolicy::log_basis_search_range_at_level`.
-3. **Catalog hook** — generated tables embed the pin in
-   `GeneratedScheduleCatalogIdentity`; runtime resolution **rejects** identity
-   mismatch (no silent fallback).
-4. **Regen hook** — `gen_schedule_tables` / family emit writes the pin into
-   generated Rust modules; changing it requires a table regen for that family.
-5. **Preset declaration** — proof-optimized macro (`impl_proof_optimized_preset!`)
-   accepts optional `root_log_basis = L0`.
+1. `basis_range.0` fixes the root fold.
+2. Recursive folds search `basis_range`.
+3. The suffix DP enforces `next_log_basis >= current_log_basis`.
+4. Normal candidate, setup, and SIS checks reject infeasible choices.
+5. Exact precommit planning uses the same root basis without conservative
+   widening.
 
-No prover or verifier code changes are required beyond what they already consume
-from `Schedule` / `LevelParams`: root pinning is entirely a **planner + config +
-catalog** concern.
+The prover and verifier continue to consume `Schedule` / `LevelParams`; they do
+not need a root-basis-specific branch.
 
 ### Invariants
 
-1. **Single source of truth** — `Cfg::root_log_basis()` is the only config-level
-   source; `policy_of::<Cfg>()` copies it into `PlannerPolicy` without
-   transformation (except conservative adapters that explicitly clear the pin).
-2. **Root fold (level 0) only** — `root_log_basis` applies to absolute fold level
-   0. Fold levels ≥ 1 always use `PlannerPolicy::basis_range` (subject to existing
-   `log_basis` minimum rules and the non-decreasing-across-levels constraint).
-3. **Pin lies in `basis_range`** — `log_basis_search_range_at_level` clamps a
-   `Some(lb)` into `(PROOF_OPTIMIZED_LOG_BASIS_MIN, PROOF_OPTIMIZED_LOG_BASIS_MAX)`;
-   resolution never panics on a malformed pin (verifier-reachable no-panic
-   contract).
-4. **Catalog identity includes the pin** — `None` and `Some(2)` are distinct
-   identities; a table generated for one cannot satisfy runtime resolution for the
-   other.
-5. **Identity mismatch is an error** — `resolve_group_batch_schedule` calls
-   `validate_catalog_identity` before lookup; mismatch returns `AkitaError`, not
-   DP fallback. (Table **miss** still falls back to DP.)
-6. **Conservative / frozen layouts do not inherit the pin** —
-   `ConservativeCommitmentConfig` and multi-group precommit paths clear
-   `root_log_basis` to `None`.
+1. **Single source of truth** — `PlannerPolicy::basis_range` is the only policy
+   input that bounds per-level basis search.
+2. **Exact root** — absolute fold level 0 evaluates only `basis_range.0`.
+3. **Planner-owned recursion** — levels ≥ 1 search the full configured range.
+   There is no field-width or decomposition-default floor.
+4. **Non-decreasing bases** — a recursive candidate below the preceding fold's
+   selected basis is rejected.
+5. **Normal feasibility checks remain authoritative** — fixed root basis 2 does
+   not bypass setup-envelope, contraction, or SIS validation.
+6. **Exact frozen layouts** — precommitted descriptors contain the ranks, bounds,
+   bases, and block geometry produced by the singleton root-basis probe.
 7. **Prover ≡ verifier schedule** — both sides resolve through the same
-   `runtime_schedule` / `get_params_for_prove` path; the pin affects planning only.
-8. **Generated entry expansion honors the pin** — the catalog walk rejects a
-   compact root entry whose `log_basis` disagrees with the pinned root basis.
+   `runtime_schedule` / `get_params_for_prove` path.
 
 ### Non-Goals
 
-- **Pinning fold levels ≥ 1** — only the root fold is pinned; deeper levels stay
+- **Fixing fold levels ≥ 1** — only the root fold is fixed; deeper levels stay
   planner-chosen.
-- **Per-`nv` pin tables** — one root pin per preset, not a lookup table over `nv`.
+- **Per-`nv` root tables** — one root rule per policy, not a lookup table over
+  `nv`.
 - **Planner objective change** — no prover-cost term added to the DP here.
 - **Small-`nv` scheduling policy** — no acceptance criteria for `nv < 30`.
-- **Conservative rank elimination** — follow-on refactor to size precommits from
-  the pinned root basis instead of the conservative-rank envelope (motivation §1).
 - **Stage-1 range-check fast path for basis 16** — the non-monotonic prover cost
   ([§ Why prove is non-monotonic](#why-prove-is-non-monotonic-the-key-finding)) is
   a *documented finding*, not fixed by this spec.
-
-> **Runtime override note:** the shipped pin is a compile-time preset constant.
-> `policy_of` additionally honors an `AKITA_ROOT_LOG_BASIS` environment override,
-> used **only** by the benchmark harness / diagnostic sweep to exercise every root
-> value from a single build; it is not a production configuration surface.
 
 ## Design
 
 ### Architecture overview
 
-Root pinning is a **vertical slice** through config → policy → planner → catalog →
-runtime resolution. Prover, verifier, and PCS consume the resulting `Schedule`
-unchanged.
+The existing `basis_range` flows from config to policy, planner, generated
+catalog, and runtime resolution. Prover, verifier, and PCS consume the resulting
+`Schedule` unchanged.
 
 ```mermaid
 flowchart TB
     subgraph config ["akita-config"]
-        Cfg["CommitmentConfig::root_log_basis()"]
+        Cfg["CommitmentConfig::basis_range()"]
         Policy["policy_of::Cfg() → PlannerPolicy"]
+        Precommit["PrecommittedCommitmentConfig"]
         Runtime["Cfg::runtime_schedule(key)"]
     end
 
     subgraph planner ["akita-planner"]
         Search["log_basis_search_range_at_level(level)"]
         DP["find_schedule / suffix_dp / group_batch"]
-        Identity["catalog_identity (root pin)"]
+        Identity["catalog_identity (basis_range)"]
         Resolve["resolve_group_batch_schedule"]
         Emit["emit / gen_schedule_tables"]
     end
@@ -240,6 +210,7 @@ flowchart TB
     Cfg --> Policy
     Policy --> Search
     Search --> DP
+    Policy --> Precommit
     Policy --> Identity
     Emit --> Table
     Table --> Resolve
@@ -251,10 +222,10 @@ flowchart TB
 **Data flow at prove time:**
 
 1. PCS calls `Cfg::get_params_for_prove(layout)` → `runtime_schedule(key)`.
-2. `policy_of::<Cfg>()` builds `PlannerPolicy` including `root_log_basis`.
+2. `policy_of::<Cfg>()` builds `PlannerPolicy` including `basis_range`.
 3. If `Cfg::schedule_catalog()` is `Some(table)`: `validate_catalog_identity`
-   **must pass** (root pin included); on hit expand the compact entry, on miss DP
-   fallback with the same policy.
+   validates the policy identity; on hit it expands the compact entry, and on
+   miss it runs DP with the same policy.
 4. If no catalog: DP only.
 5. Prover and verifier execute folds using `LevelParams.log_basis` per level — no
    pin-specific branches downstream.
@@ -265,11 +236,10 @@ flowchart TB
 
 | Piece | Responsibility |
 |-------|----------------|
-| `CommitmentConfig::root_log_basis()` | Default `None`; overridden per preset. |
-| `policy_of::<Cfg>()` | Copies the root pin into `PlannerPolicy` (honoring the `AKITA_ROOT_LOG_BASIS` bench override). |
-| `impl_proof_optimized_preset!` | Optional `root_log_basis = L0` macro arg → `Some(L0)`. |
-| `ConservativeCommitmentConfig` | Clears the pin (`None`) when adapting frozen precommits. |
-| `RecursiveCommitmentConfig` | Inherits the base preset pin unless spec'd otherwise; catalog identity distinct per adapter flag. |
+| `CommitmentConfig::basis_range()` | Declares the supported basis interval. Proof-optimized presets use `(2, 6)`. |
+| `policy_of::<Cfg>()` | Copies `basis_range` into `PlannerPolicy`. |
+| `PrecommittedCommitmentConfig` | Plans under the singleton root basis and freezes exact commitment metadata. |
+| `RecursiveCommitmentConfig` | Inherits `basis_range`; catalog identity remains distinct through the recursion-policy fields. |
 
 **Preset example (illustrative):**
 
@@ -278,7 +248,6 @@ impl_proof_optimized_preset!(
     D64OneHot,
     // ...
     256,
-    root_log_basis = 2,   // optional; omit for unpinned. Recommended: 2.
     schedules = ("schedules-fp128-d64-onehot", "fp128_d64_onehot", fp128_d64_onehot_table)
 );
 ```
@@ -287,54 +256,47 @@ impl_proof_optimized_preset!(
 
 | Piece | Responsibility |
 |-------|----------------|
-| `PlannerPolicy::root_log_basis` | `Option<u32>` carried through the DP. |
-| `log_basis_search_range_at_level(level)` | Returns `(lb, lb)` when `level == 0` and the root is pinned (clamped into `basis_range`); else the ordinary `basis_range` range with gadget-base / field-bit floors. **Single source of truth** for all three DP loops. |
+| `PlannerPolicy::basis_range` | Inclusive basis interval carried through the DP. |
+| `log_basis_search_range_at_level(level)` | Returns `(basis_range.0, basis_range.0)` at level 0 and `basis_range` at deeper levels. **Single source of truth** for all three DP loops. |
 | `schedule_params.rs` (root DP) | Root loop calls `log_basis_search_range_at_level(0)`. |
-| `schedule_params/suffix_dp.rs` (levels ≥ 1) | Suffix loop calls `log_basis_search_range_at_level(level)` — unaffected by the root pin, but sees the non-decreasing-`lb` constraint. |
+| `schedule_params/suffix_dp.rs` (levels ≥ 1) | Suffix loop calls `log_basis_search_range_at_level(level)` and applies the non-decreasing-basis constraint. |
 | `group_batch.rs` | Group-batch root search calls `log_basis_search_range_at_level(0)`. |
-| `generated/walk.rs` | Entry expansion validates the stored root `log_basis` against the pin (planned; Phase 3). |
 
-**Important:** pinning constrains *which* `log_basis` values the DP may evaluate at
-the root; it does **not** short-circuit the DP. Because the suffix DP keeps
-`log_basis` non-decreasing across levels, a large root pin (e.g. `4`) can
-indirectly raise the second fold's floor — expected schedule behavior, not a
-second pin.
+**Important:** fixing the root constrains which basis the DP may evaluate at
+level 0; it does not short-circuit the DP. The suffix DP keeps `log_basis`
+non-decreasing across levels.
 
 #### `akita-planner` — catalog identity and emit
 
 | Piece | Responsibility |
 |-------|----------------|
-| `CatalogIdentityExpectation::root_log_basis` | Compared on resolve. |
 | `expected_catalog_identity` / `validate_catalog_identity` | Mismatch → `AkitaError` with family name. |
-| `emit/mod.rs` | Serializes `None` vs `Some(2)` into the generated identity struct. |
 | `gen_schedule_tables` binary | Regenerates all families from current `policy_of` + preset hooks. |
 
-Changing the pin **without** regen leaves stale identity in the `.rs` file →
-runtime identity failure (by design).
+Changing `basis_range` without regeneration leaves stale identity in the
+generated module and causes runtime identity failure.
 
 #### `akita-schedules` — generated artifacts
 
-- Each family module embeds `root_log_basis: Option<u32>` in its catalog identity
-  constant.
-- Companion / placeholder families use the parent preset's pin at emit time, or
-  `None` if intentionally unpinned.
+- Each family module embeds `basis_range` in its catalog identity.
+- Companion families inherit the parent preset policy at emit time.
 
 #### Downstream consumers (no pin-aware code)
 
-`akita-pcs` / `akita-prover` / `akita-verifier` use the `Schedule` from config; no
-`root_log_basis` reads. The profile example resolves layout via
-`get_params_for_batched_commitment` and benefits from the catalog when the pin
-matches.
+`akita-pcs` / `akita-prover` / `akita-verifier` use the `Schedule` from config.
+The profile example resolves layout via
+`get_params_for_batched_commitment` and benefits from the catalog when the
+policy identity matches.
 
 ### Alternatives considered
 
 | Alternative | Why not |
 |-------------|---------|
-| **Two-slot pin `[Option<u32>; 2]`** (levels 0 and 1) | The original design; the study shows the root pin alone captures the verifier-geometry win (planner recovers a good L1 basis), so the extra slot adds surface, catalog width, and prover cost for little benefit. Simplified to a scalar root pin. |
-| **Pin all levels** | Explodes catalog size and removes DP freedom where the witness is already small; prover win negligible. |
+| **Separate `root_log_basis` config field** | Duplicates `basis_range.0`, widens config and catalog identity, and permits contradictory policy inputs. |
+| **Fix all levels** | Removes DP freedom where the witness is already small; used only for the internal precommit planning probe. |
 | **Silent catalog fallback on identity mismatch** | Hides config/table skew; violates schedule-catalog hardening ([`schedule-catalog-ownership.md`](schedule-catalog-ownership.md)). |
 | **Prover-cost-aware DP** | Correct direction for future work but a separate project; the root pin is a simpler byte/geometry knob. |
-| **Per-key pin in table entries** | Would bloat compact entries and break the identity model; the pin is preset-global. |
+| **Per-key root basis in table entries** | Makes the root unknown before planning and recreates the conservative-precommit problem. |
 
 ## Empirical study
 
@@ -363,23 +325,21 @@ Two number sources:
 
 ### Policies compared
 
-Policies are labeled by the **root** (`level 0`) `log_basis`. `unpinned` lets the
-planner choose the root per `nv` (it picks `3` at `nv = 36`). `root=b` pins only
-the root fold; **all deeper levels remain planner-chosen**.
+This table records the historical experiment that motivated the fixed-root
+decision. The `unpinned` row and the `Option<u32>` staging hook are not current
+APIs. The current diagnostic varies `basis_range.0`; deeper levels remain
+planner-chosen.
 
-| Policy | Config `root_log_basis` | Effective root at nv=36 |
+| Policy | Root policy | Effective root at nv=36 |
 |--------|-------------------------|-------------------------|
-| unpinned | `None` | planner chooses **3** |
-| `root=2` | `Some(2)` | fixed **2** |
-| `root=3` | `Some(3)` | fixed **3** (= unpinned at nv=36) |
-| `root=4` | `Some(4)` | fixed **4** |
+| unpinned (historical) | free root search | planner chooses **3** |
+| `root=2` | `basis_range.0 = 2` | fixed **2** |
+| `root=3` | `basis_range.0 = 3` | fixed **3** (= historical unpinned result at nv=36) |
+| `root=4` | `basis_range.0 = 4` | fixed **4** |
 
-> **Note on `root=4`.** Because the suffix DP keeps `log_basis` non-decreasing and
-> the deep-fold floor is `3`, pinning the root to `4` also nudges the second fold
-> to `≥ 4`. At `nv = 36` `root=4` therefore matches the schedule a both-levels
-> `[4, 4]` pin would produce, but at other `nv` (e.g. `nv = 43`) the planner lifts
-> a deeper level and the two diverge — this study measures **root-only** pins
-> throughout.
+> **Historical note on `root=4`.** The experiment predated removal of the
+> decomposition-default floor. The non-decreasing rule still ensures that a
+> basis-4 root prevents later levels from selecting a smaller basis.
 
 ### Headline results (nv = 36, np = 1)
 
@@ -572,19 +532,18 @@ cargo test -p akita-config --test root_log_basis_sweep -- --ignored --nocapture
 # target/debug/deps/root_log_basis_sweep-* --ignored --nocapture
 ```
 
-End-to-end profile (per policy):
+End-to-end profile for the shipped policy:
 
 ```bash
-for ROOT in none 2 3 4; do
-  AKITA_ROOT_LOG_BASIS="$ROOT" AKITA_NUM_VARS=36 AKITA_NUM_POLYS=1 \
-  AKITA_MODE=onehot_fp128_d64 AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error \
-  cargo run --release -p akita-pcs --example profile \
-    --no-default-features --features parallel \
-    2>&1 | tee /tmp/profile_nv36_root${ROOT}.log
-done
-sed 's/\x1b\[[0-9;]*m//g' /tmp/profile_nv36_root<root>.log | \
-  rg '\] (proof:|commit:|prove:|verify OK:)'
+AKITA_NUM_VARS=36 AKITA_NUM_POLYS=1 \
+AKITA_MODE=onehot_fp128_d64 AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=error \
+cargo run --release -p akita-pcs --example profile \
+  --no-default-features --features parallel
 ```
+
+The alternative runtime rows are retained as historical evidence. Reproducing
+them requires a local policy variant; there is intentionally no production
+root-basis override.
 
 Stage-1 attribution (per-span, at a smaller nv for speed): run the profile with
 `AKITA_PROFILE_LOG=info` and sum the `stage1_sumcheck: close time.busy=…` spans.
@@ -597,7 +556,7 @@ Stage-1 attribution (per-span, at a smaller nv for speed): run the profile with
 | **Run-to-run noise** | Commit/prove vary ~±10%; C+P+V are averages of three runs. `root=4` vs unpinned (+2%) is within noise. |
 | `np = 1` **only** | `np = 4` at nv=36 not benchmarked. |
 | **Proof-size sweep** | `nv = 30…43` uses planner estimates; runtime proofs measured at `nv = 36` only. |
-| **Catalog disabled** | DP resolution via `AKITA_ROOT_LOG_BASIS`; regenerate the catalog for any shipped pin. |
+| **Catalog disabled** | DP resolution uses the same fixed-root policy. |
 | **Setup time** | One-time; excluded from C+P+V. |
 
 ## Trade-offs and recommendations
@@ -638,45 +597,34 @@ bytes**, and **prover latency**.
 
 ### Shipped scope (implemented)
 
-Every proof-optimized preset now pins its root `log_basis` to a **per-preset
-constant** (no shared constant): **fp128 → `2`** (one-hot and dense),
-**small fields (fp32/fp64) → `5`** (their field-bit floor). The literal lives at
-each declaration site.
+Every proof-optimized preset uses `basis_range = (2, 6)`, so every shipped root
+uses `log_basis = 2`.
 
-| Preset family | `root_log_basis()` | Notes |
-|---------------|--------------------|-------|
-| `fp128::{D64OneHot, D128OneHot, D64OneHotK16}` | `Some(2)` | One-hot (`log_commit_bound = 1`); power-of-two root digits. |
-| `fp128::D64OneHotMultiChunk{,W2R2,W4R2}` | `Some(2)` (inherits `D64OneHot`) | One-hot chunked companions. |
-| `tensor_verifier::fp128::D64OneHotTensor` | `Some(2)` | One-hot tensor verifier variant. |
-| `RecursiveCommitmentConfig<fp128 …>` | `Some(2)` (inherits inner) | Recursive adapter mirrors its base. |
-| `fp128::D128Full` (dense) | `Some(2)` | Dense; root=2 plans across the full `nv = 1…50` range. |
-| `fp128::{D64Full, D64FullMultiChunk}` (dense) | `Some(2)` | Dense; root=2 **cannot fold `nv = 50`**, so the family range is **capped at `nv = 49`** (the unsupported `nv` are removed). |
-| `fp32::*`, `fp64::*` (small fields) | `Some(5)` | `5` is the `field_bits < 128` floor (`log_basis ≥ 5`); pinning below it is unsound, so small fields pin at the floor. Not a power of two, so the verifier digit win (motivation §2) does **not** apply — the payoff is the known-root-basis precommit/planner simplification. |
-| `ConservativeCommitmentConfig<…>` | `None` (cleared) | Frozen precommit layouts must not force a pinned root (invariant 6). |
+| Preset family | Root | Recursive search | Notes |
+|---------------|------|------------------|-------|
+| fp128 one-hot, dense, tensor, and chunked families | 2 | 2…6 | `fp128::{D64Full,D64FullMultiChunk}` remain capped at `nv = 49` because their basis-2 root cannot produce the required schedule at `nv = 50`. |
+| fp64 dense and one-hot families | 2 | 2…6 | No field-specific floor. |
+| fp32 one-hot families | 2 | 2…6 | No field-specific floor. |
+| `RecursiveCommitmentConfig<…>` | 2 | 2…6 | Inherits the base policy and retains recursion-specific catalog identity. |
+| `PrecommittedCommitmentConfig<…>` | 2 | singleton probe at 2 | Freezes exact root metadata; no conservative widening. |
 
-All 16 shipped tables were regenerated: fp128 families carry `root_log_basis:
-Some(2)` (root `log_basis: 2` entries), small-field families `Some(5)` (root
-`log_basis: 5`). `fp128_d64_full` and `fp128_d64_full_multi_chunk` drop `nv = 50`
-(capped at 49). Catalog identity now includes the pin, so a pinned runtime policy
-cannot resolve an unpinned table (or a differently-pinned one).
+All 16 shipped tables are regenerated from this rule. Catalog identity already
+contains `basis_range`, so changing the policy range still requires
+regeneration.
 
 ## Evaluation
 
 ### Acceptance criteria
 
-- [x] `CommitmentConfig::root_log_basis()` exists; default `None`.
-- [x] `PlannerPolicy::root_log_basis` populated by `policy_of::<Cfg>()`; covered by
-      `runtime_fallback::assert_policy_matches_cfg`.
-- [x] When the root is pinned, DP search never considers a root `log_basis ≠ pin`;
-      covered by the `root_log_basis_sweep` dump (effective root `log_basis = 2`).
-- [x] Catalog identity includes `root_log_basis`, so `validate_catalog_identity`
-      fails when the runtime root pin differs from the embedded table identity.
-- [ ] The catalog walk rejects a compact root entry whose `log_basis` disagrees
-      with the pin (identity check covers the family-level guard; the per-entry
-      walk assertion is a follow-up).
-- [x] `ConservativeCommitmentConfig` clears the pin.
-- [x] All shipped tables regenerated (fp128 one-hot `Some(2)`, others `None`);
-      `generated_tables` + `basis_envelope` pass.
+- [x] `policy_of::<Cfg>()` derives `basis_range` from `CommitmentConfig`.
+- [x] Level 0 returns the singleton `(basis_range.0, basis_range.0)`.
+- [x] Levels ≥ 1 return the full `basis_range`.
+- [x] fp128, fp64, and fp32 policy tests all resolve root basis 2.
+- [x] `PrecommittedCommitmentConfig` freezes exact basis-2 metadata without
+      conservative rank widening.
+- [x] The W8R2 recursive multi-group catalog regenerates with exact precommits.
+- [x] All shipped tables regenerated.
+- [ ] `generated_tables`, `basis_envelope`, and focused small-field E2E tests pass.
 - [ ] Profile / e2e at `nv = 36`: prove and verify succeed for the shipped preset
       with catalog enabled.
 - [ ] Shipped-pin benchmark row (runtime proof bytes + C+P+V) recorded in the PR
@@ -686,10 +634,10 @@ cannot resolve an unpinned table (or a differently-pinned one).
 
 | Layer | Tests |
 |-------|-------|
-| Planner | `catalog_identity` unit tests with varied `root_log_basis`; optional golden schedule at `nv = 36`. |
+| Planner | Search-range unit tests, catalog identity, and optional golden schedule at `nv = 36`. |
 | Config | `runtime_fallback`, `generated_tables`, `basis_envelope`; ignored `root_log_basis_sweep` proof-size + anatomy comparison over `nv = 30…43`. |
-| Integration | `akita-pcs` profile `onehot_fp128_d64` at `nv = 36`; existing fp128 D64 onehot e2e suites. |
-| Regen | Full `gen_schedule_tables` diff reviewed when the pin or ship choice changes. |
+| Integration | fp32/fp64 one-hot E2E, recursive W8R2 setup-offload E2E, and fp128 profile `onehot_fp128_d64` at `nv = 36`. |
+| Regen | Full `gen_schedule_tables` diff reviewed when `basis_range` or planner rules change. |
 
 Run CI-relevant checks per `AGENTS.md`: `cargo test`, `cargo clippy`,
 `generated_tables` with schedule features.
@@ -699,63 +647,36 @@ Run CI-relevant checks per `AGENTS.md`: `cargo test`, `cargo clippy`,
 | Metric | Expectation |
 |--------|-------------|
 | **Proof bytes @ large `nv`** | `root=2` smaller than unpinned; `root=4` within ~2.2 KB of the optimum at `nv = 36`. |
-| **Verifier structure** | Pinned root uses a power-of-two `num_digits_open` (64 for `lb = 2`, 32 for `lb = 4`). |
+| **Verifier structure** | Fixed basis-2 root uses a power-of-two `num_digits_open`. |
 | **Prover latency @ `nv = 36`** | ~+15% C+P+V for `root=2` (commit-dominated); `root=4` ≈ unpinned (but see the non-monotonicity finding). |
 | **Verifier latency** | Flat ~44–53 ms across all policies. |
-| **Catalog resolve** | No hot-path regression; identity check is O(1). |
-| **Table size** | Unchanged entry count; identity struct grows by one `Option<u32>`. |
+| **Catalog resolve** | No new identity field or hot-path branch. |
+| **Table size** | No root-basis identity field. Entry counts follow ordinary schedule feasibility. |
 
 ## Execution
 
-The planner + config surface and the benchmark driver are already implemented on
-this branch (Phases 1–2 partial); the catalog/emit/regen work (Phases 3–4) is the
-remaining ship path.
+### Phase 1 — Use the existing policy surface (implemented)
 
-### Phase 0 — Spec approval and ship choice
+1. Remove the separate config, planner, macro, and catalog root-basis fields.
+2. Make `log_basis_search_range_at_level(0)` return `basis_range.0` exactly.
+3. Let deeper levels search `basis_range`; retain the non-decreasing constraint.
+4. Remove field-width and decomposition-default floors.
 
-1. Review [§ Empirical study](#empirical-study) and
-   [§ Trade-offs](#trade-offs-and-recommendations).
-2. Confirm `fp128::D64OneHot` ship value: **`root=2`** recommended.
-3. Record the decision in the PR description and `book/src/how/configuration.md`.
+### Phase 2 — Exact precommitment (implemented)
 
-### Phase 1 — Planner policy surface (implemented)
+1. Replace `ConservativeCommitmentConfig` with
+   `PrecommittedCommitmentConfig`.
+2. Plan the frozen commitment under the singleton root basis.
+3. Preserve the selected block geometry and exact A/B ranks and bounds.
+4. Delete widening over alternative bases.
 
-1. Add `root_log_basis: Option<u32>` to `PlannerPolicy`.
-2. Implement `log_basis_search_range_at_level` (root pin collapses level-0 range
-   to a singleton).
-3. Thread through `schedule_params` (root), `suffix_dp`, and `group_batch` (all
-   consult the single helper).
-4. Unit tests: pinned root search range is a singleton; deeper levels unaffected.
+### Phase 3 — Catalog regeneration (implemented)
 
-### Phase 2 — Config bridge (implemented)
+1. Regenerate all 16 shipped families with root basis 2.
+2. Regenerate the W8R2 recursive family with exact frozen precommits.
+3. Refresh generated module wiring.
 
-1. Add `CommitmentConfig::root_log_basis()` with default `None`.
-2. Wire `policy_of::<Cfg>()` (+ `AKITA_ROOT_LOG_BASIS` bench override).
-3. Extend `impl_proof_optimized_preset!` / `impl_multi_chunk_companion!` with an
-   optional per-preset `root_log_basis = L0`; set `= 2` on all fp128 presets and
-   `= 5` on the small-field (fp32/fp64) presets (see
-   [Shipped scope](#shipped-scope-implemented)).
-4. Recursive adapter inherits the inner pin; conservative adapter clears it.
-
-### Phase 3 — Catalog identity and emit (implemented)
-
-1. Add `root_log_basis` to `GeneratedScheduleCatalogIdentity` and
-   `CatalogIdentityExpectation`.
-2. Update `policy_digest` / `identity_digest` and `validate_catalog_identity`.
-3. Update `emit/mod.rs` to write the `root_log_basis` literal for generated modules.
-4. **Follow-up:** the per-entry catalog walk root-`log_basis` assertion (invariant
-   8) is not yet added; the identity check is the current family-level guard.
-
-### Phase 4 — Table regen (implemented)
-
-1. Regenerated all 16 shipped families via `gen_schedule_tables`
-   (`--no-default-features`): fp128 families `root_log_basis: Some(2)`, small-field
-   families `Some(5)`. `fp128_d64_full` / `fp128_d64_full_multi_chunk` are capped
-   at `nv = 49` (root=2 cannot fold `nv = 50`).
-2. `generated_tables`, `basis_envelope`, `runtime_fallback`,
-   `schedule_catalog_miswire`, `schedule_catalog_feature_off` all pass.
-
-### Phase 5 — Validation at large `nv`
+### Phase 4 — Validation
 
 1. Profile `onehot_fp128_d64` at `nv = 36` with **catalog enabled** for the
    shipped preset.
@@ -763,32 +684,30 @@ remaining ship path.
    [§ Empirical study](#empirical-study) within normal variance.
 3. Optional: `np = 4` row at `nv = 36` if product requires batched evidence.
 
-### Phase 6 — Ship
+### Phase 5 — Ship
 
 1. Land PR with spec status → `implemented`.
 2. Fold configuration guidance into the book.
-3. **Follow-on tickets:** (a) conservative precommit refactor (motivation §1) —
-   the primary payoff, removing the conservative rank now that the root basis is known;
-   (b) stage-1 basis-16 range-check fast path
+3. Track the stage-1 basis-16 range-check fast path
    ([§ Why prove is non-monotonic](#why-prove-is-non-monotonic-the-key-finding)).
 
 ### Risks and mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Catalog / config pin skew in production | Identity validation errors loudly; regen checklist in Phase 4; CI `assert_policy_matches_cfg`. |
-| Integrators build without schedule feature | DP fallback still honors the pin; document that the table fast path needs matching feature + regen. |
+| Catalog / config range skew in production | Identity validation errors loudly; regeneration and `assert_policy_matches_cfg` cover the policy bridge. |
+| Integrators build without schedule feature | DP fallback uses the same root and recursive search rule. |
 | Wrong ship choice for Jolt latency | Default to `root=2`; prover regression (~+15%) documented above; profile at `nv = 36` in CI. |
-| Conservative adapter still clears the pin | Documented Phase 6 follow-on; precommit simplification not blocked on initial merge. |
-| Multi-chunk companions alias parent identity | Companions inherit the parent `policy_of` pin at emit; separate catalog identity via `witness_chunk`. |
+| Exact precommit geometry becomes too compact for W8R2 | Singleton-basis planning preserves at least one live block per chunk; the recursive catalog and E2E test pin the profile. |
+| Multi-chunk companions alias parent identity | Companions inherit the parent policy; `witness_chunk` keeps catalog identities distinct. |
 
 ## References
 
 - [`specs/schedule-catalog-ownership.md`](schedule-catalog-ownership.md) — catalog identity and resolve path
 - [`specs/planner-incidence-generalization.md`](planner-incidence-generalization.md) — schedule key shape
 - [`specs/planner-refactor.md`](planner-refactor.md) — stage-2 planner-vs-runtime overcount
-- `crates/akita-planner/src/lib.rs` — `PlannerPolicy`, `root_log_basis`, `log_basis_search_range_at_level`
+- `crates/akita-planner/src/lib.rs` — `PlannerPolicy::basis_range`, `log_basis_search_range_at_level`
 - `crates/akita-planner/src/catalog_identity.rs` — identity validation
-- `crates/akita-config/src/proof_optimized.rs` — preset macro
+- `crates/akita-config/src/precommitted_commitment.rs` — exact frozen precommit planning
 - `crates/akita-config/tests/root_log_basis_sweep.rs` — root-pin planner byte comparison + schedule anatomy over `nv = 30…43` (diagnostic)
 - `crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs` — stage-1 range-check basis cutover (`plan.basis() <= 8`)

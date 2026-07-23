@@ -125,15 +125,6 @@ pub struct PlannerPolicy {
     pub chal_ext_degree: usize,
     /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
     pub basis_range: (u32, u32),
-    /// Pin for the root-fold (level 0) `log_basis` (`Cfg::root_log_basis()`).
-    ///
-    /// `Some(lb)` collapses the DP's `log_basis` search at the root fold to the
-    /// singleton `lb` (clamped into `basis_range`, overriding the gadget-base
-    /// floor so a shallow root such as `lb = 2` is reachable). `None` leaves the
-    /// root to the ordinary `basis_range` search with the field-bit / gadget-base
-    /// floor. Fold levels `≥ 1` are never pinned. Default `None` (unpinned)
-    /// reproduces the historical free search byte-for-byte.
-    pub root_log_basis: Option<u32>,
     /// One-hot chunk size `K` (`Cfg::onehot_chunk_size()`).
     ///
     /// Used to bound the committed one-hot witness L1 mass per ring element
@@ -208,14 +199,12 @@ impl PlannerPolicy {
     /// Inclusive `(min, max)` `log_basis` values the DP may evaluate at absolute
     /// fold `level`.
     ///
-    /// When the root fold is pinned (`level == 0` and `root_log_basis` is
-    /// `Some(lb)`), the range collapses to the singleton `lb` clamped into
-    /// `basis_range` — the pin overrides the ordinary gadget-base floor so a
-    /// shallow root fold (e.g. `lb = 2`) is reachable. Otherwise the range is the
-    /// ordinary `basis_range` search raised to the gadget-base
-    /// (`decomposition.log_basis`) and small-field (`5` when `field_bits < 128`)
-    /// floors, exactly reproducing the historical free search. Fold levels
-    /// `≥ 1` are never pinned.
+    /// The root fold is fixed to the smallest basis supported by the existing
+    /// policy, `basis_range.0`. Deeper folds search the full configured range;
+    /// the suffix DP separately enforces that the basis is non-decreasing from
+    /// the preceding fold, and candidate validation remains responsible for
+    /// setup and SIS feasibility. Field width and the decomposition's default
+    /// basis do not impose planner floors.
     ///
     /// This is the single source of truth the root DP, suffix DP, and
     /// group-batch root scorer all consult; there is no other per-level
@@ -223,18 +212,8 @@ impl PlannerPolicy {
     pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
         let (configured_min, max) = self.basis_range;
         if level == 0 {
-            if let Some(pin) = self.root_log_basis {
-                let clamped = pin.clamp(configured_min, max);
-                return (clamped, clamped);
-            }
+            return (configured_min, configured_min);
         }
-        let min = configured_min.max(self.decomposition.log_basis).max(
-            if self.decomposition.field_bits() < 128 {
-                5
-            } else {
-                0
-            },
-        );
-        (min, max)
+        (configured_min, max)
     }
 }

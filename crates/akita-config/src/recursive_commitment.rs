@@ -63,12 +63,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::onehot_chunk_size()
     }
 
-    /// Inherit the inner preset's root pin: a recursive adapter plans the same
-    /// root geometry as its base config.
-    fn root_log_basis() -> Option<u32> {
-        Cfg::root_log_basis()
-    }
-
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         Cfg::chunked_witness_cfg()
     }
@@ -132,7 +126,7 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
         .root_precommitted_group_layouts()?
         .iter()
         .copied()
-        .map(crate::conservative_commitment::conservative_precommitted_group_params::<Cfg>)
+        .map(crate::precommitted_commitment::precommitted_group_params::<Cfg>)
         .collect::<Result<Vec<_>, _>>()?;
     let key = AkitaScheduleLookupKey {
         final_group,

@@ -1,12 +1,13 @@
-//! Diagnostic: planner proof-size sweep across root-fold `log_basis` pin
-//! policies for the fp128 `D = 64` one-hot preset.
+//! Diagnostic: planner proof-size sweep across alternative fixed root-fold
+//! `log_basis` values for the fp128 `D = 64` one-hot preset.
 //!
 //! Prints `FoldScheduleEstimate::estimated_direct_proof_payload_bytes` for each
 //! `(policy, nv)` cell so the empirical tables in
 //! `specs/pinned-early-log-basis.md` can be regenerated with realistic numbers.
-//! Only the **root fold (level 0)** is pinned; fold levels `≥ 1` are left to the
-//! planner. Planner estimates only (no executed proofs); use the `profile`
-//! example for runtime commit/prove/verify.
+//! The root is derived from `basis_range.0`; fold levels `≥ 1` search the full
+//! range subject to the non-decreasing basis constraint. Planner estimates only
+//! (no executed proofs); use the `profile` example for runtime
+//! commit/prove/verify.
 //!
 //! ```bash
 //! cargo test -p akita-config --test root_log_basis_sweep -- --ignored --nocapture
@@ -21,14 +22,10 @@ use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 type Cfg = fp128::D64OneHot;
 
-/// Root-pin policies compared in the study. `None` is the unpinned planner
-/// (which picks the root `log_basis` per `nv`).
-const POLICIES: &[(&str, Option<u32>)] = &[
-    ("unpinned", None),
-    ("root=2", Some(2)),
-    ("root=3", Some(3)),
-    ("root=4", Some(4)),
-];
+/// Alternative lower endpoints compared in the study. At fp128 these are the
+/// exact root bases; the same endpoint bounds the deeper search, which also
+/// enforces the non-decreasing basis constraint.
+const POLICIES: &[(&str, u32)] = &[("root=2", 2), ("root=3", 3), ("root=4", 4)];
 
 fn payload_bytes(policy: &PlannerPolicy, nv: usize) -> Result<usize, String> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
@@ -46,7 +43,7 @@ fn payload_bytes(policy: &PlannerPolicy, nv: usize) -> Result<usize, String> {
 }
 
 /// Per-level `(log_basis_open, output_witness_len)` of the resolved schedule
-/// (for auditing that the root pin took and for the report's schedule-anatomy
+/// (for auditing that the fixed root took and for the report's schedule-anatomy
 /// table). Index 0 is the root fold; the last entry is the terminal input.
 fn schedule_anatomy(policy: &PlannerPolicy, nv: usize) -> Vec<(u32, usize)> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
@@ -75,7 +72,7 @@ fn schedule_anatomy(policy: &PlannerPolicy, nv: usize) -> Vec<(u32, usize)> {
 
 #[test]
 #[ignore = "diagnostic"]
-fn fp128_d64_onehot_root_log_basis_sweep_proof_sizes() {
+fn fp128_d64_onehot_fixed_root_basis_sweep_proof_sizes() {
     const NV_LO: usize = 30;
     const NV_HI: usize = 43;
 
@@ -89,9 +86,9 @@ fn fp128_d64_onehot_root_log_basis_sweep_proof_sizes() {
     let base = policy_of::<Cfg>();
     let policies: Vec<(&str, PlannerPolicy)> = POLICIES
         .iter()
-        .map(|(label, pin)| {
+        .map(|(label, root_basis)| {
             let mut p = base;
-            p.root_log_basis = *pin;
+            p.basis_range.0 = *root_basis;
             (*label, p)
         })
         .collect();

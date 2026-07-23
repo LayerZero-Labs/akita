@@ -21,12 +21,9 @@ use akita_types::{
     PolynomialGroupLayout, PrecommittedGroupDescriptor,
 };
 
-use crate::conservative_commitment::conservative_commit_params;
+use crate::precommitted_commitment::precommitted_commit_params;
 use crate::proof_optimized::{fp128, fp32, fp64};
-use crate::{
-    policy_of, tensor_verifier, CommitmentConfig, ConservativeCommitmentConfig,
-    RecursiveCommitmentConfig,
-};
+use crate::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
@@ -186,7 +183,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         let mut supported = true;
         for _ in 0..num_precommitted {
             let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-            let params = match conservative_commit_params::<Cfg>(&pre_key) {
+            let params = match precommitted_commit_params::<Cfg>(&pre_key) {
                 Ok(params) => params,
                 Err(_) => {
                     supported = false;
@@ -218,9 +215,7 @@ fn recursive_profile_group_batch_keys(
 
 fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params = conservative_commit_params::<
-        ConservativeCommitmentConfig<fp128::D64OneHot>,
-    >(&precommitted_group)?;
+    let precommitted_params = precommitted_commit_params::<fp128::D64OneHot>(&precommitted_group)?;
     let precommitted =
         PrecommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {

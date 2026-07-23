@@ -53,7 +53,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
-    write_root_log_basis(&mut h, policy.root_log_basis);
     h.write_u64(policy.onehot_chunk_size as u64);
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
@@ -83,7 +82,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
-    write_root_log_basis(&mut h, identity.root_log_basis);
     h.write_u64(identity.onehot_chunk_size as u64);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
@@ -143,7 +141,6 @@ struct CatalogIdentityExpectation {
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
-    root_log_basis: Option<u32>,
     onehot_chunk_size: usize,
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
@@ -174,7 +171,6 @@ impl CatalogIdentityExpectation {
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
-            root_log_basis: identity.root_log_basis,
             onehot_chunk_size: identity.onehot_chunk_size,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
@@ -219,7 +215,6 @@ fn catalog_identity_expectation(
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
-        root_log_basis: policy.root_log_basis,
         onehot_chunk_size: policy.onehot_chunk_size,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
@@ -264,7 +259,6 @@ pub fn expected_catalog_identity(
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
-        root_log_basis: expected.root_log_basis,
         onehot_chunk_size: expected.onehot_chunk_size,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
@@ -571,16 +565,6 @@ pub fn ring_challenge_config_digest(
         encode_sparse_challenge_config(&mut h, &cfg);
     }
     Ok(h.finish())
-}
-
-fn write_root_log_basis(h: &mut Fnv64, root_log_basis: Option<u32>) {
-    match root_log_basis {
-        None => h.write_u64(0),
-        Some(lb) => {
-            h.write_u64(1);
-            h.write_u64(u64::from(lb));
-        }
-    }
 }
 
 fn write_decomposition(h: &mut Fnv64, d: akita_types::DecompositionParams) {

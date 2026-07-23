@@ -118,7 +118,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        root_log_basis: Cfg::root_log_basis(),
         onehot_chunk_size: Cfg::onehot_chunk_size(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
@@ -135,6 +134,21 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D128Full>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn root_basis_is_derived_from_existing_policy_inputs() {
+    let fp128 = policy_of::<fp128::D64OneHot>();
+    assert_eq!(fp128.basis_range, (2, 6));
+    assert_eq!(fp128.decomposition.log_basis, 3);
+    assert_eq!(fp128.log_basis_search_range_at_level(0), (2, 2));
+    assert_eq!(fp128.log_basis_search_range_at_level(1), (2, 6));
+
+    let fp32 = policy_of::<fp32::D64OneHot>();
+    assert_eq!(fp32.basis_range, (2, 6));
+    assert_eq!(fp32.decomposition.log_basis, 3);
+    assert_eq!(fp32.log_basis_search_range_at_level(0), (2, 2));
+    assert_eq!(fp32.log_basis_search_range_at_level(1), (2, 6));
 }
 
 #[test]
