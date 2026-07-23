@@ -1,122 +1,255 @@
-use super::utils::{
-    accumulate_left_round, accumulate_left_round_compact, accumulate_left_round_compact_eq,
-    accumulate_left_round_eq, accumulate_right_round, accumulate_right_round_compact,
-    accumulate_second_right_round_compact, fold_compact_left_round, fold_compact_left_round_eq,
-    fold_compact_right_round, fold_compact_right_two_rounds, fold_dense_left_round,
-    fold_factor_in_place, fold_left_round, fold_right_round, product_claim, product_claim_eq,
-    product_claim_from_m_compact, product_claim_from_m_compact_eq,
-};
+use super::utils::{accumulate_left_round, fold_dense_left_round, fold_factor_in_place};
+#[cfg(test)]
+use super::utils::{accumulate_right_round, fold_left_round, fold_right_round, product_claim};
+use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_algebra::uni_poly::UniPoly;
-use akita_field::{AkitaError, FieldCore, FromPrimitiveInt};
-use std::sync::Arc;
+use akita_field::parallel::*;
+use akita_field::{AkitaError, FieldCore, FromPrimitiveInt, MulBaseUnreduced, Zero};
 
-/// One factored product term `sum_{l,r} table[l,r] * left[l] * right[r]`.
+/// One dense factored setup-product term
+/// `sum_{left,right} table[left,right] * left_factor[left] * right_factor[right]`.
+#[cfg(test)]
 pub(super) struct FactoredProductTerm<E: FieldCore> {
-    table: ProductTable<E>,
-    left_factor: LeftFactor<E>,
+    table: Vec<E>,
+    left_factor: Vec<E>,
     right_factor: Vec<E>,
     input_claim: E,
     right_rounds: usize,
     total_rounds: usize,
 }
 
-enum LeftFactor<E: FieldCore> {
-    Dense(Vec<E>),
-    Equality { point: Arc<[E]>, scale: E },
+/// Two-pass setup-product term over the canonical flat setup layout.
+///
+/// The setup source stays in the base field with row-major layout
+/// `setup[setup_index * coefficient_len + coefficient]`. Akita's committed
+/// setup MLE binds coefficient variables first, so this term first proves the
+/// common-coefficient rounds and then the setup-index rounds. This preserves
+/// the Stage-3 suffix-opening projection while storing only one contracted
+/// coefficient vector and one contracted setup-index vector in the extension
+/// field.
+pub(super) struct RectangularSetupProductTerm<'a, F: FieldCore, E: FieldCore> {
+    setup: &'a [F],
+    required_rows: usize,
+    row_capacity: usize,
+    coefficient_len: usize,
+    coefficient_rounds: usize,
+    total_rounds: usize,
+    coefficient_challenges: Vec<E>,
+    coefficient_table: Vec<E>,
+    coefficient_factor: Vec<E>,
+    index_table: Option<Vec<E>>,
+    index_factor: Vec<E>,
+    input_claim: E,
 }
 
-impl<E: FieldCore> LeftFactor<E> {
-    fn len(&self) -> usize {
-        match self {
-            Self::Dense(factor) => factor.len(),
-            Self::Equality { point, .. } => 1usize << point.len(),
+impl<'a, F, E> RectangularSetupProductTerm<'a, F, E>
+where
+    F: FieldCore,
+    E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
+{
+    pub(super) fn new(
+        setup: &'a [F],
+        required_rows: usize,
+        index_factor: Vec<E>,
+        coefficient_factor: Vec<E>,
+    ) -> Result<Self, AkitaError> {
+        if required_rows == 0
+            || index_factor.is_empty()
+            || coefficient_factor.is_empty()
+            || !index_factor.len().is_power_of_two()
+            || !coefficient_factor.len().is_power_of_two()
+            || required_rows > index_factor.len()
+        {
+            return Err(AkitaError::InvalidInput(
+                "rectangular setup-product dimensions are invalid".into(),
+            ));
         }
+        let required_source_len = required_rows
+            .checked_mul(coefficient_factor.len())
+            .ok_or_else(|| AkitaError::InvalidSetup("setup source length overflow".into()))?;
+        if setup.len() < required_source_len {
+            return Err(AkitaError::InvalidSize {
+                expected: required_source_len,
+                actual: setup.len(),
+            });
+        }
+
+        let coefficient_len = coefficient_factor.len();
+        let coefficient_table = {
+            let _span = tracing::info_span!(
+                "stage3_setup_coefficient_pass",
+                kernel = "rectangular_base_field",
+                source_pass = 1u64,
+                source_rows = required_rows as u64,
+                coefficient_len = coefficient_len as u64,
+                base_to_extension_lifts = 0u64,
+                setup_table_state_elements = (coefficient_len + index_factor.len()) as u64,
+            )
+            .entered();
+            let accumulators = cfg_fold_reduce!(
+                0..required_rows,
+                || (0..coefficient_len)
+                    .map(|_| {
+                        <E as akita_field::unreduced::HasUnreducedOps>::ProductAccum::zero()
+                    })
+                    .collect::<Vec<_>>(),
+                |mut accumulators, setup_index| {
+                    let row_start = setup_index * coefficient_len;
+                    let factor = index_factor[setup_index];
+                    for (accumulator, &coefficient) in accumulators
+                        .iter_mut()
+                        .zip(&setup[row_start..row_start + coefficient_len])
+                    {
+                        *accumulator += factor.mul_base_to_product_accum(coefficient);
+                    }
+                    accumulators
+                },
+                |mut left, right| {
+                    for (left, right) in left.iter_mut().zip(right) {
+                        *left += right;
+                    }
+                    left
+                }
+            );
+            accumulators
+                .into_iter()
+                .map(E::reduce_product_accum)
+                .collect::<Vec<_>>()
+        };
+        let input_claim = coefficient_table
+            .iter()
+            .zip(&coefficient_factor)
+            .fold(E::zero(), |acc, (&value, &factor)| acc + value * factor);
+        let coefficient_rounds = coefficient_len.trailing_zeros() as usize;
+        let total_rounds = coefficient_rounds + index_factor.len().trailing_zeros() as usize;
+
+        let mut term = Self {
+            setup,
+            required_rows,
+            row_capacity: index_factor.len(),
+            coefficient_len,
+            coefficient_rounds,
+            total_rounds,
+            coefficient_challenges: Vec::with_capacity(coefficient_rounds),
+            coefficient_table,
+            coefficient_factor,
+            index_table: None,
+            index_factor,
+            input_claim,
+        };
+        // A one-coefficient setup view has no coefficient-round challenge to
+        // trigger the normal phase transition. Materialize its index state at
+        // construction so the first index round (or a zero-round final value)
+        // consumes the same canonical table as every other geometry.
+        if coefficient_rounds == 0 {
+            term.materialize_index_table();
+        }
+        Ok(term)
+    }
+
+    pub(super) const fn num_rounds(&self) -> usize {
+        self.total_rounds
+    }
+
+    pub(super) const fn input_claim(&self) -> E {
+        self.input_claim
+    }
+
+    pub(super) fn compute_round_univariate(&self, round: usize) -> UniPoly<E> {
+        let (constant, linear, quadratic) = if round < self.coefficient_rounds {
+            accumulate_left_round(&self.coefficient_table, &self.coefficient_factor, E::one())
+        } else {
+            accumulate_left_round(
+                self.index_table
+                    .as_deref()
+                    .expect("setup index table exists after coefficient rounds"),
+                &self.index_factor,
+                self.coefficient_factor[0],
+            )
+        };
+        UniPoly::from_coeffs(vec![constant, linear, quadratic])
+    }
+
+    pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
+        if round < self.coefficient_rounds {
+            self.coefficient_challenges.push(challenge);
+            fold_dense_left_round(&mut self.coefficient_table, challenge);
+            fold_factor_in_place(&mut self.coefficient_factor, challenge);
+            if round + 1 == self.coefficient_rounds {
+                self.materialize_index_table();
+            }
+        } else {
+            fold_dense_left_round(
+                self.index_table
+                    .as_mut()
+                    .expect("setup index table exists after coefficient rounds"),
+                challenge,
+            );
+            fold_factor_in_place(&mut self.index_factor, challenge);
+        }
+    }
+
+    fn materialize_index_table(&mut self) {
+        let coefficient_eq = EqPolynomial::evals(&self.coefficient_challenges)
+            .expect("validated power-of-two setup coefficient domain");
+        debug_assert_eq!(coefficient_eq.len(), self.coefficient_len);
+        let _span = tracing::info_span!(
+            "stage3_setup_index_pass",
+            kernel = "rectangular_base_field",
+            source_pass = 2u64,
+            source_rows = self.required_rows as u64,
+            coefficient_len = self.coefficient_len as u64,
+            base_to_extension_lifts = 0u64,
+            setup_table_state_elements = (self.row_capacity + self.coefficient_len) as u64,
+        )
+        .entered();
+        let mut index_table = cfg_into_iter!(0..self.required_rows)
+            .map(|setup_index| {
+                let start = setup_index * self.coefficient_len;
+                eval_flat_ring_at_pows_fast(
+                    &self.setup[start..start + self.coefficient_len],
+                    &coefficient_eq,
+                )
+            })
+            .collect::<Vec<_>>();
+        index_table.resize(self.row_capacity, E::zero());
+        self.index_table = Some(index_table);
+    }
+
+    pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
+        let table = self
+            .index_table
+            .as_deref()
+            .ok_or(AkitaError::InvalidProof)?;
+        if table.len() != 1 {
+            return Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: table.len(),
+            });
+        }
+        Ok(table[0])
     }
 }
 
-enum ProductTable<E: FieldCore> {
-    Dense(Vec<E>),
-    CompactWitness {
-        digits: Arc<[i8]>,
-        padded_len: usize,
-        pending_right_challenge: Option<E>,
-    },
-}
-
+#[cfg(test)]
 impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
     /// Construct a dense factored product-sumcheck term.
     ///
-    /// Returns an error if factor lengths are not powers of two, are empty, or if
-    /// `table.len() != left_factor.len() * right_factor.len()`.
+    /// Returns an error if factor lengths are not powers of two, are empty, or
+    /// if `table.len() != left_factor.len() * right_factor.len()`.
     pub(super) fn new_dense(
         table: Vec<E>,
         left_factor: Vec<E>,
         right_factor: Vec<E>,
     ) -> Result<Self, AkitaError> {
-        Self::new(
-            ProductTable::Dense(table),
-            LeftFactor::Dense(left_factor),
-            right_factor,
-        )
-    }
-
-    /// Construct the witness-carry term from compact digit storage.
-    ///
-    /// The witness term shares the same factored product identity as the setup term,
-    /// but its source table starts as signed gadget digits. Keeping that distinction
-    /// outside `AkitaStage3Prover` makes the term state about sumcheck lifecycle,
-    /// while this constructor owns representation choice.
-    pub(super) fn new_compact(
-        digits: Arc<[i8]>,
-        padded_len: usize,
-        left_factor: Vec<E>,
-        right_factor: Vec<E>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            ProductTable::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge: None,
-            },
-            LeftFactor::Dense(left_factor),
-            right_factor,
-        )
-    }
-
-    /// Construct a compact witness term whose left factor is an equality
-    /// polynomial kept in factored form until it is consumed by the rounds.
-    pub(super) fn new_compact_equality(
-        digits: Arc<[i8]>,
-        padded_len: usize,
-        point: Arc<[E]>,
-        right_factor: Vec<E>,
-    ) -> Result<Self, AkitaError> {
-        Self::new(
-            ProductTable::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge: None,
-            },
-            LeftFactor::Equality {
-                point,
-                scale: E::one(),
-            },
-            right_factor,
-        )
-    }
-
-    fn new(
-        table: ProductTable<E>,
-        left_factor: LeftFactor<E>,
-        right_factor: Vec<E>,
-    ) -> Result<Self, AkitaError> {
-        if left_factor.len() == 0
+        if left_factor.is_empty()
             || right_factor.is_empty()
             || !left_factor.len().is_power_of_two()
             || !right_factor.len().is_power_of_two()
         {
             return Err(AkitaError::InvalidInput(
-                "factored product dimensions must be non-empty powers of two".to_string(),
+                "factored product dimensions must be non-empty powers of two".into(),
             ));
         }
         let expected_len = left_factor
@@ -130,7 +263,7 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
             });
         }
 
-        let input_claim = table.product_claim(&left_factor, &right_factor);
+        let input_claim = product_claim(&table, &left_factor, &right_factor);
         let right_rounds = right_factor.len().trailing_zeros() as usize;
         let total_rounds = right_rounds + left_factor.len().trailing_zeros() as usize;
         Ok(Self {
@@ -143,209 +276,200 @@ impl<E: FieldCore + FromPrimitiveInt> FactoredProductTerm<E> {
         })
     }
 
-    pub(super) fn num_rounds(&self) -> usize {
+    pub(super) const fn num_rounds(&self) -> usize {
         self.total_rounds
     }
 
-    pub(super) fn input_claim(&self) -> E {
+    pub(super) const fn input_claim(&self) -> E {
         self.input_claim
     }
 
-    pub(super) fn compute_round_univariate(
-        &mut self,
-        round: usize,
-        _previous_claim: E,
-    ) -> UniPoly<E> {
+    pub(super) fn compute_round_univariate(&self, round: usize, _previous_claim: E) -> UniPoly<E> {
         let (constant, linear, quadratic) = if round < self.right_rounds {
-            self.table
-                .accumulate_right_round(&self.left_factor, &self.right_factor)
+            accumulate_right_round(&self.table, &self.left_factor, &self.right_factor)
         } else {
-            self.table
-                .accumulate_left_round(&self.left_factor, self.right_factor[0])
+            accumulate_left_round(&self.table, &self.left_factor, self.right_factor[0])
         };
         UniPoly::from_coeffs(vec![constant, linear, quadratic])
     }
 
-    pub(super) fn ingest_challenge(&mut self, round: usize, r_round: E) {
+    pub(super) fn ingest_challenge(&mut self, round: usize, challenge: E) {
         if round < self.right_rounds {
-            self.table.fold_right_round(&mut self.right_factor, r_round);
+            fold_right_round(&mut self.table, &mut self.right_factor, challenge);
         } else {
-            self.table.fold_left_round(&mut self.left_factor, r_round);
+            fold_left_round(&mut self.table, &mut self.left_factor, challenge);
         }
     }
 
     pub(super) fn folded_table_value(&self) -> Result<E, AkitaError> {
-        self.table.folded_value()
+        if self.table.len() != 1 {
+            return Err(AkitaError::InvalidSize {
+                expected: 1,
+                actual: self.table.len(),
+            });
+        }
+        Ok(self.table[0])
     }
 }
 
-impl<E: FieldCore + FromPrimitiveInt> ProductTable<E> {
-    fn len(&self) -> usize {
-        match self {
-            Self::Dense(table) => table.len(),
-            Self::CompactWitness { padded_len, .. } => *padded_len,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::ring::scalar_powers;
+    use akita_field::Prime128Offset275 as F;
+    use std::time::{Duration, Instant};
+
+    fn scalar(value: u64) -> F {
+        F::from_u64(value)
     }
 
-    fn product_claim(&self, left_factor: &LeftFactor<E>, right_factor: &[E]) -> E {
-        match left_factor {
-            LeftFactor::Dense(left_factor) => match self {
-                Self::Dense(table) => product_claim(table, left_factor, right_factor),
-                Self::CompactWitness {
-                    digits, padded_len, ..
-                } => product_claim_from_m_compact(digits, *padded_len, left_factor, right_factor),
-            },
-            LeftFactor::Equality { point, scale } => match self {
-                Self::Dense(table) => product_claim_eq(table, point, *scale, right_factor),
-                Self::CompactWitness {
-                    digits, padded_len, ..
-                } => product_claim_from_m_compact_eq(
-                    digits,
-                    *padded_len,
-                    point,
-                    *scale,
-                    right_factor,
-                ),
-            },
-        }
+    fn setup_source(rows: usize, coefficient_len: usize) -> Vec<F> {
+        (0..rows * coefficient_len)
+            .map(|index| scalar(((index * 17 + index / coefficient_len * 5) % 251 + 1) as u64))
+            .collect()
     }
 
-    fn accumulate_right_round(&self, left_factor: &LeftFactor<E>, right_factor: &[E]) -> (E, E, E) {
-        let LeftFactor::Dense(left_factor) = left_factor else {
-            debug_assert!(
-                false,
-                "equality left factor requires a zero-width right factor"
-            );
-            return (E::zero(), E::zero(), E::zero());
-        };
-        match self {
-            Self::Dense(table) => accumulate_right_round(table, left_factor, right_factor),
-            Self::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge,
-            } => match pending_right_challenge {
-                Some(first_challenge) => accumulate_second_right_round_compact(
-                    digits,
-                    *padded_len,
-                    left_factor,
-                    right_factor,
-                    *first_challenge,
-                ),
-                None => {
-                    accumulate_right_round_compact(digits, *padded_len, left_factor, right_factor)
-                }
-            },
-        }
+    fn dense_term(
+        setup: &[F],
+        required_rows: usize,
+        row_capacity: usize,
+        coefficient_len: usize,
+        index_factor: Vec<F>,
+        coefficient_factor: Vec<F>,
+    ) -> FactoredProductTerm<F> {
+        let mut table = vec![F::zero(); row_capacity * coefficient_len];
+        table[..required_rows * coefficient_len]
+            .copy_from_slice(&setup[..required_rows * coefficient_len]);
+        FactoredProductTerm::new_dense(table, index_factor, coefficient_factor)
+            .expect("dense setup product")
     }
 
-    fn accumulate_left_round(&self, left_factor: &LeftFactor<E>, right_weight: E) -> (E, E, E) {
-        match left_factor {
-            LeftFactor::Dense(left_factor) => match self {
-                Self::Dense(table) => accumulate_left_round(table, left_factor, right_weight),
-                Self::CompactWitness {
-                    digits,
-                    padded_len,
-                    pending_right_challenge,
-                } => {
-                    debug_assert!(pending_right_challenge.is_none());
-                    accumulate_left_round_compact(digits, *padded_len, left_factor, right_weight)
-                }
-            },
-            LeftFactor::Equality { point, scale } => match self {
-                Self::Dense(table) => accumulate_left_round_eq(table, point, *scale, right_weight),
-                Self::CompactWitness {
-                    digits,
-                    padded_len,
-                    pending_right_challenge,
-                } => {
-                    debug_assert!(pending_right_challenge.is_none());
-                    accumulate_left_round_compact_eq(
-                        digits,
-                        *padded_len,
-                        point,
-                        *scale,
-                        right_weight,
-                    )
-                }
-            },
+    fn assert_round_parity(required_rows: usize, row_capacity: usize, coefficient_len: usize) {
+        let setup = setup_source(required_rows, coefficient_len);
+        let index_factor = (0..row_capacity)
+            .map(|index| scalar((index * 13 + 3) as u64))
+            .collect::<Vec<_>>();
+        let coefficient_factor = scalar_powers(scalar(7), coefficient_len).to_vec();
+        let mut dense = dense_term(
+            &setup,
+            required_rows,
+            row_capacity,
+            coefficient_len,
+            index_factor.clone(),
+            coefficient_factor.clone(),
+        );
+        let mut rectangular = RectangularSetupProductTerm::new(
+            &setup,
+            required_rows,
+            index_factor,
+            coefficient_factor,
+        )
+        .expect("rectangular setup product");
+        assert_eq!(dense.input_claim(), rectangular.input_claim());
+        assert_eq!(dense.num_rounds(), rectangular.num_rounds());
+
+        for round in 0..dense.num_rounds() {
+            let dense_poly = dense.compute_round_univariate(round, dense.input_claim());
+            let rectangular_poly = rectangular.compute_round_univariate(round);
+            assert_eq!(dense_poly, rectangular_poly, "round {round}");
+            let challenge = scalar((round * 19 + 11) as u64);
+            dense.ingest_challenge(round, challenge);
+            rectangular.ingest_challenge(round, challenge);
         }
+        assert_eq!(
+            dense.folded_table_value().expect("dense folded setup"),
+            rectangular
+                .folded_table_value()
+                .expect("rectangular folded setup")
+        );
     }
 
-    fn fold_right_round(&mut self, right_factor: &mut Vec<E>, r: E) {
-        match self {
-            Self::Dense(table) => fold_right_round(table, right_factor, r),
-            Self::CompactWitness {
-                digits,
-                padded_len,
-                pending_right_challenge,
-            } => {
-                if let Some(first_challenge) = pending_right_challenge.take() {
-                    let folded = fold_compact_right_two_rounds(
-                        digits,
-                        *padded_len,
-                        right_factor,
-                        first_challenge,
-                        r,
-                    );
-                    *self = Self::Dense(folded);
-                } else if right_factor.len() >= 4 {
-                    fold_factor_in_place(right_factor, r);
-                    *pending_right_challenge = Some(r);
-                } else {
-                    let folded = fold_compact_right_round(digits, *padded_len, right_factor, r);
-                    *self = Self::Dense(folded);
-                }
-            }
-        }
+    #[test]
+    fn rectangular_setup_product_matches_dense_rounds_with_padding() {
+        assert_round_parity(5, 8, 8);
     }
 
-    fn fold_left_round(&mut self, left_factor: &mut LeftFactor<E>, r: E) {
-        match left_factor {
-            LeftFactor::Dense(left_factor) => match self {
-                Self::Dense(table) => fold_left_round(table, left_factor, r),
-                Self::CompactWitness {
-                    digits,
-                    padded_len,
-                    pending_right_challenge,
-                } => {
-                    debug_assert!(pending_right_challenge.is_none());
-                    let folded = fold_compact_left_round(digits, *padded_len, left_factor, r);
-                    *self = Self::Dense(folded);
+    #[test]
+    fn rectangular_setup_product_matches_dense_rounds_without_padding() {
+        assert_round_parity(16, 16, 64);
+    }
+
+    #[test]
+    fn rectangular_setup_product_materializes_index_state_without_coefficient_rounds() {
+        assert_round_parity(3, 4, 1);
+        assert_round_parity(1, 1, 1);
+    }
+
+    fn elapsed(mut run: impl FnMut(), samples: usize) -> Duration {
+        let start = Instant::now();
+        for _ in 0..samples {
+            run();
+        }
+        start.elapsed()
+    }
+
+    /// Explicit microbenchmark for the old dense setup table (S0) and the
+    /// canonical two-pass rectangular prover (S2).
+    ///
+    /// `cargo test -p akita-prover --release stage3_setup_product_ab -- --ignored --nocapture`
+    #[test]
+    #[ignore = "release-only Stage 3 setup-product A/B benchmark"]
+    fn stage3_setup_product_ab() {
+        const REQUIRED_ROWS: usize = 1 << 15;
+        const ROW_CAPACITY: usize = 1 << 15;
+        const COEFFICIENT_LEN: usize = 64;
+        const SAMPLES: usize = 5;
+
+        let setup = setup_source(REQUIRED_ROWS, COEFFICIENT_LEN);
+        let index_factor = (0..ROW_CAPACITY)
+            .map(|index| scalar((index * 13 + 3) as u64))
+            .collect::<Vec<_>>();
+        let coefficient_factor = scalar_powers(scalar(7), COEFFICIENT_LEN).to_vec();
+        let challenges = (0..(ROW_CAPACITY * COEFFICIENT_LEN).trailing_zeros() as usize)
+            .map(|round| scalar((round * 19 + 11) as u64))
+            .collect::<Vec<_>>();
+
+        let dense_elapsed = elapsed(
+            || {
+                let mut term = dense_term(
+                    &setup,
+                    REQUIRED_ROWS,
+                    ROW_CAPACITY,
+                    COEFFICIENT_LEN,
+                    index_factor.clone(),
+                    coefficient_factor.clone(),
+                );
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let _ = term.compute_round_univariate(round, term.input_claim());
+                    term.ingest_challenge(round, challenge);
                 }
+                std::hint::black_box(term.folded_table_value().expect("dense folded setup"));
             },
-            LeftFactor::Equality { point, scale } => {
-                match self {
-                    Self::Dense(table) => fold_dense_left_round(table, r),
-                    Self::CompactWitness {
-                        digits,
-                        padded_len,
-                        pending_right_challenge,
-                    } => {
-                        debug_assert!(pending_right_challenge.is_none());
-                        let folded = fold_compact_left_round_eq(digits, *padded_len, r);
-                        *self = Self::Dense(folded);
-                    }
+            SAMPLES,
+        );
+        let rectangular_elapsed = elapsed(
+            || {
+                let mut term = RectangularSetupProductTerm::new(
+                    &setup,
+                    REQUIRED_ROWS,
+                    index_factor.clone(),
+                    coefficient_factor.clone(),
+                )
+                .expect("rectangular setup product");
+                for (round, &challenge) in challenges.iter().enumerate() {
+                    let _ = term.compute_round_univariate(round);
+                    term.ingest_challenge(round, challenge);
                 }
-                if let Some((&head, tail)) = point.split_first() {
-                    let folded_head = (E::one() - r) * (E::one() - head) + r * head;
-                    *scale *= folded_head;
-                    *point = Arc::from(tail.to_vec());
-                }
-            }
-        }
-    }
+                std::hint::black_box(term.folded_table_value().expect("rectangular folded setup"));
+            },
+            SAMPLES,
+        );
 
-    fn folded_value(&self) -> Result<E, AkitaError> {
-        match self {
-            Self::Dense(table) if table.len() == 1 => Ok(table[0]),
-            Self::Dense(table) => Err(AkitaError::InvalidSize {
-                expected: 1,
-                actual: table.len(),
-            }),
-            Self::CompactWitness { digits, .. } => {
-                Ok(super::utils::compact_value_at::<E>(digits, 0))
-            }
-        }
+        eprintln!(
+            "stage3 setup product A/B: S0_dense={dense_elapsed:?}, S2_rectangular={rectangular_elapsed:?}, ratio={:.4}, dense_table_state_elements={}, rectangular_table_state_elements={}",
+            rectangular_elapsed.as_secs_f64() / dense_elapsed.as_secs_f64(),
+            ROW_CAPACITY * COEFFICIENT_LEN,
+            ROW_CAPACITY + COEFFICIENT_LEN,
+        );
     }
 }

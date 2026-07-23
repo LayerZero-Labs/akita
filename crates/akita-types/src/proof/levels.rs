@@ -137,7 +137,7 @@ pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
 
 impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     /// Construct from typed ring elements for the current level and its
-    /// inline two-stage norm-check payloads.
+    /// inline norm-check payloads.
     pub fn new<const D: usize>(
         v: Vec<CyclotomicRing<F, D>>,
         stage1: AkitaStage1Proof<E>,
