@@ -21,6 +21,8 @@
   - [Setup and commitment](./how/commitment.md)
   - [Transcript and instance binding](./how/transcript.md)
   - [The proving protocol](./how/proving/proving.md)
+    - [Multilinear evaluation reduction](./how/proving/trace-open-reduction.md)
+    - [Core relation and ring switching](./how/proving/core-relation-and-ring-switching.md)
     - [Opening points and digit-innermost layout](./how/proving/opening-points-layout.md)
     - [Root fold and ring switching](./how/proving/root-fold-ring-switch.md)
     - [Sumcheck stages](./how/proving/sumcheck-stages.md)
@@ -37,6 +39,7 @@
 
 - [Foundations](./foundations/foundations.md)
   - [Cyclotomic rings and extension fields](./foundations/rings-and-fields.md)
+  - [Trace openings](./foundations/trace-open.md)
   - [NTT, CRT, and fast ring arithmetic](./foundations/ntt-crt.md)
   - [Gadget decomposition](./foundations/gadget-decomposition.md)
   - [Lattices, Module-SIS, and discrete Gaussians](./foundations/lattices-sis.md)

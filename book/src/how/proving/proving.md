@@ -184,6 +184,7 @@ the next witness (inside stage 2), the partial-evaluation commitment payload
 
 ## Subpages
 
+- [Multilinear evaluation reduction](./trace-open-reduction.md)
 - [Opening points and digit-innermost layout](./opening-points-layout.md)
 - [Root fold and ring switching](./root-fold-ring-switch.md)
 - [Sumcheck stages](./sumcheck-stages.md)

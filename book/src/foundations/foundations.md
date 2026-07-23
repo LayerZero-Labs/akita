@@ -13,6 +13,7 @@ choices, and flag what is liable to change (the paper is a work in progress).
 Reading map (paper section → page):
 
 - §2.1 → [Cyclotomic rings and extension fields](./rings-and-fields.md)
+- Ring/extension evaluation pairing → [Trace openings](./trace-open.md)
 - App B.2 → [NTT, CRT, and fast ring arithmetic](./ntt-crt.md)
 - §2.2 → [Gadget decomposition](./gadget-decomposition.md)
 - §2.2 + §2.7 → [Lattices, Module-SIS, and discrete Gaussians](./lattices-sis.md)

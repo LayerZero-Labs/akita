@@ -15,9 +15,8 @@ The required terminal fold takes a separate direct path: it reveals the
 remaining witness and runs none of these sumchecks
 ([`fold.rs:582`](https://github.com/LayerZero-Labs/akita/blob/8a4ec9b140e23514b8e53e61b885774f8d8397d7/crates/akita-prover/src/protocol/core/fold.rs#L582-L606)).
 
-This chapter explains the Stage-1 protocol in detail. It starts with the
-simplest sound range check, then derives the complete product-tree protocol.
-Stages 2 and 3 are summarized at the end.
+This chapter explains the Stage-1 range protocol and the Stage-2 fused
+relation protocol in detail. Stage 3 is summarized at the end.
 
 ## Stage 1: the digit range check
 
@@ -342,22 +341,307 @@ Passing Stage 1 proves that the range-tree claims are internally consistent and
 reduces the final leaf to `range_image_evaluation`. It does **not** by itself
 tie that virtual value to the committed witness.
 
-### Scope
-
-This protocol checks every position against the common balanced alphabet
-$\mathcal{A}_b$. Some compression spans use the narrower alphabet
-$\{-1,0\}$; fusing a separate binariness check for those positions remains
-outside the current Stage-1 protocol.
 
 ## Stage 2: bind the range image and prove the fold relation
 
-After Stage 1, the transcript absorbs `range_image_evaluation` and samples a
-fresh batching coefficient. Stage 2 includes the claim
-$\widetilde S(r_{\mathsf{range}})$ in its fused relation sumcheck and checks it
-against the actual witness term $w(x)(w(x)+1)$. This binds Stage 1's virtual
-range-image table to the committed witness. The same sumcheck proves the fold
-relation and produces the next-witness opening claim
-([`fold.rs:666`](https://github.com/LayerZero-Labs/akita/blob/8a4ec9b140e23514b8e53e61b885774f8d8397d7/crates/akita-prover/src/protocol/core/fold.rs#L666-L861)).
+Stage 2 proves three statements about the same committed digit witness:
+
+1. the ring-switched fold relation is satisfied;
+2. Stage 1's virtual range-image value really comes from $w(w+1)$; and
+3. the witness is consistent with the opening claim carried into this fold.
+
+They are fused into one sumcheck. We first describe the relation term by
+itself, with the matrix-row dimension visible, and then add the other two
+terms.
+
+### Start with the ring relation
+
+Let $w_j(X)$ be the $j$-th ring element encoded by the digit witness, and let
+row $i$ of the extended fold relation be
+
+$$
+\sum_j M_{i,j}(X)w_j(X)=h_i(X).
+\tag{3}
+$$
+
+The extended relation includes the quotient witness, so Equation (3) is an
+equality rather than a congruence modulo a ring polynomial. The public right
+side $h_i$ is zero for some rows and contains the public data
+for the remaining rows.
+
+Ring switching samples one field element $\alpha$ and evaluates every ring
+polynomial at that point:
+
+$$
+\sum_j M_{i,j}(\alpha)w_j(\alpha)=h_i(\alpha).
+\tag{4}
+$$
+
+The scalar $\alpha$ removes the ring-coefficient dimension from the algebraic
+relation. It is not a Boolean sumcheck point.
+
+### Batch the matrix rows
+
+Suppose the relation has rows indexed by $i$. The protocol samples a Boolean
+MLE point $\tau_1$ of sufficient width for that row domain and defines
+
+$$
+\beta_i=\operatorname{eq}(\tau_1,i).
+$$
+
+It takes the random linear combination of Equation (4) over all rows. Define
+
+$$
+m_j
+=
+\sum_i\beta_iM_{i,j}(\alpha)
+\qquad\text{and}\qquad
+h_{\tau}
+=
+\sum_i\beta_i h_i(\alpha).
+$$
+
+The batched relation is the single scalar claim
+
+$$
+\sum_j m_jw_j(\alpha)=h_{\tau}.
+\tag{5}
+$$
+
+This is where the matrix-row dimension goes. It is contracted by $\tau_1$
+before Stage 2 starts its witness-address sumcheck. Consequently, the Stage-2
+sumcheck point has no matrix-row coordinate.
+
+
+Stage 2 proves the relation for this batched row. Soundness comes from the fact
+that $\tau_1$ was sampled after the witness was committed: a false collection
+of rows cannot generally arrange for its random multilinear combination to
+vanish.
+
+### Expand the ring elements into one flat witness
+
+For the moment, suppose every witness ring element has $D$ coefficients:
+
+$$
+w_j(X)=\sum_{k=0}^{D-1}w_{j,k}X^k.
+$$
+
+Evaluating at $\alpha$ gives
+
+$$
+w_j(\alpha)=\sum_{k=0}^{D-1}w_{j,k}\alpha^k.
+$$
+
+Substituting this into Equation (5) yields
+
+$$
+h_{\tau}
+=
+\sum_{j,k}w_{j,k}\,\alpha^k m_j.
+\tag{6}
+$$
+
+Now view $(j,k)$ as one flat Boolean address $x$. The low bits select the
+coefficient $k$ and the remaining bits select the witness lane $j$. Define
+
+$$
+A(k)=\alpha^k,
+\qquad
+L(j)=m_j.
+$$
+
+The relation weight factors as
+
+$$
+R(k,j)=A(k)L(j),
+$$
+
+so Equation (6) becomes
+
+$$
+h_{\tau}
+=
+\sum_{x\in\{0,1\}^n}w(x)R(x).
+\tag{7}
+$$
+
+The Boolean domain is padded with zeros when the live witness length is not a
+power of two.
+
+The production protocol also permits different ring dimensions in different
+parts of the relation. It chooses the largest power-of-two coefficient block
+common to every role and to the outgoing witness. The low address still
+selects a coefficient inside that common block. Any remaining high power of
+$\alpha$, together with the matrix entry and its $\beta_i$ row weight, is
+absorbed into the lane weight $L$. Thus the exact factorization $R=A\cdot L$
+continues to hold without adding another sumcheck dimension.
+
+### Add the range-image binding
+
+Let $r_1$ be the final point produced by Stage 1, and let $s_1$ be the
+`range_image_evaluation` carried by its proof. Stage 1 established a claim
+about a virtual table. Stage 2 must connect that table to the committed
+witness by proving
+
+$$
+s_1
+=
+\sum_x
+\operatorname{eq}(r_1,x)w(x)\bigl(w(x)+1\bigr).
+\tag{8}
+$$
+
+This is a sum over Boolean addresses. It does not claim that
+$s_1=\widetilde w(r_1)(\widetilde w(r_1)+1)$, which is generally false.
+
+After absorbing $s_1$, the transcript samples a fresh scalar $\gamma$. The
+protocol uses $\gamma$ to batch Equation (8) with the relation claim.
+
+### Add the opening trace
+
+The protocol also has an incoming opening target $v_{\mathrm{tr}}$.
+[Multilinear evaluation reduction](./trace-open-reduction.md) derives how
+evaluating the
+outer-folded polynomial ring against the inner opening point becomes a public
+linear function of the $\hat e$ digits. Write that function as $T(x)$. Then
+
+$$
+v_{\mathrm{tr}}=\sum_x w(x)T(x).
+\tag{9}
+$$
+
+The opening trace is **not** inserted into the ring-relation matrix. The
+physical matrix and its relation-weight factorization contain only the
+consistency, $A$, $B$, and $D$ rows.
+
+The protocol nevertheless reserves the next index $i_{\mathrm{tr}}$ in the
+padded row domain used by $\tau_1$. Its batching weight is
+
+$$
+\beta_{\mathrm{tr}}
+=
+\operatorname{eq}(\tau_1,i_{\mathrm{tr}}).
+$$
+
+Only this scalar comes from the row domain. The trace function $T(x)$ is built
+separately from the matrix weights, and
+$\beta_{\mathrm{tr}}w(x)T(x)$ is fused directly into the Stage-2 sumcheck over
+the flat witness address $x$. Thus the trace reuses $\tau_1$ without becoming
+an evaluated matrix row.
+
+### The fused Stage-2 claim
+
+Combining Equations (7), (8), and (9), the input claim is
+
+$$
+C_0
+=
+\gamma s_1+h_{\tau}+\beta_{\mathrm{tr}}v_{\mathrm{tr}}.
+$$
+
+Stage 2 proves
+
+$$
+\begin{aligned}
+C_0
+=\sum_x \bigl[{}
+&\gamma\operatorname{eq}(r_1,x)
+  w(x)\bigl(w(x)+1\bigr)\\
+&+w(x)A(k(x))L(j(x))\\
+&+\beta_{\mathrm{tr}}w(x)T(x)
+\bigr].
+\end{aligned}
+\tag{10}
+$$
+
+All three terms use the same flat witness address $x$. This is why they can be
+proved by one sumcheck.
+
+### Sumcheck rounds and the final point
+
+Let $P(X)$ denote the multilinear-polynomial expression inside the brackets in
+Equation (10). In round $t$, after challenges
+$r_{2,0},\ldots,r_{2,t-1}$ have been sampled, the prover sends
+
+$$
+g_t(Z)
+=
+\sum_{x_{t+1},\ldots,x_{n-1}\in\{0,1\}}
+P(r_{2,0},\ldots,r_{2,t-1},Z,x_{t+1},\ldots,x_{n-1}).
+$$
+
+The verifier checks
+
+$$
+g_t(0)+g_t(1)=C_t,
+$$
+
+samples the next coordinate $r_{2,t}$, and sets
+
+$$
+C_{t+1}=g_t(r_{2,t}).
+$$
+
+After all $n$ rounds, these coordinates form the flat witness point
+
+$$
+r_2=(r_{2,0},\ldots,r_{2,n-1}).
+$$
+
+Split it according to the flat address as
+
+$$
+r_2=(r_{\mathrm{coeff}},r_{\mathrm{lane}}).
+$$
+
+The verifier closes the sumcheck against
+
+$$
+\begin{aligned}
+C_n={}
+&\gamma\operatorname{eq}(r_1,r_2)
+  \widetilde w(r_2)\bigl(\widetilde w(r_2)+1\bigr)\\
+&+\widetilde w(r_2)
+  \widetilde A(r_{\mathrm{coeff}})
+  \widetilde L(r_{\mathrm{lane}})\\
+&+\beta_{\mathrm{tr}}\widetilde w(r_2)\widetilde T(r_2).
+\end{aligned}
+\tag{11}
+$$
+
+The value $\widetilde w(r_2)$ becomes the next-witness opening claim. The
+range term has degree three in each sumcheck variable: one degree from the
+equality polynomial and two from $w(w+1)$. The relation and trace terms each
+have degree two. Therefore Stage 2 sends degree-three round polynomials.
+
+The random objects have separate jobs:
+
+| Object | Shape | What it removes or binds |
+|---|---|---|
+| $\alpha$ | one field element | evaluates the ring-polynomial variable $X$ |
+| $\tau_1$ | a point over matrix rows | batches all relation rows into one virtual row |
+| $\gamma$ | one field element | batches range-image consistency with the linear claims |
+| $r_1$ | Stage-1 output point over flat witness addresses | identifies the carried range-image evaluation |
+| $r_2$ | Stage-2 output point over flat witness addresses | reduces the complete fused claim to one witness evaluation |
+
+In particular, $\alpha$, $\tau_1$, and $r_2$ are not coordinates of one larger
+point. They contract three different domains.
+
+### Implementation map
+
+The implementation builds the row weights with
+`eq_tau1.eval_at(row)`, factors the resulting flat relation table into the
+common alpha and lane factors, and evaluates that factorization at $r_2$
+([`relation_weights.rs:442`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L442-L520),
+[`relation_weights.rs:234`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L234-L310),
+[`ring_switch.rs:627`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/protocol/ring_switch.rs#L627-L657)).
+Those relation weights stop at the physical fold-consistency, $A$, $B$, and
+$D$ rows. The trace index is the next reserved padded-domain index, but no
+matrix row is created for it. The prover builds its weight function separately
+and adds it directly to the relation weight during the shared witness scan
+([`relation_range_image/mod.rs:281`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L281-L300)).
+The fused identity is implemented by
+[`relation_range_image/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L1-L77).
 
 ## Stage 3: recursive setup contribution
 
