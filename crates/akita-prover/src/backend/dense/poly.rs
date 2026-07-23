@@ -2,7 +2,7 @@
 
 use crate::backend::poly_helpers::try_small_i8_cache_from_ring_coeffs;
 use crate::kernels::linear::try_centered_i8;
-use akita_algebra::ring::cyclotomic::BalancedDecomposePow2I8Params;
+use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
 use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
@@ -318,7 +318,7 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
 
         let rings = self.ring_coeffs::<D>().ok()?;
         let q = (-F::one()).to_canonical_u128() + 1;
-        let params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+        let params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
         let mut planes = vec![0i8; num_rings * num_digits * D];
         cfg_chunks_mut!(planes, num_digits * D)
             .zip(cfg_iter!(rings))

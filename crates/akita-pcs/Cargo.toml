@@ -50,6 +50,7 @@ profile-ci = [
   "akita-config/schedules-fp64-d128-onehot",
   "akita-config/schedules-fp128-d64-onehot",
   "akita-config/schedules-fp128-d64-onehot-recursive",
+  "akita-config/schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "akita-config/schedules-fp128-d64-onehot-tensor",
   "akita-config/schedules-fp128-d64-full",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk",
@@ -115,6 +116,10 @@ path = "examples/profile/main.rs"
 
 [[bench]]
 name = "ring_ntt"
+harness = false
+
+[[bench]]
+name = "ntt_matvec"
 harness = false
 
 [[bench]]

@@ -3,7 +3,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use crate::descriptor_bytes::push_usize;
 use crate::sis::FoldWitnessLinfCapPolicy;
 
-pub(super) fn append_sparse_challenge_descriptor_bytes(
+pub(crate) fn append_sparse_challenge_descriptor_bytes(
     bytes: &mut Vec<u8>,
     config: &SparseChallengeConfig,
 ) {

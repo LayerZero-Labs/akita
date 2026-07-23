@@ -1,6 +1,6 @@
 use akita_field::AkitaError;
 
-pub(crate) const MAX_I8_LOG_BASIS: u32 = 6;
+pub(crate) const MAX_I8_LOG_BASIS: u32 = 8;
 
 #[inline]
 pub(crate) fn is_i8_log_basis(log_basis: u32) -> bool {
@@ -13,7 +13,7 @@ pub(crate) fn validate_i8_setup_log_basis(log_basis: u32, context: &str) -> Resu
         Ok(())
     } else {
         Err(AkitaError::InvalidSetup(format!(
-            "log_basis must be in 1..=6 {context}"
+            "log_basis must be in 1..=8 {context}"
         )))
     }
 }
@@ -24,7 +24,7 @@ pub(crate) fn validate_i8_input_log_basis(log_basis: u32, context: &str) -> Resu
         Ok(())
     } else {
         Err(AkitaError::InvalidInput(format!(
-            "log_basis must be in 1..=6 {context}"
+            "log_basis must be in 1..=8 {context}"
         )))
     }
 }

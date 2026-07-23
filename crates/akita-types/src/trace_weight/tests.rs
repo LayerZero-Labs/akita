@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     block_rings_at_opening, lagrange_weights, recover_ring_subfield_inner_product,
-    reduce_inner_opening_to_ring_element, BasisMode, LevelParams, OpeningClaimsLayout,
+    reduce_inner_opening_to_ring_element, BasisMode, CommittedGroupParams, OpeningClaimsLayout,
     SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
@@ -29,7 +29,7 @@ fn trace_layout(
     num_chunks: usize,
 ) -> TraceWeightLayout {
     let group_id = 0;
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         1usize << ring_bits,
         1,

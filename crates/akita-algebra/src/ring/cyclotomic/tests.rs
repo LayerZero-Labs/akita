@@ -222,3 +222,49 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
         );
     }
 }
+
+#[test]
+fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 6 {
+        0 => F128::from_i64(-1024),
+        1 => F128::from_i64(-512),
+        2 => F128::from_i64(-1),
+        3 => F128::zero(),
+        4 => F128::from_i64(511),
+        _ => F128::from_i64(1023),
+    }));
+
+    for log_basis in [10, 11] {
+        let digits = ring.balanced_decompose_pow2_i16(12, log_basis);
+        let bound = 1i16 << (log_basis - 1);
+        assert!(digits
+            .iter()
+            .flatten()
+            .all(|digit| (-bound..bound).contains(digit)));
+        for coefficient in 0..D {
+            let mut recomposed = F128::zero();
+            let mut power = F128::one();
+            let basis = F128::from_u64(1u64 << log_basis);
+            for plane in &digits {
+                recomposed += F128::from_i64(i64::from(plane[coefficient])) * power;
+                power *= basis;
+            }
+            assert_eq!(recomposed, ring.coeffs[coefficient]);
+        }
+    }
+}
+
+#[test]
+fn balanced_i8_decomposition_includes_bases_seven_and_eight() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 4 {
+        0 => F128::from_i64(-128),
+        1 => F128::from_i64(-64),
+        2 => F128::from_i64(63),
+        _ => F128::from_i64(127),
+    }));
+    for log_basis in [7, 8] {
+        let digits = ring.balanced_decompose_pow2_i8(16, log_basis);
+        let recomposed = CyclotomicRing::gadget_recompose_pow2_i8(&digits, log_basis);
+        assert_eq!(recomposed, ring);
+    }
+}

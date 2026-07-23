@@ -174,7 +174,7 @@ Implemented now:
 - `OpeningClaims` / `OpeningClaimsLayout` record one shared opening point plus
   ordered polynomial groups. `PolynomialGroupClaims` carries the point-variable
   selection, claimed evaluations, and commitment for one group.
-- `PolynomialGroupLayout`, `PrecommittedGroupParams`, and
+- `PolynomialGroupLayout`, `PrecommittedGroupDescriptor`, and
   `AkitaScheduleLookupKey` exist in `akita-types`.
 - `CommitmentConfig::runtime_schedule` resolves the unified
   `AkitaScheduleLookupKey`. A scalar key is represented as
@@ -196,7 +196,7 @@ Implemented now:
   groups.
 - `commit_final_group` is exposed through `akita-prover` and the public
   `CommitmentProver` / PCS scheme surface. It validates the final group,
-  reconstructs precommitted `PrecommittedGroupParams` values from
+  reconstructs precommitted `PrecommittedGroupDescriptor` values from
   `PolynomialGroupLayout`s under `ConservativeCommitmentConfig<Cfg>`,
   resolves the runtime schedule, reads its root commit params from
   `schedule.root_fold()?.params`,
@@ -416,10 +416,10 @@ planning:
 ```rust
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupParams>,
+    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
 }
 
-pub struct PrecommittedGroupParams {
+pub struct PrecommittedGroupDescriptor {
     pub group: PolynomialGroupLayout,
     pub num_live_ring_elements_per_claim: usize,
     pub num_positions_per_block: usize,
@@ -431,14 +431,14 @@ pub struct PrecommittedGroupParams {
 }
 ```
 
-`PrecommittedGroupParams` records the root layout that was used to create the
+`PrecommittedGroupDescriptor` records the root layout that was used to create the
 group commitment. The final planner must use the same `t_hat_g` shape for that
 group. In the `commit_final_group`/opening phase, every precommitted group must
 verify against the frozen `n_b`. The final group is likewise priced against its
 selected outer basis after the full multi-group root shape is known.
 
 The public final-commit API accepts precommitted `PolynomialGroupLayout`s and
-recomputes `PrecommittedGroupParams` internally under
+recomputes `PrecommittedGroupDescriptor` internally under
 `ConservativeCommitmentConfig<Cfg>`.
 
 The key means:
@@ -484,7 +484,7 @@ Generated schedule entries must inline the same shape as `AkitaScheduleLookupKey
 ```rust
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupParams],
+    pub precommitteds: &'static [PrecommittedGroupDescriptor],
     pub steps: &'static [GeneratedStep],
 }
 ```
@@ -573,7 +573,7 @@ For a group committed before the final multi-group proof is known:
    log_basis_inner = l_inner,g, log_basis_outer = l_outer,g, ...
    ```
 
-7. Store the frozen fields and `n_b,g` in `PrecommittedGroupParams`.
+7. Store the frozen fields and `n_b,g` in `PrecommittedGroupDescriptor`.
 
 The final multi-group root must not change the precommitted group's `m`, `r`,
 `n_a`, `n_b`, inner/outer bases, or derived B width. A later root-selected
@@ -594,7 +594,7 @@ commit_final_group(new_group, precommitted_layouts)
 
 - derives the final group key from `new_group` through the ordinary
   `batched_commit` input rules;
-- recomputes each precommitted group's conservative `PrecommittedGroupParams`
+- recomputes each precommitted group's conservative `PrecommittedGroupDescriptor`
   from its `PolynomialGroupLayout` under `ConservativeCommitmentConfig<Cfg>`;
 - builds the full `AkitaScheduleLookupKey`;
 - resolves the multi-group final-root commit params through
@@ -903,10 +903,10 @@ for each group:
 `PlanSection.effective_schedule_digest` binds
 `schedule.append_descriptor_bytes(...)`. When a multi-group schedule is materialized,
 the root `LevelParams` descriptor includes `precommitted_groups`; each
-`GroupRootParams` descriptor includes its frozen `PrecommittedGroupParams`, A key,
+`GroupRootParams` descriptor includes its frozen `PrecommittedGroupDescriptor`, A key,
 B key, block geometry, and digit counts.
 
-`PrecommittedGroupParams` descriptor bytes currently encode:
+`PrecommittedGroupDescriptor` descriptor bytes currently encode:
 
 ```text
 group.num_vars
@@ -949,7 +949,7 @@ existing descriptor already has the two bindings needed for this shape:
   selections.
 - `PlanSection.effective_schedule_digest` binds the materialized schedule. For a
   multi-group root, the schedule descriptor includes the root `LevelParams`, its
-  `precommitted_groups`, each `PrecommittedGroupParams`, conservative B ranks, A/B
+  `precommitted_groups`, each `PrecommittedGroupDescriptor`, conservative B ranks, A/B
   keys, block geometry, and digit counts.
 
 Setup seed and policy fields, including the configured basis range, remain bound
@@ -971,7 +971,7 @@ usize[] -> usize length prefix, then each element in order
 digest  -> 32 raw bytes (Blake2b-256 output)
 ```
 
-`PrecommittedGroupParams` encodes in this fixed order:
+`PrecommittedGroupDescriptor` encodes in this fixed order:
 
 ```text
 group.num_vars
@@ -989,7 +989,7 @@ materialized root `LevelParams`:
 ```text
 precommitteds.len()
 for g in 0..precommitteds.len():
-    PrecommittedGroupParams(precommitteds[g])
+    PrecommittedGroupDescriptor(precommitteds[g])
 ```
 
 The multi-group opening-batch digest in `CallSection` remains separate and uses the
@@ -1020,7 +1020,7 @@ rejection cases:
 
 ```text
 schedule.precommitted_groups.len() + 1 != opening_batch.G -> AkitaError::InvalidProof
-any PrecommittedGroupParams field overflow or zero where forbidden -> AkitaError::InvalidProof
+any PrecommittedGroupDescriptor field overflow or zero where forbidden -> AkitaError::InvalidProof
 unknown descriptor version                           -> SerializationError
 group vector order differs from commitment vector order -> AkitaError::InvalidProof
 effective_schedule_digest mismatch after recompute      -> AkitaError::InvalidProof
@@ -1029,7 +1029,7 @@ scalar [4] opening-batch digest presented as multi-group [1,3] -> AkitaError::In
 
 ### Phase 2 Verifier Boundary
 
-`PrecommittedGroupParams` values are not a separate prover-supplied side channel in
+`PrecommittedGroupDescriptor` values are not a separate prover-supplied side channel in
 the Phase 2 multi-group opening phase. They are derived from the public
 `OpeningClaimsLayout`, setup, and config policy, then bound indirectly through
 the effective schedule digest.
@@ -1114,9 +1114,9 @@ At conservative precommit time:
 - the group must be one-hot;
 - the group must be nonempty;
 - `log_basis` must be `min_basis(Cfg)`;
-- the `PrecommittedGroupParams` must be derived by the proof-optimized planner
+- the `PrecommittedGroupDescriptor` must be derived by the proof-optimized planner
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
-- the `PrecommittedGroupParams` must determine the same `t_hat_g` shape used by
+- the `PrecommittedGroupDescriptor` must determine the same `t_hat_g` shape used by
   the commit witness;
 - frozen `n_b` must pass `AjtaiKeyParams::try_new` for
   `(derived_B_width_g, norm_B(l_outer,g))`;
@@ -1142,7 +1142,7 @@ At current `commit_final_group` time:
   `ConservativeCommitmentConfig<Cfg>`;
 - the full `AkitaScheduleLookupKey` must be derivable from those recomputed
   layouts plus the final group;
-- each precommitted group must keep its `PrecommittedGroupParams` `m`, `r`,
+- each precommitted group must keep its `PrecommittedGroupDescriptor` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
   multi-group root relation;
@@ -1169,7 +1169,7 @@ At current verify time:
   opening batch, setup, and config policy.
 - The verifier must recompute multi-group root params from the key.
 - The verifier must reject if a precommitted group's final root layout differs
-  from its `PrecommittedGroupParams`.
+  from its `PrecommittedGroupDescriptor`.
 - The verifier must reject if a precommitted group's B row count differs from
   its frozen conservative `n_b'`.
 - The verifier must recompute root `w_len` from the multi-group witness layout.
@@ -1229,7 +1229,7 @@ paths still work, and unsupported multi-group proof paths fail explicitly.
   - `num_w_vectors_root = sum_g W_g`;
   - `num_z_vectors_root = G`;
   - `num_z_segments = G`.
-- Implemented `PrecommittedGroupParams`.
+- Implemented `PrecommittedGroupDescriptor`.
 - Implemented conservative B rank selection for standalone groups through
   `ConservativeCommitmentConfig<Cfg>`.
 - Added generated multi-group table entries for selected one-hot families.
@@ -1291,7 +1291,7 @@ kernels land if B-row time is a bottleneck.
 - `[1, 3]` and `[4]` produce different opening-batch digests.
 - Generated group-batch schedule lookup compares precommitted group params,
   frozen group params, and `n_b`.
-- Descriptor bytes change when a precommitted group's `PrecommittedGroupParams`
+- Descriptor bytes change when a precommitted group's `PrecommittedGroupDescriptor`
   `m`, `r`, semantic bases, `n_a`, or `n_b` changes.
 - Scheduler multi-group root sizing accounts for one `z_hat_g` segment per group.
 - Scheduler multi-group D width reports `total_d_w_rings = sum_g w_hat_rings_g`.
@@ -1310,7 +1310,7 @@ kernels land if B-row time is a bottleneck.
 - `commit_final_group(group_last, precommitted_layouts)` commits the final group
   with multi-group params.
 - `commit_final_group` rejects if a precommitted key cannot recompute to a valid
-  conservative `PrecommittedGroupParams`.
+  conservative `PrecommittedGroupDescriptor`.
 - Phase 2: multi-group opening finalization uses the existing opening-batch and
   effective-schedule descriptor plumbing; it does not add a handle side channel
   or a params digest.
@@ -1337,7 +1337,7 @@ kernels land if B-row time is a bottleneck.
 - Phase 2: tampering group `1` opening rejects.
 - Phase 2: tampering group `1` hint or `t_hat` segment rejects.
 - Phase 2: truncating one group's commitment rows rejects.
-- Phase 2: changing a precommitted group's `PrecommittedGroupParams` rejects.
+- Phase 2: changing a precommitted group's `PrecommittedGroupDescriptor` rejects.
 - Phase 2: changing a precommitted group's conservative `n_b'` rejects.
 - Phase 2: descriptor `[1, 3]` with proof `[4]` rejects.
 

@@ -75,7 +75,7 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         return;
     }
     let q = (-F::one()).to_canonical_u128() + 1;
-    let decompose_params = BalancedDecomposePow2I8Params::new(num_digits, log_basis, q);
+    let decompose_params = BalancedDecomposePow2Params::new(num_digits, log_basis, q);
 
     #[cfg(feature = "parallel")]
     out.par_chunks_mut(num_digits)

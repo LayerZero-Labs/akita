@@ -1,17 +1,17 @@
 //! Akita-specific sumcheck stage implementations.
 //!
 //! Generic sumcheck proof types, traits, and drivers live in `akita-sumcheck`.
-//! This module keeps the Akita stage-1/stage-2 instances and the prover-internal
-//! two-round-prefix optimization beside the protocol code they depend on.
+//! This module keeps the digit-range, relation/range-image, and setup instances
+//! beside the prover-internal prefix optimizations they depend on.
 
-pub mod akita_stage2;
 pub mod akita_stage3;
 pub mod digit_range;
+pub mod relation_range_image;
 pub mod two_round_prefix;
 
-pub use akita_stage2::AkitaStage2Prover;
 pub use akita_stage3::AkitaStage3Prover;
 pub use digit_range::DigitRangeProver;
+pub use relation_range_image::RelationRangeImageProver;
 
 // --- Shared helpers ------------------------------------------------------
 

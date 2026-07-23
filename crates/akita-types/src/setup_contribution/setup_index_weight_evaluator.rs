@@ -3,8 +3,8 @@ use akita_algebra::ring::scalar_powers;
 use akita_field::{AkitaError, FieldCore, MulBase};
 
 use crate::{
-    LevelParams, OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupProjectionGeometry, WitnessLayout,
+    CommittedGroupParams, OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupProjectionGeometry, WitnessLayout,
 };
 
 use super::get_d_col_range;
@@ -19,9 +19,8 @@ use super::get_d_col_range;
 pub struct SetupIndexWeightEvaluator<E> {
     tau1: Vec<E>,
     x_challenges: Vec<E>,
-    level_params: LevelParams,
+    level_params: CommittedGroupParams,
     opening_batch: OpeningClaimsLayout,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     witness_layout: WitnessLayout,
     opening_source_len: usize,
     groups: Vec<SetupContributionGroupInputs>,
@@ -48,9 +47,8 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     #[allow(clippy::too_many_arguments)]
     pub fn new<F>(
         plan: &SetupContributionPlan<E>,
-        level_params: &LevelParams,
+        level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
-        relation_matrix_row_layout: RelationMatrixRowLayout,
         witness_layout: &WitnessLayout,
         opening_source_len: usize,
         groups: &[SetupContributionGroupInputs],
@@ -70,10 +68,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         }
         let geometry = plan.projection_geometry();
         geometry.ensure_evaluation_budget()?;
-        let rows = level_params.relation_matrix_row_count_for(
-            opening_batch.num_groups(),
-            relation_matrix_row_layout,
-        )?;
+        let rows = level_params.relation_matrix_row_count(opening_batch.num_groups())?;
         validate_tau_domain(tau1, rows)?;
 
         let d_rows = plan.d_rows;
@@ -103,7 +98,6 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             x_challenges: x_challenges.to_vec(),
             level_params: level_params.clone(),
             opening_batch: opening_batch.clone(),
-            relation_matrix_row_layout,
             witness_layout: witness_layout.clone(),
             opening_source_len,
             groups: groups.to_vec(),
@@ -244,11 +238,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         let num_live_blocks = group.num_live_blocks(&self.level_params, &self.opening_batch)?;
         let depth_commit = group.depth_commit(&self.level_params, &self.opening_batch)?;
         let n_a = group.n_a(&self.level_params, &self.opening_batch)?;
-        let n_b = group.n_b(
-            &self.level_params,
-            &self.opening_batch,
-            self.relation_matrix_row_layout,
-        )?;
+        let n_b = group.n_b(&self.level_params, &self.opening_batch)?;
         if n_b == 0 {
             return Ok(E::zero());
         }

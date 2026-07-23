@@ -313,7 +313,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             self.fold_grind_nonce,
             compress,
         )?;
-        self.final_witness
+        self.terminal_response
             .serialize_with_mode(&mut writer, compress)
     }
 
@@ -321,7 +321,7 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         terminal_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             compress,
-        ) + self.final_witness.serialized_size(compress)
+        ) + self.terminal_response.serialized_size(compress)
     }
 }
 
@@ -331,7 +331,7 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for TerminalLevelProof<F,
             reduction.partials.check()?;
             reduction.sumcheck.check()?;
         }
-        self.final_witness.check()
+        self.terminal_response.check()
     }
 }
 
@@ -355,16 +355,16 @@ impl<
                 validate,
                 ctx.extension_opening_reduction.as_ref(),
             )?;
-        let final_witness = SegmentTypedWitness::deserialize_with_mode(
+        let terminal_response = TerminalResponse::deserialize_with_mode(
             &mut reader,
             compress,
             validate,
-            &ctx.final_witness,
+            &ctx.terminal_response,
         )?;
         let out = Self {
             extension_opening_reduction,
             fold_grind_nonce,
-            final_witness,
+            terminal_response,
         };
         if matches!(validate, Validate::Yes) {
             out.check()?;

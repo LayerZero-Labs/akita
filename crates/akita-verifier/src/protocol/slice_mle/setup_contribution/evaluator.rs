@@ -3,12 +3,8 @@ use akita_types::AkitaExpandedSetup;
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 
-// Naive direct-evaluation oracle for the setup contribution, used only to
-// cross-check the optimized `RelationMatrixEvaluator::setup_contribution_plan`
-// path. It builds the plan and evaluates it directly, validating the per-role
-// alpha-power lengths first.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn evaluate_setup_contribution_direct<F, E, const D: usize>(
+pub(crate) fn evaluate_setup_contribution_direct<F, E, const D: usize>(
     relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
     full_vec_randomness: &[E],
     alpha_pows_a: &[E],

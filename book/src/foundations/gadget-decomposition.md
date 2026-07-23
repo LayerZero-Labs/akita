@@ -24,6 +24,13 @@ Why balanced digits halve the digit \\( \ell_\infty \\) bound (and the worst-cas
 \\( \ell_2 \\) mass), the asymmetric range \\( [-M_k, T_k] \\), and the centering
 threshold that avoids an extra digit.
 
+The storage width follows the mathematical digit interval. For `L <= 8`,
+`[-2^(L-1), 2^(L-1)-1]` uses i8. For `9 <= L <= 16`, it uses signed i16;
+in particular base 10 maps to `[-512, 511]` and base 11 maps to
+`[-1024, 1023]`. The first basis requiring i16 is `L=9`. This is independent of whether later protocol decompositions
+are range checked: the inner `f -> s` source basis is an arithmetic choice, and
+its NTT capability is validated from its actual signed bound.
+
 **Sources to fold in**
 
 - Paper §2.2 (the \\( T_k, M_k \\) range; centering threshold \\( T \\)).

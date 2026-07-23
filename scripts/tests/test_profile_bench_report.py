@@ -75,7 +75,8 @@ class ProfileBenchReportTests(unittest.TestCase):
         ingest_tail_summary_fields(
             summary,
             {
-                "final_w_encoding": "segment_typed",
+                "final_w_encoding": "terminal_response",
+                "tail_log_basis_inner": "6",
                 "z_witness_linf_cap": "4096",
                 "z_rice_low_bits_wire": "10",
                 "z_rice_low_bits_cap": "12",
@@ -85,6 +86,66 @@ class ProfileBenchReportTests(unittest.TestCase):
         self.assertEqual(summary["z_rice_low_bits_wire"], 10)
         self.assertEqual(summary["z_rice_low_bits_cap"], 12)
         self.assertAlmostEqual(summary["z_bits_per_coord_golomb"], 12.50)
+        self.assertEqual(summary["terminal_log_basis"], 6)
+
+    def test_terminal_response_encoding_renders_component_breakdown(self) -> None:
+        from scripts.profile_bench_report import render_tail_encoding
+
+        summary = {
+            "tail_encoding": "terminal_response",
+            "tail_policy": "non_zk_default",
+            "tail_num_elems": 96,
+            "tail_log_basis_inner": 6,
+            "tail_z_prefix_bytes": 8,
+            "tail_z_golomb_bytes": 12,
+            "tail_z_bytes": 20,
+            "tail_z_field_elems": 32,
+            "tail_z_ring_elems": 1,
+            "tail_e_bytes": 64,
+            "tail_e_field_elems": 32,
+            "tail_e_ring_elems": 1,
+            "tail_t_bytes": 64,
+            "tail_t_field_elems": 32,
+            "tail_t_ring_elems": 1,
+        }
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_tail_encoding(summary)
+        report = output.getvalue()
+
+        self.assertIn("quotient-free terminal response", report)
+        self.assertIn("inner gadget basis width `6` bits", report)
+        self.assertIn("Folded-witness (`z`) segment", report)
+        self.assertIn("Opening-digit (`e`) segment", report)
+        self.assertIn("Inner-commitment (`t`) segment", report)
+
+    def test_compact_report_renders_terminal_response_component_table(self) -> None:
+        from scripts.profile_bench_report import render_terminal_response_components
+
+        case = {
+            "mode": "onehot_fp128_d64",
+            "num_vars": 32,
+            "num_polys": 1,
+            "exit_code": 0,
+            "tail_encoding": "terminal_response",
+            "tail_z_bytes": 20,
+            "tail_e_bytes": 64,
+            "tail_t_bytes": 96,
+            "tail_bytes": 180,
+        }
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            render_terminal_response_components([case])
+        report = output.getvalue()
+
+        self.assertIn("Terminal response component breakdown", report)
+        self.assertIn("20 bytes", report)
+        self.assertIn("64 bytes", report)
+        self.assertIn("96 bytes", report)
+        self.assertIn("180 bytes", report)
+        self.assertIn("sum exactly", report)
 
     def test_z_fold_encoding_stats_prefers_wire_low_bits(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -142,6 +203,29 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "level_bytes": 4096,
             },
         )
+
+    def test_planned_fold_level_parses_typed_schedule_field_names(self) -> None:
+        from scripts.profile_bench_report import extract_summary
+
+        # The typed-schedule cutover renamed `current_w_len`/`next_w_len` to
+        # `input_witness_len`/`output_witness_len` and dropped `level_bytes`
+        # from the runtime log.
+        log = (
+            'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
+            'n_a=2 n_b=3 n_d=4 '
+            'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
+            'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
+            'num_positions_per_block=128 num_digits_inner=4 num_digits_outer=5 num_digits_open=5 '
+            'delta_fold=6 input_witness_len=1024 output_witness_len=2048\n'
+        )
+
+        summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
+        level = summary["planned_levels"][0]
+
+        self.assertEqual(level["current_w_len"], 1024)
+        self.assertEqual(level["next_w_len"], 2048)
+        self.assertEqual(level["num_live_ring_elements_per_claim"], 768)
+        self.assertNotIn("level_bytes", level)
 
     def test_planned_fold_level_normalizes_merge_base_geometry(self) -> None:
         from scripts.profile_bench_report import extract_summary
@@ -489,6 +573,43 @@ class ProfileBenchReportTests(unittest.TestCase):
             self.assertEqual(case_status(pr_summary["cases"][0]), "fail")
             self.assertEqual(case_status(base_summary["cases"][0]), "fail")
             self.assertIn("paired binary failed", pr_summary["cases"][0]["error"])
+
+    def test_validate_case_consistency_tolerates_terminal_proof_level(self) -> None:
+        from scripts.profile_bench_report import (
+            PROOF_LEVEL_BYTE_FIELDS,
+            validate_case_consistency,
+        )
+
+        def level(index: int) -> dict:
+            return {
+                "level": index,
+                "d_a": 64,
+                "d": 64,
+                "total_bytes": 0,
+                **{field: 0 for field in PROOF_LEVEL_BYTE_FIELDS},
+            }
+
+        planned = [level(i) for i in range(5)]
+        # The proof carries the planned non-terminal folds plus one trailing
+        # terminal level the planner reports separately; that is allowed.
+        proof_with_terminal = [level(i) for i in range(6)]
+        validate_case_consistency(
+            {"planned_levels": planned, "proof_levels": proof_with_terminal}
+        )
+        # Equal counts (degenerate single/terminal-only proofs) are also allowed.
+        validate_case_consistency(
+            {"planned_levels": planned, "proof_levels": [level(i) for i in range(5)]}
+        )
+        # Two extra proof levels is a genuine mismatch and must fail closed.
+        with self.assertRaises(ValueError):
+            validate_case_consistency(
+                {"planned_levels": planned, "proof_levels": [level(i) for i in range(7)]}
+            )
+        # Fewer proof levels than planned must also fail closed.
+        with self.assertRaises(ValueError):
+            validate_case_consistency(
+                {"planned_levels": planned, "proof_levels": [level(i) for i in range(4)]}
+            )
 
 
 if __name__ == "__main__":

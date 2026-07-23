@@ -18,6 +18,10 @@ pub struct D64Full;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
+/// Binary onehot `D=64`, `K=16` preset with planner-derived schedules.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D64OneHotK16;
+
 /// Binary onehot `D=128` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
@@ -96,6 +100,16 @@ impl_proof_optimized_preset!(
         fp128_d64_onehot_table
     )
 );
+impl_proof_optimized_preset!(
+    D64OneHotK16,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    64,
+    128,
+    1,
+    16
+);
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,
     D64OneHot,
@@ -171,7 +185,9 @@ pub struct Fp128ScheduleSelection {
     /// Selected concrete preset.
     pub preset: Fp128Preset,
     /// Runtime schedule selected for the supplied lookup key.
-    pub schedule: Schedule,
+    pub schedule: FoldSchedule,
+    /// Non-protocol planner estimate used to compare presets.
+    pub estimate: akita_types::FoldScheduleEstimate,
 }
 
 fn candidate<Cfg: CommitmentConfig>(
@@ -180,8 +196,17 @@ fn candidate<Cfg: CommitmentConfig>(
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
     // Planner failures, including unsupported schedules that cannot profitably
     // fold twice, propagate rather than being swallowed into a missing candidate.
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))?;
-    Ok(Some(Fp128ScheduleSelection { preset, schedule }))
+    let planned = akita_planner::find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(key),
+        &crate::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    Ok(Some(Fp128ScheduleSelection {
+        preset,
+        schedule: planned.schedule,
+        estimate: planned.estimate,
+    }))
 }
 
 fn best_by_exact_bytes<I>(candidates: I) -> Option<Fp128ScheduleSelection>
@@ -190,7 +215,10 @@ where
 {
     candidates.into_iter().flatten().min_by_key(|selection| {
         (
-            selection.schedule.total_bytes,
+            selection
+                .estimate
+                .estimated_direct_proof_payload_bytes()
+                .unwrap_or(usize::MAX),
             selection.preset.ring_dimension(),
         )
     })

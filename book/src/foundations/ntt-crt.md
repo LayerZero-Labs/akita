@@ -40,7 +40,7 @@ DIT-inverse pairing that avoids bit-reversal.
 **Sources to fold in**
 
 - Paper App B.2.1-B.2.2 (`sec:akita-crt-profiles`, `tab:akita-crt-profiles`).
-- `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ring/partial_split_ntt.rs`, `ntt/`.
+- `crates/akita-algebra/src/ring/crt_ntt_repr.rs`, `ntt/`.
 - `specs/crt-ntt-prime-profiles.md`.
 
 ## Accumulation capacity and chunking
@@ -48,6 +48,32 @@ DIT-inverse pairing that avoids bit-reversal.
 The safe accumulation width \\( n_{\mathrm{safe}} \\) before a pointwise
 accumulator can overflow the CRT range, and capacity-aware chunking with
 intermediate Garner reconstruction.
+
+For a matrix width `W`, ring degree `D`, centered matrix coefficients bounded
+by `floor(q/2)`, and signed RHS coefficients bounded by `B`, centered CRT
+reconstruction is unique exactly under the implemented strict bound
+
+```text
+2 * W * D * floor(q/2) * B < product(CRT primes).
+```
+
+Balanced base `2^L` digits have `B = 2^(L-1)`. Bases through 8 use i8. The
+large-basis arithmetic path uses i16 for bases 9 through 16 and appends a 12289
+residue only when the existing field profile fails the bound. The extra prime
+supports every protocol ring degree and is a derived, non-serialized cache
+artifact. Prover i8 kernels continue to use only their existing cache. The
+terminal verifier uses one signed-i16 relation kernel for every schedule and
+therefore selects the tail independently from its terminal width; current q32
+terminal schedules do require it.
+
+`BothTransforms` prepares the base negacyclic and cyclic forms used by prover
+commitment and quotient kernels. `ExactNegacyclic { width, log_basis }`
+prepares only the minimum exact negacyclic form: base residues alone when they
+fit, otherwise the base plus the 12289 tail. Verifier warming coalesces all
+terminal groups into one strongest prefix per ring degree. The base prefix
+covers every group, while the tail prefix covers only groups whose exact bound
+requires it, so another group cannot duplicate or unnecessarily extend the
+base or tail transforms.
 
 **Sources to fold in**
 

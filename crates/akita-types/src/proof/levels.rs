@@ -1,7 +1,7 @@
 use super::shapes::level_proof_shape;
 use super::shapes::sumcheck_shape;
 use super::*;
-use crate::{LevelParams, SetupContributionMode};
+use crate::{CommittedGroupParams, SetupContributionMode};
 
 /// One stage in the stage-1 range-check tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub range_image_evaluation: F,
 }
 
-/// Schedule-shaped outgoing witness binding for an intermediate fold.
+/// FoldSchedule-shaped outgoing witness binding for an intermediate fold.
 ///
 /// The proof stream carries no variant tag. Headerless decoding obtains the
 /// variant from [`NextWitnessBindingShape`]: ordinary recursive edges carry an
@@ -54,7 +54,7 @@ impl<F: FieldCore> NextWitnessBinding<F> {
 pub struct AkitaStage2Proof<F: FieldCore, E: FieldCore> {
     /// Stage-2 fused sumcheck proof.
     pub sumcheck_proof: SumcheckProof<E>,
-    /// Schedule-shaped binding for the next witness.
+    /// FoldSchedule-shaped binding for the next witness.
     pub next_witness_binding: NextWitnessBinding<F>,
     /// Claimed evaluation of the next witness `w` at the stage-2 challenge point.
     pub next_w_eval: E,
@@ -202,8 +202,8 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
     pub fn stage3_for_mode<'a>(
         &'a self,
         mode: SetupContributionMode,
-        next_fold_level_params: Option<&'a LevelParams>,
-    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>, AkitaError> {
+        next_fold_level_params: Option<&'a CommittedGroupParams>,
+    ) -> Result<Option<(&'a SetupSumcheckProof<E>, &'a CommittedGroupParams)>, AkitaError> {
         match (mode, self.stage3_sumcheck_proof.as_ref()) {
             (SetupContributionMode::Direct, None) => Ok(None),
             (SetupContributionMode::Direct, Some(_)) => Err(AkitaError::InvalidSetup(
@@ -258,15 +258,15 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
 
 /// Terminal fold-level proof.
 ///
-/// Ships `final_witness` in cleartext. Its raw `e` segment is bound before the
+/// Ships the terminal response in cleartext. Its raw `e` segment is bound before the
 /// terminal sparse challenge. The predecessor first binds canonical `t` as its
 /// outgoing state; terminal replay rebinds the same `t` as current state before
 /// absorbing `e`, sampling challenges, and absorbing the `z` response.
 ///
 /// Drops the redundant proof components at the terminal: `stage1`
-/// (segment-typed tail encodes digit range), the stage-2 outgoing binding
-/// (replaced by `final_witness`), and `next_w_eval` (verifier computes
-/// directly from `final_witness`). All terminal schedules drop commitment and
+/// (the terminal response codec enforces its range), the stage-2 outgoing binding
+/// (replaced by the terminal response), and `next_w_eval` (verifier computes
+/// directly from the response). All terminal schedules drop commitment and
 /// D-row blocks, so neither an outer `u` nor `v` is serialized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
@@ -274,35 +274,35 @@ pub struct TerminalLevelProof<F: FieldCore, E: FieldCore> {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
     /// Accepted Fiat-Shamir grind nonce for fold-l∞ rejection (0 under deterministic policy).
     pub fold_grind_nonce: u32,
-    /// Quotient-free terminal witness checked directly by the verifier.
-    pub final_witness: SegmentTypedWitness<F>,
+    /// Quotient-free terminal response checked directly by the verifier.
+    pub terminal_response: TerminalResponse<F>,
 }
 
 impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
-    /// Construct from typed ring elements and a terminal cleartext witness.
+    /// Construct from typed ring elements and a clear terminal response.
     ///
     /// Pass `extension_opening_reduction = None` for opening shapes that do
     /// not use extension-opening reduction.
     pub fn new_with_extension_opening_reduction(
         extension_opening_reduction: Option<ExtensionOpeningReductionProof<E>>,
-        final_witness: SegmentTypedWitness<F>,
+        terminal_response: TerminalResponse<F>,
         fold_grind_nonce: u32,
     ) -> Self {
         Self {
             extension_opening_reduction,
             fold_grind_nonce,
-            final_witness,
+            terminal_response,
         }
     }
 
-    /// Borrow the terminal cleartext witness.
-    pub fn final_witness(&self) -> &SegmentTypedWitness<F> {
-        &self.final_witness
+    /// Borrow the clear terminal response.
+    pub fn terminal_response(&self) -> &TerminalResponse<F> {
+        &self.terminal_response
     }
 
-    /// Mutably borrow the terminal cleartext witness.
-    pub fn final_witness_mut(&mut self) -> &mut SegmentTypedWitness<F> {
-        &mut self.final_witness
+    /// Mutably borrow the clear terminal response.
+    pub fn terminal_response_mut(&mut self) -> &mut TerminalResponse<F> {
+        &mut self.terminal_response
     }
 
     /// Derive the [`TerminalLevelProofShape`] for this terminal-level proof.
@@ -312,7 +312,7 @@ impl<F: FieldCore, E: FieldCore> TerminalLevelProof<F, E> {
                 .extension_opening_reduction
                 .as_ref()
                 .map(ExtensionOpeningReductionProof::shape),
-            final_witness: self.final_witness().shape(),
+            terminal_response: self.terminal_response().shape(),
         }
     }
 }
@@ -324,14 +324,14 @@ pub struct AkitaBatchedProof<F: FieldCore, E: FieldCore> {
     pub root: FoldLevelProof<F, E>,
     /// Non-terminal recursive folds between the root and terminal fold.
     pub recursive_folds: Vec<FoldLevelProof<F, E>>,
-    /// Required terminal fold carrying the final cleartext witness.
+    /// Required terminal fold carrying the clear terminal response.
     pub terminal: TerminalLevelProof<F, E>,
 }
 
 impl<F: FieldCore, E: FieldCore> AkitaBatchedProof<F, E> {
-    /// Access the terminal cleartext witness.
-    pub fn final_witness(&self) -> &SegmentTypedWitness<F> {
-        self.terminal.final_witness()
+    /// Access the clear terminal response.
+    pub fn terminal_response(&self) -> &TerminalResponse<F> {
+        self.terminal.terminal_response()
     }
 
     /// Iterate over every non-terminal fold in execution order.

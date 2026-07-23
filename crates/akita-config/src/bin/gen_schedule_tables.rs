@@ -81,7 +81,7 @@ fn main() -> Result<(), String> {
             .collect();
         refresh_generated_wiring(&sorted_unique_specs(&wiring_specs), &mod_path)?;
         println!("updated {}", mod_path.display());
-        run_regen_fmt()?;
     }
+    run_regen_fmt()?;
     Ok(())
 }

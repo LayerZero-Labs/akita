@@ -4,8 +4,7 @@ use akita_algebra::ring::scalar_powers;
 use akita_challenges::{SparseChallenge, SparseChallengeConfig, TensorChallenges};
 use akita_field::Fp32;
 use akita_types::{
-    OpeningClaimsLayout, RelationMatrixRowLayout, SetupContributionGroupInputs,
-    SetupContributionPlan, SisModulusProfileId,
+    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
 
 type F = Fp32<251>;
@@ -23,7 +22,7 @@ fn ring_switch_prepare_rejects_invalid_log_basis() {
 
 #[test]
 fn ring_switch_prepare_rejects_zero_num_live_blocks() {
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -33,7 +32,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         fold_challenge_config(),
     );
     let opening_batch = OpeningClaimsLayout::new(0, 1).expect("opening batch");
-    let valid_lp = LevelParams::params_only(
+    let valid_lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -55,7 +54,6 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
-        RelationMatrixRowLayout::WithDBlock,
         vec![F::one(); 4].into(),
         &witness_layout,
         3,
@@ -72,7 +70,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
 
 #[test]
 fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
-    let lp = LevelParams::params_only(
+    let lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         D,
         2,
@@ -81,7 +79,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         1,
         fold_challenge_config(),
     )
-    .with_decomp(4, 25, 1, 3, 3)
+    .with_decomp(4, 25, 1, 1, 3)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 2).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
@@ -125,10 +123,10 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         num_claims: 2,
         num_live_blocks: 7,
         depth_witness: 1,
-        depth_commit: 3,
         depth_open: 3,
+        depth_commit: 1,
         depth_fold: 1,
-        log_basis_inner: 1,
+        log_basis_inner: 2,
         log_basis_outer: 2,
         log_basis_open: 2,
         n_a: 2,
@@ -152,7 +150,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         consistency_weight,
         &a_row_weights,
         &gadget,
-        &gadget,
+        &gadget[..group.depth_commit],
     )
     .unwrap();
 
@@ -178,6 +176,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
                         * consistency_weight
                         * challenge
                         * digit_weight;
+                }
+                for (digit, &digit_weight) in gadget[..group.depth_commit].iter().enumerate() {
                     for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
                         let t_index = unit
                             .t_index(

@@ -38,9 +38,8 @@ pub use module::{Module, VectorModule};
 pub use ntt::tables;
 pub use ntt::{GarnerData, LimbQ, MontCoeff, NttPrime, PrimeWidth, RADIX_BITS};
 pub use ring::{
-    CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet, CyclotomicCrtNtt, CyclotomicRing,
-    DigitMontLut, PackedPartialSplitEval16, PackedPartialSplitNtt16, PartialSplitEval16,
-    PartialSplitNtt16,
+    mat_vec_i16_with_tail, CenteredMontLut, CrtNttConvertibleField, CrtNttParamSet,
+    CyclotomicCrtNtt, CyclotomicRing, DigitMontLut, I16TailParams,
 };
 pub use split_eq::GruenSplitEq;
 pub use uni_poly::{CompressedUniPoly, UniPoly};

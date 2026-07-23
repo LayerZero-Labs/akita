@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{CommitmentRingDims, LevelParams, RelationMatrixRowLayout, RingVec};
+use akita_types::{CommitmentRingDims, CommittedGroupParams, RingVec};
 
 #[inline]
 fn accumulate_small_signed<F: FieldCore + FromPrimitiveInt>(dst: &mut F, value: F, coeff: i64) {
@@ -296,7 +296,7 @@ where
 #[tracing::instrument(skip_all, name = "compute_multi_group_relation_quotient")]
 pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     ring_switch_ctx: &OperationCtx<'_, F, B>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &akita_types::OpeningClaimsLayout,
     groups: &[PreparedRingSwitchGroup<'_, F, D>],
     group_ring_multiplier_points: &[&RingMultiplierOpeningPoint<F>],
@@ -304,7 +304,6 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     e_hat_concat: &DigitBlocks,
     y: &RingVec<F>,
     role_dims: CommitmentRingDims,
-    relation_matrix_row_layout: RelationMatrixRowLayout,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -321,14 +320,12 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let n_d_active = lp.n_d_active_for(relation_matrix_row_layout);
-    let num_rows =
-        lp.relation_matrix_row_count_for(opening_batch.num_groups(), relation_matrix_row_layout)?;
+    let n_d_active = lp.open_commit_matrix.output_rank();
+    let num_rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     let d_start = num_rows
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
-    let rhs_layout =
-        akita_types::relation_rhs_layout_for(lp, opening_batch, relation_matrix_row_layout)?;
+    let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
     let expected_y_len = akita_types::relation_rhs_coeff_len(role_dims, &rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
@@ -490,7 +487,7 @@ where
             slot @ None => *slot = Some(RelationQuotientOutput::row_from_ring(quotient)),
         }
 
-        let a_range = lp.a_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let a_range = lp.a_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a {
             return Err(AkitaError::InvalidProof);
         }
@@ -517,8 +514,7 @@ where
             )
             .ok_or(AkitaError::InvalidProof)?;
 
-        let b_range =
-            lp.commitment_row_range(opening_batch, group_index, relation_matrix_row_layout)?;
+        let b_range = lp.commitment_row_range(opening_batch, group_index)?;
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }

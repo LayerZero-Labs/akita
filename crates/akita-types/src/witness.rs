@@ -9,7 +9,7 @@ use std::ops::Range;
 
 use akita_field::AkitaError;
 
-use crate::{LevelParams, OpeningClaimsLayout};
+use crate::{CommittedGroupParams, OpeningClaimsLayout};
 
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -214,7 +214,7 @@ impl WitnessLayout {
     /// Resolve exact group-major, chunk-minor witness ranges from the canonical
     /// level parameters and opening claims layout.
     pub fn new(
-        lp: &LevelParams,
+        lp: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
         num_chunks: usize,
         relation_rows: usize,
@@ -684,7 +684,7 @@ impl ChunkedWitnessCfg {
 
     /// Append canonical Fiat-Shamir descriptor bytes.
     ///
-    /// Only invoked by [`crate::LevelParams`] descriptor binding when the level
+    /// Only invoked by [`crate::CommittedGroupParams`] descriptor binding when the level
     /// is chunked, so single-chunk levels stay byte-for-byte identical to the
     /// historical layout (the flag-off no-op invariant).
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
@@ -729,8 +729,10 @@ mod tests {
         }
     }
 
-    fn test_layout(num_chunks: usize) -> (LevelParams, OpeningClaimsLayout, WitnessLayout) {
-        let lp = LevelParams::params_only(
+    fn test_layout(
+        num_chunks: usize,
+    ) -> (CommittedGroupParams, OpeningClaimsLayout, WitnessLayout) {
+        let lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             32,
             2,

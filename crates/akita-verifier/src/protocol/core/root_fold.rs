@@ -1,23 +1,5 @@
-use akita_field::{
-    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
-    HalvingField, MulBaseUnreduced, RandomSampling,
-};
-use akita_serialization::AkitaSerialize;
-use akita_transcript::labels::{ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS};
-use akita_transcript::{append_ext_field, Transcript};
-use akita_types::{
-    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
-    ring_subfield_packed_extension_opening_point, root_trace_block_opening,
-    sample_public_row_coefficients, AkitaVerifierSetup, BasisMode, Commitment,
-    ExtensionOpeningReductionProof, FoldLevelProof, FpExtEncoding, LevelParams, OpeningClaims,
-    OpeningClaimsLayout, RelationMatrixRowLayout, RingVec, RingView, SetupSumcheckProof,
-};
-
-use super::{
-    prepare_group_opening_point, verify_fold, verify_fold_eor, FoldVerifyOutput,
-    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, RelationReplayInputs,
-    TracePreparation,
-};
+use super::*;
+use akita_types::{dispatch_for_field, Commitment, RingView};
 
 /// Verify the folded root proof payload.
 ///
@@ -38,8 +20,9 @@ pub(super) fn verify_root<F, E, T>(
     transcript: &mut T,
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     basis: BasisMode,
-    root_lp: &LevelParams,
-    next_fold_level_params: &LevelParams,
+    root_lp: &CommittedGroupParams,
+    next_fold_params: Option<&RecursiveFoldParams>,
+    next_witness_ring_dim: usize,
     next_t_state: Option<&[u8]>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -52,18 +35,22 @@ where
         + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
+    let setup_contribution_mode = next_fold_params
+        .map_or(SetupContributionMode::Direct, |params| {
+            params.predecessor_setup_contribution_mode()
+        });
+    let next_fold_level_params = next_fold_params.map(|params| &params.witness);
     let extension_opening_reduction = proof.extension_opening_reduction();
     let stage3_sumcheck_proof = proof
-        .stage3_for_mode(
-            root_lp.setup_contribution_mode,
-            Some(next_fold_level_params),
-        )?
+        .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
         .map(|(proof, _)| proof);
     let next_witness = match (proof.next_w_commitment(), next_t_state) {
         (Some(commitment), None) => PreparedNextWitness::Commitment {
             commitment,
-            ring_dim: next_fold_level_params.role_dims().d_b(),
+            ring_dim: next_fold_level_params
+                .ok_or(AkitaError::InvalidProof)?
+                .role_dims()
+                .d_b(),
         },
         (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
         _ => return Err(AkitaError::InvalidProof),
@@ -112,6 +99,7 @@ where
             extension_opening_reduction,
             stage3_sumcheck_proof,
             next_fold_level_params,
+            next_witness_ring_dim,
             basis,
             root_lp,
             next_witness,
@@ -129,10 +117,10 @@ where
         &openings,
         &opening_batch,
         shared_opening_point,
-        relation_matrix_row_layout,
         extension_opening_reduction,
         stage3_sumcheck_proof,
         next_fold_level_params,
+        next_witness_ring_dim,
         basis,
         root_lp,
         next_witness,
@@ -152,12 +140,12 @@ fn verify_root_inner<F, E, T>(
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     shared_opening_point: &[E],
-    relation_matrix_row_layout: RelationMatrixRowLayout,
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
-    next_fold_level_params: &LevelParams,
+    next_fold_level_params: Option<&CommittedGroupParams>,
+    next_witness_ring_dim: usize,
     basis: BasisMode,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -205,7 +193,6 @@ where
         false,
         transcript,
     )?;
-    let reduction_check = root_eor.reduction_challenges;
     let prepared_points = root_eor.prepared_points;
     let eor_trace_final = root_eor.final_relation;
     let prepared_point = if let Some(prepared) = prepared_without_eor.as_ref() {
@@ -218,42 +205,28 @@ where
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }
     }
-    let trace_block_opening: Vec<E> = if let Some(rho) = &reduction_check {
-        let protocol_point =
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                ring_subfield_packed_extension_opening_point::<F, E, D>(rho.len(), rho)
-            })?;
-        root_trace_block_opening::<E>(
-            &protocol_point,
-            root_lp.num_positions_per_block,
-            root_lp.num_live_blocks,
-            d_a.trailing_zeros() as usize,
-        )?
-    } else {
-        root_trace_block_opening::<E>(
-            shared_opening_point,
-            root_lp.num_positions_per_block,
-            root_lp.num_live_blocks,
-            d_a.trailing_zeros() as usize,
-        )?
-    };
     let ordinary_trace_eval_target =
         opening_batch.batched_eval_target(&row_coefficients, openings)?;
     let trace_eval_target = eor_trace_final
         .as_ref()
         .map(|(final_claim, _)| *final_claim)
         .unwrap_or(ordinary_trace_eval_target);
-    let trace_claim_scales = eor_trace_final
+    let claim_reduction_factor = eor_trace_final
         .as_ref()
         .map(|(_, factors_by_point)| {
-            let shared_factor = *factors_by_point.first().ok_or(AkitaError::InvalidProof)?;
-            Ok(vec![shared_factor; opening_batch.num_total_polynomials()])
+            factors_by_point
+                .first()
+                .copied()
+                .ok_or(AkitaError::InvalidProof)
         })
-        .transpose()?;
+        .transpose()?
+        .unwrap_or_else(E::one);
+    let trace_claim_coefficients =
+        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     // Chunked levels commit a wider (replicated-ẑ) next witness; size it
     // with the per-level chunk count (`num_chunks = 1` is unchanged).
-    let w_len = akita_types::intermediate_w_ring_element_count_for_chunks(
+    let witness_len = akita_types::intermediate_w_ring_element_count_for_chunks(
         F::modulus_bits(),
         root_lp,
         opening_batch.num_total_polynomials(),
@@ -265,39 +238,31 @@ where
     // Scalar root: the sole commitment's rows are the whole M-row commitment
     // block.
     let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
-    let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
-    if !w_len.is_multiple_of(next_witness_ring_dim) {
+    if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         fold_grind_nonce,
-        w_len,
-        relation: RelationReplayInputs {
-            relation_matrix_row_layout,
-            opening_shape: opening_batch.clone(),
-            v: v_storage,
-            commitment_rows,
-            row_coefficients,
-            group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
-            group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
-        },
+        v: v_storage,
+        opening_shape: opening_batch.clone(),
+        commitment_rows,
+        row_coefficients,
+        group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
+        group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
+        w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: w_len / next_witness_ring_dim,
-            stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+            next_opening_source_len: witness_len / next_witness_ring_dim,
+            stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        trace: TracePreparation {
-            prepared_points: Some(vec![prepared_point.clone()]),
-            block_opening: Some(trace_block_opening),
-            eval_target: trace_eval_target,
-            eval_scale: E::one(),
-            claim_scales: trace_claim_scales,
-            basis,
-        },
+        evaluation_trace_points: vec![prepared_point.clone()],
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: basis,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }
@@ -330,9 +295,10 @@ fn verify_multi_group_root_inner<F, E, T>(
     shared_opening_point: &[E],
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
-    next_fold_level_params: &LevelParams,
+    next_fold_level_params: Option<&CommittedGroupParams>,
+    next_witness_ring_dim: usize,
     basis: BasisMode,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     next_witness: PreparedNextWitness<'_, F>,
 ) -> Result<FoldVerifyOutput<E>, AkitaError>
 where
@@ -350,7 +316,6 @@ where
     if extension_opening_reduction.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let relation_matrix_row_layout = RelationMatrixRowLayout::WithDBlock;
     let role_dims = root_lp.role_dims();
     let d_a = role_dims.d_a();
     let alpha_bits = d_a.trailing_zeros() as usize;
@@ -361,14 +326,33 @@ where
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = root_lp.group_params(opening_batch, group_index)?;
+        let target_len = alpha_bits
+            .checked_add(group_lp.position_index_bits())
+            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".to_string())
+            })?;
         let point_vars = claims.group_point_vars(group_index)?;
+        if point_vars.num_vars() != target_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        let group_point = point_vars
+            .indices()
+            .iter()
+            .map(|&index| {
+                shared_opening_point
+                    .get(index)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let prepared =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                prepare_group_opening_point::<F, E, D>(
-                    group_lp,
-                    point_vars,
-                    shared_opening_point,
+                prepare_opening_point::<F, E, D>(
+                    &group_point,
                     basis,
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
                     alpha_bits,
                 )
             })?;
@@ -392,18 +376,9 @@ where
     }
     let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
-    let w_len = root_lp.next_w_len::<F>(opening_batch, relation_matrix_row_layout)?;
+    let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
-    // Routes `verify_fold` to the multi-group-root trace path; inert for the dense
-    // trace-weight table that multi-group roots evaluate.
-    let trace_block_opening = root_trace_block_opening::<E>(
-        shared_opening_point,
-        root_lp.num_positions_per_block,
-        root_lp.num_live_blocks,
-        alpha_bits,
-    )?;
-
     let group_ring_opening_points = prepared_points
         .iter()
         .map(|prepared| prepared.ring_opening_point.clone())
@@ -413,39 +388,32 @@ where
         .map(|prepared| prepared.ring_multiplier_point.clone())
         .collect::<Vec<_>>();
 
-    let next_witness_ring_dim = next_fold_level_params.role_dims().d_a();
-    if !w_len.is_multiple_of(next_witness_ring_dim) {
+    if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
+    let trace_claim_coefficients = row_coefficients.clone();
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         fold_grind_nonce,
-        w_len,
-        relation: RelationReplayInputs {
-            relation_matrix_row_layout,
-            opening_shape: opening_batch.clone(),
-            v: v_storage,
-            commitment_rows,
-            row_coefficients,
-            group_ring_opening_points,
-            group_ring_multiplier_points,
-        },
+        v: v_storage,
+        opening_shape: opening_batch.clone(),
+        commitment_rows,
+        row_coefficients,
+        group_ring_opening_points,
+        group_ring_multiplier_points,
+        w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
             stage2: &proof.stage2,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: w_len / next_witness_ring_dim,
-            stage3: stage3_sumcheck_proof.map(|proof| (proof, next_fold_level_params)),
+            next_opening_source_len: witness_len / next_witness_ring_dim,
+            stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        trace: TracePreparation {
-            prepared_points: Some(prepared_points),
-            block_opening: Some(trace_block_opening),
-            eval_target: trace_eval_target,
-            eval_scale: E::one(),
-            claim_scales: None,
-            basis,
-        },
+        evaluation_trace_points: prepared_points,
+        evaluation_trace_claim: trace_eval_target,
+        evaluation_trace_claim_coefficients: trace_claim_coefficients,
+        evaluation_trace_basis: basis,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)
 }

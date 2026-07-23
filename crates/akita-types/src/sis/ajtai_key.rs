@@ -1,10 +1,9 @@
-//! Ajtai-commitment key sizing: exact SIS profiles, explicit matrix roles, and
-//! the `AjtaiKeyParams`
-//! type, the secure-rank lookup, and coefficient-`L∞` bucket rounding.
+//! Ajtai-commitment key sizing: exact SIS profiles, role-specific matrix
+//! parameter types, secure-rank lookup, and coefficient-`L∞` bucket rounding.
 //!
 //! This is the single home for "given a width and a rounded-up coefficient
 //! bound at a security floor, what is the minimum SIS-secure module rank, and what audited
-//! `AjtaiKeyParams` does it yield". The generated SIS-floor tables it consults
+//! commit-matrix parameters does it yield". The generated SIS-floor tables it consults
 //! live in the private sibling module `super::generated_sis_table`.
 
 use akita_field::AkitaError;
@@ -40,30 +39,30 @@ impl SisTableDigest {
 /// Matrix role whose coefficient and ring geometry is being priced.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SisMatrixRole {
-    /// Fold witness and quotient matrix.
-    A,
-    /// Digit commitment matrix.
-    B,
-    /// Opening digit matrix.
-    D,
+    /// Inner commitment matrix (A).
+    Inner,
+    /// Outer commitment matrix (B).
+    Outer,
+    /// Opening commitment matrix (D).
+    Open,
 }
 
 impl SisMatrixRole {
     /// Stable wire/catalog tag.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::A => 1,
-            Self::B => 2,
-            Self::D => 3,
+            Self::Inner => 1,
+            Self::Outer => 2,
+            Self::Open => 3,
         }
     }
 
     /// Stable name used in generated provenance.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::A => "A",
-            Self::B => "B",
-            Self::D => "D",
+            Self::Inner => "Inner",
+            Self::Outer => "Outer",
+            Self::Open => "Open",
         }
     }
 }
@@ -129,6 +128,18 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => "Q32Offset99",
             Self::Q64Offset59 => "Q64Offset59",
             Self::Q128OffsetA7F7 => "Q128OffsetA7F7",
+        }
+    }
+
+    /// Infinity-norm expansion of the current trace-subfield embedding.
+    ///
+    /// The 128-bit profile is the base-field path. The 32- and 64-bit profiles
+    /// use the paired-lane trace embedding and therefore carry the certified
+    /// factor-of-two expansion.
+    pub const fn ring_subfield_embedding_norm_bound(self) -> u32 {
+        match self {
+            Self::Q128OffsetA7F7 => 1,
+            Self::Q32Offset99 | Self::Q64Offset59 => 2,
         }
     }
 
@@ -200,8 +211,11 @@ pub const A_ROLE_RING_DIMS: &[u32] = &[64, 128, 256];
 pub const BD_ROLE_RING_DIMS: &[u32] = &[32, 64, 128, 256];
 
 /// Production matrix roles with checked-in coverage.
-pub const SIS_MATRIX_ROLES: &[SisMatrixRole] =
-    &[SisMatrixRole::A, SisMatrixRole::B, SisMatrixRole::D];
+pub const SIS_MATRIX_ROLES: &[SisMatrixRole] = &[
+    SisMatrixRole::Inner,
+    SisMatrixRole::Outer,
+    SisMatrixRole::Open,
+];
 
 /// Return whether the exact role cell is part of the canonical coverage.
 ///
@@ -215,8 +229,10 @@ pub fn sis_role_cell(
     coeff_linf_bound: u128,
 ) -> Option<SisRoleCell> {
     let (dims, bounds) = match role {
-        SisMatrixRole::A => (A_ROLE_RING_DIMS, COEFF_LINF_BUCKETS),
-        SisMatrixRole::B | SisMatrixRole::D => (BD_ROLE_RING_DIMS, GADGET_COEFF_LINF_ANCHORS),
+        SisMatrixRole::Inner => (A_ROLE_RING_DIMS, COEFF_LINF_BUCKETS),
+        SisMatrixRole::Outer | SisMatrixRole::Open => {
+            (BD_ROLE_RING_DIMS, GADGET_COEFF_LINF_ANCHORS)
+        }
     };
     if !dims.contains(&ring_dimension) || !bounds.contains(&coeff_linf_bound) {
         return None;
@@ -275,8 +291,8 @@ pub fn ceil_supported_linf_bound(
         return None;
     }
     let bucket = match role {
-        SisMatrixRole::A => ceil_coeff_linf_bucket(linf)?,
-        SisMatrixRole::B | SisMatrixRole::D => GADGET_COEFF_LINF_ANCHORS
+        SisMatrixRole::Inner => ceil_coeff_linf_bucket(linf)?,
+        SisMatrixRole::Outer | SisMatrixRole::Open => GADGET_COEFF_LINF_ANCHORS
             .iter()
             .copied()
             .find(|&candidate| linf <= candidate)?,
@@ -368,212 +384,242 @@ pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
     None
 }
 
-/// Parameters for a single Ajtai commitment matrix.
-///
-/// Each matrix in the protocol (A, B, D) is characterised by its row count
-/// (security rank), column count (message width), and the generated SIS-floor
-/// key used for security sizing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AjtaiKeyParams {
-    pub(crate) row_len: usize,
-    pub(crate) col_len: usize,
-    pub(crate) sis_table_key: SisTableKey,
+#[derive(Debug, Clone, Copy)]
+struct AuditedCommitMatrixFields {
+    output_rank: usize,
+    input_width: usize,
+    sis_table_key: SisTableKey,
 }
 
-impl AjtaiKeyParams {
-    /// Create a new SIS-secure `AjtaiKeyParams`, auditing the
-    /// `(row_len, col_len, sis_table_key)` tuple against the generated
-    /// coefficient-`L∞` SIS-floor tables.
-    ///
-    /// The check is strict and has no silent-permissive fallback: a zero field,
-    /// an unsupported collision bucket, a `col_len` outside the audited range,
-    /// or a `row_len` below the audited SIS-secure floor is reported as
-    /// `AkitaError::InvalidSetup(message)`. Used by callers that must gracefully
-    /// reject SIS-insecure candidates (e.g. the planner's outer loop).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if any field is zero, if the SIS-floor tables do not
-    /// cover the configuration, or if `row_len` is below the audited floor.
-    #[allow(clippy::too_many_arguments)]
-    pub fn try_new(
-        policy: SisSecurityPolicyId,
-        table_digest: SisTableDigest,
-        sis_modulus_profile: SisModulusProfileId,
-        role: SisMatrixRole,
-        row_len: usize,
-        col_len: usize,
-        coeff_linf_bound: u128,
-        ring_dimension: usize,
-    ) -> Result<Self, AkitaError> {
-        if row_len == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "AjtaiKeyParams: row_len = 0".to_string(),
-            ));
-        }
-        if col_len == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "AjtaiKeyParams: col_len = 0".to_string(),
-            ));
-        }
-        let Some(key) = sis_table_key_for_linf_bound(
-            policy,
-            table_digest,
-            sis_modulus_profile,
-            role,
-            ring_dimension as u32,
-            coeff_linf_bound,
-        ) else {
-            return Err(AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: no audited SIS table key for \
-                     policy={} profile={sis_modulus_profile:?} \
-                     d={ring_dimension} coeff_linf_bound={coeff_linf_bound}",
-                policy.name()
-            )));
-        };
-        let floor = min_secure_rank(key, col_len as u64).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: no audited SIS rank for \
-                     policy={} profile={sis_modulus_profile:?} \
-                     d={ring_dimension} coeff_linf_bound={} col_len={col_len}",
-                policy.name(),
-                key.coeff_linf_bound
-            ))
-        })?;
-        if row_len < floor {
-            return Err(AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: row_len {row_len} < SIS floor {floor} \
-                 (policy={}, profile={sis_modulus_profile:?}, \
-                 d={ring_dimension}, coeff_linf_bound={}, col_len={col_len})",
-                policy.name(),
-                key.coeff_linf_bound
-            )));
-        }
-        Ok(Self {
-            row_len,
-            col_len,
-            sis_table_key: key,
-        })
+#[allow(clippy::too_many_arguments)]
+fn audit_commit_matrix_fields(
+    expected_role: SisMatrixRole,
+    policy: SisSecurityPolicyId,
+    table_digest: SisTableDigest,
+    sis_modulus_profile: SisModulusProfileId,
+    output_rank: usize,
+    input_width: usize,
+    coeff_linf_bound: u128,
+    ring_dimension: usize,
+) -> Result<AuditedCommitMatrixFields, AkitaError> {
+    if output_rank == 0 || input_width == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{} matrix requires nonzero output_rank and input_width",
+            expected_role.name()
+        )));
     }
-
-    /// Create a SIS-secure `AjtaiKeyParams`, sizing `row_len` to the audited
-    /// SIS floor for `col_len` columns under `key`.
-    ///
-    /// Computes the minimum SIS-secure module rank with [`min_secure_rank`] and
-    /// forwards it (along with the fields carried by `key`) to
-    /// [`try_new`](Self::try_new). Callers that would otherwise thread an
-    /// explicit `min_secure_rank` result next to `try_new` should use this
-    /// instead.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`AkitaError::InvalidSetup`] when no generated SIS-floor row
-    /// covers `(key, col_len)`, or when [`try_new`](Self::try_new) rejects the
-    /// resulting tuple.
-    pub fn try_new_with_min_rank(key: SisTableKey, col_len: usize) -> Result<Self, AkitaError> {
-        if col_len == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "AjtaiKeyParams: col_len = 0".to_string(),
-            ));
-        }
-        let row_len = min_secure_rank(key, col_len as u64).ok_or_else(|| {
-            AkitaError::InvalidSetup(format!(
-                "AjtaiKeyParams: no audited SIS rank for \
-                 policy={} profile={:?} d={} coeff_linf_bound={} col_len={col_len}",
-                key.policy.name(),
-                key.modulus_profile,
-                key.ring_dimension,
-                key.coeff_linf_bound
-            ))
-        })?;
-        Ok(Self {
-            row_len,
-            col_len,
-            sis_table_key: key,
-        })
+    let key = sis_table_key_for_linf_bound(
+        policy,
+        table_digest,
+        sis_modulus_profile,
+        expected_role,
+        ring_dimension as u32,
+        coeff_linf_bound,
+    )
+    .ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix has no audited SIS table key for policy={} profile={sis_modulus_profile:?} d={ring_dimension} coeff_linf_bound={coeff_linf_bound}",
+            expected_role.name(),
+            policy.name()
+        ))
+    })?;
+    let floor = min_secure_rank(key, input_width as u64).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix has no audited SIS rank for input_width={input_width}",
+            expected_role.name()
+        ))
+    })?;
+    if output_rank < floor {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{} matrix output_rank {output_rank} is below SIS floor {floor}",
+            expected_role.name()
+        )));
     }
-
-    /// Create a new `AjtaiKeyParams` without enforcing SIS security.
-    ///
-    /// Use this only for intermediate construction steps that carry
-    /// incomplete data (`params_only` placeholders with `col_len = 0` or a
-    /// zero coefficient bucket, iterative SIS fixed-point loops, etc.) and for
-    /// synthetic test/descriptor/proof-size layouts that intentionally carry
-    /// degenerate ranks. Production-facing schedule layouts are built through
-    /// [`try_new`](Self::try_new), which audits the SIS floor against the final
-    /// width as the key is constructed.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_unchecked(
-        policy: SisSecurityPolicyId,
-        table_digest: SisTableDigest,
-        sis_modulus_profile: SisModulusProfileId,
-        role: SisMatrixRole,
-        row_len: usize,
-        col_len: usize,
-        coeff_linf_bound: u128,
-        ring_dimension: usize,
-    ) -> Self {
-        Self {
-            row_len,
-            col_len,
-            sis_table_key: SisTableKey {
-                policy,
-                table_digest,
-                modulus_profile: sis_modulus_profile,
-                role,
-                ring_dimension: ring_dimension as u32,
-                coeff_linf_bound,
-            },
-        }
-    }
-
-    /// Number of rows.
-    #[inline]
-    pub fn row_len(&self) -> usize {
-        self.row_len
-    }
-
-    /// Number of columns.
-    #[inline]
-    pub fn col_len(&self) -> usize {
-        self.col_len
-    }
-
-    /// SIS policy used to size and validate this key.
-    #[inline]
-    pub fn security_policy(&self) -> SisSecurityPolicyId {
-        self.sis_table_key.policy
-    }
-
-    /// Rounded coefficient-`L∞` bucket for SIS sizing.
-    #[inline]
-    pub fn coeff_linf_bound(&self) -> u128 {
-        self.sis_table_key.coeff_linf_bound
-    }
-
-    /// Exact SIS modulus profile used to validate this key.
-    #[inline]
-    pub fn sis_modulus_profile(&self) -> SisModulusProfileId {
-        self.sis_table_key.modulus_profile
-    }
-
-    /// Full generated-table key used to validate this key.
-    #[inline]
-    pub fn sis_table_key(&self) -> SisTableKey {
-        self.sis_table_key
-    }
-
-    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
-        bytes.push(self.security_policy().tag());
-        bytes.push(self.sis_table_key.role.tag());
-        bytes.extend_from_slice(&self.sis_table_key.table_digest.0);
-        bytes.extend_from_slice(&self.sis_table_key.ring_dimension.to_le_bytes());
-        push_usize(bytes, self.row_len());
-        push_usize(bytes, self.col_len());
-        push_u128(bytes, self.coeff_linf_bound());
-    }
+    Ok(AuditedCommitMatrixFields {
+        output_rank,
+        input_width,
+        sis_table_key: key,
+    })
 }
+
+fn min_rank_commit_matrix_fields(
+    expected_role: SisMatrixRole,
+    key: SisTableKey,
+    input_width: usize,
+) -> Result<AuditedCommitMatrixFields, AkitaError> {
+    if key.role != expected_role || input_width == 0 {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{} matrix has mismatched role or zero input_width",
+            expected_role.name()
+        )));
+    }
+    let output_rank = min_secure_rank(key, input_width as u64).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "{} matrix has no audited SIS rank for input_width={input_width}",
+            expected_role.name()
+        ))
+    })?;
+    Ok(AuditedCommitMatrixFields {
+        output_rank,
+        input_width,
+        sis_table_key: key,
+    })
+}
+
+macro_rules! define_commit_matrix_params {
+    ($name:ident, $role:expr, $description:literal) => {
+        #[doc = $description]
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        pub struct $name {
+            pub(crate) output_rank: usize,
+            pub(crate) input_width: usize,
+            pub(crate) sis_table_key: SisTableKey,
+        }
+
+        impl $name {
+            #[allow(clippy::too_many_arguments)]
+            pub fn try_new(
+                policy: SisSecurityPolicyId,
+                table_digest: SisTableDigest,
+                sis_modulus_profile: SisModulusProfileId,
+                output_rank: usize,
+                input_width: usize,
+                coeff_linf_bound: u128,
+                ring_dimension: usize,
+            ) -> Result<Self, AkitaError> {
+                let fields = audit_commit_matrix_fields(
+                    $role,
+                    policy,
+                    table_digest,
+                    sis_modulus_profile,
+                    output_rank,
+                    input_width,
+                    coeff_linf_bound,
+                    ring_dimension,
+                )?;
+                Ok(Self {
+                    output_rank: fields.output_rank,
+                    input_width: fields.input_width,
+                    sis_table_key: fields.sis_table_key,
+                })
+            }
+
+            pub fn try_new_with_min_rank(
+                key: SisTableKey,
+                input_width: usize,
+            ) -> Result<Self, AkitaError> {
+                let fields = min_rank_commit_matrix_fields($role, key, input_width)?;
+                Ok(Self {
+                    output_rank: fields.output_rank,
+                    input_width: fields.input_width,
+                    sis_table_key: fields.sis_table_key,
+                })
+            }
+
+            #[allow(clippy::too_many_arguments)]
+            pub fn new_unchecked(
+                policy: SisSecurityPolicyId,
+                table_digest: SisTableDigest,
+                sis_modulus_profile: SisModulusProfileId,
+                output_rank: usize,
+                input_width: usize,
+                coeff_linf_bound: u128,
+                ring_dimension: usize,
+            ) -> Self {
+                Self {
+                    output_rank,
+                    input_width,
+                    sis_table_key: SisTableKey {
+                        policy,
+                        table_digest,
+                        modulus_profile: sis_modulus_profile,
+                        role: $role,
+                        ring_dimension: ring_dimension as u32,
+                        coeff_linf_bound,
+                    },
+                }
+            }
+
+            #[inline]
+            pub fn output_rank(&self) -> usize {
+                self.output_rank
+            }
+
+            #[inline]
+            pub fn input_width(&self) -> usize {
+                self.input_width
+            }
+
+            #[inline]
+            pub fn security_policy(&self) -> SisSecurityPolicyId {
+                self.sis_table_key.policy
+            }
+
+            #[inline]
+            pub fn coeff_linf_bound(&self) -> u128 {
+                self.sis_table_key.coeff_linf_bound
+            }
+
+            #[inline]
+            pub fn sis_modulus_profile(&self) -> SisModulusProfileId {
+                self.sis_table_key.modulus_profile
+            }
+
+            #[inline]
+            pub fn sis_table_key(&self) -> SisTableKey {
+                self.sis_table_key
+            }
+
+            #[inline]
+            pub fn ring_dimension(&self) -> usize {
+                self.sis_table_key.ring_dimension as usize
+            }
+
+            #[must_use]
+            pub fn max_secure_collision_linf(&self) -> Option<u128> {
+                COEFF_LINF_BUCKETS
+                    .iter()
+                    .copied()
+                    .take_while(|&bound| {
+                        let key = SisTableKey {
+                            coeff_linf_bound: bound,
+                            ..self.sis_table_key
+                        };
+                        min_secure_rank(key, self.input_width as u64)
+                            .is_some_and(|rank| rank <= self.output_rank)
+                    })
+                    .last()
+            }
+
+            pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+                bytes.push(sis_modulus_profile_tag(self.sis_modulus_profile()));
+                bytes.push(self.security_policy().tag());
+                bytes.push(self.sis_table_key.role.tag());
+                bytes.extend_from_slice(&self.sis_table_key.table_digest.0);
+                bytes.extend_from_slice(&self.sis_table_key.ring_dimension.to_le_bytes());
+                push_usize(bytes, self.output_rank());
+                push_usize(bytes, self.input_width());
+                push_u128(bytes, self.coeff_linf_bound());
+            }
+        }
+    };
+}
+
+define_commit_matrix_params!(
+    InnerCommitMatrixParams,
+    SisMatrixRole::Inner,
+    "Parameters for the inner commitment matrix (A)."
+);
+define_commit_matrix_params!(
+    OuterCommitMatrixParams,
+    SisMatrixRole::Outer,
+    "Parameters for the outer commitment matrix (B)."
+);
+define_commit_matrix_params!(
+    OpenCommitMatrixParams,
+    SisMatrixRole::Open,
+    "Parameters for the opening commitment matrix (D)."
+);
 
 #[cfg(test)]
 mod tests {
@@ -586,12 +632,41 @@ mod tests {
                 DEFAULT_SIS_SECURITY_POLICY,
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
-                SisMatrixRole::A,
+                SisMatrixRole::Inner,
                 31,
                 7,
             ),
             None
         );
+    }
+
+    #[test]
+    fn fixed_matrix_capacity_inverts_the_checked_sis_table() {
+        let key = SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            role: SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: 32_767,
+        };
+        let matrix =
+            InnerCommitMatrixParams::try_new_with_min_rank(key, 64).expect("audited matrix");
+        let capacity = matrix
+            .max_secure_collision_linf()
+            .expect("fixed matrix capacity");
+        assert!(capacity >= key.coeff_linf_bound);
+        for &larger in COEFF_LINF_BUCKETS.iter().filter(|&&bound| bound > capacity) {
+            let larger_key = SisTableKey {
+                coeff_linf_bound: larger,
+                ..key
+            };
+            assert!(
+                min_secure_rank(larger_key, matrix.input_width() as u64)
+                    .is_none_or(|rank| rank > matrix.output_rank()),
+                "capacity must be the largest bucket supported by the fixed matrix"
+            );
+        }
     }
 
     #[test]
@@ -622,7 +697,7 @@ mod tests {
             DEFAULT_SIS_SECURITY_POLICY,
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
-            SisMatrixRole::A,
+            SisMatrixRole::Inner,
             128,
             linf,
         );

@@ -11,10 +11,11 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
 use akita_types::{
-    golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_flat_admit_terminal_wire, golomb_rice_rows_admit_terminal_wire,
     sis::{FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
-    FoldLinfProtocolBinding, LevelParams, LevelParamsLike, OpeningClaimsLayout,
-    FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN, FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
+    CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
+    TerminalCommittedGroupParams, TerminalResponseShape, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
+    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
 };
 
 use super::ring_relation::{
@@ -122,7 +123,7 @@ pub(crate) fn grind_probe_nonces(
     contract: &FoldWitnessGrindBatchContract,
     binding: &FoldLinfProtocolBinding,
     transcript: &dyn FoldChallengeSeedPreview,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     groups: &[(&dyn LevelParamsLike, usize)],
 ) -> Result<Vec<u32>, AkitaError> {
     let cap = contract.max_nonce_exclusive();
@@ -141,7 +142,7 @@ pub(crate) fn grind_probe_nonces(
 }
 
 fn fold_grind_probe_order_absorb_buf(
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     groups: &[(&dyn LevelParamsLike, usize)],
 ) -> Result<Vec<u8>, AkitaError> {
     fn push_usize(buf: &mut Vec<u8>, value: usize, name: &str) -> Result<(), AkitaError> {
@@ -153,11 +154,7 @@ fn fold_grind_probe_order_absorb_buf(
 
     let mut buf = Vec::with_capacity(24 + 72 * groups.len());
     buf.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
-    push_usize(
-        &mut buf,
-        root_lp.ring_dimension,
-        "fold grind ring dimension",
-    )?;
+    push_usize(&mut buf, root_lp.d_a(), "fold grind ring dimension")?;
     push_usize(&mut buf, groups.len(), "fold grind group count")?;
     for (group_index, (params, num_claims)) in groups.iter().copied().enumerate() {
         push_usize(&mut buf, group_index, "fold grind group index")?;
@@ -213,6 +210,142 @@ pub(crate) struct FoldGrindGroupOutput<F: FieldCore> {
     pub(crate) challenges: Challenges,
 }
 
+pub(crate) struct TerminalFoldGrindOutput<F: FieldCore> {
+    pub(crate) witness: DecomposeFoldWitness<F>,
+    pub(crate) nonce: u32,
+}
+
+/// Sample the flat scalar terminal fold against its capacity-based response
+/// cap. The returned witness retains centered `z` coefficients only; terminal
+/// `e` and `t` are never gadget decomposed.
+pub(crate) fn sample_terminal_fold_response<F, P, B, T>(
+    backend: &B,
+    prepared: Option<&B::PreparedSetup>,
+    transcript: &mut T,
+    params: &TerminalCommittedGroupParams,
+    sparse: &akita_challenges::SparseChallengeConfig,
+    poly: &P,
+    shape: &TerminalResponseShape,
+) -> Result<TerminalFoldGrindOutput<F>, AkitaError>
+where
+    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+    T: Transcript<F> + ProverTranscriptGrind<F>,
+{
+    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let expected_group =
+        shape.layout.groups.first().ok_or_else(|| {
+            AkitaError::InvalidSetup("terminal response shape has no group".into())
+        })?;
+    if shape.layout.groups.len() != 1
+        || expected_group.z_coords
+            != params
+                .inner_width()
+                .checked_mul(params.d_a())
+                .ok_or_else(|| AkitaError::InvalidSetup("terminal z width overflow".into()))?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "terminal response shape does not match terminal A width".into(),
+        ));
+    }
+    let binding = FoldLinfProtocolBinding::CURRENT;
+    let max_nonce = params
+        .fold_linf_cap_config
+        .policy
+        .max_nonce_exclusive(binding.max_grind_attempts);
+    let probe_nonces = match binding.grind_probe_order {
+        FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN => (0..max_nonce).collect::<Vec<_>>(),
+        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE
+            if params.fold_linf_cap_config.policy.allows_grind() =>
+        {
+            let mut absorb = Vec::new();
+            absorb.extend_from_slice(akita_types::sis::FOLD_GRIND_PROBE_ORDER_ABSORB);
+            absorb.extend_from_slice(&(params.d_a() as u64).to_le_bytes());
+            absorb
+                .extend_from_slice(&(params.num_live_ring_elements_per_claim as u64).to_le_bytes());
+            absorb.extend_from_slice(&(params.num_positions_per_block as u64).to_le_bytes());
+            absorb.extend_from_slice(&(params.num_live_blocks as u64).to_le_bytes());
+            absorb.extend_from_slice(&(params.inner_width() as u64).to_le_bytes());
+            let seed = transcript.preview_challenge_bytes_after_absorb(&absorb, 32);
+            grind_probe_permutation(&seed, max_nonce)
+        }
+        FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE => vec![0],
+        other => {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported fold grind probe order tag {other}"
+            )))
+        }
+    };
+    let labels = witness_fold_challenge_labels();
+    let polys = [poly];
+    let point_indices = [0usize];
+    let (nonce, (witness, challenges)) = first_jointly_accepted_nonce(&probe_nonces, |nonce| {
+        let mut preview = PreviewFoldDraw::new(transcript);
+        let challenges = preview.draw_folding_challenges(
+            params.d_a(),
+            0,
+            params.num_live_blocks,
+            1,
+            sparse,
+            &akita_challenges::TensorChallengeShape::Flat,
+            labels,
+            nonce,
+        )?;
+        let witness = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            params.d_a(),
+            |D| {
+                build_point_decompose_fold_witness::<F, P, B, D>(
+                    backend,
+                    prepared,
+                    &challenges,
+                    &polys,
+                    &point_indices,
+                    params.num_positions_per_block,
+                    params.num_digits_inner,
+                    params.log_basis_inner,
+                )
+            }
+        )?;
+        if u128::from(witness.centered_inf_norm) > admission_cap {
+            return Ok(None);
+        }
+        let centered = witness
+            .centered_coeffs_flat()
+            .iter()
+            .map(|&value| i64::from(value))
+            .collect::<Vec<_>>();
+        let wire_ok = golomb_rice_flat_admit_terminal_wire(&centered, admission_cap);
+        if wire_ok.is_err() {
+            return Ok(None);
+        }
+        Ok(Some((witness, challenges)))
+    })?;
+    let mut live = LiveFoldDraw::<F, T>::new(transcript);
+    let live_challenges = live.draw_folding_challenges(
+        params.d_a(),
+        0,
+        params.num_live_blocks,
+        1,
+        sparse,
+        &akita_challenges::TensorChallengeShape::Flat,
+        labels,
+        nonce,
+    )?;
+    if live_challenges != challenges {
+        return Err(AkitaError::InvalidInput(
+            "terminal grind preview did not match live transcript replay".into(),
+        ));
+    }
+    Ok(TerminalFoldGrindOutput { witness, nonce })
+}
+
 struct PreparedFoldGrindGroup<'params, 'poly, P> {
     input: FoldGrindGroup<'params, 'poly, P>,
     acceptance: FoldGrindAcceptanceCtx,
@@ -235,7 +368,7 @@ fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     challenges: &Challenges,
     polys: &[&P],
     point_indices: &[usize],
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     params: &(impl LevelParamsLike + ?Sized),
 ) -> Result<(DecomposeFoldWitness<F>, Vec<Vec<[i32; D]>>), AkitaError>
 where
@@ -253,7 +386,9 @@ where
             challenges,
             polys,
             point_indices,
-            params,
+            params.num_positions_per_block(),
+            params.num_digits_inner(),
+            params.log_basis_inner(),
         )?;
         let per_chunk = vec![witness.centered_coeffs_owned::<D>()];
         return Ok((witness, per_chunk));
@@ -273,7 +408,9 @@ where
                 &windowed,
                 polys,
                 point_indices,
-                params,
+                params.num_positions_per_block(),
+                params.num_digits_inner(),
+                params.log_basis_inner(),
             )
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -306,7 +443,7 @@ fn sample_multi_group_fold_decompose_witnesses_at_dim<F, P, B, T, const D: usize
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     groups: &[PreparedFoldGrindGroup<'_, '_, P>],
     probe_nonces: &[u32],
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
@@ -405,7 +542,7 @@ pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
-    root_lp: &LevelParams,
+    root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     groups: &[FoldGrindGroup<'_, '_, P>],
     tail_t_vectors: Option<usize>,
@@ -513,8 +650,8 @@ mod tests {
 
     type F = akita_field::Prime128Offset275;
 
-    fn sample_level() -> LevelParams {
-        LevelParams::params_only(
+    fn sample_level() -> CommittedGroupParams {
+        CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
             3,

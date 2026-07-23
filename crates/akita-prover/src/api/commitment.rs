@@ -14,8 +14,8 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, DigitBlocks, FpExtEncoding, LevelParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupParams, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    Commitment, CommittedGroupParams, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -27,7 +27,7 @@ pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Frozen layout, commitment rows, and prover hint for one standalone group.
 pub type CommittedGroupWithHint<F> = (
-    PrecommittedGroupParams,
+    PrecommittedGroupDescriptor,
     Commitment<F>,
     AkitaCommitmentHint<F>,
 );
@@ -126,7 +126,7 @@ where
 }
 
 pub(crate) fn validate_commit_level_params<F>(
-    params: &LevelParams,
+    params: &CommittedGroupParams,
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError>
 where
@@ -158,46 +158,58 @@ where
         .num_positions_per_block
         .checked_mul(params.num_digits_inner)
         .ok_or_else(|| AkitaError::InvalidSetup("A commit width overflow".to_string()))?;
-    if params.a_key.col_len() != expected_a_width {
+    if params.inner_commit_matrix.input_width() != expected_a_width {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params A width {} does not match num_positions_per_block * num_digits_inner = {expected_a_width}",
-            params.a_key.col_len()
+            params.inner_commit_matrix.input_width()
         )));
     }
-    if params.b_key.col_len() == 0 {
+    if params.outer_commit_matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero B width, got B={}",
-            params.b_key.col_len()
+            params.outer_commit_matrix.input_width()
         )));
     }
-    if params.d_key.col_len() == 0 {
+    if params.open_commit_matrix.input_width() == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "commit params require nonzero D width, got D={}",
-            params.d_key.col_len()
+            params.open_commit_matrix.input_width()
         )));
     }
-    let setup_len = setup
-        .shared_matrix
-        .total_ring_elements_at_dyn(params.ring_dimension)?;
     let a_required = params
-        .a_key
-        .row_len()
-        .checked_mul(params.a_key.col_len())
+        .inner_commit_matrix
+        .output_rank()
+        .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let b_required = params
-        .b_key
-        .row_len()
-        .checked_mul(params.b_key.col_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let d_required = params
-        .d_key
-        .row_len()
-        .checked_mul(params.d_key.col_len())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    let required = a_required.max(b_required).max(d_required);
-    if required > setup_len {
+    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
-            "commit params require {required} setup ring elements but setup has {setup_len}",
+            "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
+            dims.d_a()
+        )));
+    }
+    let b_required = params
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(params.outer_commit_matrix.input_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
+    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    if b_required > b_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
+            dims.d_b()
+        )));
+    }
+    let d_required = params
+        .open_commit_matrix
+        .output_rank()
+        .checked_mul(params.open_commit_matrix.input_width())
+        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
+    let d_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_d())?;
+    if d_required > d_available {
+        return Err(AkitaError::InvalidSetup(format!(
+            "D-role commit params require {d_required} setup ring elements at d={}, but setup has {d_available}",
+            dims.d_d()
         )));
     }
     Ok(())
@@ -256,7 +268,7 @@ where
 
 pub(crate) fn validate_onehot_chunk_size_for_params<F, P>(
     polys: &[P],
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
@@ -281,7 +293,7 @@ where
 
 pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, P>(
     polys: &[P],
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
@@ -350,7 +362,7 @@ where
 fn commit_with_validated_params<F, P, B>(
     polys: &[P],
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -371,12 +383,12 @@ where
     let plan = CommitInnerPlan::from_level(params);
     let b_input_len_per_poly = commit_inner_flat_digit_count(
         params.num_live_blocks,
-        params.a_key.row_len(),
+        params.inner_commit_matrix.output_rank(),
         params.num_digits_outer,
     )?;
     let total_b_input_len = checked_commit_b_input_len(polys.len(), b_input_len_per_poly)?;
     let num_live_blocks = params.num_live_blocks;
-    let n_a = params.a_key.row_len();
+    let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     // A-role operation: per-poly inner commit + digit decomposition. The digit
@@ -384,6 +396,17 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
+    let gen_ring_dim = backend
+        .prepared_expanded_setup(prepared)
+        .seed()
+        .gen_ring_dim;
+    let mut warmed_ring_dim = gen_ring_dim;
+    for ring_dim in [dims.d_a(), dims.d_b()] {
+        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
+            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
+            warmed_ring_dim = ring_dim;
+        }
+    }
     let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -421,7 +444,7 @@ where
         }
     )?;
     validate_commit_outer_input_nonempty(b_input_flat.len())?;
-    let n_b = params.b_key.row_len();
+    let n_b = params.outer_commit_matrix.output_rank();
     // B-role operation: the sent commitment rows `u = B·t̂`.
     let commitment = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Outer),
@@ -461,7 +484,7 @@ pub fn commit_with_params<F, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -502,8 +525,8 @@ where
         return Ok(None);
     }
     let schedule = Cfg::get_params_for_prove(opening_batch)?;
-    let root_fold = schedule.root_fold()?;
-    let ring_d = root_fold.params.role_dims().d_a();
+    let root_fold = schedule.root_fold();
+    let ring_d = root_fold.params.final_group.commitment.role_dims().d_a();
     Ok(root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(
         ring_d,
         opening_batch.max_num_vars(),
@@ -522,8 +545,7 @@ where
     if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(ring_d, key.num_vars()) {
         return Ok(false);
     }
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
-    schedule.root_fold()?;
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
     Ok(true)
 }
 
@@ -692,7 +714,7 @@ where
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
     Ok((
-        PrecommittedGroupParams::from_params(key, &params),
+        PrecommittedGroupDescriptor::from_params(key, &params),
         commitment,
         hint,
     ))
@@ -700,7 +722,7 @@ where
 
 fn precommitted_layouts_from_keys<Cfg>(
     precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<Vec<PrecommittedGroupParams>, AkitaError>
+) -> Result<Vec<PrecommittedGroupDescriptor>, AkitaError>
 where
     Cfg: CommitmentConfig,
 {
@@ -717,7 +739,7 @@ where
             let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
                 &singleton,
             )?;
-            Ok(PrecommittedGroupParams::from_params(key, &params))
+            Ok(PrecommittedGroupDescriptor::from_params(key, &params))
         })
         .collect()
 }
@@ -756,8 +778,7 @@ where
     ) {
         return Ok(false);
     }
-    let schedule = Cfg::runtime_schedule(key.clone())?;
-    schedule.root_fold()?;
+    Cfg::runtime_schedule(key.clone())?;
     Ok(true)
 }
 
@@ -792,7 +813,7 @@ where
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
-    let params = schedule.root_fold()?.params.clone();
+    let params = schedule.root_fold().params.final_group.commitment.clone();
     validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
@@ -873,7 +894,7 @@ pub fn batched_commit_with_params<F, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<F>,
     ctx: &OperationCtx<'_, F, B>,
-    params: &LevelParams,
+    params: &CommittedGroupParams,
 ) -> Result<CommitmentWithHint<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -962,7 +983,7 @@ mod tests {
     fn commit_inner_shape_rejects_log_basis_above_i8_range() {
         let inner = inner_witness(1, 1, vec![2]);
         assert!(matches!(
-            validate_commit_inner_shape::<F, D>(&inner, 1, 1, 2, 7),
+            validate_commit_inner_shape::<F, D>(&inner, 1, 1, 2, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -977,10 +998,10 @@ mod tests {
         )
         .unwrap()
         .expanded;
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
-            7,
+            9,
             1,
             1,
             1,
@@ -1006,7 +1027,7 @@ mod tests {
 
     #[test]
     fn onehot_chunk_size_validator_rejects_mismatched_k() {
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -1029,7 +1050,7 @@ mod tests {
 
     #[test]
     fn validate_onehot_chunk_size_rejects_wrapped_onehot_mismatch() {
-        let params = LevelParams::params_only(
+        let params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q32Offset99,
             D,
             2,

@@ -432,23 +432,47 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let num_live_blocks = self.num_live_blocks(plan.num_positions_per_block)?;
-        let t = backend.recursive_witness_commit_rows(
+        let t = self.commit_inner_rows(
+            backend,
             prepared,
-            RecursiveWitnessCommitRowsPlan {
-                coeffs: self.coeffs,
-                n_rows: plan.n_a,
-                num_positions_per_block: plan.num_positions_per_block,
-                num_live_blocks,
-                num_digits_inner: plan.num_digits_inner,
-                log_basis_inner: plan.log_basis_inner,
-                known_balanced_log_basis: self.known_balanced_log_basis,
-            },
+            plan.n_a,
+            plan.num_positions_per_block,
+            plan.num_digits_inner,
+            plan.log_basis_inner,
         )?;
 
         let decomposed_inner_rows =
             decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
         CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+    }
+
+    /// Compute the canonical inner commitment rows. Ordinary commitment
+    /// decomposes this result for B; terminal binding stops here.
+    pub(crate) fn commit_inner_rows<B>(
+        &self,
+        backend: &B,
+        prepared: &B::PreparedSetup,
+        n_a: usize,
+        num_positions_per_block: usize,
+        num_digits_inner: usize,
+        log_basis_inner: u32,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
+    where
+        B: CommitmentComputeBackend<F>,
+    {
+        let num_live_blocks = self.num_live_blocks(num_positions_per_block)?;
+        backend.recursive_witness_commit_rows(
+            prepared,
+            RecursiveWitnessCommitRowsPlan {
+                coeffs: self.coeffs,
+                n_rows: n_a,
+                num_positions_per_block,
+                num_live_blocks,
+                num_digits_inner,
+                log_basis_inner,
+                known_balanced_log_basis: self.known_balanced_log_basis,
+            },
+        )
     }
 }
 

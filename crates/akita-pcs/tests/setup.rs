@@ -254,7 +254,7 @@ where
         "fixture must use exactly two folds"
     );
     let mut tampered = proof.clone();
-    let witness = tampered.terminal.final_witness_mut();
+    let witness = tampered.terminal.terminal_response_mut();
     let mut t_coeffs = witness.t_fields.coeffs().to_vec();
     t_coeffs[0] += F::one();
     witness.t_fields = akita_types::RingVec::from_coeffs(t_coeffs);

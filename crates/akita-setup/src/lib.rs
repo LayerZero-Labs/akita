@@ -195,8 +195,9 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // invalidated when the planner's per-level layout (including the
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
-    // `digest_effective_schedule`. The `planner_v7_` prefix marks the
-    // two-field lookup key cutover; old `planner_v6_*` files are not reused.
+    // `digest_effective_schedule`. Akita is still in development, so the cache
+    // namespace remains v1; the digest prevents incompatible schedules from
+    // aliasing within that namespace.
     let raw_schedule =
         match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
             Ok(schedule) => {
@@ -206,7 +207,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                     let _ = write!(hex, "{byte:02x}");
                 }
                 format!(
-                    "planner_v7_nv{}_batch{}_{hex}",
+                    "planner_v1_nv{}_batch{}_{hex}",
                     schedule_lookup_key.num_vars(),
                     schedule_lookup_key.num_polynomials(),
                 )
@@ -546,13 +547,20 @@ mod tests {
         }
 
         #[test]
+        fn cache_file_name_uses_development_v1_namespace() {
+            let name = cache_file_name::<Cfg>(16, 4);
+            assert!(name.contains("planner_v1_"), "cache name: {name}");
+        }
+
+        #[test]
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AjtaiKeyParams, AkitaCommitmentHint, DigitBlocks,
-                    PolynomialGroupLayout, PrecommittedGroupParams, PrecommittedLevelParams,
-                    RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot, SisMatrixRole,
-                    SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+                    setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks,
+                    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+                    PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec,
+                    SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
+                    SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -561,12 +569,11 @@ mod tests {
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupParams {
+                    layout: PrecommittedGroupDescriptor {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
-                        fold_challenge_shape: akita_types::TensorChallengeShape::Flat,
                         log_basis_inner: 1,
                         log_basis_outer: 1,
                         n_a: 1,
@@ -574,21 +581,19 @@ mod tests {
                         n_b: 1,
                         b_coeff_linf_bound: 1,
                     },
-                    a_key: AjtaiKeyParams::new_unchecked(
+                    inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
                         DEFAULT_SIS_SECURITY_POLICY,
                         SisTableDigest::CURRENT,
                         SisModulusProfileId::Q128OffsetA7F7,
-                        SisMatrixRole::A,
                         1,
                         1,
                         1,
                         TEST_D,
                     ),
-                    b_key: AjtaiKeyParams::new_unchecked(
+                    outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
                         DEFAULT_SIS_SECURITY_POLICY,
                         SisTableDigest::CURRENT,
                         SisModulusProfileId::Q128OffsetA7F7,
-                        SisMatrixRole::B,
                         1,
                         1,
                         1,
@@ -765,7 +770,7 @@ mod tests {
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
-                            lp.b_key.row_len(),
+                            lp.outer_commit_matrix.output_rank(),
                             typed_digits.typed_planes::<TEST_D>().unwrap(),
                             lp.log_basis_outer,
                         )

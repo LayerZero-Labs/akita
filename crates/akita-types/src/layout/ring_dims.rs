@@ -2,10 +2,10 @@
 //!
 //! [`validate_schedule_ring_dims`] checks every fold level's [`CommitmentRingDims`]
 //! against the setup seed. Per-level geometry (`n_ring_elems`, `flat_field_len`, …)
-//! lives on [`super::LevelParams`].
+//! lives on [`super::CommittedGroupParams`].
 
 use crate::proof::AkitaSetupSeed;
-use crate::schedule::Schedule;
+use crate::schedule::FoldSchedule;
 use akita_field::AkitaError;
 
 /// Upper bound on fold levels accepted by [`validate_schedule_ring_dims`].
@@ -81,6 +81,47 @@ impl CommitmentRingDims {
         self.opening
     }
 
+    /// Largest low coefficient block shared by every relation role.
+    ///
+    /// This is the relation-algebra boundary: alpha exponents for every role
+    /// reset on multiples of this count. It does not depend on the outgoing
+    /// witness representation.
+    #[must_use]
+    pub const fn common_relation_coeff_count(self) -> usize {
+        let inner_outer_min = if self.inner < self.outer {
+            self.inner
+        } else {
+            self.outer
+        };
+        if inner_outer_min < self.opening {
+            inner_outer_min
+        } else {
+            self.opening
+        }
+    }
+
+    /// Largest low coefficient block aligned for both the relation and the
+    /// outgoing witness representation.
+    ///
+    /// The current prover stores the flat relation witness in outgoing ring
+    /// elements. Its first rounds therefore need a block width that divides
+    /// both every role-local alpha sequence and one outgoing witness ring
+    /// element. This is the intersection of those two address geometries, not
+    /// an additional relation constraint. Use [`Self::common_relation_coeff_count`]
+    /// when only the relation algebra matters.
+    #[must_use]
+    pub const fn common_relation_witness_coeff_count(
+        self,
+        outgoing_witness_ring_dimension: usize,
+    ) -> usize {
+        let relation_common = self.common_relation_coeff_count();
+        if relation_common < outgoing_witness_ring_dimension {
+            relation_common
+        } else {
+            outgoing_witness_ring_dimension
+        }
+    }
+
     /// The single dimension shared by all roles, or an error once per-role
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {
@@ -107,7 +148,7 @@ impl CommitmentRingDims {
 
 /// Validate every fold level's per-role ring dimensions against the setup seed.
 ///
-/// Reads [`super::LevelParams::role_dims`] from each scheduled fold step; does
+/// Reads [`super::CommittedGroupParams::role_dims`] from each scheduled fold step; does
 /// not copy them into a separate plan object.
 ///
 /// # Errors
@@ -115,7 +156,7 @@ impl CommitmentRingDims {
 /// Returns [`AkitaError::InvalidSetup`] when any catalog, key-consistency,
 /// seed-divisibility, or witness-length check fails.
 pub fn validate_schedule_ring_dims(
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
     seed: &AkitaSetupSeed,
 ) -> Result<(), AkitaError> {
     if seed.gen_ring_dim == 0 {
@@ -129,14 +170,12 @@ pub fn validate_schedule_ring_dims(
             "schedule has {num_folds} fold levels, max supported is {MAX_FOLD_LEVELS}"
         )));
     }
-    for level in 0..num_folds {
-        let Some(step) = schedule.folds.get(level) else {
-            return Err(AkitaError::InvalidSetup(format!(
-                "schedule is missing fold step at level {level}"
-            )));
-        };
-        let lp = &step.params;
-        let dims = lp.role_dims;
+    let validate_step = |lp: &crate::CommittedGroupParams,
+                         input_witness_len: usize,
+                         output_witness_len: Option<usize>,
+                         next_ring_d: Option<usize>|
+     -> Result<(), AkitaError> {
+        let dims = lp.role_dims();
         validate_role_dims(dims)?;
         validate_role_dims_match_keys(lp)?;
         for (role, d) in [
@@ -151,36 +190,68 @@ pub fn validate_schedule_ring_dims(
                 )));
             }
         }
-        if !step.current_w_len.is_multiple_of(dims.inner) {
+        if !input_witness_len.is_multiple_of(dims.inner) {
             return Err(AkitaError::InvalidSetup(format!(
                 "witness length {} is not divisible by fold ring d_a={}",
-                step.current_w_len, dims.inner
+                input_witness_len, dims.inner
             )));
         }
-        if let Some(next) = schedule.folds.get(level + 1) {
-            let next_ring_d = next.params.role_dims.inner;
-            if next_ring_d == 0 || !step.next_w_len.is_multiple_of(next_ring_d) {
+        if let (Some(output_witness_len), Some(next_ring_d)) = (output_witness_len, next_ring_d) {
+            if next_ring_d == 0 || !output_witness_len.is_multiple_of(next_ring_d) {
                 return Err(AkitaError::InvalidSetup(format!(
                     "next witness length {} is not divisible by next fold ring d_a={next_ring_d}",
-                    step.next_w_len,
+                    output_witness_len,
                 )));
             }
         }
+        Ok(())
+    };
+    let root_next_d = schedule.recursive_folds.first().map_or_else(
+        || schedule.terminal.params.witness.d_a(),
+        |next| next.params.witness.d_a(),
+    );
+    validate_step(
+        &schedule.root.params.final_group.commitment,
+        schedule.root.input_witness_len,
+        Some(schedule.root.output_witness_len),
+        Some(root_next_d),
+    )?;
+    for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
+            || schedule.terminal.params.witness.d_a(),
+            |next| next.params.witness.d_a(),
+        );
+        validate_step(
+            &step.params.witness,
+            step.input_witness_len,
+            Some(step.output_witness_len),
+            Some(next_ring_d),
+        )?;
+    }
+    let terminal = &schedule.terminal.params.witness;
+    let terminal_d = terminal.d_a();
+    if terminal_d == 0
+        || !SUPPORTED_RING_DIMS.contains(&terminal_d)
+        || !seed.gen_ring_dim.is_multiple_of(terminal_d)
+        || !schedule
+            .terminal
+            .input_witness_len
+            .is_multiple_of(terminal_d)
+        || terminal.inner_commit_matrix.sis_table_key().ring_dimension as usize != terminal_d
+    {
+        return Err(AkitaError::InvalidSetup(
+            "terminal inner ring dimension is inconsistent with setup or witness length"
+                .to_string(),
+        ));
     }
     Ok(())
 }
 
-pub fn validate_role_dims_match_keys(lp: &crate::LevelParams) -> Result<(), AkitaError> {
-    let dims = lp.role_dims;
-    if lp.ring_dimension != dims.inner {
-        return Err(AkitaError::InvalidSetup(format!(
-            "ring_dimension={} disagrees with role_dims.d_a={}",
-            lp.ring_dimension, dims.inner
-        )));
-    }
-    let a_ring = lp.a_key.sis_table_key().ring_dimension as usize;
-    let b_ring = lp.b_key.sis_table_key().ring_dimension as usize;
-    let d_ring = lp.d_key.sis_table_key().ring_dimension as usize;
+pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result<(), AkitaError> {
+    let dims = lp.role_dims();
+    let a_ring = lp.inner_commit_matrix.sis_table_key().ring_dimension as usize;
+    let b_ring = lp.outer_commit_matrix.sis_table_key().ring_dimension as usize;
+    let d_ring = lp.open_commit_matrix.sis_table_key().ring_dimension as usize;
     if a_ring != dims.inner {
         return Err(AkitaError::InvalidSetup(format!(
             "A-key ring dimension {a_ring} disagrees with role_dims.d_a={}",
@@ -243,404 +314,5 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::layout::LevelParams;
-    use crate::schedule::{FoldStep, Schedule, TerminalWitnessPlan};
-    use crate::sis::SisModulusProfileId;
-    use crate::SegmentTypedWitnessShape;
-    use akita_challenges::SparseChallengeConfig;
-    use akita_field::AkitaError;
-
-    fn fold_challenge_config_for_ring_dim(ring_dimension: usize) -> SparseChallengeConfig {
-        SparseChallengeConfig::production_for_ring_dim(ring_dimension).unwrap_or_else(|| {
-            // Rejection/fixture paths outside the production ladder still need a family
-            // that clears the 128-bit entropy floor at `ring_dimension`.
-            SparseChallengeConfig::pm1_only(ring_dimension.max(31))
-        })
-    }
-
-    fn make_fold_level_params(
-        ring_dimension: usize,
-        num_live_blocks: usize,
-        num_positions_per_block: usize,
-    ) -> LevelParams {
-        LevelParams::params_only(
-            SisModulusProfileId::Q128OffsetA7F7,
-            ring_dimension,
-            3,
-            1,
-            1,
-            1,
-            fold_challenge_config_for_ring_dim(ring_dimension),
-        )
-        .with_decomp(
-            num_positions_per_block,
-            num_live_blocks * num_positions_per_block,
-            2,
-            2,
-            2,
-        )
-        .expect("valid ring-dimension test params")
-    }
-
-    fn make_fold_step(
-        ring_dimension: usize,
-        num_live_blocks: usize,
-        num_positions_per_block: usize,
-    ) -> FoldStep {
-        FoldStep {
-            params: make_fold_level_params(
-                ring_dimension,
-                num_live_blocks,
-                num_positions_per_block,
-            ),
-            current_w_len: 0,
-            next_w_len: 0,
-            level_bytes: 0,
-        }
-    }
-
-    fn make_direct_step() -> TerminalWitnessPlan {
-        TerminalWitnessPlan {
-            current_w_len: 0,
-            witness_shape: SegmentTypedWitnessShape {
-                layout: crate::TailSegmentLayout {
-                    ring_dimension: 64,
-                    log_basis_open: 3,
-                    groups: vec![crate::TailSegmentGroupLayout {
-                        z_coords: 1,
-                        e_field_elems: 0,
-                        t_field_elems: 0,
-                        z_payload_bytes: 1,
-                    }],
-                    logical_num_elems: 0,
-                },
-            },
-            terminal_bytes: 0,
-        }
-    }
-
-    fn uniform_schedule(ring_dimension: usize, num_levels: usize) -> Schedule {
-        Schedule {
-            folds: (0..num_levels)
-                .map(|_| make_fold_step(ring_dimension, 4, 8))
-                .collect(),
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        }
-    }
-
-    fn mixed_d_schedule(dims: &[(usize, usize, usize)]) -> Schedule {
-        Schedule {
-            folds: dims
-                .iter()
-                .map(|&(d, nb, bl)| make_fold_step(d, nb, bl))
-                .collect(),
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        }
-    }
-
-    fn seed(gen_ring_dim: usize) -> AkitaSetupSeed {
-        AkitaSetupSeed {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            gen_ring_dim,
-            max_setup_len: 0,
-            public_matrix_seed: [0u8; 32],
-        }
-    }
-
-    #[test]
-    fn accepts_uniform_d_schedule_when_d_equals_gen_ring_dim() {
-        let sched = uniform_schedule(256, 3);
-        validate_schedule_ring_dims(&sched, &seed(256)).expect("256|256");
-        assert_eq!(sched.num_fold_levels(), 3);
-    }
-
-    #[test]
-    fn accepts_d_divides_gen_ring_dim() {
-        let sched = uniform_schedule(64, 2);
-        validate_schedule_ring_dims(&sched, &seed(256)).expect("64|256");
-    }
-
-    #[test]
-    fn accepts_mixed_d_schedule_when_all_dims_divide_gen_ring_dim() {
-        let sched = mixed_d_schedule(&[(64, 4, 8), (128, 4, 4), (256, 2, 2)]);
-        validate_schedule_ring_dims(&sched, &seed(256)).expect("all divide 256");
-        assert_eq!(sched.num_fold_levels(), 3);
-    }
-
-    #[test]
-    fn level_params_flat_field_len_matches_ring_elems_times_ring_dim() {
-        let sched = uniform_schedule(64, 1);
-        let step = &sched.folds[0];
-        assert_eq!(step.params.n_ring_elems().expect("n_ring"), 32);
-        assert_eq!(step.params.flat_field_len().expect("flat"), 2048);
-    }
-
-    #[test]
-    fn schedule_with_no_fold_steps_is_valid() {
-        let sched = Schedule {
-            folds: Vec::new(),
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        validate_schedule_ring_dims(&sched, &seed(256)).expect("no folds");
-        assert_eq!(sched.num_fold_levels(), 0);
-    }
-
-    #[test]
-    fn rejects_zero_gen_ring_dim() {
-        let sched = uniform_schedule(64, 1);
-        let err = validate_schedule_ring_dims(&sched, &seed(0)).expect_err("gen=0");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_level_ring_dimension_does_not_divide_gen_ring_dim() {
-        let sched = mixed_d_schedule(&[(96, 4, 4)]);
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("96|256");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_level_ring_dimension_zero() {
-        let mut fold = make_fold_step(64, 4, 4);
-        fold.params.ring_dimension = 0;
-        let sched = Schedule {
-            folds: vec![fold],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("d=0");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_non_power_of_two_role_dims() {
-        let err = validate_role_dims(CommitmentRingDims {
-            inner: 128,
-            outer: 48,
-            opening: 16,
-        })
-        .expect_err("outer role dim is not a power of two");
-        assert!(
-            matches!(err, AkitaError::InvalidSetup(message) if message.contains("power of two"))
-        );
-    }
-
-    fn fold_step_with_witness_lens(
-        ring_dimension: usize,
-        current_w_len: usize,
-        next_w_len: usize,
-    ) -> FoldStep {
-        let mut step = make_fold_step(ring_dimension, 4, 8);
-        step.current_w_len = current_w_len;
-        step.next_w_len = next_w_len;
-        step
-    }
-
-    #[test]
-    fn rejects_witness_length_not_divisible_by_d_a() {
-        let sched = Schedule {
-            folds: vec![fold_step_with_witness_lens(64, 65, 64)],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("65 % 64");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_next_witness_length_not_divisible_by_next_d_a() {
-        let sched = Schedule {
-            folds: vec![
-                fold_step_with_witness_lens(64, 64, 65),
-                make_fold_step(64, 4, 8),
-            ],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("next 65 % 64");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_too_many_fold_levels() {
-        let sched = Schedule {
-            folds: (0..MAX_FOLD_LEVELS + 1)
-                .map(|_| make_fold_step(64, 4, 8))
-                .collect(),
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("> MAX_FOLD_LEVELS");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_role_dims_key_mismatch() {
-        let mut step = make_fold_step(128, 4, 8);
-        step.params.role_dims = CommitmentRingDims {
-            inner: 128,
-            outer: 64,
-            opening: 64,
-        };
-        let sched = Schedule {
-            folds: vec![step],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("B-key still 64");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn accepts_nested_per_role_dims_with_matching_keys() {
-        use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
-        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
-
-        let mut params = make_fold_level_params(256, 4, 8);
-        params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::A,
-            1,
-            16,
-            0,
-            256,
-        );
-        params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::B,
-            1,
-            16,
-            0,
-            128,
-        );
-        params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::D,
-            1,
-            16,
-            0,
-            64,
-        );
-        params.stamp_role_dims_from_keys();
-        let sched = Schedule {
-            folds: vec![FoldStep {
-                params,
-                current_w_len: 256,
-                next_w_len: 128,
-                level_bytes: 0,
-            }],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        validate_schedule_ring_dims(&sched, &seed(256)).expect("nested 256|128|64");
-        let step = &sched.folds[0];
-        let dims = step.params.role_dims;
-        assert_eq!(dims.d_a(), 256);
-        assert_eq!(dims.d_b(), 128);
-        assert_eq!(dims.d_d(), 64);
-    }
-
-    #[test]
-    fn accepts_nested_role_dims_with_opening_at_d32() {
-        use crate::layout::{AjtaiKeyParams, SisModulusProfileId};
-        use crate::sis::DEFAULT_SIS_SECURITY_POLICY;
-
-        let mut params = make_fold_level_params(128, 4, 8);
-        params.a_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::A,
-            1,
-            16,
-            0,
-            128,
-        );
-        params.b_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::B,
-            1,
-            16,
-            0,
-            64,
-        );
-        params.d_key = AjtaiKeyParams::new_unchecked(
-            DEFAULT_SIS_SECURITY_POLICY,
-            crate::sis::SisTableDigest::CURRENT,
-            SisModulusProfileId::Q128OffsetA7F7,
-            crate::sis::SisMatrixRole::D,
-            1,
-            16,
-            0,
-            32,
-        );
-        params.stamp_role_dims_from_keys();
-        let sched = Schedule {
-            folds: vec![FoldStep {
-                params,
-                current_w_len: 128,
-                next_w_len: 64,
-                level_bytes: 0,
-            }],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        validate_schedule_ring_dims(&sched, &seed(128)).expect("nested 128|64|32");
-        let step = &sched.folds[0];
-        let dims = step.params.role_dims;
-        assert_eq!(dims.d_a(), 128);
-        assert_eq!(dims.d_b(), 64);
-        assert_eq!(dims.d_d(), 32);
-    }
-
-    #[test]
-    fn rejects_inner_ring_dim_32_for_fold_challenge() {
-        let mut step = make_fold_step(64, 4, 8);
-        step.params.role_dims = CommitmentRingDims {
-            inner: 32,
-            outer: 32,
-            opening: 32,
-        };
-        let sched = Schedule {
-            folds: vec![step],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("d_a=32");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_ring_dimension_mismatch_with_role_dims() {
-        let mut step = make_fold_step(64, 4, 8);
-        step.params.ring_dimension = 128;
-        let sched = Schedule {
-            folds: vec![step],
-            terminal: make_direct_step(),
-            total_bytes: 0,
-        };
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("ring_dim != d_a");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-
-    #[test]
-    fn rejects_level_ring_dimension_larger_than_gen_ring_dim() {
-        let sched = mixed_d_schedule(&[(512, 4, 4)]);
-        let err = validate_schedule_ring_dims(&sched, &seed(256)).expect_err("512|256");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
-    }
-}
+#[path = "ring_dims_tests.rs"]
+mod tests;

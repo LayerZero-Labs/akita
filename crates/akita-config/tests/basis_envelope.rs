@@ -19,11 +19,16 @@ fn d64_onehot_schedule_stays_within_basis_envelope() {
             Ok(schedule) => schedule,
             Err(_) => continue,
         };
-        let within_window = schedule.folds.iter().all(|fold| {
-            fold.params.log_basis_inner <= 6
-                && fold.params.log_basis_outer <= 6
-                && fold.params.log_basis_open <= 6
-        }) && schedule.terminal.witness_shape.layout.log_basis_open <= 6;
+        let root = &schedule.root.params.final_group.commitment;
+        let within_window = root.log_basis_inner <= 6
+            && root.log_basis_outer <= 6
+            && root.log_basis_open <= 6
+            && schedule.recursive_folds.iter().all(|fold| {
+                fold.params.witness.log_basis_inner <= 6
+                    && fold.params.witness.log_basis_outer <= 6
+                    && fold.params.witness.log_basis_open <= 6
+            })
+            && schedule.terminal.params.witness.log_basis_inner <= 6;
         assert!(
             within_window,
             "adaptive onehot schedule selected log_basis > 6 at nv={nv}: {schedule:?}"

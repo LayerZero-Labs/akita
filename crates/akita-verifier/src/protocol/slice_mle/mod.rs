@@ -11,7 +11,6 @@
 //! so we can evaluate each slice in isolation against the same `r` and sum
 //! the results — each slice is orders of magnitude smaller than `M`.
 
-#[cfg(test)]
 mod setup_contribution;
 mod structured_slice;
 

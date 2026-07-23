@@ -22,15 +22,52 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, FpExtEncoding, LevelParams,
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupParams, Schedule, SetupContributionMode,
+    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, CommittedGroupParams,
+    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
+
+fn planned_payload_bytes<Cfg: CommitmentConfig>(
+    schedule: &FoldSchedule,
+    final_group: PolynomialGroupLayout,
+) -> usize {
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group,
+        precommitteds: schedule
+            .root
+            .params
+            .precommitted_groups
+            .iter()
+            .map(|group| group.descriptor)
+            .collect(),
+    };
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        if let Some(entry) = akita_planner::generated::table_entry(catalog, &key) {
+            return akita_planner::estimate_proof_bytes(
+                entry,
+                &key,
+                &akita_config::policy_of::<Cfg>(),
+                Cfg::ring_challenge_config,
+                Cfg::fold_challenge_shape_at_level,
+            )
+            .expect("generated schedule estimate");
+        }
+    }
+    akita_planner::find_group_batch_schedule(
+        &key,
+        &akita_config::policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+    .and_then(|planned| planned.estimate.estimated_direct_proof_payload_bytes())
+    .expect("runtime schedule estimate")
+}
 
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
@@ -68,7 +105,7 @@ fn verifier_claims<'a, E: FieldCore, C>(
 }
 
 fn make_profile_onehot_poly<FF, const D: usize>(
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     seed: u64,
 ) -> OneHotPoly<FF, u8>
 where
@@ -148,9 +185,9 @@ where
 /// absolute proof growth is bounded by the CI proof-size regression threshold.
 const ACCEPTED_PLANNER_PROOF_SIZE_OVERCOUNT_BYTES: usize = 3072;
 
-fn segment_typed_z_planner_slack<FF, E>(
+fn terminal_response_z_planner_slack<FF, E>(
     proof: &AkitaBatchedProof<FF, E>,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) -> usize
 where
     FF: FieldCore,
@@ -158,12 +195,13 @@ where
 {
     schedule
         .terminal
-        .witness_shape
+        .params
+        .response_shape
         .layout
         .z_payload_bytes()
         .saturating_sub(
             proof
-                .final_witness()
+                .terminal_response()
                 .z_payloads
                 .iter()
                 .map(Vec::len)
@@ -241,12 +279,12 @@ fn report_proof_size_against_planner<FF, E>(
     planned_bytes: usize,
     source: &str,
     mode: SetupContributionMode,
-    schedule: &Schedule,
+    schedule: &FoldSchedule,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
 {
-    let z_slack = segment_typed_z_planner_slack(proof, schedule);
+    let z_slack = terminal_response_z_planner_slack(proof, schedule);
     match mode {
         SetupContributionMode::Direct => {
             assert_runtime_matches_planned_proof_size(
@@ -361,7 +399,7 @@ where
 fn opening_from_poly<'a, FF, const D: usize, P>(
     poly: &'a P,
     point: &[FF],
-    layout: &LevelParams,
+    layout: &CommittedGroupParams,
     basis: BasisMode,
 ) -> FF
 where
@@ -419,7 +457,7 @@ fn run_prove<
     poly: &P,
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
-    plan: Option<&Schedule>,
+    plan: Option<&FoldSchedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -486,7 +524,7 @@ fn run_prove<
         report_proof_size_against_planner(
             label,
             &proof,
-            plan.total_bytes,
+            planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::singleton(pt.len())),
             "planned",
             setup_contribution_mode,
             plan,
@@ -505,7 +543,7 @@ fn run_prove<
         report_proof_size_against_planner(
             label,
             &proof,
-            schedule.total_bytes,
+            planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::singleton(pt.len())),
             "runtime schedule",
             setup_contribution_mode,
             &schedule,
@@ -558,8 +596,8 @@ fn run_prove<
 pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
-    layout: &LevelParams,
-    plan: Option<&Schedule>,
+    layout: &CommittedGroupParams,
+    plan: Option<&FoldSchedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -646,8 +684,8 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
 pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     label: &str,
     nv: usize,
-    layout: &LevelParams,
-    plan: Option<&Schedule>,
+    layout: &CommittedGroupParams,
+    plan: Option<&FoldSchedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -734,8 +772,8 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
     label: &str,
     nv: usize,
     num_polys: usize,
-    layout: &LevelParams,
-    plan: Option<&Schedule>,
+    layout: &CommittedGroupParams,
+    plan: Option<&FoldSchedule>,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -853,7 +891,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            plan.total_bytes,
+            planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::new(nv, num_polys)),
             "planned",
             setup_contribution_mode,
             plan,
@@ -869,7 +907,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_proof_size_against_planner(
             label,
             &proof,
-            schedule.total_bytes,
+            planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::new(nv, num_polys)),
             "runtime schedule",
             setup_contribution_mode,
             &schedule,
@@ -893,10 +931,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         "profile extension field"
     );
     eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
-    let root_step = schedule.root_fold().expect("profile schedule root fold");
+    let root_step = &schedule.root;
     tracing::info!(
         label,
-        root_bytes = root_step.level_bytes,
+        root_output_witness_len = root_step.output_witness_len,
         observed_total_bytes = proof.size(),
         "batched planner root-fold summary"
     );
@@ -1041,7 +1079,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
                     &setup, &polys, &stack,
                 )
                 .expect("precommit");
-            pre_frozen.push(PrecommittedGroupParams::from_params(key, &layout));
+            pre_frozen.push(PrecommittedGroupDescriptor::from_params(key, &layout));
             pre_keys.push(key);
             pre_commitments.push(commitment);
             pre_hints.push(hint);
@@ -1055,11 +1093,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         };
         let schedule = ProofCfg::<Cfg>::runtime_schedule(multi_group_key)
             .expect("multi-group runtime schedule");
-        let main_params = schedule
-            .root_fold()
-            .expect("multi-group root fold")
-            .params
-            .clone();
+        let main_params = schedule.root.params.final_group.commitment.clone();
         let final_polys = (0..final_num_polys)
             .map(|poly_idx| {
                 make_profile_onehot_poly::<FF, D>(
@@ -1155,7 +1189,10 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
     report_proof_size_against_planner(
         label,
         &proof,
-        schedule.total_bytes,
+        planned_payload_bytes::<ProofCfg<Cfg>>(
+            &schedule,
+            PolynomialGroupLayout::new(final_num_vars, final_num_polys),
+        ),
         "planned",
         setup_contribution_mode,
         &schedule,

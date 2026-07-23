@@ -10,10 +10,10 @@ use super::build::{
     build_trace_weight_compact_field_sparse_scaled, build_trace_weight_compact_ring_terms_scaled,
 };
 use super::trace_table::TraceTable;
+use super::{TraceFieldBlockOpening, TraceRingBlockOpening, TraceTerm, TraceWeightLayout};
 use crate::{
-    dispatch_for_field, embed_ring_subfield_scalar, BasisMode, FpExtEncoding, LevelParams,
-    OpeningClaimsLayout, PreparedOpeningPoint, TraceFieldBlockOpening, TraceRingBlockOpening,
-    TraceTerm, TraceWeightLayout, WitnessLayout,
+    dispatch_for_field, embed_ring_subfield_scalar, BasisMode, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
 
 /// Owned public trace-weight factors used by the fused stage-2 trace term.
@@ -66,38 +66,13 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     pub trace_term_batches: Vec<TraceTermBatch<F, E, D>>,
 }
 
-/// Whether the trace-weight dispatcher has an algebraic implementation for this
-/// claim-field extension degree.
-#[inline]
-fn trace_stage2_supported(extension_degree: usize) -> bool {
-    matches!(extension_degree, 1 | 2 | 4 | 8)
-}
-
-/// Reject extension degrees with no trace-weight implementation.
-///
-/// The fused trace term is mandatory: it is what binds the fold opening to the
-/// committed witness in place of the dropped on-wire `y_ring`. A degree with no
-/// algebraic implementation must therefore be rejected rather than silently
-/// skipped, which would leave the opening unbound (a soundness footgun). This
-/// is verifier-reachable, so it returns an error instead of panicking.
-#[inline]
-pub fn ensure_trace_stage2_supported(extension_degree: usize) -> Result<(), AkitaError> {
-    if trace_stage2_supported(extension_degree) {
-        Ok(())
-    } else {
-        Err(AkitaError::InvalidSetup(format!(
-            "fused stage-2 trace term has no implementation for claim-field extension degree {extension_degree}; cannot bind the fold opening"
-        )))
-    }
-}
-
 /// Derive the trace-weight layout for the `e_hat` digit segment.
 ///
 /// `num_trace_blocks` is the logical number of folded opening blocks addressed
 /// by the trace term. Recursive singleton folds use `lp.num_live_blocks`; batched
 /// root folds can use a wider claim-weighted block row.
 pub fn trace_weight_layout_from_segment(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     witness_layout: &WitnessLayout,
     opening_source_len: usize,
     col_bits: usize,
@@ -109,7 +84,7 @@ pub fn trace_weight_layout_from_segment(
             "trace-weight block count must be non-zero".to_string(),
         ));
     }
-    if ring_bits != lp.ring_dimension.trailing_zeros() as usize {
+    if ring_bits != lp.d_a().trailing_zeros() as usize {
         return Err(AkitaError::InvalidInput(
             "trace-weight ring bits do not match level ring dimension".to_string(),
         ));
@@ -201,7 +176,7 @@ where
 }
 
 struct RootTraceClaimInputs<'a, F: FieldCore, E: FieldCore> {
-    /// M-matrix block count per claim (`LevelParams::num_live_blocks`, extracted by
+    /// M-matrix block count per claim (`CommittedGroupParams::num_live_blocks`, extracted by
     /// the caller — trace-weight construction must not read schedule types).
     num_live_blocks: usize,
     opening_batch: &'a OpeningClaimsLayout,
@@ -395,7 +370,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 /// per-claim terms instead of materialized block weights.
 #[allow(clippy::too_many_arguments)]
 pub fn trace_terms_root<F, E, const D: usize>(
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
@@ -432,7 +407,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_point: &PreparedOpeningPoint<F, E>,
     b_open: &[E],
@@ -469,7 +444,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub fn build_trace_claim_multi_group_root<F, E, const D: usize>(
     layout: TraceWeightLayout,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
@@ -616,7 +591,7 @@ pub fn build_multi_group_root_stage2_trace_table<F, E>(
     ring_d: usize,
     witness_layout: &WitnessLayout,
     opening_source_len: usize,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     prepared_points: &[PreparedOpeningPoint<F, E>],
     row_coefficients: &[E],
@@ -739,7 +714,7 @@ where
 /// fold. The fold-axis opening follows the physical digit-innermost order.
 pub fn trace_terms_recursive<F, E, const D: usize>(
     prepared: &PreparedOpeningPoint<F, E>,
-    lp: &LevelParams,
+    lp: &CommittedGroupParams,
     basis: BasisMode,
     scale: E,
 ) -> Result<Vec<TraceTerm<F, E, D>>, AkitaError>
