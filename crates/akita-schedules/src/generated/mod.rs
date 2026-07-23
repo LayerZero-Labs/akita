@@ -14,14 +14,14 @@ pub use akita_planner::{
 };
 
 // @generated schedule module wiring begin
-#[cfg(feature = "fp128-d128-full")]
-pub mod fp128_d128_full;
+#[cfg(feature = "fp128-d128-dense")]
+pub mod fp128_d128_dense;
 #[cfg(feature = "fp128-d128-onehot")]
 pub mod fp128_d128_onehot;
-#[cfg(feature = "fp128-d64-full")]
-pub mod fp128_d64_full;
-#[cfg(feature = "fp128-d64-full-multi-chunk")]
-pub mod fp128_d64_full_multi_chunk;
+#[cfg(feature = "fp128-d64-dense")]
+pub mod fp128_d64_dense;
+#[cfg(feature = "fp128-d64-dense-multi-chunk")]
+pub mod fp128_d64_dense_multi_chunk;
 #[cfg(feature = "fp128-d64-onehot")]
 pub mod fp128_d64_onehot;
 #[cfg(feature = "fp128-d64-onehot-multi-chunk")]
@@ -40,18 +40,18 @@ pub mod fp128_d64_onehot_tensor;
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d256-onehot")]
 pub mod fp32_d256_onehot;
-#[cfg(feature = "fp64-d128")]
-pub mod fp64_d128;
+#[cfg(feature = "fp64-d128-dense")]
+pub mod fp64_d128_dense;
 #[cfg(feature = "fp64-d128-onehot")]
 pub mod fp64_d128_onehot;
 #[cfg(feature = "fp64-d256-onehot")]
 pub mod fp64_d256_onehot;
 
-#[cfg(feature = "fp128-d128-full")]
-pub fn fp128_d128_full_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-d128-dense")]
+pub fn fp128_d128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d128_full::FP128_D128_FULL_SCHEDULES,
-        identity: fp128_d128_full::CATALOG_IDENTITY,
+        entries: fp128_d128_dense::FP128_D128_DENSE_SCHEDULES,
+        identity: fp128_d128_dense::CATALOG_IDENTITY,
     }
 }
 
@@ -63,19 +63,19 @@ pub fn fp128_d128_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(feature = "fp128-d64-full")]
-pub fn fp128_d64_full_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-d64-dense")]
+pub fn fp128_d64_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_full::FP128_D64_FULL_SCHEDULES,
-        identity: fp128_d64_full::CATALOG_IDENTITY,
+        entries: fp128_d64_dense::FP128_D64_DENSE_SCHEDULES,
+        identity: fp128_d64_dense::CATALOG_IDENTITY,
     }
 }
 
-#[cfg(feature = "fp128-d64-full-multi-chunk")]
-pub fn fp128_d64_full_multi_chunk_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp128-d64-dense-multi-chunk")]
+pub fn fp128_d64_dense_multi_chunk_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp128_d64_full_multi_chunk::FP128_D64_FULL_MULTI_CHUNK_SCHEDULES,
-        identity: fp128_d64_full_multi_chunk::CATALOG_IDENTITY,
+        entries: fp128_d64_dense_multi_chunk::FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES,
+        identity: fp128_d64_dense_multi_chunk::CATALOG_IDENTITY,
     }
 }
 
@@ -151,11 +151,11 @@ pub fn fp32_d256_onehot_table() -> GeneratedScheduleTable {
     }
 }
 
-#[cfg(feature = "fp64-d128")]
-pub fn fp64_d128_table() -> GeneratedScheduleTable {
+#[cfg(feature = "fp64-d128-dense")]
+pub fn fp64_d128_dense_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
-        entries: fp64_d128::FP64_D128_SCHEDULES,
-        identity: fp64_d128::CATALOG_IDENTITY,
+        entries: fp64_d128_dense::FP64_D128_DENSE_SCHEDULES,
+        identity: fp64_d128_dense::CATALOG_IDENTITY,
     }
 }
 

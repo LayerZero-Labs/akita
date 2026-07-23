@@ -162,7 +162,7 @@ the blinding segment with matching group-local B-column offsets.
 needed to recompute the public commitment.
 - ZK dense end-to-end tests prove that same-polynomial commitments
 re-randomize and still commit, prove, serialize, deserialize, and verify
-for D=32, D=64, and D=128 fp128 full-field configs.
+for D=32, D=64, and D=128 fp128 dense configs.
 - CI runs transparent tests, transparent planner tests, all-features tests,
 clippy with all features, clippy without default features, docs with all
 features, and planner validation.

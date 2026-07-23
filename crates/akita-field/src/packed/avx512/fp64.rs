@@ -43,16 +43,16 @@ impl<const P: u64> PackedFp64Avx512<P> {
     #[inline]
     unsafe fn reduce128_vec(hi: __m512i, lo: __m512i) -> __m512i {
         if Self::BITS < 64 {
-            Self::reduce128_small_k(hi, lo)
+            Self::reduce128_sub_word(hi, lo)
         } else {
-            Self::reduce128_full_k(hi, lo)
+            Self::reduce128_word_sized(hi, lo)
         }
     }
 
     /// Reduction for BITS < 64 (e.g. 40-bit prime). No overflow issues: all
     /// intermediates fit in u64.
     #[inline]
-    unsafe fn reduce128_small_k(hi: __m512i, lo: __m512i) -> __m512i {
+    unsafe fn reduce128_sub_word(hi: __m512i, lo: __m512i) -> __m512i {
         let mask_k = _mm512_set1_epi64(Self::MASK64 as i64);
         let c_vec = _mm512_set1_epi64(Self::C_LO as i64);
         let p_vec = _mm512_set1_epi64(P as i64);
@@ -69,9 +69,9 @@ impl<const P: u64> PackedFp64Avx512<P> {
         let hi_k_top = _mm512_srli_epi64::<32>(hi_k);
         let c_hi_top = _mm512_mul_epu32(c_vec, hi_k_top);
         let c_hi_top_shifted = _mm512_slli_epi64::<32>(c_hi_top);
-        let c_hi_full = _mm512_add_epi64(c_hi_lo, c_hi_top_shifted);
+        let c_hi = _mm512_add_epi64(c_hi_lo, c_hi_top_shifted);
 
-        let fold1 = _mm512_add_epi64(lo_k, c_hi_full);
+        let fold1 = _mm512_add_epi64(lo_k, c_hi);
 
         let fold1_lo_k = _mm512_and_si512(fold1, mask_k);
         let fold1_hi = _mm512_srl_epi64(fold1, shift_k);
@@ -85,7 +85,7 @@ impl<const P: u64> PackedFp64Avx512<P> {
     /// Reduction for BITS == 64 (e.g. p = 2^64 - 87). Tracks overflow from
     /// c*hi exceeding 64 bits, using native unsigned comparisons.
     #[inline]
-    unsafe fn reduce128_full_k(hi: __m512i, lo: __m512i) -> __m512i {
+    unsafe fn reduce128_word_sized(hi: __m512i, lo: __m512i) -> __m512i {
         let c_vec = _mm512_set1_epi64(Self::C_LO as i64);
         let p_vec = _mm512_set1_epi64(P as i64);
         let one = _mm512_set1_epi64(1);

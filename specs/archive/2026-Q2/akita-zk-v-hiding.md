@@ -118,7 +118,7 @@ Focused ZK test:
 cargo test -p akita-pcs --features zk --test zk
 ```
 
-This test covers D=32, D=64, and D=128 fp128 full-field configs. It verifies
+This test covers D=32, D=64, and D=128 fp128 dense configs. It verifies
 that same-polynomial commitments re-randomize, proofs serialize/deserialize and
 verify, and repeated folded proofs produce different blinded `v` values without
 exposing the plain `D * w_hat` image.

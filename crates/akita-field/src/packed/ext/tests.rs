@@ -29,8 +29,8 @@ type PR4Generic31Offset32787 =
     PackedFpExt4<Generic31Offset32787, <Generic31Offset32787 as HasPacking>::Packing>;
 type R4Prime32 = FpExt4<Prime32Offset99>;
 type PR4Prime32 = PackedFpExt4<Prime32Offset99, <Prime32Offset99 as HasPacking>::Packing>;
-type E2Full = FpExt2<Prime64Offset59, TwoNr>;
-type PE2Full = PackedFpExt2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
+type Fp64Ext2 = FpExt2<Prime64Offset59, TwoNr>;
+type PFp64Ext2 = PackedFpExt2<Prime64Offset59, TwoNr, <Prime64Offset59 as HasPacking>::Packing>;
 
 fn fp32_ext_edge_values<const P: u32>() -> [Fp32<P>; 4] {
     [
@@ -107,21 +107,21 @@ fn packed_fp_ext2_mul() {
 }
 
 #[test]
-fn packed_fp_ext2_mul_full_word_fp64() {
+fn packed_fp_ext2_mul_fp64() {
     let mut rng = StdRng::seed_from_u64(201);
-    let width = <PE2Full as PackedValue>::WIDTH;
-    let a_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
-    let b_elems: Vec<E2Full> = (0..width).map(|_| E2Full::random(&mut rng)).collect();
+    let width = <PFp64Ext2 as PackedValue>::WIDTH;
+    let a_elems: Vec<Fp64Ext2> = (0..width).map(|_| Fp64Ext2::random(&mut rng)).collect();
+    let b_elems: Vec<Fp64Ext2> = (0..width).map(|_| Fp64Ext2::random(&mut rng)).collect();
 
-    let pa = PE2Full::from_fn(|i| a_elems[i]);
-    let pb = PE2Full::from_fn(|i| b_elems[i]);
+    let pa = PFp64Ext2::from_fn(|i| a_elems[i]);
+    let pb = PFp64Ext2::from_fn(|i| b_elems[i]);
     let pc = pa * pb;
 
     for (i, (a, b)) in a_elems.iter().zip(&b_elems).enumerate() {
         assert_eq!(
             pc.extract(i),
             *a * *b,
-            "full-word packed FpExt2 mul mismatch at lane {i}"
+            "word-sized packed FpExt2 mul mismatch at lane {i}"
         );
     }
 }

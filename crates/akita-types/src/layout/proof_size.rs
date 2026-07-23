@@ -2,7 +2,7 @@
 
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::sis::compute_num_digits_full_field;
+use crate::sis::compute_num_digits_field_width;
 use crate::PolynomialGroupLayout;
 use crate::{CommittedGroupParams, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 
@@ -139,7 +139,10 @@ pub fn planned_w_ring_element_count<F: CanonicalField>(
         .ok_or_else(|| AkitaError::InvalidSetup("planned Z width overflow".to_string()))?;
     let r_count = lp
         .relation_matrix_row_count(1)?
-        .checked_mul(compute_num_digits_full_field(field_bits, lp.log_basis_open))
+        .checked_mul(compute_num_digits_field_width(
+            field_bits,
+            lp.log_basis_open,
+        ))
         .ok_or_else(|| AkitaError::InvalidSetup("planned r-tail width overflow".to_string()))?;
 
     e_hat_count

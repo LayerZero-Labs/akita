@@ -432,12 +432,12 @@ pub fn emit_spec_for_family(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
-        "fp128_d128_full",
-        "FP128_D128_FULL_SCHEDULES",
-        "fp128-d128-full",
+        "fp128_d128_dense",
+        "FP128_D128_DENSE_SCHEDULES",
+        "fp128-d128-dense",
         1,
         50,
-        fp128::D128Full
+        fp128::D128Dense
     ),
     family_row!(
         group_batch,
@@ -479,12 +479,12 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
     ),
     family_row!(
-        "fp128_d64_full",
-        "FP128_D64_FULL_SCHEDULES",
-        "fp128-d64-full",
+        "fp128_d64_dense",
+        "FP128_D64_DENSE_SCHEDULES",
+        "fp128-d64-dense",
         1,
         50,
-        fp128::D64Full
+        fp128::D64Dense
     ),
     family_row!(
         group_batch,
@@ -523,20 +523,20 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHotMultiChunkW4R2
     ),
     family_row!(
-        "fp128_d64_full_multi_chunk",
-        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
-        "fp128-d64-full-multi-chunk",
+        "fp128_d64_dense_multi_chunk",
+        "FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-dense-multi-chunk",
         1,
         50,
-        fp128::D64FullMultiChunk
+        fp128::D64DenseMultiChunk
     ),
     family_row!(
-        "fp64_d128",
-        "FP64_D128_SCHEDULES",
-        "fp64-d128",
+        "fp64_d128_dense",
+        "FP64_D128_DENSE_SCHEDULES",
+        "fp64-d128-dense",
         1,
         32,
-        fp64::D128Full
+        fp64::D128Dense
     ),
     family_row!(
         "fp64_d128_onehot",

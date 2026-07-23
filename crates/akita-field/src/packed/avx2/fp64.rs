@@ -41,15 +41,15 @@ impl<const P: u64> PackedFp64Avx2<P> {
     #[inline]
     unsafe fn reduce128_vec(hi: __m256i, lo: __m256i) -> __m256i {
         if Self::BITS < 64 {
-            Self::reduce128_small_k(hi, lo)
+            Self::reduce128_sub_word(hi, lo)
         } else {
-            Self::reduce128_full_k(hi, lo)
+            Self::reduce128_word_sized(hi, lo)
         }
     }
 
     /// Reduction for BITS < 64. All intermediates fit in u64 — no overflow.
     #[inline]
-    unsafe fn reduce128_small_k(hi: __m256i, lo: __m256i) -> __m256i {
+    unsafe fn reduce128_sub_word(hi: __m256i, lo: __m256i) -> __m256i {
         let mask_k = _mm256_set1_epi64x(Self::MASK64 as i64);
         let c_vec = _mm256_set1_epi64x(Self::C_LO as i64);
         let p_vec = _mm256_set1_epi64x(P as i64);
@@ -65,9 +65,9 @@ impl<const P: u64> PackedFp64Avx2<P> {
         let hi_k_top = _mm256_srli_epi64::<32>(hi_k);
         let c_hi_top = _mm256_mul_epu32(c_vec, hi_k_top);
         let c_hi_top_shifted = _mm256_slli_epi64::<32>(c_hi_top);
-        let c_hi_full = _mm256_add_epi64(c_hi_lo, c_hi_top_shifted);
+        let c_hi = _mm256_add_epi64(c_hi_lo, c_hi_top_shifted);
 
-        let fold1 = _mm256_add_epi64(lo_k, c_hi_full);
+        let fold1 = _mm256_add_epi64(lo_k, c_hi);
 
         let fold1_lo_k = _mm256_and_si256(fold1, mask_k);
         let fold1_hi = _mm256_srl_epi64(fold1, shift_k);
@@ -85,7 +85,7 @@ impl<const P: u64> PackedFp64Avx2<P> {
     /// Reduction for BITS == 64. Uses XOR-with-SIGN_BIT trick for unsigned
     /// overflow detection.
     #[inline]
-    unsafe fn reduce128_full_k(hi: __m256i, lo: __m256i) -> __m256i {
+    unsafe fn reduce128_word_sized(hi: __m256i, lo: __m256i) -> __m256i {
         let c_vec = _mm256_set1_epi64x(Self::C_LO as i64);
         let p_vec = _mm256_set1_epi64x(P as i64);
         let sign = _mm256_set1_epi64x(i64::MIN);

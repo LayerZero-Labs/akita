@@ -37,9 +37,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::compute_round_full_sparse_x_y"
+        name = "LowBasisRangeCheckProver::compute_round_materialized_sparse_x_y"
     )]
-    pub(super) fn compute_round_full_sparse_x_y(&self, range_image: &[E]) -> EqFactoredUniPoly<E> {
+    pub(super) fn compute_round_materialized_sparse_x_y(
+        &self,
+        range_image: &[E],
+    ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.use_sparse_x_y_round());
         let y_len = range_image.len() / self.live_x_cols;
         let y_pairs = y_len / 2;
@@ -60,9 +63,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::fuse_full_sparse_x_y_and_compute_round"
+        name = "LowBasisRangeCheckProver::fuse_materialized_sparse_x_y_and_compute_round"
     )]
-    pub(super) fn fuse_full_sparse_x_y_and_compute_round(
+    pub(super) fn fuse_materialized_sparse_x_y_and_compute_round(
         &self,
         range_image: &[E],
         r: E,
