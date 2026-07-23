@@ -241,15 +241,18 @@ fn commit_group_returns_frozen_exact_layout() {
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
-    let layout =
-        OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("group commit layout");
+    // `commit_group` freezes the standalone precommit layout (root basis pinned),
+    // so size the setup and expected layout with the precommit config, not the
+    // main runtime config (which resolves a different, single-group root split).
+    let layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("group commit layout");
     let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
