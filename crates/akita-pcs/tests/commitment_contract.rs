@@ -24,7 +24,7 @@ use akita_prover::{
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
 
-type Cfg = fp64::D64Full;
+type Cfg = fp64::D64Dense;
 type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
 // The folded-only protocol requires at least two folds. `nv=8` was a

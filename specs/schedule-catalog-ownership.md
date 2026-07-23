@@ -274,7 +274,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 - [ ] New workspace crate `crates/akita-schedules` contains all generated table
   modules moved from `akita-planner/src/generated/`.
 - [ ] Root `Cargo.toml` adds `crates/akita-schedules` to `workspace.members`.
-- [ ] Each family is behind a Cargo feature (e.g. `fp128-d64-onehot`, `fp128-d64-full`).
+- [ ] Each family is behind a Cargo feature (e.g. `fp128-d64-onehot`, `fp128-d64-dense`).
 - [ ] `akita-planner` default build contains **no** generated table `.rs` files.
 - [ ] `gen_schedule_tables` writes into `akita-schedules/src/generated/`, emits catalog
   identities, and updates family feature wiring (not `akita-planner`). The binary
@@ -682,7 +682,7 @@ than projecting through the scalar `AkitaScheduleLookupKey::from_layout` path.
 | Feature | Module | Typical preset |
 |---------|--------|----------------|
 | `fp128-d64-onehot` | `fp128_d64_onehot.rs` | `fp128::D64OneHot` |
-| `fp128-d64-full` | `fp128_d64_full.rs` | `fp128::D64Full` |
+| `fp128-d64-dense` | `fp128_d64_dense.rs` | `fp128::D64Dense` |
 | `fp128-d32-onehot` | (new/emitted) | `fp128::D32OneHot` |
 | `fp32-d128-onehot` | `fp32_d128_onehot.rs` | `fp32::D128OneHot` |
 | … | … | … |
@@ -703,12 +703,12 @@ default = []
 zk = ["akita-planner/zk"]
 all-schedules = [
     "fp128-d64-onehot",
-    "fp128-d64-full",
+    "fp128-d64-dense",
     "fp128-d64-onehot-tiered", # non-ZK-only; inert when feature = "zk"
     # every other family
 ]
 fp128-d64-onehot = []
-fp128-d64-full = []
+fp128-d64-dense = []
 ```
 
 `akita-config/Cargo.toml` shape:
@@ -719,13 +719,13 @@ default = ["schedules-default"]
 zk = ["akita-planner/zk", "akita-types/zk", "akita-schedules?/zk"]
 schedules-default = [
     "schedules-fp128-d64-onehot",
-    "schedules-fp128-d64-full",
+    "schedules-fp128-d64-dense",
     "schedules-fp128-d128-onehot",
-    "schedules-fp128-d128-full",
+    "schedules-fp128-d128-dense",
     "schedules-fp32-d128-onehot",
     "schedules-fp32-d256-onehot",
     "schedules-fp64-d128-onehot",
-    "schedules-fp64-d128-full",
+    "schedules-fp64-d128-dense",
     "schedules-fp64-d256-onehot",
 ]
 all-schedules = [
@@ -757,7 +757,7 @@ profile-ci = [
     "akita-config/schedules-fp32-d128-onehot",
     "akita-config/schedules-fp64-d128-onehot",
     "akita-config/schedules-fp128-d64-onehot",
-    "akita-config/schedules-fp128-d64-full",
+    "akita-config/schedules-fp128-d64-dense",
 ]
 ```
 
@@ -830,7 +830,7 @@ of the shipped table it is supposed to profile.
 
 This is the *only* drift that matters for the refactor. Note what is **not** a
 problem: link stripping already falls out of per-preset feature gating. The `profile`
-example names preset *types* (`type Cfg = fp128::D64Full`), which are always
+example names preset *types* (`type Cfg = fp128::D64Dense`), which are always
 available; only the table *data* is feature-gated. So
 `--no-default-features --features parallel,profile-ci` linking the schedule families
 for the bench matrix needs no manifest — it is just a feature list. We do not need a
@@ -848,7 +848,7 @@ profile-ci = [
     "akita-config/schedules-fp32-d128-onehot",
     "akita-config/schedules-fp64-d128-onehot",
     "akita-config/schedules-fp128-d64-onehot",
-    "akita-config/schedules-fp128-d64-full",
+    "akita-config/schedules-fp128-d64-dense",
 ]
 ```
 

@@ -730,15 +730,15 @@ A later Jolt integration PR can update Jolt docs once Jolt consumes `akita-verif
 ## Future Planner Improvement
 
 The current runtime/profile surface still has a type-level config split:
-callers choose a concrete preset such as `D32Full`, `D128Full`, `D32OneHot`,
+callers choose a concrete preset such as `D32Dense`, `D128Dense`, `D32OneHot`,
 or `D64OneHot`, and each preset then plans the best schedule inside that fixed
 ring family. As a result, `profile.rs` implements a wrapper-level comparison
-between generated plans, for example comparing `D32Full` against `D128Full`
+between generated plans, for example comparing `D32Dense` against `D128Dense`
 before running the dense profile.
 
 This is good enough for the crate-decomposition cutover, but it is not the
 ideal Akita planner API. After the crate graph is stable, add an explicit
-planner-facing selector for "best full" and "best onehot" modes that returns
+planner-facing selector for "best dense" and "best onehot" modes that returns
 the chosen concrete config/ring family plus its schedule, rather than making
 callers manually compare typed presets. The selector should support singleton
 and batched shapes, use the same schedule-provider boundary as the typed

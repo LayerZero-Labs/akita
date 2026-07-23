@@ -45,20 +45,20 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
 
 #[test]
 fn accepts_real_fp64_d64_schedule() {
-    let schedule = schedule::<fp64::D64Full>(20);
+    let schedule = schedule::<fp64::D64Dense>(20);
     validate_schedule_ring_dims(&schedule, &seed(64)).expect("D64 schedule");
     assert_schedule_geometry(&schedule, 64);
 }
 
 #[test]
 fn accepts_real_fp128_d128_schedule() {
-    let schedule = schedule::<fp128::D128Full>(18);
+    let schedule = schedule::<fp128::D128Dense>(18);
     validate_schedule_ring_dims(&schedule, &seed(128)).expect("D128 schedule");
     assert_schedule_geometry(&schedule, 128);
 }
 
 #[test]
 fn rejects_schedule_larger_than_setup_ring_dimension() {
-    let schedule = schedule::<fp128::D128Full>(16);
+    let schedule = schedule::<fp128::D128Dense>(16);
     assert!(validate_schedule_ring_dims(&schedule, &seed(64)).is_err());
 }

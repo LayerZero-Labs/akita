@@ -48,9 +48,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 }
                 LowBasisRangeImageStorage::Materialized(range_image) => {
                     if use_prefix_x_round {
-                        self.compute_round_full_prefix_x(range_image)
+                        self.compute_round_materialized_prefix_x(range_image)
                     } else if use_sparse_x_y_round {
-                        self.compute_round_full_sparse_x_y(range_image)
+                        self.compute_round_materialized_sparse_x_y(range_image)
                     } else {
                         compute_range_round_polynomial_from_range_image(
                             &self.split_eq,
@@ -67,9 +67,9 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::fold_compact_range_image_to_full"
+        name = "LowBasisRangeCheckProver::fold_compact_range_image_to_materialized"
     )]
-    pub(super) fn fold_compact_range_image_to_full<V: CompactRangeImageValue>(
+    pub(super) fn fold_compact_range_image_to_materialized<V: CompactRangeImageValue>(
         compact_range_image: &[V],
         fold_lut: &CompactPairFoldLut<E>,
     ) -> Vec<E> {
@@ -269,7 +269,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
         self.split_eq.bind(r);
         let use_prefix_x_round = self.use_prefix_x_round();
         let use_sparse_x_y_round = self.use_sparse_x_y_round();
-        let fuse_next_full_prefix_x =
+        let fuse_next_materialized_prefix_x =
             use_prefix_x_round && self.next_use_prefix_x_round_after_current();
         let fuse_next_sparse_x_y =
             use_sparse_x_y_round && self.next_use_sparse_x_y_round_after_current();
@@ -296,15 +296,15 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                         &fold_lut,
                     )
                 } else {
-                    Self::fold_compact_range_image_to_full(&compact_range_image, &fold_lut)
+                    Self::fold_compact_range_image_to_materialized(&compact_range_image, &fold_lut)
                 };
                 LowBasisRangeImageStorage::Materialized(range_image)
             }
             LowBasisRangeImageStorage::Materialized(range_image) => {
                 if use_prefix_x_round {
-                    if fuse_next_full_prefix_x {
+                    if fuse_next_materialized_prefix_x {
                         let (next_range_image, round_poly) =
-                            self.fuse_full_prefix_x_and_compute_round(&range_image, r);
+                            self.fuse_materialized_prefix_x_and_compute_round(&range_image, r);
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::Materialized(next_range_image)
                     } else {
@@ -319,7 +319,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold>
                 } else if use_sparse_x_y_round {
                     if fuse_next_sparse_x_y {
                         let (next_range_image, round_poly) =
-                            self.fuse_full_sparse_x_y_and_compute_round(&range_image, r);
+                            self.fuse_materialized_sparse_x_y_and_compute_round(&range_image, r);
                         self.cached_round_poly = Some(round_poly);
                         LowBasisRangeImageStorage::Materialized(next_range_image)
                     } else {

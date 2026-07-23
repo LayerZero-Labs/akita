@@ -281,7 +281,7 @@ impl AkitaScheduleLookupKey {
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    crate::sis::compute_num_digits_full_field(field_bits, log_basis)
+    crate::sis::compute_num_digits_field_width(field_bits, log_basis)
 }
 
 /// Detect the field modulus from the canonical representation.
@@ -336,7 +336,7 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     let r_rows = lp.relation_matrix_row_count(1)?;
     let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
+        .checked_mul(crate::sis::compute_num_digits_field_width(
             field_bits,
             lp.log_basis_open,
         ))

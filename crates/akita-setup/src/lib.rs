@@ -455,7 +455,7 @@ mod tests {
     use akita_serialization::{AkitaDeserialize, AkitaSerialize};
     use std::sync::Arc;
 
-    type Cfg = fp128::D64Full;
+    type Cfg = fp128::D64Dense;
     type TestF = fp128::Field;
 
     #[test]
@@ -484,9 +484,9 @@ mod tests {
     fn setup_accepts_field_coupled_presets() {
         // Both folded-only catalogs begin at nv=13, the first singleton shape
         // with the required root and suffix folds.
-        new_prover_setup::<fp128::Field, fp128::D128Full>(13, 1)
+        new_prover_setup::<fp128::Field, fp128::D128Dense>(13, 1)
             .expect("default fp128 D=128 preset should accept the fp128 field");
-        new_prover_setup::<fp128::Field, fp128::D64Full>(13, 1)
+        new_prover_setup::<fp128::Field, fp128::D64Dense>(13, 1)
             .expect("small-D fp128 preset should accept the default field");
     }
 

@@ -602,7 +602,7 @@ uses `log_basis = 2`.
 
 | Preset family | Root | Recursive search | Notes |
 |---------------|------|------------------|-------|
-| fp128 one-hot, dense, tensor, and chunked families | 2 | 2…6 | `fp128::{D64Full,D64FullMultiChunk}` remain capped at `nv = 49` because their basis-2 root cannot produce the required schedule at `nv = 50`. |
+| fp128 one-hot, dense, tensor, and chunked families | 2 | 2…6 | `fp128::{D64Dense,D64DenseMultiChunk}` cap at `nv = 48` because their basis-2 root cannot produce a valid schedule beyond that. |
 | fp64 dense and one-hot families | 2 | 2…6 | No field-specific floor. |
 | fp32 one-hot families | 2 | 2…6 | No field-specific floor. |
 | `RecursiveCommitmentConfig<…>` | 2 | 2…6 | Inherits the base policy and retains recursion-specific catalog identity. |

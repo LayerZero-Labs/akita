@@ -20,12 +20,12 @@ default = ["schedules-default"]
 test-support = []
 schedules-default = [
   "schedules-fp128-d64-onehot",
-  "schedules-fp128-d64-full",
+  "schedules-fp128-d64-dense",
   "schedules-fp128-d128-onehot",
-  "schedules-fp128-d128-full",
+  "schedules-fp128-d128-dense",
   "schedules-fp32-d128-onehot",
   "schedules-fp32-d256-onehot",
-  "schedules-fp64-d128",
+  "schedules-fp64-d128-dense",
   "schedules-fp64-d128-onehot",
   "schedules-fp64-d256-onehot",
 ]
@@ -37,7 +37,7 @@ all-schedules = [
   "schedules-fp128-d64-onehot-multi-chunk",
   "schedules-fp128-d64-onehot-multi-chunk-w2r2",
   "schedules-fp128-d64-onehot-multi-chunk-w4r2",
-  "schedules-fp128-d64-full-multi-chunk",
+  "schedules-fp128-d64-dense-multi-chunk",
 ]
 schedules-fp128-d64-onehot = [
   "dep:akita-schedules",
@@ -51,17 +51,17 @@ schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
 ]
-schedules-fp128-d64-full = [
+schedules-fp128-d64-dense = [
   "dep:akita-schedules",
-  "akita-schedules/fp128-d64-full",
+  "akita-schedules/fp128-d64-dense",
 ]
 schedules-fp128-d128-onehot = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d128-onehot",
 ]
-schedules-fp128-d128-full = [
+schedules-fp128-d128-dense = [
   "dep:akita-schedules",
-  "akita-schedules/fp128-d128-full",
+  "akita-schedules/fp128-d128-dense",
 ]
 schedules-fp128-d64-onehot-tensor = [
   "dep:akita-schedules",
@@ -79,9 +79,9 @@ schedules-fp128-d64-onehot-multi-chunk-w4r2 = [
   "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-multi-chunk-w4r2",
 ]
-schedules-fp128-d64-full-multi-chunk = [
+schedules-fp128-d64-dense-multi-chunk = [
   "dep:akita-schedules",
-  "akita-schedules/fp128-d64-full-multi-chunk",
+  "akita-schedules/fp128-d64-dense-multi-chunk",
 ]
 
 schedules-fp32-d128-onehot = [
@@ -92,7 +92,10 @@ schedules-fp32-d256-onehot = [
   "dep:akita-schedules",
   "akita-schedules/fp32-d256-onehot",
 ]
-schedules-fp64-d128 = ["dep:akita-schedules", "akita-schedules/fp64-d128"]
+schedules-fp64-d128-dense = [
+  "dep:akita-schedules",
+  "akita-schedules/fp64-d128-dense",
+]
 schedules-fp64-d128-onehot = [
   "dep:akita-schedules",
   "akita-schedules/fp64-d128-onehot",
@@ -119,7 +122,7 @@ path = "src/bin/gen_schedule_tables.rs"
 [[test]]
 name = "schedule_catalog_miswire"
 path = "tests/schedule_catalog_miswire.rs"
-required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-full"]
+required-features = ["schedules-fp128-d64-onehot", "schedules-fp128-d64-dense"]
 
 [[test]]
 name = "generated_tables"

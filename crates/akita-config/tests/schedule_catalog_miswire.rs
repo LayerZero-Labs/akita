@@ -14,12 +14,12 @@ fn miswired_catalog_rejects_before_lookup() {
 
     let err = resolve_schedule(
         key,
-        &policy_of::<fp128::D64Full>(),
-        fp128::D64Full::ring_challenge_config,
-        fp128::D64Full::fold_challenge_shape_at_level,
+        &policy_of::<fp128::D64Dense>(),
+        fp128::D64Dense::ring_challenge_config,
+        fp128::D64Dense::fold_challenge_shape_at_level,
         Some(wrong_catalog),
     )
-    .expect_err("D64 full preset must reject D64 one-hot catalog");
+    .expect_err("D64 dense preset must reject D64 one-hot catalog");
 
     assert!(
         matches!(err, akita_field::AkitaError::InvalidSetup(_)),

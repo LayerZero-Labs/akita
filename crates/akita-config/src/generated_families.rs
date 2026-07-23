@@ -427,12 +427,12 @@ pub fn emit_spec_for_family(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
-        "fp128_d128_full",
-        "FP128_D128_FULL_SCHEDULES",
-        "fp128-d128-full",
+        "fp128_d128_dense",
+        "FP128_D128_DENSE_SCHEDULES",
+        "fp128-d128-dense",
         1,
         50,
-        fp128::D128Full
+        fp128::D128Dense
     ),
     family_row!(
         group_batch,
@@ -473,16 +473,15 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
     ),
-    // Dense `D64` full-field: root `log_basis = 2` cannot fold `nv = 50` into a
-    // valid >=2-fold schedule (dense witnesses shrink weakest at `lb = 2`), so the
-    // supported range is capped at `nv = 49`.
+    // Dense `D64`: the basis-2 root shrinks weakest, so no valid >=2-fold schedule
+    // exists past `nv = 48`; cap the family there (the unsupported `nv` are removed).
     family_row!(
-        "fp128_d64_full",
-        "FP128_D64_FULL_SCHEDULES",
-        "fp128-d64-full",
+        "fp128_d64_dense",
+        "FP128_D64_DENSE_SCHEDULES",
+        "fp128-d64-dense",
         1,
-        49,
-        fp128::D64Full
+        48,
+        fp128::D64Dense
     ),
     family_row!(
         group_batch,
@@ -520,23 +519,23 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHotMultiChunkW4R2
     ),
-    // Dense `D64` full-field chunked companion: same `nv = 50` root=2 planning
-    // limit as its base `D64Full`; capped at `nv = 49`.
+    // Dense `D64` chunked companion: same basis-2 root limit as `D64Dense`; the
+    // supported range caps at `nv = 48`.
     family_row!(
-        "fp128_d64_full_multi_chunk",
-        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
-        "fp128-d64-full-multi-chunk",
+        "fp128_d64_dense_multi_chunk",
+        "FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-dense-multi-chunk",
         1,
-        49,
-        fp128::D64FullMultiChunk
+        48,
+        fp128::D64DenseMultiChunk
     ),
     family_row!(
-        "fp64_d128",
-        "FP64_D128_SCHEDULES",
-        "fp64-d128",
+        "fp64_d128_dense",
+        "FP64_D128_DENSE_SCHEDULES",
+        "fp64-d128-dense",
         1,
         32,
-        fp64::D128Full
+        fp64::D128Dense
     ),
     family_row!(
         "fp64_d128_onehot",
