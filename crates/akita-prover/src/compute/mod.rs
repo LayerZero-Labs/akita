@@ -31,6 +31,7 @@ mod kernels;
 mod operation_plans;
 mod plans;
 mod poly;
+mod pool;
 mod stack;
 
 pub use backend::{
@@ -57,6 +58,7 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+pub use pool::{run_on_compute_pool, COMPUTE_WORKER_STACK_BYTES};
 
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
