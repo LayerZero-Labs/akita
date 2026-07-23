@@ -1,5 +1,12 @@
 # Spec: Batched Stage-3 Setup and Next-Witness Opening
 
+> **Shared-point supersession (2026-07-22).** The fused Stage 3 witness carry
+> and common-point projection in this record are superseded by
+> [`group-local-opening-points.md`](group-local-opening-points.md). With one
+> arbitrary point per group, recursive setup offloading keeps the Stage 2
+> witness opening unchanged and runs a setup-only Stage 3 for the independent
+> setup-prefix opening.
+
 | Field         | Value                          |
 |---------------|--------------------------------|
 | Author(s)     |                                |

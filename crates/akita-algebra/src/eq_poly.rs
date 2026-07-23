@@ -151,10 +151,11 @@ impl<E: FieldCore> EqPolynomial<E> {
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
         for &t in r.iter().rev() {
-            let one_minus_t = E::one() - t;
             for j in (0..len).rev() {
-                evals[2 * j + 1] = evals[j] * t;
-                evals[2 * j] = evals[j] * one_minus_t;
+                let value = evals[j];
+                let right = value * t;
+                evals[2 * j] = value - right;
+                evals[2 * j + 1] = right;
             }
             len *= 2;
         }
@@ -197,11 +198,12 @@ impl<E: FieldCore> EqPolynomial<E> {
         for j in 0..r.len() {
             let idx = r.len() - 1 - j;
             let t = r[idx];
-            let one_minus_t = E::one() - t;
             let prev_len = 1 << j;
             for i in (0..prev_len).rev() {
-                result[j + 1][2 * i + 1] = result[j][i] * t;
-                result[j + 1][2 * i] = result[j][i] * one_minus_t;
+                let value = result[j][i];
+                let right = value * t;
+                result[j + 1][2 * i] = value - right;
+                result[j + 1][2 * i + 1] = right;
             }
         }
         Ok(result)
