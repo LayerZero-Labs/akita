@@ -14,7 +14,7 @@ use akita_types::{
 };
 
 use super::{
-    prepare_group_opening_point, verify_fold, verify_fold_eor, FoldVerifyOutput, GroupOpeningPoint,
+    prepare_group_opening_point, verify_fold, verify_fold_eor, FoldVerifyOutput,
     PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness, RelationReplayInputs,
     TracePreparation,
 };
@@ -363,7 +363,7 @@ where
         let group_lp = root_lp.group_params(opening_batch, group_index)?;
         let point_vars = claims.group_point_vars(group_index)?;
         let prepared =
-            match dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_group_opening_point::<F, E, D>(
                     group_lp,
                     point_vars,
@@ -371,10 +371,7 @@ where
                     basis,
                     alpha_bits,
                 )
-            })? {
-                GroupOpeningPoint::Prepared(prepared) => prepared,
-                GroupOpeningPoint::WidthMismatch { .. } => return Err(AkitaError::InvalidProof),
-            };
+            })?;
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }

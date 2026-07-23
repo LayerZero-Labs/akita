@@ -46,42 +46,25 @@ where
     Ok(parts)
 }
 
-/// One group's prepared opening point, or a point-width mismatch returned as
-/// data so each caller can reject with its own frozen error variant.
-///
-/// The multi-group root and suffix per-group loops share the target-length
-/// computation, point-variable extraction, and `prepare_opening_point` call, but
-/// legacy rejects a width mismatch with different variants — root:
-/// `AkitaError::InvalidProof`; suffix: `AkitaError::InvalidInput`. Carrying the
-/// mismatch out instead of erroring here keeps both reject paths byte-identical.
-pub(in crate::protocol::core) enum GroupOpeningPoint<F: FieldCore, E: FieldCore> {
-    /// The prepared opening point for a well-formed group.
-    Prepared(PreparedOpeningPoint<F, E>),
-    /// The group's point-variable count did not match the expected width.
-    WidthMismatch {
-        target_len: usize,
-        actual_len: usize,
-    },
-}
-
 /// Prepare one group's opening point from a shared protocol point.
 ///
 /// Shared by the multi-group root and suffix per-group loops. Each caller
 /// dispatches `D` (root per-group, suffix once around the loop — same `D`, same
-/// result), supplies its own `basis`, absorbs the returned padded point, and
-/// maps [`GroupOpeningPoint::WidthMismatch`] to its own error variant.
+/// result), supplies its own `basis`, and absorbs the returned padded point.
 ///
 /// # Errors
 ///
-/// Returns an error if the group opening-point length overflows or a selected
-/// point-variable index is out of range for `source_point`.
+/// Returns [`AkitaError::InvalidProof`] if the group's point-variable count does
+/// not match the expected width. Also errors if the opening-point length
+/// overflows or a selected point-variable index is out of range for
+/// `source_point`.
 pub(in crate::protocol::core) fn prepare_group_opening_point<F, E, const D: usize>(
     group_lp: &dyn LevelParamsLike,
     point_vars: &PointVariableSelection,
     source_point: &[E],
     basis: BasisMode,
     alpha_bits: usize,
-) -> Result<GroupOpeningPoint<F, E>, AkitaError>
+) -> Result<PreparedOpeningPoint<F, E>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
     E: FpExtEncoding<F>,
@@ -94,10 +77,7 @@ where
         })?;
     let actual_len = point_vars.num_vars();
     if actual_len != target_len {
-        return Ok(GroupOpeningPoint::WidthMismatch {
-            target_len,
-            actual_len,
-        });
+        return Err(AkitaError::InvalidProof);
     }
     let group_point = point_vars
         .indices()
@@ -116,5 +96,5 @@ where
         group_lp.num_live_blocks(),
         alpha_bits,
     )?;
-    Ok(GroupOpeningPoint::Prepared(prepared))
+    Ok(prepared)
 }

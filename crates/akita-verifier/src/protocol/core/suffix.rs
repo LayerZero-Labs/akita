@@ -16,7 +16,7 @@ use akita_types::{
 
 use super::{
     prepare_group_opening_point, prepare_terminal_witness_replay, verify_fold, verify_fold_eor,
-    FoldEorReplay, GroupOpeningPoint, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
+    FoldEorReplay, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
     RelationReplayInputs, SetupPrefixOpening, TracePreparation,
 };
 
@@ -61,27 +61,13 @@ where
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let point_vars = block_claims.group_point_vars(group_index)?;
-                match prepare_group_opening_point::<F, E, D>(
+                prepared_points.push(prepare_group_opening_point::<F, E, D>(
                     group_lp,
                     point_vars,
                     protocol_point,
                     BasisMode::Lagrange,
                     alpha_bits,
-                )? {
-                    GroupOpeningPoint::Prepared(prepared) => prepared_points.push(prepared),
-                    GroupOpeningPoint::WidthMismatch {
-                        target_len,
-                        actual_len,
-                    } => {
-                        return Err(AkitaError::InvalidInput(format!(
-                            "suffix group point width mismatch: group={group_index}, \
-                             groups={}, setup_prefix={}, target_len={target_len}, \
-                             actual_len={actual_len}",
-                            opening_batch.num_groups(),
-                            lp.setup_prefix.is_some(),
-                        )));
-                    }
-                }
+                )?);
             }
             Ok(prepared_points)
         }
