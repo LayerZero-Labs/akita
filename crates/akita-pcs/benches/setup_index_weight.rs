@@ -88,6 +88,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         &opening_batch,
         eq_tau1,
         &layout,
+        layout.total_len(),
         &full_vec_randomness,
         CommitmentRingDims::uniform(D),
         D,

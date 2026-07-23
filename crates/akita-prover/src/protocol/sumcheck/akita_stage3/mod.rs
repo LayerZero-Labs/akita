@@ -599,11 +599,13 @@ where
         }
     }
 
+    let opening_source_len = chunk_layout.total_len();
     let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
         eq_tau1,
         &chunk_layout,
+        opening_source_len,
         x_challenges,
         relation.role_dims(),
         outgoing_ring_dim,

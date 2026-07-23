@@ -1,11 +1,13 @@
 use super::*;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
+    #[allow(clippy::too_many_arguments)]
     pub fn prepare<F>(
         level_params: &CommittedGroupParams,
         opening_batch: &OpeningClaimsLayout,
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
+        opening_source_len: usize,
         full_vec_randomness: &[E],
         role_dims: CommitmentRingDims,
         outgoing_ring_dim: usize,
@@ -16,7 +18,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
         let groups = validate_setup_inputs(level_params, opening_batch, witness_layout)?;
-        let opening_source_len = witness_layout.total_len();
+        // The relation address domain is sized from the padded opening-source
+        // length that the ring-switch evaluation point is built from — not from
+        // `witness_layout.total_len()`, which can round to a smaller power of two
+        // in mixed-D folds and would desync this plan from the actual point.
+        if witness_layout.total_len() > opening_source_len {
+            return Err(AkitaError::InvalidSetup(
+                "witness layout exceeds opening source length".into(),
+            ));
+        }
         crate::validate_role_dims(role_dims)?;
         if outgoing_ring_dim == 0 || !outgoing_ring_dim.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(

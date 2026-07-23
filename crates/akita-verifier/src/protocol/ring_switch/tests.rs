@@ -45,6 +45,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         &opening_batch,
         vec![F::one(); 4].into(),
         &witness_layout,
+        witness_layout.total_len(),
         &[],
         CommitmentRingDims::uniform(D),
         D,

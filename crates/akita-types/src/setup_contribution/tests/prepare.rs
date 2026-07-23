@@ -104,6 +104,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         &opening_batch,
         eq_tau1,
         &witness_layout,
+        opening_source_len,
         &randomness,
         CommitmentRingDims::uniform(TEST_D),
         TEST_D,

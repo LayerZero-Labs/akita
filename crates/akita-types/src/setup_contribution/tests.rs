@@ -241,6 +241,7 @@ fn prepare_test_plan(
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
         witness_layout,
+        witness_layout.total_len(),
         full_vec_randomness,
         role_dims,
         role_dims.d_a(),
