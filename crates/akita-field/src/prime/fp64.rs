@@ -622,7 +622,7 @@ mod tests {
     }
 
     #[test]
-    fn basic_arithmetic_full_word() {
+    fn basic_arithmetic_word_sized() {
         let a = F64::from_u64(1_000_000_000);
         let b = F64::from_u64(2_000_000_000);
         let p = u64::MAX - 58;

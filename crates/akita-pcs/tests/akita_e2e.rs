@@ -35,7 +35,7 @@ use common::opening_from_poly;
 
 type F = fp128::Field;
 const ONEHOT_K: usize = 256;
-const FULL_TEST_NV: usize = 14;
+const DENSE_TEST_NV: usize = 14;
 const ONEHOT_TEST_NV: usize = 15;
 const SAME_POINT_ONEHOT_BATCH_SIZE: usize = 4;
 
@@ -313,7 +313,7 @@ fn chunked_multi_chunk_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64FullMultiChunk;
+        type Cfg = fp128::D64DenseMultiChunk;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -405,28 +405,28 @@ fn chunked_multi_chunk_prove_verify() {
 }
 
 #[test]
-fn full_d64_prove_verify() {
+fn dense_d64_prove_verify() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
-        let layout = singleton_layout::<Cfg>(FULL_TEST_NV);
+        let layout = singleton_layout::<Cfg>(DENSE_TEST_NV);
 
         let mut rng = StdRng::seed_from_u64(0xdead_beef);
-        let evals: Vec<F> = (0..1usize << FULL_TEST_NV)
+        let evals: Vec<F> = (0..1usize << DENSE_TEST_NV)
             .map(|_| F::from_canonical_u128_reduced(rng.gen::<u128>()))
             .collect();
 
-        let poly = DensePoly::<F>::from_field_evals(FULL_TEST_NV, D, &evals).unwrap();
-        let pt = random_point::<F>(FULL_TEST_NV);
+        let poly = DensePoly::<F>::from_field_evals(DENSE_TEST_NV, D, &evals).unwrap();
+        let pt = random_point::<F>(DENSE_TEST_NV);
         let expected_opening = opening_from_poly::<D, _>(&poly, &pt, &layout);
 
         #[cfg(feature = "disk-persistence")]
-        purge_setup_cache(FULL_TEST_NV);
+        purge_setup_cache(DENSE_TEST_NV);
 
-        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(FULL_TEST_NV, 1).unwrap();
+        let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(DENSE_TEST_NV, 1).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -470,7 +470,7 @@ fn full_d64_prove_verify() {
         assert!(total_fold_levels > 0, "proof must have at least one level");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(FULL_TEST_NV),
+            PolynomialGroupLayout::singleton(DENSE_TEST_NV),
         ))
         .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
@@ -500,18 +500,18 @@ fn full_d64_prove_verify() {
             proof_bytes,
             proof_kib = proof_bytes as f64 / 1024.0,
             levels = total_fold_levels,
-            "full-d64/nv{FULL_TEST_NV} e2e"
+            "dense-d64/nv{DENSE_TEST_NV} e2e"
         );
     });
 }
 
-/// Snap-regenerated `fp128_d64_full` schedules must verify at production `nv` keys.
+/// Snap-regenerated `fp128_d64_dense` schedules must verify at production `nv` keys.
 #[test]
-fn full_d64_snap_regen_prove_verify_nv24() {
+fn dense_d64_snap_regen_prove_verify_nv24() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
         const NV: usize = 24;
 
@@ -541,11 +541,11 @@ fn trace_internalization_rejects_tampered_root_fold_handle() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/root-trace-tamper");
+            make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/root-trace-tamper");
         let mut malformed = proof.clone();
         bump_flat_ring_vec(&mut malformed.root.v);
 
@@ -648,11 +648,11 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(FULL_TEST_NV, b"akita_e2e/terminal-trace-tamper");
+            make_dense_fixture::<F, D, Cfg>(DENSE_TEST_NV, b"akita_e2e/terminal-trace-tamper");
         let mut malformed = proof.clone();
         mutate_terminal_e_hat_digit(terminal_witness_mut(&mut malformed));
 
@@ -673,10 +673,10 @@ fn trace_internalization_rejects_tampered_terminal_e_hat_digit() {
 #[test]
 fn small_field_d64_dense_degenerate_roots_fail_fast() {
     for result in [
-        fp32::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp32::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
         )),
-        fp64::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp64::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
         )),
     ] {
@@ -688,11 +688,11 @@ fn small_field_d64_dense_degenerate_roots_fail_fast() {
 }
 
 #[test]
-fn full_d64_tiny_roots_and_setup_capacities_are_rejected() {
+fn dense_d64_tiny_roots_and_setup_capacities_are_rejected() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         let nv = 4;
         let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
@@ -712,16 +712,16 @@ fn full_d64_tiny_roots_and_setup_capacities_are_rejected() {
 }
 
 #[test]
-fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
+fn dense_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
     init_rayon_pool();
     let _guard = E2E_TEST_LOCK.lock().unwrap();
     run_on_large_stack(|| {
-        type Cfg = fp128::D64Full;
+        type Cfg = fp128::D64Dense;
         const D: usize = Cfg::D;
 
-        let nv = FULL_TEST_NV;
+        let nv = DENSE_TEST_NV;
         let (verifier_setup, commitment, proof, opening_point, opening, _layout) =
-            make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-full-mixed");
+            make_dense_fixture::<F, D, Cfg>(nv, b"akita_e2e/adaptive-dense-mixed");
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
@@ -743,7 +743,7 @@ fn full_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
         let openings = [opening];
         let opening_groups = [&openings[..]];
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/adaptive-full-mixed");
+        let mut verifier_transcript = AkitaTranscript::<F>::new(b"akita_e2e/adaptive-dense-mixed");
         let result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &decoded,
             &verifier_setup,

@@ -10,7 +10,7 @@ use akita_types::{
     RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
 };
 
-type Cfg = fp128::D128Full;
+type Cfg = fp128::D128Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 const NUM_VARIABLES: usize = 16;

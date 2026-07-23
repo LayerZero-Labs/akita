@@ -1,10 +1,10 @@
 //! Mixed ring-dimension-per-level E2E acceptance test for the runtime ring
 //! cutover (specs/runtime-ring-cutover.md §Acceptance / §Testing Strategy).
 //!
-//! Uses the fp128 `D128Full` setup (`gen_ring_dim = 128`) with a hand-built
+//! Uses the fp128 `D128Dense` setup (`gen_ring_dim = 128`) with a hand-built
 //! schedule: fold levels `[0, MIXED_D_SWITCH_FOLD)` at `D = 128`, levels
 //! `[MIXED_D_SWITCH_FOLD, …)` at `D = 64` (stitched from the shipped
-//! `D64Full` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
+//! `D64Dense` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
 //!
 //! The proof is produced and checked exclusively through the **normal public
 //! PCS API** — `AkitaCommitmentScheme::{commit, batched_prove,
@@ -33,9 +33,9 @@ use common::*;
 use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
-type Envelope = fp128::D128Full;
+type Envelope = fp128::D128Dense;
 /// Suffix preset: recursive levels at `D = 64`.
-type Suffix = fp128::D64Full;
+type Suffix = fp128::D64Dense;
 
 /// Fold levels `[0, MIXED_D_SWITCH_FOLD)` run at `D = 128`; levels
 /// `[MIXED_D_SWITCH_FOLD, …)` run at `D = 64`.

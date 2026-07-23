@@ -693,7 +693,7 @@ Add **D = 64 multi-chunk companions** for the existing non-zk D64 families:
 | Base module | Multi-chunk module | Base `Cfg` (pattern) |
 |-------------|-------------------|----------------------|
 | `fp128_d64_onehot` | `fp128_d64_onehot_multi_chunk` | `fp128::D64OneHotMultiChunk` |
-| `fp128_d64_full` | `fp128_d64_full_multi_chunk` | `fp128::D64FullMultiChunk` |
+| `fp128_d64_dense` | `fp128_d64_dense_multi_chunk` | `fp128::D64DenseMultiChunk` |
 
 **Exclude** tensor multi-chunk companions for now. The **tensor** verifier family
 (`fp128_d64_onehot_tensor`) does not get a multi-chunk companion: the
@@ -743,7 +743,7 @@ cargo run --release -p akita-config --bin gen_schedule_tables -- \
 Commit new files:
 
 - `crates/akita-schedules/src/generated/fp128_d64_onehot_multi_chunk.rs`
-- `crates/akita-schedules/src/generated/fp128_d64_full_multi_chunk.rs`
+- `crates/akita-schedules/src/generated/fp128_d64_dense_multi_chunk.rs`
 
 Non-zk only in this spec phase.
 
@@ -814,7 +814,7 @@ Non-zk only in this spec phase.
   `== 1` from level `3` onward for a smoke `num_vars` key.
 - [ ] Root DP skips `(log_basis, block_index_bits)` whose `num_live_blocks % 8 != 0` when
   `num_chunks = 8`.
-- [ ] Two `_multi_chunk` D64 modules emitted (`onehot`, `full`);
+- [ ] Two `_multi_chunk` D64 modules emitted (`onehot`, `dense`);
   `validate_catalog_identity` passes with embedded `witness_chunk == d64_production()`.
 - [ ] `generated_schedule_tables_match_find_schedule` passes with
   `--features all-schedules` including multi-chunk families (same keys as siblings,
