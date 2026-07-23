@@ -3,9 +3,10 @@ use crate::{
     WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
-use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
+
+use super::GroupSetupSegment;
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
@@ -304,13 +305,14 @@ impl SetupContributionGroupInputs {
 }
 
 pub struct SetupContributionPlan<E: FieldCore> {
-    pub(crate) groups: Vec<SetupContributionGroupPlan>,
+    pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) eq_tau1: Arc<[E]>,
     pub(crate) x_challenges: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) d_row_start: usize,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
+    pub(crate) d_weights: Arc<[E]>,
     pub(crate) projection_geometry: SetupProjectionGeometry,
     pub(crate) eq_window: OffsetEqWindow<E>,
 }
@@ -328,21 +330,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         index: usize,
     ) -> Result<(Vec<E>, Vec<E>, Vec<E>), AkitaError> {
         let group = self.groups.get(index).ok_or(AkitaError::InvalidProof)?;
-        let e = cfg_into_iter!(0..group.d_col_range.len())
-            .map(|column| group.d_eq_at(column, &self.eq_window))
-            .collect::<Result<Vec<_>, _>>()?;
-        let t = cfg_into_iter!(0..group.t_cols)
-            .map(|column| group.b_eq_at(column, &self.eq_window))
-            .collect::<Result<Vec<_>, _>>()?;
-        let z = cfg_into_iter!(0..group.z_cols)
-            .map(|column| group.a_eq_at(column, &self.eq_window, &self.fold_gadget))
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok((e, t, z))
+        Ok((
+            group.e_eq_slice.clone(),
+            group.t_eq_slice.clone(),
+            group.z_eq_slice.clone(),
+        ))
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct SetupContributionGroupPlan {
+pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) depth_fold: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
@@ -351,13 +348,20 @@ pub(crate) struct SetupContributionGroupPlan {
     pub(crate) z_cols: usize,
     pub(crate) n_a: usize,
     pub(crate) n_b: usize,
+    pub(crate) required: usize,
+    pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
+    pub(crate) a_row_weights: Arc<[E]>,
+    pub(crate) b_weights: Arc<[E]>,
+    pub(crate) e_eq_slice: Vec<E>,
+    pub(crate) t_eq_slice: Vec<E>,
+    pub(crate) z_eq_slice: Vec<E>,
     pub(crate) d_spans: Vec<(usize, usize, usize)>,
     pub(crate) b_spans: Vec<(usize, usize, usize)>,
     pub(crate) a_spans: Vec<(usize, usize, usize, usize)>,
 }
 
-impl SetupContributionGroupPlan {
-    pub(crate) fn d_eq_at<E: FieldCore>(
+impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    pub(crate) fn d_eq_at(
         &self,
         column: usize,
         eq_window: &OffsetEqWindow<E>,
@@ -373,7 +377,7 @@ impl SetupContributionGroupPlan {
         Ok(E::zero())
     }
 
-    pub(crate) fn b_eq_at<E: FieldCore>(
+    pub(crate) fn b_eq_at(
         &self,
         column: usize,
         eq_window: &OffsetEqWindow<E>,
@@ -389,7 +393,7 @@ impl SetupContributionGroupPlan {
         Ok(E::zero())
     }
 
-    pub(crate) fn a_eq_at<E: FieldCore>(
+    pub(crate) fn a_eq_at(
         &self,
         column: usize,
         eq_window: &OffsetEqWindow<E>,

@@ -13,8 +13,6 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
 mod plan;
-#[cfg(test)]
-#[allow(dead_code)]
 mod weights;
 
 #[cfg(test)]

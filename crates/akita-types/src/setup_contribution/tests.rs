@@ -257,7 +257,7 @@ fn prepare_test_plan(
 fn finalize_test_plan(
     d_rows: usize,
     d_physical_cols: usize,
-    groups: Vec<SetupContributionGroupPlan>,
+    groups: Vec<SetupContributionGroupPlan<F>>,
     role_dims: CommitmentRingDims,
 ) -> SetupContributionPlan<F> {
     let a_footprint = groups
@@ -288,7 +288,7 @@ fn finalize_test_plan(
     let eq_tau1 = (0..row_capacity)
         .map(|idx| test_scalar(43 + 4 * idx as u128))
         .collect::<Vec<_>>();
-    SetupContributionPlan {
+    let mut plan = SetupContributionPlan {
         groups,
         eq_tau1: eq_tau1.into(),
         x_challenges: Vec::new().into(),
@@ -296,9 +296,23 @@ fn finalize_test_plan(
         d_row_start: 0,
         d_rows,
         d_physical_cols,
+        d_weights: (0..d_rows).map(|_| F::zero()).collect::<Vec<_>>().into(),
         projection_geometry,
         eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
+    };
+    for group in &mut plan.groups {
+        group
+            .refresh_segments(
+                &plan.d_weights,
+                plan.d_rows,
+                plan.d_physical_cols,
+                plan.projection_geometry.a_ratio(),
+                plan.projection_geometry.b_ratio(),
+                plan.projection_geometry.d_ratio(),
+            )
+            .expect("valid cached setup scan segments");
     }
+    plan
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -308,7 +322,8 @@ fn test_group_plan(
     z_cols: usize,
     n_a: usize,
     n_b: usize,
-) -> SetupContributionGroupPlan {
+) -> SetupContributionGroupPlan<F> {
+    let e_cols = d_col_range.len();
     SetupContributionGroupPlan {
         depth_fold: 1,
         a_row_start: 0,
@@ -318,6 +333,13 @@ fn test_group_plan(
         z_cols,
         n_a,
         n_b,
+        required: 0,
+        segments: Vec::new().into(),
+        a_row_weights: (0..n_a).map(|_| F::zero()).collect::<Vec<_>>().into(),
+        b_weights: (0..n_b).map(|_| F::zero()).collect::<Vec<_>>().into(),
+        e_eq_slice: vec![F::zero(); e_cols],
+        t_eq_slice: vec![F::zero(); t_cols],
+        z_eq_slice: vec![F::zero(); z_cols],
         d_spans: Vec::new(),
         b_spans: Vec::new(),
         a_spans: Vec::new(),

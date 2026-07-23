@@ -136,7 +136,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_d_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan,
+        group: &SetupContributionGroupPlan<E>,
         rho_setup_idx: &[E],
         scales: &[E],
     ) -> Result<E, AkitaError> {
@@ -181,7 +181,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_b_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan,
+        group: &SetupContributionGroupPlan<E>,
         rho_setup_idx: &[E],
         scales: &[E],
     ) -> Result<E, AkitaError> {
@@ -221,7 +221,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_a_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan,
+        group: &SetupContributionGroupPlan<E>,
         rho_setup_idx: &[E],
         scales: &[E],
     ) -> Result<E, AkitaError> {

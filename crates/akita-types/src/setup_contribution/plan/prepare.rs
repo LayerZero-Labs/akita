@@ -23,15 +23,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
             validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
-        let (d_row_start, d_rows, d_physical_cols) = {
+        let (d_row_start, d_rows, d_physical_cols, d_weights) = {
             let _span = tracing::info_span!("setup_prepare_global_geometry").entered();
             let d_rows = level_params.open_commit_matrix.output_rank();
             let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
                 AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
             })?;
             let d_physical_cols = get_total_d(level_params, opening_batch, groups)?;
-            checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?;
-            (d_row_start, d_rows, d_physical_cols)
+            let d_weights: std::sync::Arc<[E]> =
+                checked_slice(&eq_tau1, d_row_start, d_rows, "setup D rows")?
+                    .to_vec()
+                    .into();
+            (d_row_start, d_rows, d_physical_cols, d_weights)
         };
         // Build the bounded equality window once and share it across every E/T/Z
         // column weight. Each canonical column address then costs one bounded
@@ -49,7 +52,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .max()
             .ok_or_else(|| AkitaError::InvalidSetup("setup groups are empty".into()))?;
         let fold_gadget_storage;
-        let fold_gadget = if let Some(fold_gadget) = fold_gadget {
+        let fold_gadget_base = if let Some(fold_gadget) = fold_gadget {
             if fold_gadget.len() < max_depth_fold {
                 return Err(AkitaError::InvalidSize {
                     expected: max_depth_fold,
@@ -62,14 +65,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             fold_gadget_storage = crate::gadget_row_scalars::<F>(max_depth_fold, log_basis_open);
             &fold_gadget_storage
         };
-        let fold_gadget: std::sync::Arc<[E]> = fold_gadget
+        let fold_gadget: std::sync::Arc<[E]> = fold_gadget_base
             .iter()
             .copied()
             .map(|fold| E::one().mul_base(fold))
             .collect::<Vec<_>>()
             .into();
 
-        let dynamic_groups = groups
+        let mut dynamic_groups = groups
             .iter()
             .map(|group| {
                 let geometry_span =
@@ -93,13 +96,60 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let z_cols = num_positions_per_block
                     .checked_mul(depth_witness)
                     .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?;
-                checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?;
-                if fold_gadget.len() < group.depth_fold {
+                let a_row_weights: std::sync::Arc<[E]> =
+                    checked_slice(&eq_tau1, group.a_row_start, n_a, "setup A rows")?
+                        .to_vec()
+                        .into();
+                let b_weights: std::sync::Arc<[E]> =
+                    checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
+                        .to_vec()
+                        .into();
+                if fold_gadget_base.len() < group.depth_fold {
                     return Err(AkitaError::InvalidSize {
                         expected: group.depth_fold,
-                        actual: fold_gadget.len(),
+                        actual: fold_gadget_base.len(),
                     });
+                }
+                drop(geometry_span);
+                let e_eq_slice = {
+                    let _span = tracing::info_span!("setup_prepare_e_weights").entered();
+                    setup_e_col_weights::<E>(
+                        witness_layout,
+                        opening_source_len,
+                        group.group_id,
+                        num_live_blocks,
+                        group.num_claims,
+                        depth_open,
+                        &eq_window,
+                    )?
+                };
+                let t_eq_slice = {
+                    let _span = tracing::info_span!("setup_prepare_t_weights").entered();
+                    setup_t_col_weights::<E>(
+                        witness_layout,
+                        opening_source_len,
+                        group.group_id,
+                        num_live_blocks,
+                        depth_commit,
+                        n_a,
+                        group.num_claims,
+                        &eq_window,
+                    )?
+                };
+                let mut z_eq_slice = vec![E::zero(); z_cols];
+                {
+                    let _span = tracing::info_span!("setup_prepare_z_weights").entered();
+                    setup_z_col_weights::<F, E>(
+                        witness_layout,
+                        opening_source_len,
+                        group.group_id,
+                        num_positions_per_block,
+                        depth_witness,
+                        group.depth_fold,
+                        &eq_window,
+                        fold_gadget_base,
+                        &mut z_eq_slice,
+                    )?;
                 }
                 let mut d_spans = Vec::new();
                 let mut b_spans = Vec::new();
@@ -194,8 +244,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         a_spans.push((0, a_witness_start, z_cols, fold_digit));
                     }
                 }
-                drop(geometry_span);
-
                 Ok(SetupContributionGroupPlan {
                     depth_fold: group.depth_fold,
                     a_row_start: group.a_row_start,
@@ -205,6 +253,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     z_cols,
                     n_a,
                     n_b,
+                    required: 0,
+                    segments: Vec::new().into(),
+                    a_row_weights,
+                    b_weights,
+                    e_eq_slice,
+                    t_eq_slice,
+                    z_eq_slice,
                     d_spans,
                     b_spans,
                     a_spans,
@@ -233,6 +288,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_physical_cols,
             &projection_groups,
         )?;
+        for group in &mut dynamic_groups {
+            group.refresh_segments(
+                &d_weights,
+                d_rows,
+                d_physical_cols,
+                projection_geometry.a_ratio(),
+                projection_geometry.b_ratio(),
+                projection_geometry.d_ratio(),
+            )?;
+        }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
             eq_tau1,
@@ -241,6 +306,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_row_start,
             d_rows,
             d_physical_cols,
+            d_weights,
             projection_geometry,
             eq_window,
         })
