@@ -266,29 +266,6 @@ impl SetupProjectionGeometry {
         }
         Ok(())
     }
-
-    pub(crate) fn validate_alpha_power_lengths(
-        self,
-        a_len: usize,
-        b_len: usize,
-        d_len: usize,
-    ) -> Result<(), AkitaError> {
-        for (role, expected, actual) in [
-            ("A", self.role_dims.d_a(), a_len),
-            ("B", self.role_dims.d_b(), b_len),
-            ("D", self.role_dims.d_d(), d_len),
-        ] {
-            if actual != expected {
-                return Err(AkitaError::InvalidSize { expected, actual });
-            }
-            if actual < self.base_ring_dim {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "{role} alpha powers are shorter than the Stage 3 base"
-                )));
-            }
-        }
-        Ok(())
-    }
 }
 
 fn checked_role_ratios(

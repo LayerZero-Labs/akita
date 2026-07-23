@@ -3,9 +3,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
-    WitnessLayout,
+    r_decomp_levels, CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout,
+    SetupContributionPlan, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -66,9 +65,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         depth_open,
     )
     .unwrap();
-    let depth_fold = level_params
-        .num_digits_fold(num_claims, level_params.field_bits_for_cache())
-        .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let layout = WitnessLayout::new(
         &level_params,
@@ -83,28 +79,16 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let eq_tau1 = EqPolynomial::evals(&tau1).unwrap().into();
-    let opening_source_len = layout.total_len();
-    let groups = vec![SetupContributionGroupInputs {
-        group_id: 0,
-        num_claims,
-        depth_fold,
-        a_row_start: 1,
-        b_row_start: 1 + n_a,
-    }];
     let full_vec_randomness = (0..24)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
         eq_tau1,
         &layout,
-        opening_source_len,
-        &groups,
         &full_vec_randomness,
-        Some(&fold_gadget),
         CommitmentRingDims::uniform(D),
         D,
     )

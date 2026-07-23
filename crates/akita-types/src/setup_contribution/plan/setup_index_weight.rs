@@ -18,8 +18,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// position, their scalar weights are added.
     pub fn materialize_setup_index_weights(&self, alpha: E) -> Result<Vec<E>, AkitaError> {
         let scales = self.projection_scales(alpha);
+        let lane_powers = self.relation_lane_powers(alpha)?;
         (0..self.required())
-            .map(|setup_idx| self.setup_index_weight_at(setup_idx, &scales))
+            .map(|setup_idx| self.setup_index_weight_at(setup_idx, &scales, &lane_powers))
             .collect()
     }
 
@@ -49,11 +50,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
         let scales = self.projection_scales(alpha);
+        let lane_powers = self.relation_lane_powers(alpha)?;
         let mut acc = E::zero();
         for group in &self.groups {
-            acc += self.evaluate_d_spans_at_point(group, rho_setup_idx, &scales[2])?;
-            acc += self.evaluate_b_spans_at_point(group, rho_setup_idx, &scales[1])?;
-            acc += self.evaluate_a_spans_at_point(group, rho_setup_idx, &scales[0])?;
+            acc +=
+                self.evaluate_d_spans_at_point(group, rho_setup_idx, &scales[2], &lane_powers[2])?;
+            acc +=
+                self.evaluate_b_spans_at_point(group, rho_setup_idx, &scales[1], &lane_powers[1])?;
+            acc +=
+                self.evaluate_a_spans_at_point(group, rho_setup_idx, &scales[0], &lane_powers[0])?;
         }
         Ok(acc)
     }
@@ -73,10 +78,31 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         ]
     }
 
+    fn relation_lane_powers(&self, alpha: E) -> Result<[Vec<E>; 3], AkitaError> {
+        Ok([
+            super::structured::relation_lane_powers(
+                alpha,
+                self.common_coeff_count,
+                self.inner_lane_count,
+            )?,
+            super::structured::relation_lane_powers(
+                alpha,
+                self.common_coeff_count,
+                self.outer_lane_count,
+            )?,
+            super::structured::relation_lane_powers(
+                alpha,
+                self.common_coeff_count,
+                self.opening_lane_count,
+            )?,
+        ])
+    }
+
     fn setup_index_weight_at(
         &self,
         setup_idx: usize,
         scales: &[Vec<E>; 3],
+        lane_powers: &[Vec<E>; 3],
     ) -> Result<E, AkitaError> {
         let geometry = self.projection_geometry;
         if setup_idx >= geometry.required() {
@@ -101,7 +127,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .ok_or(AkitaError::InvalidProof)?;
                     weight += scales[2][setup_idx % geometry.d_ratio()]
                         * self.eq_tau1[self.d_row_start + d_row]
-                        * group.d_eq_at(local_col, &self.eq_window)?;
+                        * role_column_weight(
+                            &group.d_spans,
+                            local_col,
+                            &self.eq_window,
+                            &lane_powers[2],
+                            None,
+                        )?;
                 }
             }
 
@@ -115,7 +147,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let b_row = b_idx / group.t_cols;
                 weight += scales[1][setup_idx % geometry.b_ratio()]
                     * self.eq_tau1[group.b_row_start + b_row]
-                    * group.b_eq_at(b_col, &self.eq_window)?;
+                    * role_column_weight(
+                        &group.b_spans,
+                        b_col,
+                        &self.eq_window,
+                        &lane_powers[1],
+                        None,
+                    )?;
             }
 
             let a_idx = setup_idx / geometry.a_ratio();
@@ -128,7 +166,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let a_row = a_idx / group.z_cols;
                 weight += scales[0][setup_idx % geometry.a_ratio()]
                     * self.eq_tau1[group.a_row_start + a_row]
-                    * group.a_eq_at(a_col, &self.eq_window, &self.fold_gadget)?;
+                    * role_column_weight(
+                        &group.a_spans,
+                        a_col,
+                        &self.eq_window,
+                        &lane_powers[0],
+                        Some(&self.fold_gadget),
+                    )?;
             }
         }
         Ok(weight)
@@ -136,9 +180,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_d_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan<E>,
+        group: &SetupContributionGroupPlan,
         rho_setup_idx: &[E],
         scales: &[E],
+        lane_powers: &[E],
     ) -> Result<E, AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(E::zero());
@@ -168,16 +213,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         setup_col,
                         lane,
                     )?;
-                    let pair = eval_compact_pair_eq(
-                        rho_setup_idx,
-                        setup_index,
-                        setup_stride,
-                        &self.x_challenges,
-                        span.witness_start,
-                        span.witness_stride,
-                        span.len,
-                    )?;
-                    acc += row_weight * scale * pair;
+                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
+                        let witness_start = span
+                            .witness_start
+                            .checked_add(relation_lane)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            setup_stride,
+                            &self.x_challenges,
+                            witness_start,
+                            span.witness_stride,
+                            span.len,
+                        )?;
+                        acc += row_weight * scale * lane_power * pair;
+                    }
                 }
             }
         }
@@ -186,9 +237,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_b_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan<E>,
+        group: &SetupContributionGroupPlan,
         rho_setup_idx: &[E],
         scales: &[E],
+        lane_powers: &[E],
     ) -> Result<E, AkitaError> {
         if group.n_b == 0 {
             return Ok(E::zero());
@@ -213,16 +265,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         span.setup_start,
                         lane,
                     )?;
-                    let pair = eval_compact_pair_eq(
-                        rho_setup_idx,
-                        setup_index,
-                        setup_stride,
-                        &self.x_challenges,
-                        span.witness_start,
-                        span.witness_stride,
-                        span.len,
-                    )?;
-                    acc += row_weight * scale * pair;
+                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
+                        let witness_start = span
+                            .witness_start
+                            .checked_add(relation_lane)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            setup_stride,
+                            &self.x_challenges,
+                            witness_start,
+                            span.witness_stride,
+                            span.len,
+                        )?;
+                        acc += row_weight * scale * lane_power * pair;
+                    }
                 }
             }
         }
@@ -231,9 +289,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
     fn evaluate_a_spans_at_point(
         &self,
-        group: &SetupContributionGroupPlan<E>,
+        group: &SetupContributionGroupPlan,
         rho_setup_idx: &[E],
         scales: &[E],
+        lane_powers: &[E],
     ) -> Result<E, AkitaError> {
         if group.n_a == 0 {
             return Ok(E::zero());
@@ -263,21 +322,60 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         span.setup_start,
                         lane,
                     )?;
-                    let pair = eval_compact_pair_eq(
-                        rho_setup_idx,
-                        setup_index,
-                        setup_stride,
-                        &self.x_challenges,
-                        span.witness_start,
-                        span.witness_stride,
-                        span.len,
-                    )?;
-                    acc -= row_weight * scale * fold * pair;
+                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
+                        let witness_start = span
+                            .witness_start
+                            .checked_add(relation_lane)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        let pair = eval_compact_pair_eq(
+                            rho_setup_idx,
+                            setup_index,
+                            setup_stride,
+                            &self.x_challenges,
+                            witness_start,
+                            span.witness_stride,
+                            span.len,
+                        )?;
+                        acc -= row_weight * scale * fold * lane_power * pair;
+                    }
                 }
             }
         }
         Ok(acc)
     }
+}
+
+fn role_column_weight<E: FieldCore>(
+    spans: &[SetupContributionSpan],
+    column: usize,
+    equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    lane_powers: &[E],
+    fold_gadget: Option<&[E]>,
+) -> Result<E, AkitaError> {
+    let mut weight = E::zero();
+    for span in spans {
+        let Some(witness) = span.witness_index_for_setup(column)? else {
+            continue;
+        };
+        let lane_equality =
+            lane_powers
+                .iter()
+                .copied()
+                .enumerate()
+                .try_fold(E::zero(), |sum, (lane, power)| {
+                    let address = witness.checked_add(lane).ok_or(AkitaError::InvalidProof)?;
+                    Ok(sum + equality_window.eval(address) * power)
+                })?;
+        if let Some(fold_digit) = span.fold_digit {
+            let fold = *fold_gadget
+                .and_then(|gadget| gadget.get(fold_digit))
+                .ok_or(AkitaError::InvalidProof)?;
+            weight -= lane_equality * fold;
+        } else {
+            weight += lane_equality;
+        }
+    }
+    Ok(weight)
 }
 
 fn projected_setup_offset(

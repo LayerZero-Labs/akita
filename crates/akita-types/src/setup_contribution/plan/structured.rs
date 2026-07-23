@@ -35,18 +35,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .first()
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
-        let opening_gadget =
-            crate::gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
+        let opening_gadget = crate::gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
         let commitment_gadget =
             crate::gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
         let witness_gadget =
             crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
         let inner_lane_powers =
             relation_lane_powers(alpha, self.common_coeff_count, self.inner_lane_count)?;
-        let outer_lane_powers =
-            relation_lane_powers(alpha, self.common_coeff_count, self.outer_lane_count)?;
-        let opening_lane_powers =
-            relation_lane_powers(alpha, self.common_coeff_count, self.opening_lane_count)?;
         let (outer_subcolumns, opening_subcolumns) =
             SetupProjectionGeometry::witness_subcolumn_ratios(
                 self.projection_geometry.role_dims(),
@@ -75,31 +70,38 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut evaluation = E::zero();
         let high = [E::one()];
         for span in &group.d_spans {
-            let semantic = span.setup_start / group.depth_open;
+            let native = span.setup_start / group.depth_open;
             let digit = span.setup_start % group.depth_open;
-            let block_claim = semantic / opening_subcolumns;
+            let subcolumn = native % opening_subcolumns;
+            let block_claim = native / opening_subcolumns;
             let claim = block_claim / group.num_live_blocks;
             let block_start = block_claim % group.num_live_blocks;
             let factors = claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?;
+            let lane_start = subcolumn
+                .checked_mul(self.opening_lane_count)
+                .ok_or(AkitaError::InvalidProof)?;
+            let lane_end = lane_start
+                .checked_add(self.opening_lane_count)
+                .ok_or(AkitaError::InvalidProof)?;
+            let lane_powers = inner_lane_powers
+                .get(lane_start..lane_end)
+                .ok_or(AkitaError::InvalidProof)?;
             let interval = eval_affine_digit_interval(
                 &self.x_challenges,
                 span.witness_start,
                 block_start,
                 span.len,
                 span.witness_stride,
-                &opening_lane_powers,
+                lane_powers,
                 &high,
                 factors,
             )?;
             evaluation += consistency_weight
-                * interval.mul_base(
-                    *opening_gadget
-                        .get(digit)
-                        .ok_or(AkitaError::InvalidProof)?,
-                );
+                * interval.mul_base(*opening_gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
         }
 
         for span in &group.b_spans {
+            let subcolumn = span.setup_start % outer_subcolumns;
             let semantic = span.setup_start / outer_subcolumns;
             let digit = semantic % group.depth_commit;
             let row_and_block = semantic / group.depth_commit;
@@ -112,13 +114,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .eq_tau1
                 .get(group.a_row_start + a_row)
                 .ok_or(AkitaError::InvalidProof)?;
+            let lane_start = subcolumn
+                .checked_mul(self.outer_lane_count)
+                .ok_or(AkitaError::InvalidProof)?;
+            let lane_end = lane_start
+                .checked_add(self.outer_lane_count)
+                .ok_or(AkitaError::InvalidProof)?;
+            let lane_powers = inner_lane_powers
+                .get(lane_start..lane_end)
+                .ok_or(AkitaError::InvalidProof)?;
             let interval = eval_affine_digit_interval(
                 &self.x_challenges,
                 span.witness_start,
                 block_start,
                 span.len,
                 span.witness_stride,
-                &outer_lane_powers,
+                lane_powers,
                 &high,
                 factors,
             )?;
@@ -167,7 +178,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 }
 
-fn relation_lane_powers<E: FieldCore>(
+pub(super) fn relation_lane_powers<E: FieldCore>(
     alpha: E,
     common_coeff_count: usize,
     lane_count: usize,
@@ -191,9 +202,9 @@ fn evaluate_lane_segment<E: FieldCore>(
         .copied()
         .enumerate()
         .try_fold(E::zero(), |sum, (lane, power)| {
-            let address = lane_start.checked_add(lane).ok_or_else(|| {
-                AkitaError::InvalidSetup("relation lane address overflow".into())
-            })?;
+            let address = lane_start
+                .checked_add(lane)
+                .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
             Ok(sum + equality_window.eval(address) * power)
         })
 }

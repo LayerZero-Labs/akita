@@ -17,10 +17,10 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, SumcheckProof};
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
-    ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    BatchedStage3Geometry, CommittedGroupParams, FpExtEncoding, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
-    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup, BatchedStage3Geometry,
+    CommittedGroupParams, FpExtEncoding, RingRelationInstance, SetupContributionPlan,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::FactoredProductTerm;
 use std::sync::Arc;
@@ -92,7 +92,15 @@ impl<E: FieldCore + FromPrimitiveInt> AkitaStage3Prover<E> {
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let setup_coefficient_bits = lp.d_a().trailing_zeros() as usize;
+        let setup_coeff_count = relation
+            .role_dims()
+            .common_relation_witness_coeff_count(next_fold_level_params.d_a());
+        if setup_coeff_count == 0 || !setup_coeff_count.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "stage-3 setup relation has no common coefficient block".into(),
+            ));
+        }
+        let setup_coefficient_bits = setup_coeff_count.trailing_zeros() as usize;
         let setup_x_challenges = stage2_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
@@ -293,8 +301,14 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    let (geometry, mut setup_index_weight, alpha_pows) =
-        prepare_setup_sumcheck_terms::<F, E>(lp, relation, tau1, alpha, x_challenges)?;
+    let (geometry, mut setup_index_weight, alpha_pows) = prepare_setup_sumcheck_terms::<F, E>(
+        lp,
+        relation,
+        tau1,
+        alpha,
+        x_challenges,
+        next_fold_level_params.d_a(),
+    )?;
 
     let required = geometry.required();
     let ring_d = geometry.base_ring_dim();
@@ -484,12 +498,19 @@ fn prepare_setup_sumcheck_terms<F, E>(
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
+    outgoing_ring_dim: usize,
 ) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges)?;
+    let plan = prepare_setup_contribution_plan::<F, E>(
+        relation,
+        lp,
+        tau1,
+        x_challenges,
+        outgoing_ring_dim,
+    )?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
@@ -502,6 +523,7 @@ fn prepare_setup_contribution_plan<F, E>(
     lp: &CommittedGroupParams,
     tau1: &[E],
     x_challenges: &[E],
+    outgoing_ring_dim: usize,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -522,11 +544,8 @@ where
         ));
     }
 
-    let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
-        let group_layout = opening_batch.group_layout(group_index)?;
-        let num_claims = group_layout.num_polynomials();
         let n_a = group_lp.a_rows_len();
         let n_b = group_lp.b_rows_len();
         let a_range = lp.a_row_range(opening_batch, group_index)?;
@@ -536,32 +555,16 @@ where
                 "multi-group row ranges do not match group matrix heights".to_string(),
             ));
         }
-        groups.push(SetupContributionGroupInputs {
-            group_id: group_index,
-            num_claims,
-            depth_fold: lp.num_digits_fold_for_params(
-                group_lp,
-                num_claims,
-                lp.field_bits_for_cache(),
-            )?,
-            a_row_start: a_range.start,
-            b_row_start: b_range.start,
-        });
     }
 
-    let opening_source_len = chunk_layout.total_len();
-    let fold_gadget = shared_setup_fold_gadget::<F>(lp, opening_batch, &groups);
     let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
         eq_tau1,
         &chunk_layout,
-        opening_source_len,
-        &groups,
         x_challenges,
-        fold_gadget.as_deref(),
         relation.role_dims(),
-        relation.role_dims().d_a(),
+        outgoing_ring_dim,
     )?;
     Ok(plan)
 }

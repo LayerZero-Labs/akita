@@ -4,38 +4,6 @@ use super::*;
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
 pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
-impl<E: FieldCore> SetupContributionGroupPlan<E> {
-    pub(crate) fn refresh_segments(
-        &mut self,
-        d_weights: &[E],
-        d_rows: usize,
-        d_physical_cols: usize,
-        a_ratio: usize,
-        b_ratio: usize,
-        d_ratio: usize,
-    ) -> Result<(), AkitaError> {
-        let (required, segments) = build_packed_segments(
-            self.d_col_range.start,
-            self.e_eq_slice.len(),
-            self.t_cols,
-            self.z_cols,
-            self.n_a,
-            self.n_b,
-            &self.a_row_weights,
-            &self.b_weights,
-            d_weights,
-            d_rows,
-            d_physical_cols,
-            a_ratio,
-            b_ratio,
-            d_ratio,
-        )?;
-        self.required = required;
-        self.segments = segments.into();
-        Ok(())
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn build_packed_segments<E: FieldCore>(
     d_col_start: usize,

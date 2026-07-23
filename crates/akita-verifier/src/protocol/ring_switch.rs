@@ -3,7 +3,6 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
-use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
     RandomSampling,
@@ -11,10 +10,10 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    gadget_row_scalars, r_decomp_levels, validate_role_dispatch, AkitaExpandedSetup,
+    CommitmentRingDims, CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout,
+    RingMultiplierOpeningPoint, RingRelationInstance, RingRole, SetupContributionPlan,
+    WitnessLayout,
 };
 use std::sync::{Arc, OnceLock};
 
@@ -109,16 +108,6 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) group_id: usize,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
-    pub(crate) depth_witness: usize,
-    pub(crate) depth_open: usize,
-    pub(crate) depth_commit: usize,
-    pub(crate) depth_fold: usize,
-    pub(crate) log_basis_inner: u32,
-    pub(crate) log_basis_outer: u32,
-    pub(crate) log_basis_open: u32,
-    pub(crate) n_a: usize,
-    pub(crate) a_row_start: usize,
-    pub(crate) b_row_start: usize,
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
@@ -364,9 +353,6 @@ where
         let num_live_blocks = group_lp.num_live_blocks();
         let num_positions_per_block = group_lp.num_positions_per_block();
         let depth_witness = group_lp.num_digits_inner();
-        let depth_commit = group_lp.num_digits_outer();
-        let depth_open = group_lp.num_digits_open();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
         let log_basis_inner = group_lp.log_basis_inner();
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();
@@ -433,16 +419,6 @@ where
             group_id: group_index,
             num_claims: k_g,
             num_live_blocks,
-            depth_witness,
-            depth_open,
-            depth_commit,
-            depth_fold,
-            log_basis_inner,
-            log_basis_outer,
-            log_basis_open,
-            n_a,
-            a_row_start: a_range.start,
-            b_row_start: b_range.start,
         });
     }
 
@@ -530,7 +506,6 @@ where
 {
     validate_role_dispatch::<D>(lp.role_dims(), RingRole::Inner)?;
     let num_polys = opening_batch.num_total_polynomials();
-    let depth_fold = lp.num_digits_fold(num_polys, lp.field_bits_for_cache())?;
     let alpha_pows = scalar_powers(alpha, D);
     let num_claims = gamma.len();
     if num_polys != num_claims {
@@ -543,9 +518,6 @@ where
     validate_log_basis(log_basis_inner)?;
     validate_log_basis(log_basis_outer)?;
     validate_log_basis(log_basis_open)?;
-    let depth_witness = lp.num_digits_inner;
-    let depth_commit = lp.num_digits_outer;
-    let depth_open = lp.num_digits_open;
     let num_live_blocks = lp.num_live_blocks;
     let total_blocks = num_live_blocks
         .checked_mul(num_claims)
@@ -557,7 +529,6 @@ where
         });
     }
     let num_positions_per_block = lp.num_positions_per_block;
-    let n_a = lp.inner_commit_matrix.output_rank();
 
     let c_alphas = prepare_challenge_evals::<F, E, D>(
         challenges,
@@ -574,16 +545,6 @@ where
         group_id: 0,
         num_claims,
         num_live_blocks,
-        depth_witness,
-        depth_open,
-        depth_commit,
-        depth_fold,
-        log_basis_inner,
-        log_basis_outer,
-        log_basis_open,
-        n_a,
-        a_row_start: 1,
-        b_row_start: 1 + n_a,
     };
 
     let groups = vec![group];
@@ -603,21 +564,6 @@ where
             opening_ring_dim,
         }),
     })
-}
-
-pub(crate) fn setup_contribution_group_inputs<F: FieldCore>(
-    groups: &[RelationMatrixGroupEvaluator<F>],
-) -> Vec<SetupContributionGroupInputs> {
-    groups
-        .iter()
-        .map(|group| SetupContributionGroupInputs {
-            group_id: group.group_id,
-            num_claims: group.num_claims,
-            depth_fold: group.depth_fold,
-            a_row_start: group.a_row_start,
-            b_row_start: group.b_row_start,
-        })
-        .collect()
 }
 
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
@@ -661,21 +607,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             context.opening_ring_dim,
             context.opening_source_len,
         )?;
-        let setup_groups = self.setup_contribution_inputs();
-        let fold_gadget = shared_setup_fold_gadget::<F>(
-            &context.level_params,
-            &context.opening_batch,
-            &setup_groups,
-        );
         let setup_plan = SetupContributionPlan::prepare::<F>(
             &context.level_params,
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
-            &setup_groups,
             prepared_point.address_point(),
-            fold_gadget.as_deref(),
             self.role_dims,
             context.opening_ring_dim,
         )?;
@@ -692,30 +629,21 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         Ok(evaluation)
     }
 
-    pub(crate) fn setup_contribution_inputs(&self) -> Vec<SetupContributionGroupInputs> {
-        setup_contribution_group_inputs(&self.groups)
-    }
-
     pub(crate) fn setup_contribution_plan<F>(
         &self,
         x_challenges: &[E],
-        fold_gadget: Option<&[F]>,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
         SetupContributionPlan::prepare::<F>(
             &context.level_params,
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
-            &setup_groups,
             x_challenges,
-            fold_gadget,
             self.role_dims,
             context.opening_ring_dim,
         )
@@ -810,24 +738,14 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &alpha_pows_d_storage
         };
 
-        let setup_groups = self.setup_contribution_inputs();
-        let setup_fold_gadget = shared_setup_fold_gadget::<F>(
-            &context.level_params,
-            &context.opening_batch,
-            &setup_groups,
-        );
         let shared_log_basis = self.log_basis;
         validate_log_basis(shared_log_basis)?;
         let r_depth = r_decomp_levels::<F>(shared_log_basis);
         let shared_gadget = gadget_row_scalars::<F>(r_depth, shared_log_basis);
 
-        let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
         let setup_plan = {
             let _span = tracing::info_span!("setup_contribution_plan").entered();
-            self.setup_contribution_plan::<F>(
-                x_challenges,
-                (!fold_gadget.is_empty()).then_some(fold_gadget),
-            )?
+            self.setup_contribution_plan::<F>(x_challenges)?
         };
 
         let structured_contribution = {
@@ -850,7 +768,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         } else {
             let _span = tracing::info_span!("setup_contribution", required = setup_plan.required())
                 .entered();
-            setup_plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)?
+            setup_plan.evaluate_direct::<F>(setup, alpha)?
         };
 
         let r_contribution = {
@@ -884,7 +802,7 @@ pub(super) fn group_block_challenges<F, E>(
 ) -> Result<Vec<E>, AkitaError>
 where
     F: FieldCore + FromPrimitiveInt,
-    E: FieldCore,
+    E: FieldCore + MulBase<F>,
 {
     let capacity = group
         .num_claims
@@ -905,115 +823,4 @@ where
         );
     }
     Ok(challenges)
-}
-
-#[cfg(test)]
-#[allow(clippy::too_many_arguments)]
-fn evaluate_group_et_from_eq_slices<F, E>(
-    group: &RelationMatrixGroupEvaluator<E>,
-    consistency_weight: E,
-    a_row_weights: &[E],
-    g_open_ext: &[E],
-    g_t_commit_ext: &[E],
-    e_eq_slice: &[E],
-    t_eq_slice: &[E],
-) -> Result<(E, E), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
-{
-    let e_stride = group.depth_open;
-    let t_stride = group
-        .n_a
-        .checked_mul(group.depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
-    let block_claims = group
-        .num_claims
-        .checked_mul(group.num_live_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
-    let expected_e = block_claims
-        .checked_mul(e_stride)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
-    let expected_t = block_claims
-        .checked_mul(t_stride)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
-    if e_eq_slice.len() != expected_e
-        || t_eq_slice.len() != expected_t
-        || g_open_ext.len() != group.depth_open
-        || g_t_commit_ext.len() != group.depth_commit
-        || a_row_weights.len() != group.n_a
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let challenge_factors = (0..group.num_claims)
-        .map(|claim| {
-            group
-                .c_alphas
-                .affine_factors::<F>(claim, group.num_live_blocks)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let t_weights = a_row_weights
-        .iter()
-        .flat_map(|&row_weight| {
-            g_t_commit_ext
-                .iter()
-                .map(move |&gadget| row_weight * gadget)
-        })
-        .collect::<Vec<_>>();
-    let _span = tracing::info_span!(
-        "structured_et_from_setup_slices",
-        block_claims,
-        e_columns = expected_e,
-        t_columns = expected_t
-    )
-    .entered();
-    cfg_fold_reduce!(
-        0..block_claims,
-        || Ok((E::zero(), E::zero())),
-        |acc: Result<(E, E), AkitaError>, block_claim| {
-            let (mut e_acc, mut t_acc) = acc?;
-            let claim = block_claim / group.num_live_blocks;
-            let block = block_claim % group.num_live_blocks;
-            let challenge = challenge_factors
-                .get(claim)
-                .and_then(|factors| factors.low.get(block))
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_start = block_claim
-                .checked_mul(e_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_end = e_start
-                .checked_add(e_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_block = e_eq_slice
-                .get(e_start..e_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut e_weight = E::zero();
-            for (&eq, &gadget) in e_block.iter().zip(g_open_ext) {
-                e_weight += eq * gadget;
-            }
-            e_acc += challenge * consistency_weight * e_weight;
-
-            let t_start = block_claim
-                .checked_mul(t_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let t_end = t_start
-                .checked_add(t_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let t_block = t_eq_slice
-                .get(t_start..t_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut t_weight = E::zero();
-            for (&eq, &weight) in t_block.iter().zip(&t_weights) {
-                t_weight += eq * weight;
-            }
-            t_acc += challenge * t_weight;
-            Ok((e_acc, t_acc))
-        },
-        |lhs: Result<(E, E), AkitaError>, rhs: Result<(E, E), AkitaError>| {
-            let (lhs_e, lhs_t) = lhs?;
-            let (rhs_e, rhs_t) = rhs?;
-            Ok((lhs_e + rhs_e, lhs_t + rhs_t))
-        }
-    )
 }

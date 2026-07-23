@@ -37,20 +37,14 @@ fn prepare_budget_fixture(ownership_units: usize) -> Result<SetupContributionPla
         1,
     );
     let opening_source_len = witness_layout.total_len();
-    let randomness_bits = crate::opening_domain_len(opening_source_len)?.trailing_zeros() as usize;
+    let coeff_count = ROLE_DIMS.common_relation_witness_coeff_count(ROLE_DIMS.d_a());
+    let randomness_bits = (crate::opening_domain_len(opening_source_len)? * ROLE_DIMS.d_a()
+        / coeff_count)
+        .trailing_zeros() as usize;
     let full_vec_randomness = (0..randomness_bits)
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
-    let group = test_single_group_descriptor(&inputs)?;
-    prepare_test_plan(
-        &inputs,
-        &witness_layout,
-        opening_source_len,
-        &[group],
-        &full_vec_randomness,
-        None,
-        ROLE_DIMS,
-    )
+    prepare_test_plan(&inputs, &witness_layout, &full_vec_randomness, ROLE_DIMS)
 }
 
 #[test]
@@ -91,15 +85,16 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
-    let group = SetupContributionGroupInputs {
-        group_id: 0,
-        num_claims: 2,
-        depth_fold: 2,
-        a_row_start: 1,
-        b_row_start: 2,
-    };
-    let witness_layout = test_witness_layout(2, 3, 8, 3, 2, 2, 1, 1, rows, 2);
+    let group_params = lp.group_params(&opening_batch, 0).unwrap();
+    let depth_fold = lp
+        .num_digits_fold_for_params(group_params, 2, lp.field_bits_for_cache())
+        .unwrap();
+    let witness_layout = test_witness_layout(2, 3, 8, 3, 2, depth_fold, 1, 1, rows, depth_fold);
     let opening_source_len = witness_layout.total_len();
+    let randomness_bits = crate::opening_domain_len(opening_source_len)
+        .unwrap()
+        .trailing_zeros() as usize;
+    let randomness = vec![F::one(); randomness_bits];
     let eq_tau1 = (0..rows.next_power_of_two())
         .map(|idx| test_scalar(11 + idx as u128))
         .collect::<Vec<_>>()
@@ -109,10 +104,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         &opening_batch,
         eq_tau1,
         &witness_layout,
-        opening_source_len,
-        &[group],
-        &[],
-        None,
+        &randomness,
         CommitmentRingDims::uniform(TEST_D),
         TEST_D,
     )

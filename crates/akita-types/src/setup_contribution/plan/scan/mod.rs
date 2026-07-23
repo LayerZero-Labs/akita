@@ -1,55 +1,59 @@
-mod group;
-
 use super::*;
-use akita_algebra::ring::eval_ring_at_pows_fast;
+use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+
+struct CompiledSetupGroup<E> {
+    required: usize,
+    segments: Vec<GroupSetupSegment<E>>,
+    d_eq: Vec<E>,
+    b_eq: Vec<E>,
+    a_eq: Vec<E>,
+}
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
         &self,
         setup: &AkitaExpandedSetup<F>,
-        alpha_pows_a: &[E],
-        alpha_pows_b: &[E],
-        alpha_pows_d: &[E],
+        alpha: E,
     ) -> Result<E, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let geometry = self.projection_geometry;
-        geometry.validate_alpha_power_lengths(
-            alpha_pows_a.len(),
-            alpha_pows_b.len(),
-            alpha_pows_d.len(),
-        )?;
+        let alpha_pows_a = scalar_powers(alpha, geometry.role_dims().d_a());
+        let alpha_pows_b = scalar_powers(alpha, geometry.role_dims().d_b());
+        let alpha_pows_d = scalar_powers(alpha, geometry.role_dims().d_d());
         let base_d = geometry.base_ring_dim();
         let base_pows = alpha_pows_d.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_projection = role_projection(alpha_pows_a, base_pows, geometry.a_ratio())
+        let a_projection = role_projection(&alpha_pows_a, base_pows, geometry.a_ratio())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "A alpha powers do not decompose over base dimension".into(),
                 )
             })?;
-        let b_projection = role_projection(alpha_pows_b, base_pows, geometry.b_ratio())
+        let b_projection = role_projection(&alpha_pows_b, base_pows, geometry.b_ratio())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "B alpha powers do not decompose over base dimension".into(),
                 )
             })?;
-        let d_projection = role_projection(alpha_pows_d, base_pows, geometry.d_ratio())
+        let d_projection = role_projection(&alpha_pows_d, base_pows, geometry.d_ratio())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "D alpha powers do not decompose over base dimension".into(),
                 )
             })?;
+        let compiled = self.compile_direct(alpha)?;
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_role_dims_direct_typed::<F, BASE_D>(
+                self.evaluate_direct_typed::<F, BASE_D>(
                     setup,
                     base_pows,
+                    &compiled,
                     &a_projection,
                     &b_projection,
                     &d_projection,
@@ -58,10 +62,92 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         )
     }
 
-    fn evaluate_role_dims_direct_typed<F, const BASE_D: usize>(
+    fn compile_direct(&self, alpha: E) -> Result<Vec<CompiledSetupGroup<E>>, AkitaError> {
+        let inner_lane_powers = super::structured::relation_lane_powers(
+            alpha,
+            self.common_coeff_count,
+            self.inner_lane_count,
+        )?;
+        let outer_lane_powers = super::structured::relation_lane_powers(
+            alpha,
+            self.common_coeff_count,
+            self.outer_lane_count,
+        )?;
+        let opening_lane_powers = super::structured::relation_lane_powers(
+            alpha,
+            self.common_coeff_count,
+            self.opening_lane_count,
+        )?;
+        let d_weights = self
+            .eq_tau1
+            .get(self.d_row_start..self.d_row_start + self.d_rows)
+            .ok_or(AkitaError::InvalidProof)?;
+
+        self.groups
+            .iter()
+            .map(|group| {
+                let d_eq = materialize_role_columns(
+                    &group.d_spans,
+                    group.d_col_range.len(),
+                    &self.eq_window,
+                    &opening_lane_powers,
+                    None,
+                )?;
+                let b_eq = materialize_role_columns(
+                    &group.b_spans,
+                    group.t_cols,
+                    &self.eq_window,
+                    &outer_lane_powers,
+                    None,
+                )?;
+                let a_eq = materialize_role_columns(
+                    &group.a_spans,
+                    group.z_cols,
+                    &self.eq_window,
+                    &inner_lane_powers,
+                    Some(&self.fold_gadget),
+                )?;
+                let a_weights = self
+                    .eq_tau1
+                    .get(group.a_row_start..group.a_row_start + group.n_a)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let b_weights = self
+                    .eq_tau1
+                    .get(group.b_row_start..group.b_row_start + group.n_b)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let (required, segments) = super::segments::build_packed_segments(
+                    group.d_col_range.start,
+                    d_eq.len(),
+                    group.t_cols,
+                    group.z_cols,
+                    group.n_a,
+                    group.n_b,
+                    a_weights,
+                    b_weights,
+                    d_weights,
+                    self.d_rows,
+                    self.d_physical_cols,
+                    self.projection_geometry.a_ratio(),
+                    self.projection_geometry.b_ratio(),
+                    self.projection_geometry.d_ratio(),
+                )?;
+                Ok(CompiledSetupGroup {
+                    required,
+                    segments,
+                    d_eq,
+                    b_eq,
+                    a_eq,
+                })
+            })
+            .collect()
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn evaluate_direct_typed<F, const BASE_D: usize>(
         &self,
         setup: &AkitaExpandedSetup<F>,
         base_pows: &[E],
+        groups: &[CompiledSetupGroup<E>],
         a_projection: &RoleProjection<E>,
         b_projection: &RoleProjection<E>,
         d_projection: &RoleProjection<E>,
@@ -71,45 +157,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let required = self.projection_geometry.required();
-        let fused_groups = self.groups.len() > 1;
-        let logical_group_rings = self
-            .groups
-            .iter()
-            .fold(0usize, |sum, group| sum.saturating_add(group.required));
-        let physical_ring_evaluations = if fused_groups {
-            self.projection_geometry.required()
-        } else {
-            logical_group_rings
-        };
-        let jobs = if fused_groups {
-            self.projection_geometry
-                .required()
-                .div_ceil(super::segments::SETUP_SCAN_JOB_RINGS)
-        } else {
-            self.groups
-                .iter()
-                .map(|group| group.segments.len())
-                .sum::<usize>()
-        };
-        let _span = tracing::info_span!(
-            "setup_contribution_scan",
-            required,
-            groups = self.groups.len(),
-            logical_group_rings,
-            physical_ring_evaluations,
-            jobs,
-            fused_groups,
-            base_d = BASE_D,
-            a_ratio = self.projection_geometry.a_ratio(),
-            b_ratio = self.projection_geometry.b_ratio(),
-            d_ratio = self.projection_geometry.d_ratio()
-        )
-        .entered();
-        if base_pows.len() != BASE_D {
-            return Err(AkitaError::InvalidSize {
-                expected: BASE_D,
-                actual: base_pows.len(),
-            });
+        if base_pows.len() != BASE_D || groups.len() != self.groups.len() {
+            return Err(AkitaError::InvalidProof);
         }
         let setup_len = setup.shared_matrix().total_ring_elements_at::<BASE_D>()?;
         if required > setup_len {
@@ -118,52 +167,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
-        if fused_groups {
-            return self.evaluate_groups_fused::<F, BASE_D>(
-                &setup_view,
-                base_pows,
-                a_projection,
-                b_projection,
-                d_projection,
-            );
-        }
-        let mut acc = E::zero();
-        for group in &self.groups {
-            acc += group.evaluate_base_ring_direct::<F, BASE_D>(
-                &setup_view,
-                base_pows,
-                &self.d_weights,
-                a_projection,
-                b_projection,
-                d_projection,
-                self.d_rows,
-                self.d_physical_cols,
-            )?;
-        }
-        Ok(acc)
-    }
-
-    fn evaluate_groups_fused<F, const BASE_D: usize>(
-        &self,
-        setup_view: &RingMatrixView<'_, F, BASE_D>,
-        base_pows: &[E],
-        a_projection: &RoleProjection<E>,
-        b_projection: &RoleProjection<E>,
-        d_projection: &RoleProjection<E>,
-    ) -> Result<E, AkitaError>
-    where
-        F: FieldCore,
-        E: ExtField<F> + MulBaseUnreduced<F>,
-    {
         let setup_flat = setup_view.as_slice();
-        let required = self.projection_geometry.required();
-        if self.d_weights.len() != self.d_rows {
-            return Err(AkitaError::InvalidSetup(
-                "cached setup scan geometry is malformed".into(),
-            ));
-        }
         let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
         let num_jobs = required.div_ceil(job_rings);
+        let _span = tracing::info_span!(
+            "setup_contribution_scan",
+            required,
+            groups = groups.len(),
+            jobs = num_jobs,
+            base_d = BASE_D,
+        )
+        .entered();
         cfg_try_fold_reduce!(
             0..num_jobs,
             E::zero,
@@ -172,7 +186,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let hi = lo.saturating_add(job_rings).min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
-                for group in &self.groups {
+                for group in groups {
+                    if group.required > required {
+                        return Err(AkitaError::InvalidProof);
+                    }
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);
                     for segment in group.segments.iter().skip(first) {
                         if segment.lo >= hi {
@@ -187,16 +204,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
                                 overlap,
                                 segment,
-                                &group.e_eq_slice,
-                                &group.t_eq_slice,
-                                &group.z_eq_slice,
+                                &group.d_eq,
+                                &group.b_eq,
+                                &group.a_eq,
                                 d_projection,
                                 b_projection,
                                 a_projection,
                                 |offset, weight| {
-                                    let slot = weight_start
-                                        .checked_add(offset)
-                                        .and_then(|index| weights.get_mut(index))
+                                    let slot = weights
+                                        .get_mut(weight_start + offset)
                                         .ok_or(AkitaError::InvalidProof)?;
                                     *slot += weight;
                                     Ok(())
@@ -216,4 +232,56 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             |lhs, rhs| Ok(lhs + rhs)
         )
     }
+}
+
+pub(super) fn materialize_role_columns<E: FieldCore>(
+    spans: &[SetupContributionSpan],
+    column_count: usize,
+    equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    lane_powers: &[E],
+    fold_gadget: Option<&[E]>,
+) -> Result<Vec<E>, AkitaError> {
+    let mut weights = vec![E::zero(); column_count];
+    for span in spans {
+        let fold = match span.fold_digit {
+            Some(digit) => Some(
+                *fold_gadget
+                    .and_then(|gadget| gadget.get(digit))
+                    .ok_or(AkitaError::InvalidProof)?,
+            ),
+            None => None,
+        };
+        for offset in 0..span.len {
+            let column = span
+                .setup_start
+                .checked_add(
+                    offset
+                        .checked_mul(span.setup_stride)
+                        .ok_or(AkitaError::InvalidProof)?,
+                )
+                .ok_or(AkitaError::InvalidProof)?;
+            let witness = span
+                .witness_start
+                .checked_add(
+                    offset
+                        .checked_mul(span.witness_stride)
+                        .ok_or(AkitaError::InvalidProof)?,
+                )
+                .ok_or(AkitaError::InvalidProof)?;
+            let equality = lane_powers.iter().copied().enumerate().try_fold(
+                E::zero(),
+                |sum, (lane, power)| {
+                    let address = witness.checked_add(lane).ok_or(AkitaError::InvalidProof)?;
+                    Ok(sum + equality_window.eval(address) * power)
+                },
+            )?;
+            let slot = weights.get_mut(column).ok_or(AkitaError::InvalidProof)?;
+            if let Some(fold) = fold {
+                *slot -= equality * fold;
+            } else {
+                *slot += equality;
+            }
+        }
+    }
+    Ok(weights)
 }

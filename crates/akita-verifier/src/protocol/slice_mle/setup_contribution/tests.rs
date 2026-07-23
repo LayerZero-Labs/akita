@@ -3,8 +3,8 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, Prime128OffsetA7F7};
 use akita_types::{
-    gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
+    AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
+    OpeningClaimsLayout, SisModulusProfileId, WitnessLayout,
 };
 
 use crate::protocol::ring_switch::{
@@ -24,7 +24,6 @@ struct SetupContributionFixture {
     setup: AkitaExpandedSetup<TestField>,
     full_vec_randomness: Vec<TestField>,
     alpha_pows: Vec<TestField>,
-    fold_gadget: Vec<TestField>,
 }
 
 #[derive(Clone)]
@@ -208,16 +207,6 @@ impl SetupContributionFixture {
             group_id: 0,
             num_claims: shape.num_claims,
             num_live_blocks: shape.num_live_blocks,
-            depth_witness: shape.depth_commit,
-            depth_open: shape.depth_open,
-            depth_commit: shape.depth_open,
-            depth_fold: shape.depth_fold,
-            log_basis_inner: shape.log_basis,
-            log_basis_outer: shape.log_basis,
-            log_basis_open: shape.log_basis,
-            n_a: shape.n_a,
-            a_row_start: 1,
-            b_row_start: 1 + shape.n_a,
         }];
         let opening_source_len = layout.total_len();
         let layout = std::sync::Arc::new(layout);
@@ -240,41 +229,28 @@ impl SetupContributionFixture {
             .collect();
         let alpha = test_scalar(19);
         let alpha_pows = scalar_powers(alpha, TEST_RING_DIM);
-        let fold_gadget = gadget_row_scalars::<TestField>(shape.depth_fold, shape.log_basis);
 
         Self {
             relation_matrix_evaluator,
             setup,
             full_vec_randomness,
             alpha_pows,
-            fold_gadget,
         }
     }
 
     fn compute_contribution(&self) -> TestField {
         let plan = self
             .relation_matrix_evaluator
-            .setup_contribution_plan::<TestField>(
-                &self.full_vec_randomness,
-                (!self.fold_gadget.is_empty()).then_some(self.fold_gadget.as_slice()),
-            )
+            .setup_contribution_plan::<TestField>(&self.full_vec_randomness)
             .unwrap();
-        plan.evaluate_direct::<TestField>(
-            &self.setup,
-            &self.alpha_pows,
-            &self.alpha_pows,
-            &self.alpha_pows,
-        )
-        .unwrap()
+        plan.evaluate_direct::<TestField>(&self.setup, self.alpha_pows[1])
+            .unwrap()
     }
 
     fn materialized_contribution(&self) -> TestField {
         let plan = self
             .relation_matrix_evaluator
-            .setup_contribution_plan::<TestField>(
-                &self.full_vec_randomness,
-                Some(&self.fold_gadget),
-            )
+            .setup_contribution_plan::<TestField>(&self.full_vec_randomness)
             .unwrap();
         let alpha = self.alpha_pows[1];
         let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
@@ -314,10 +290,7 @@ impl SetupContributionFixture {
     fn assert_setup_index_weight_mle_matches_materialized(&self) {
         let plan = self
             .relation_matrix_evaluator
-            .setup_contribution_plan::<TestField>(
-                &self.full_vec_randomness,
-                Some(&self.fold_gadget),
-            )
+            .setup_contribution_plan::<TestField>(&self.full_vec_randomness)
             .unwrap();
         let alpha = self.alpha_pows[1];
         let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();

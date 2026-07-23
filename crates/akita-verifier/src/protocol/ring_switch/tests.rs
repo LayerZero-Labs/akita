@@ -1,12 +1,7 @@
 use super::*;
-use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::scalar_powers;
-use akita_challenges::{SparseChallenge, SparseChallengeConfig, TensorChallenges};
+use akita_challenges::SparseChallengeConfig;
 use akita_field::Fp32;
-use akita_types::{
-    gadget_row_scalars, OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan,
-    SisModulusProfileId,
-};
+use akita_types::{OpeningClaimsLayout, SetupContributionPlan, SisModulusProfileId};
 
 type F = Fp32<251>;
 const D: usize = 64;
@@ -45,22 +40,12 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
     .with_decomp(1, 1, 1, 1, 1)
     .unwrap();
     let witness_layout = WitnessLayout::new(&valid_lp, &opening_batch, 1, 4, 1).unwrap();
-    let setup_groups = vec![SetupContributionGroupInputs {
-        group_id: 0,
-        num_claims: 1,
-        depth_fold: 1,
-        a_row_start: 1,
-        b_row_start: 2,
-    }];
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         vec![F::one(); 4].into(),
         &witness_layout,
-        3,
-        &setup_groups,
         &[],
-        None,
         CommitmentRingDims::uniform(D),
         D,
     ) {
@@ -68,165 +53,4 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         Err(err) => err,
     };
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
-}
-
-#[test]
-fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
-    let lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q32Offset99,
-        D,
-        2,
-        2,
-        1,
-        1,
-        fold_challenge_config(),
-    )
-    .with_decomp(4, 25, 1, 1, 3)
-    .unwrap();
-    let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
-    let depth_fold = lp
-        .num_digits_fold(
-            opening_batch.num_total_polynomials(),
-            lp.field_bits_for_cache(),
-        )
-        .unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
-    let units = witness_layout.units_for_group(0).unwrap();
-    assert_eq!(
-        units
-            .iter()
-            .map(|unit| unit.num_live_blocks())
-            .collect::<Vec<_>>(),
-        vec![4, 3]
-    );
-
-    let sparse = |position: u32, sign: i8| SparseChallenge {
-        positions: vec![position],
-        coeffs: vec![sign],
-    };
-    let tensor = TensorChallenges {
-        fold_high: vec![sparse(0, 1), sparse(1, -1)],
-        fold_low: vec![sparse(4, 1), sparse(5, 1), sparse(6, -1), sparse(7, 1)],
-        num_live_blocks_per_claim: 7,
-        fold_low_len: 4,
-        num_claims: 1,
-    };
-    let alpha_pows = scalar_powers(F::from_u64(5), D);
-    let group = RelationMatrixGroupEvaluator {
-        c_alphas: PreparedChallengeEvals::Tensor {
-            challenges: tensor.clone(),
-            alpha_pows: alpha_pows.clone(),
-        },
-        opening_a_evals: Vec::new(),
-        group_id: 0,
-        num_claims: 1,
-        num_live_blocks: 7,
-        depth_witness: 1,
-        depth_open: 3,
-        depth_commit: 1,
-        depth_fold,
-        log_basis_inner: 2,
-        log_basis_outer: 2,
-        log_basis_open: 2,
-        n_a: 2,
-        a_row_start: 1,
-        b_row_start: 3,
-    };
-    let opening_source_len = witness_layout.total_len();
-    let bits = opening_source_len.next_power_of_two().trailing_zeros() as usize;
-    let x_challenges = (0..bits)
-        .map(|index| F::from_u64(17 + index as u64))
-        .collect::<Vec<_>>();
-    let consistency_weight = F::from_u64(29);
-    let a_row_weights = [F::from_u64(31), F::from_u64(37)];
-    let gadget = [F::from_u64(1), F::from_u64(4), F::from_u64(16)];
-
-    let setup_groups = vec![SetupContributionGroupInputs {
-        group_id: group.group_id,
-        num_claims: group.num_claims,
-        depth_fold: group.depth_fold,
-        a_row_start: group.a_row_start,
-        b_row_start: group.b_row_start,
-    }];
-    let rows = lp
-        .relation_matrix_row_count(opening_batch.num_groups())
-        .unwrap();
-    let mut eq_tau1 = vec![F::from_u64(41); rows];
-    eq_tau1[0] = consistency_weight;
-    eq_tau1[group.a_row_start..group.a_row_start + group.n_a].copy_from_slice(&a_row_weights);
-    let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
-    let setup_plan = SetupContributionPlan::prepare::<F>(
-        &lp,
-        &opening_batch,
-        eq_tau1.into(),
-        &witness_layout,
-        opening_source_len,
-        &setup_groups,
-        &x_challenges,
-        Some(&fold_gadget),
-        CommitmentRingDims::uniform(D),
-        D,
-    )
-    .unwrap();
-    let (e_eq_slice, t_eq_slice, _) = setup_plan.group_column_eq_slices(0).unwrap();
-    let g_open_ext = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
-    let g_t_commit_ext = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
-
-    let got = evaluate_group_et_from_eq_slices::<F, F>(
-        &group,
-        consistency_weight,
-        &a_row_weights,
-        &g_open_ext,
-        &g_t_commit_ext,
-        e_eq_slice,
-        t_eq_slice,
-    )
-    .unwrap();
-
-    let mut expected = (F::zero(), F::zero());
-    for &unit in &units {
-        for claim in 0..group.num_claims {
-            for global_block in unit.global_block_range() {
-                let logical = claim * group.num_live_blocks + global_block;
-                let challenge = tensor
-                    .eval_logical_at_pows::<F, F>(logical, &alpha_pows)
-                    .unwrap();
-                for (digit, &digit_weight) in gadget.iter().enumerate() {
-                    let e_index = unit
-                        .e_index(
-                            group.num_claims,
-                            group.depth_open,
-                            claim,
-                            global_block,
-                            digit,
-                        )
-                        .unwrap();
-                    expected.0 += eq_eval_at_index(&x_challenges, e_index)
-                        * consistency_weight
-                        * challenge
-                        * digit_weight;
-                }
-                for (digit, &digit_weight) in gadget[..group.depth_commit].iter().enumerate() {
-                    for (a_row, &row_weight) in a_row_weights.iter().enumerate() {
-                        let t_index = unit
-                            .t_index(
-                                group.num_claims,
-                                group.n_a,
-                                group.depth_commit,
-                                claim,
-                                global_block,
-                                a_row,
-                                digit,
-                            )
-                            .unwrap();
-                        expected.1 += eq_eval_at_index(&x_challenges, t_index)
-                            * row_weight
-                            * challenge
-                            * digit_weight;
-                    }
-                }
-            }
-        }
-    }
-    assert_eq!(got, expected);
 }
