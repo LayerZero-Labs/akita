@@ -93,9 +93,10 @@ Preserve all of these; each names the mechanism that protects it.
 
 1. **Byte-exact prover/verifier consistency.** The verifier must replay the
    prover's exact transcript (labels + absorb order) and produce identical
-   accept/reject. Protected by: the **differential harness** (Evaluation →
-   Testing) and the existing `akita-pcs` scheme roundtrip tests +
-   `profile/akita-recursion` end-to-end.
+   accept/reject. Protected by: the `akita-pcs` scheme roundtrip tests +
+   `profile/akita-recursion` end-to-end + `mixed_d_rejections`. (The differential
+   harness protected this through Phases 0–3 and was retired at Phase-3 end — see
+   Testing Strategy.)
 2. **No-panic boundary.** Verifier-reachable code rejects malformed input with
    `AkitaError`/`SerializationError`, never a panic. Protected by:
    [`docs/verifier-contract.md`](../docs/verifier-contract.md) and
@@ -111,7 +112,10 @@ Preserve all of these; each names the mechanism that protects it.
    two cross-check test exports that cannot move (see Non-Goals). Protected by:
    a surface test / review rule.
 5. **Behavior preservation over cleverness.** No stage rewrite lands until the
-   differential harness is green for the shapes it touches.
+   `akita-pcs` roundtrip + recursion e2e + `mixed_d_rejections` coverage is green
+   for the shapes it touches. (Through Phase 3 this was the differential harness,
+   now retired; a rewrite needing byte-exact transcript protection should
+   reintroduce a golden-transcript net first.)
 
 ### Non-Goals
 
@@ -377,12 +381,23 @@ harness + characterization corpus); ensuring the recording transcript captures
 Phase 3 is largely complete and the crate is green throughout. Landed this cycle
 (each its own differential-green commit): the `verify_fold` decomposition + the
 `PreparedFoldReplay` god-struct split (24 → 6 cohesive fields), the per-group
-opening-point loop de-dup (`prepare_group_opening_point` / `GroupOpeningPoint`,
-each caller keeping its own width-mismatch error variant), and two thin-wrapper
+opening-point loop de-dup (`prepare_group_opening_point`, sharing the per-group
+target-length + point-variable extraction across the root and suffix loops), and
+two thin-wrapper
 collapses (`RingSwitchVerifyCoreOutput` + `into_intermediate`; the pointless
 `stage2` `witness_eval` tracing span). The thin-wrapper collapse list is now
 fully mined out (`proof/mod.rs` and `core/extension_opening_reduction.rs` were
 removed upstream by #311).
+
+Two type-boundary cleanups landed since (type-system tightening, behavior
+preserved): `RelationMatrixEvaluator.flat_context` dropped its vestigial
+`Option` — it is always constructed, so the seven `.ok_or(InvalidProof)` guards
+became direct borrows — and `prepare_group_opening_point` now returns the
+prepared point directly, rejecting a width mismatch with the canonical
+`AkitaError::InvalidProof`. The `GroupOpeningPoint` enum that carried the
+mismatch out so each caller could keep a distinct legacy error variant is gone;
+with legacy retired, that distinction was incidental and made no production
+contract.
 
 Of the three items, #1 is **DONE**; #2 and #3 remain, in execution order.
 
@@ -415,10 +430,18 @@ Of the three items, #1 is **DONE**; #2 and #3 remain, in execution order.
 
 3. **Relocate test-only code out of shipped `src/`.** `slice_mle/setup_contribution`
    is a whole `#[cfg(test)]` submodule (~17 KB of tests + a naive oracle) shipped
-   in `src/`. Move it behind a `test-support` feature — it needs crate internals,
-   so a plain move to `tests/` would widen the public surface (invariant #4); a
-   feature keeps the surface minimal. Satisfies the "no `#[cfg(test)]` harness
-   code in shipped `src/`" acceptance criterion.
+   in `src/`. **Still open, and thornier than first scoped.** The tests hand-build
+   `RelationMatrixEvaluator` / `FlatRelationContext` / `RelationMatrixGroupEvaluator`
+   via full struct literals (~28 private fields) plus the
+   `PreparedChallengeEvals::Flat` variant, so neither a move to `tests/` nor a
+   `test-support` feature actually "keeps the surface minimal" — both expose the
+   evaluator's *entire* internal representation (a `test-support` feature merely
+   gates that exposure behind a flag rather than avoiding it). The honest options
+   are (a) accept a feature-gated-public internal representation, or (b) rewrite
+   the characterization tests to drive the evaluator through its public
+   constructor + a small `test-support`-gated accessor surface. Until one is
+   chosen, this acceptance criterion stays unmet and the module stays
+   `#[cfg(test)]` in `src/` — a deliberate hold, not an oversight.
 
 ## Known gaps & follow-ups (as of P0/P1 on #312)
 

@@ -79,9 +79,12 @@ new `pub` is a signal to move the consumer in or expose a narrower entry point.
 
 1. **Byte-exact prover/verifier consistency.** The verifier replays the prover's
    exact transcript (labels + absorb order) and produces identical accept/reject.
-   Guarded by the differential harness
-   (`crates/akita-pcs/tests/verifier_differential.rs`), the `akita-pcs` scheme
-   roundtrip tests, and the `profile/akita-recursion` end-to-end path.
+   Guarded by the `akita-pcs` scheme roundtrip tests, the
+   [`mixed_d_rejections`](../crates/akita-verifier/tests/mixed_d_rejections.rs)
+   rejection tests, and the `profile/akita-recursion` end-to-end path. (The
+   legacy-vs-new differential harness that byte-compared transcripts through
+   Phase 3 was a temporary migration net, retired with `akita-verifier-legacy` at
+   the end of Phase 3 — see the refactor spec's Testing Strategy.)
 2. **No-panic boundary.** See [`docs/verifier-contract.md`](verifier-contract.md).
    No refactor may introduce a verifier-reachable
    `unwrap`/`expect`/`unreachable!`/unchecked index/unbounded allocation.
@@ -91,6 +94,9 @@ new `pub` is a signal to move the consumer in or expose a narrower entry point.
    builds ([`portability.yml`](../.github/workflows/portability.yml),
    [`jolt-verifier-profile-smoke.yml`](../.github/workflows/jolt-verifier-profile-smoke.yml)).
 4. **Behavior preservation over cleverness.** No stage rewrite lands until the
-   differential harness is green for the shapes it touches.
-</content>
-</invoke>
+   `akita-pcs` roundtrip + `profile/akita-recursion` e2e + `mixed_d_rejections`
+   coverage is green for the shapes it touches. Those catch accept/reject
+   regressions but not a transcript-order divergence that still verifies; a
+   soundness-sensitive rewrite that needs byte-exact protection should
+   reintroduce a golden-transcript net first (the differential harness that
+   provided this through Phase 3 is retired).
