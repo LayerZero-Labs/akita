@@ -19,10 +19,10 @@ use akita_types::{
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
 /// sumcheck for the setup contribution at `x_challenges`.
 ///
-/// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
-/// evaluation plan and sumcheck round count from the ring-switch row
-/// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
-/// with the proof and transcript.
+/// Construct with [`SetupSumcheckVerifier::new`] from the exact semantic plan
+/// captured during successful Stage 2 verification, then call
+/// [`verify_batched_stage3`](Self::verify_batched_stage3) with the proof and
+/// transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
     alpha_pows: Vec<E>,
@@ -32,12 +32,10 @@ pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
 }
 
 impl<E: FieldCore> SetupSumcheckVerifier<E> {
-    /// Prepare the setup-product sumcheck verifier for the setup contribution
-    /// at `x_challenges`.
+    /// Prepare the setup-product verifier from the Stage 2 semantic plan.
     ///
-    /// Derives the setup evaluation plan (and thus the per-round shape) from
-    /// the relation-matrix evaluation; must be called before
-    /// [`verify_batched_stage3`](Self::verify_batched_stage3).
+    /// The plan fixes the setup-index polynomial and per-round geometry; this
+    /// constructor does not rebuild either from relation layouts.
     pub(crate) fn new(plan: SetupContributionPlan<E>, alpha: E) -> Result<Self, AkitaError> {
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());

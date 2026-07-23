@@ -4,11 +4,11 @@
 |---------------|--------------------------------------------------------------|
 | Author(s)     | Quang Dao                                                   |
 | Created       | 2026-07-22                                                   |
-| Status        | proposed                                                     |
-| PR            |                                                              |
+| Status        | archived                                                     |
+| PR            | [#321](https://github.com/LayerZero-Labs/akita/pull/321)      |
 | Supersedes    | Setup-evaluator ownership in `setup-layout-repack.md`         |
 | Superseded-by |                                                              |
-| Book-chapter  | book/src/how/verification.md                                 |
+| Book-chapter  | book/src/how/proving/sumcheck-stages.md                       |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, **SHOULD NOT**,
 and **MAY** in this document are to be interpreted as described in BCP 14
@@ -345,29 +345,29 @@ would hide an ownership defect and recreate two preparation paths.
 
 ### Acceptance Criteria
 
-- [ ] `SetupContributionPlan` stores canonical typed D/B/A spans and no
+- [x] `SetupContributionPlan` stores canonical typed D/B/A spans and no
       materialized E/T/Z slices, copied row-weight vectors, or direct segments.
-- [ ] Direct and recursive Stage 2 call the same plan preparation and the same
+- [x] Direct and recursive Stage 2 call the same plan preparation and the same
       structured-relation contraction.
-- [ ] Recursive Stage 2 does not derive direct-scan segments or scan setup
+- [x] Recursive Stage 2 does not derive direct-scan segments or scan setup
       coefficients while preparing/evaluating structured relation weights.
-- [ ] Direct setup evaluation derives any scan backend privately from the
+- [x] Direct setup evaluation derives any scan backend privately from the
       canonical spans.
-- [ ] Stage 2 returns an explicit output containing its challenges and the
+- [x] Stage 2 returns an explicit output containing its challenges and the
       exact plan used for expected-claim evaluation.
-- [ ] `RelationMatrixEvaluator::setup_plan_cache`,
+- [x] `RelationMatrixEvaluator::setup_plan_cache`,
       `CachedSetupContributionPlan`, cache take/store methods, and Stage 3
       reconstruction fallback are deleted.
-- [ ] `SetupIndexWeightEvaluator` is deleted; Stage 3 evaluates the plan's
+- [x] `SetupIndexWeightEvaluator` is deleted; Stage 3 evaluates the plan's
       canonical spans directly.
-- [ ] Production `setup_e_col_weights`, `setup_t_col_weights`, and
+- [x] Production `setup_e_col_weights`, `setup_t_col_weights`, and
       `setup_z_col_weights` materialization is deleted. A dense implementation
       MAY remain under `#[cfg(test)]` as a migration oracle.
-- [ ] The Stage 3 prover obtains setup-index weights from the canonical
+- [x] The Stage 3 prover obtains setup-index weights from the canonical
       materialization contraction or consumes the canonical spans directly.
-- [ ] Direct and recursive proof bytes and logging-transcript event streams are
+- [x] Direct and recursive proof bytes and logging-transcript event streams are
       unchanged for deterministic fixtures.
-- [ ] All verifier-reachable malformed-layout tests return errors without
+- [x] All verifier-reachable malformed-layout tests return errors without
       panicking.
 
 ### Equivalence Tests
@@ -406,6 +406,18 @@ Coverage MUST include:
 End-to-end tests MUST compare proof serialization and `logging-transcript`
 events before and after the refactor. Existing recursive setup, distributed
 setup-offloading, mixed-relation, and direct PCS suites remain required.
+
+### Implementation evidence
+
+- `akita-types` setup-contribution tests compare structured, direct, point, and
+  materialized contractions across singleton, multi-group, multi-chunk,
+  non-power-of-two, carry, and mixed-role fixtures.
+- `mixed_role_e2e` commits, proves, serializes, deserializes, and verifies the
+  supported direct mixed-role schedule through the public PCS API.
+- `recursive_setup_e2e` and `distributed_setup_offload_e2e` exercise uniform
+  recursive setup contribution, including the multi-chunk path.
+- `fold_protocol_epoch` pins deterministic direct and recursive proof bytes and
+  logging-transcript event streams.
 
 ### Performance
 

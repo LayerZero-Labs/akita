@@ -854,10 +854,10 @@ Steps:
 Files centered on this slice:
 
 ```text
-crates/akita-types/src/proof/relation_weights.rs
+crates/akita-prover/src/protocol/ring_switch/relation_weights.rs
 crates/akita-types/src/setup_contribution/geometry.rs
 crates/akita-types/src/setup_contribution/plan
-crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs
+crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs
 crates/akita-prover/src/protocol/ring_relation.rs
 crates/akita-verifier/src/protocol/ring_switch.rs
 ```

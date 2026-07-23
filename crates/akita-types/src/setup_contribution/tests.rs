@@ -648,7 +648,7 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
     );
 }
 #[test]
-fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
+fn setup_index_weight_point_contraction_matches_materialization_single_chunk() {
     let (_, _, plan, _, _, _) =
         structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
@@ -664,7 +664,7 @@ fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
     assert_eq!(got, expected);
 }
 #[test]
-fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
+fn setup_index_weight_point_contraction_matches_materialization_multi_chunk() {
     let (_, _, plan, _, _, _) =
         structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
@@ -683,7 +683,7 @@ fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
     );
 }
 #[test]
-fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
+fn setup_index_weight_point_contraction_supports_non_power_of_two_ownership_widths() {
     let (_, _, plan, _, _, _) =
         structured_weight_fixture(8, &[3, 5], CommitmentRingDims::uniform(TEST_D));
     let alpha = test_scalar(3);
@@ -702,7 +702,7 @@ fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
     );
 }
 #[test]
-fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
+fn setup_index_weight_point_contraction_applies_mixed_role_projection_lanes() {
     let alpha = test_scalar(3);
     let role_dims = crate::CommitmentRingDims {
         inner: 64,

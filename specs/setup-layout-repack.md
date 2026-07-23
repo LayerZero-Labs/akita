@@ -867,40 +867,40 @@ The later setup-offload implementation must bind:
 ## Canonical setup-contribution pipeline
 
 The target verifier ownership and evaluation model is specified in
-[`setup-contribution-pipeline-unification.md`](setup-contribution-pipeline-unification.md).
-That specification supersedes the implementation-specific evaluator ownership
-described by the archival rollout slices below: one compact semantic plan feeds
-both the direct and recursive execution paths.
+[`setup-contribution-pipeline-unification.md`](archive/2026-Q3/setup-contribution-pipeline-unification.md).
+PR #321 implemented and archived that specification. The durable architecture
+now lives in
+[`book/src/how/proving/sumcheck-stages.md`](../book/src/how/proving/sumcheck-stages.md)
+and [`book/src/how/verification.md`](../book/src/how/verification.md).
 
 ## Current verifier evaluation reuse
 
-PR #318 prepares one `SetupContributionPlan` for each relation-matrix
-evaluation, in both direct and offloaded modes. The plan is the single checked
-description of:
+PR #321 prepares one `SetupContributionPlan` for each relation-matrix
+evaluation. The plan is the single checked description of:
 
 - packed A/B/D role projection geometry;
 - the active setup-prefix length;
 - the equality window over relation columns;
-- each group's prepared `e`, `t`, and `z` equality slices;
-- the setup-index-weight evaluator used by Stage 3.
+- typed affine D, B, and A spans over relation rows, witness addresses, and
+  setup addresses; and
+- the challenges and fold geometry shared by every contraction.
 
-Stage 2 consumes the prepared group slices when evaluating the structured
-relation terms. In direct mode, the same plan evaluates the active setup prefix
-against the structured setup weight. In offloaded mode, Stage 2 substitutes the
-transcript-bound setup claim but still uses the same prepared slices for the
-non-setup relation terms. The plan is then cached on the relation evaluator and
-consumed by Stage 3; Stage 3 may rebuild it only when no matching cached plan is
-available.
+Stage 2 evaluates the structured E, T, and Z relation terms from the spans in
+both modes. Direct evaluation derives a private fused scan from those spans.
+Offloaded evaluation substitutes the transcript-bound setup claim and moves the
+exact Stage 2 plan into Stage 3, which evaluates the setup-index polynomial at
+the sampled point.
 
 This reuse is semantic, not merely an optimization. Direct evaluation,
 offloaded Stage 3 verification, and relation-column weighting must read the
 same checked projection geometry. A second setup-layout formula or separately
 materialized equality table would reintroduce split authority.
 
-The cache is verifier-private and does not change proof equations, transcript
-ordering, or descriptor bytes. Missing or poisoned cached state falls back to
-checked reconstruction or returns `AkitaError`; verifier-reachable code must not
-panic.
+`RelationMatrixEvaluator` does not cache the plan, and Stage 3 has no
+reconstruction fallback. The Stage 2 verifier captures the plan in a
+single-assignment cell and the fold orchestrator consumes it immediately after
+successful verification. Missing or duplicate handoff state returns
+`AkitaError`.
 
 ## Downstream parallel work slices (archival rollout)
 

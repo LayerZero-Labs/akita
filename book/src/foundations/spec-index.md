@@ -18,6 +18,12 @@ The approved SIS security-policy frontier is
 `sis-quantum128-scalar-n-table`: a scalar, role-driven table using one ADPS16
 quantum LGSA policy at a 128-bit target.
 
+The setup-contribution pipeline unification design is archived at
+`specs/archive/2026-Q3/setup-contribution-pipeline-unification.md`. Its durable
+one-plan/two-path architecture lives in
+[`Sumcheck stages`](../how/proving/sumcheck-stages.md) and
+[`Verification`](../how/verification.md).
+
 ## Sources to fold in
 
 - `specs/PRUNING.md` (process + classification), `specs/archive/README.md`

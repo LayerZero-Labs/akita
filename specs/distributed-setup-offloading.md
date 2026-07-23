@@ -368,10 +368,10 @@ chunked.
   match root group order" guard) must accept both the level-0 chunked
   multi-group root and the level-1 chunked two-group suffix. The verifier's copy
   of that guard lives in `crates/akita-verifier/src/protocol/ring_switch.rs`.
-- Verifier Stage-3: `verify_batched_stage3` /
-  `SetupIndexWeightEvaluator::evaluate`
+- Verifier Stage 3: `verify_batched_stage3` calls
+  `SetupContributionPlan::evaluate_setup_index_weight_mle`
   (`crates/akita-verifier/src/stages/stage3.rs`,
-  `crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs`).
+  `crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs`).
   The setup-index weight and `alpha`-power ladder are challenge-driven and
   chunk-independent; confirm the carried `setup_prefix_eval` is consumed only
   when `next_fold_level_params.setup_prefix.is_some()`.
