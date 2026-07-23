@@ -331,6 +331,19 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: Fiel
     },
 }
 
+/// The stage/witness payload of a non-terminal fold, i.e. the fields of
+/// [`PreparedFoldPayload::Recursive`] handed to [`verify_recursive_fold`]. Kept
+/// as a bundle so the recursive replay mirrors the terminal one
+/// ([`verify_terminal_fold`]) instead of threading six loose arguments.
+struct RecursiveFoldStages<'a, F: FieldCore, E: FieldCore> {
+    stage1: &'a AkitaStage1Proof<E>,
+    stage2: &'a AkitaStage2Proof<F, E>,
+    next_witness: PreparedNextWitness<'a, F>,
+    next_witness_ring_dim: usize,
+    next_opening_source_len: usize,
+    stage3: Option<(&'a SetupSumcheckProof<E>, &'a LevelParams)>,
+}
+
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
     range_image_evaluation: E,
@@ -1032,6 +1045,116 @@ where
     Ok((Vec::new(), None))
 }
 
+/// Replay one non-terminal fold: bind the schedule-selected next-level witness
+/// into the transcript, run the inner ring-switch verifier, then the fused
+/// stage-1/stage-2/stage-3 sumcheck checks. The recursive sibling of
+/// [`verify_terminal_fold`]; the transcript order (next-witness binding →
+/// ring-switch → stages) is the prover's and must not be reordered. Returns the
+/// next level's opening challenges and any carried setup-prefix opening.
+#[allow(clippy::too_many_arguments)]
+fn verify_recursive_fold<F, E, T>(
+    setup: &AkitaVerifierSetup<F>,
+    transcript: &mut T,
+    relation_instance: &RingRelationInstance<F>,
+    relation_rhs_layout: &RelationRhsLayout,
+    commitment_rows: &RingVec<F>,
+    lp: &LevelParams,
+    relation_matrix_row_layout: RelationMatrixRowLayout,
+    trace: &TracePreparation<F, E>,
+    row_coefficients: &[E],
+    w_len: usize,
+    stages: RecursiveFoldStages<'_, F, E>,
+) -> Result<FoldVerifyOutput<E>, AkitaError>
+where
+    F: FieldCore + CanonicalField + RandomSampling + HalvingField + FromPrimitiveInt,
+    E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
+    T: Transcript<F>,
+{
+    let d_a = lp.role_dims().d_a();
+    let ring_switch_replay = RingSwitchReplay {
+        setup: &setup.expanded,
+        relation: relation_instance,
+        row_coefficients,
+        lp,
+        opening_source_len: stages.next_opening_source_len,
+        opening_ring_dim: stages.next_witness_ring_dim,
+    };
+    {
+        let _span = tracing::info_span!("fold_bind_next_witness").entered();
+        match stages.next_witness {
+            PreparedNextWitness::Commitment {
+                commitment,
+                ring_dim,
+            } => {
+                if ring_dim == 0 || !commitment.can_decode_vec(ring_dim) {
+                    return Err(AkitaError::InvalidProof);
+                }
+                transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
+            }
+            PreparedNextWitness::TerminalT(t_state) if !t_state.is_empty() => {
+                transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
+            }
+            PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
+        }
+    }
+    let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+        ring_switch_verifier::<F, E, T, D>(
+            &ring_switch_replay,
+            w_len,
+            transcript,
+            RelationMatrixRowLayout::WithDBlock,
+        )
+    })?;
+    let relation_claim = relation_claim_from_layout_extension::<F, E>(
+        relation_instance.role_dims(),
+        relation_rhs_layout,
+        &rs.tau1,
+        rs.alpha,
+        relation_instance.v(),
+        commitment_rows,
+    )?;
+    let stage1_replay = verify_stage1::<F, E, T>(stages.stage1, &rs, transcript)?;
+    let trace_wire = build_trace_wire::<F, E>(
+        lp,
+        relation_matrix_row_layout,
+        row_coefficients,
+        trace,
+        relation_instance,
+        &rs,
+        d_a,
+    )?;
+    let setup_claim = stages.stage3.as_ref().map(|(proof, _)| proof.claim);
+    let sumcheck_challenges = verify_stage2::<F, E, T>(
+        transcript,
+        setup,
+        relation_instance,
+        stages.stage2,
+        w_len,
+        stage1_replay,
+        &rs,
+        relation_claim,
+        lp,
+        setup_claim,
+        stages.next_opening_source_len,
+        stages.next_witness_ring_dim,
+        trace_wire,
+    )?;
+    let stage2_next_w_eval = if stages.stage3.is_some() {
+        stages.stage2.next_w_eval()
+    } else {
+        E::zero()
+    };
+    let stage3_output = verify_stage3::<F, E, T>(
+        setup,
+        transcript,
+        &rs,
+        &sumcheck_challenges,
+        stage2_next_w_eval,
+        stages.stage3,
+    )?;
+    Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
+}
+
 /// Assemble the `RingRelationInstance` for one fold from its
 /// [`RelationReplayInputs`] and the already-derived per-group stage-1
 /// challenges, returning the RHS block layout alongside it (the caller reuses
@@ -1138,121 +1261,47 @@ where
         prepared.relation.group_ring_opening_points,
         prepared.relation.group_ring_multiplier_points,
     )?;
-    let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
-        match prepared.payload {
-            PreparedFoldPayload::Terminal {
-                final_witness,
-                transcript: terminal_replay,
-            } => {
-                return verify_terminal_fold(
-                    setup,
-                    transcript,
-                    &relation_instance,
-                    prepared.lp,
-                    prepared.relation.relation_matrix_row_layout,
-                    &prepared.trace,
-                    &prepared.relation.row_coefficients,
-                    final_witness,
-                    terminal_replay,
-                );
-            }
-            PreparedFoldPayload::Recursive {
-                stage1,
-                stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len,
-                stage3,
-            } => (
-                stage1,
-                stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len,
-                stage3,
-            ),
-        };
-    let ring_switch_replay = RingSwitchReplay {
-        setup: &setup.expanded,
-        relation: &relation_instance,
-        row_coefficients: &prepared.relation.row_coefficients,
-        lp: prepared.lp,
-        opening_source_len: next_opening_source_len,
-        opening_ring_dim: next_witness_ring_dim,
-    };
-    let d_a = role_dims.d_a();
-    {
-        let _span = tracing::info_span!("fold_bind_next_witness").entered();
-        match next_witness {
-            PreparedNextWitness::Commitment {
-                commitment,
-                ring_dim,
-            } => {
-                if ring_dim == 0 || !commitment.can_decode_vec(ring_dim) {
-                    return Err(AkitaError::InvalidProof);
-                }
-                transcript.absorb_and_record_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
-            }
-            PreparedNextWitness::TerminalT(t_state) if !t_state.is_empty() => {
-                transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, t_state);
-            }
-            PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
-        }
-    }
-    let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        ring_switch_verifier::<F, E, T, D>(
-            &ring_switch_replay,
-            prepared.w_len,
+    match prepared.payload {
+        PreparedFoldPayload::Terminal {
+            final_witness,
+            transcript: terminal_replay,
+        } => verify_terminal_fold(
+            setup,
             transcript,
-            RelationMatrixRowLayout::WithDBlock,
-        )
-    })?;
-    let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        relation_instance.role_dims(),
-        &relation_rhs_layout,
-        &rs.tau1,
-        rs.alpha,
-        relation_instance.v(),
-        commitment_rows,
-    )?;
-    let stage1_replay = verify_stage1::<F, E, T>(stage1, &rs, transcript)?;
-    let trace_wire = build_trace_wire::<F, E>(
-        prepared.lp,
-        prepared.relation.relation_matrix_row_layout,
-        &prepared.relation.row_coefficients,
-        &prepared.trace,
-        &relation_instance,
-        &rs,
-        d_a,
-    )?;
-    let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
-    let sumcheck_challenges = verify_stage2::<F, E, T>(
-        transcript,
-        setup,
-        &relation_instance,
-        stage2,
-        prepared.w_len,
-        stage1_replay,
-        &rs,
-        relation_claim,
-        prepared.lp,
-        setup_claim,
-        next_opening_source_len,
-        next_witness_ring_dim,
-        trace_wire,
-    )?;
-    let stage2_next_w_eval = if stage3.is_some() {
-        stage2.next_w_eval()
-    } else {
-        E::zero()
-    };
-    let stage3_output = verify_stage3::<F, E, T>(
-        setup,
-        transcript,
-        &rs,
-        &sumcheck_challenges,
-        stage2_next_w_eval,
-        stage3,
-    )?;
-    Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
+            &relation_instance,
+            prepared.lp,
+            prepared.relation.relation_matrix_row_layout,
+            &prepared.trace,
+            &prepared.relation.row_coefficients,
+            final_witness,
+            terminal_replay,
+        ),
+        PreparedFoldPayload::Recursive {
+            stage1,
+            stage2,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len,
+            stage3,
+        } => verify_recursive_fold(
+            setup,
+            transcript,
+            &relation_instance,
+            &relation_rhs_layout,
+            commitment_rows,
+            prepared.lp,
+            prepared.relation.relation_matrix_row_layout,
+            &prepared.trace,
+            &prepared.relation.row_coefficients,
+            prepared.w_len,
+            RecursiveFoldStages {
+                stage1,
+                stage2,
+                next_witness,
+                next_witness_ring_dim,
+                next_opening_source_len,
+                stage3,
+            },
+        ),
+    }
 }
