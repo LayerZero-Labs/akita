@@ -929,7 +929,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
                 let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
-                    .group_column_eq_slices(group_index)
+                    .group_column_eq_slices(group.group_id)
                     .ok_or(AkitaError::InvalidProof)?;
                 let (e_contribution, t_contribution) = {
                     let _span = tracing::info_span!("structured_group_et", group_index).entered();

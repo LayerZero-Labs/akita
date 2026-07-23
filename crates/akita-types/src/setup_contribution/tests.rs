@@ -325,7 +325,7 @@ fn test_group_plan(
 ) -> SetupContributionGroupPlan<F> {
     let e_cols = d_col_range.len();
     SetupContributionGroupPlan {
-        depth_fold: 1,
+        group_id: 0,
         a_row_start: 0,
         b_row_start: n_a,
         d_col_range,

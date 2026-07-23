@@ -1,6 +1,6 @@
 use crate::{
-    CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout, SetupProjectionGeometry,
-    WitnessLayout,
+    checked_opening_source_index, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
+    SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
@@ -324,23 +324,108 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self.eq_window
     }
 
-    /// Prepared D/B/A column equality slices for the group at `index` in plan
-    /// order.
+    /// Prepared D/B/A column equality slices for `group_id`.
     #[must_use]
-    pub fn group_column_eq_slices(&self, index: usize) -> Option<(&[E], &[E], &[E])> {
-        self.groups.get(index).map(|group| {
-            (
-                group.e_eq_slice.as_slice(),
-                group.t_eq_slice.as_slice(),
-                group.z_eq_slice.as_slice(),
-            )
-        })
+    pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
+        self.groups
+            .iter()
+            .find(|group| group.group_id == group_id)
+            .map(|group| {
+                (
+                    group.e_eq_slice.as_slice(),
+                    group.t_eq_slice.as_slice(),
+                    group.z_eq_slice.as_slice(),
+                )
+            })
     }
 }
 
 #[derive(Clone)]
+pub(crate) struct SetupContributionSpan {
+    pub(crate) setup_start: usize,
+    pub(crate) setup_stride: usize,
+    pub(crate) witness_start: usize,
+    pub(crate) witness_stride: usize,
+    pub(crate) len: usize,
+    pub(crate) fold_digit: Option<usize>,
+}
+
+impl SetupContributionSpan {
+    pub(crate) fn new(
+        setup_start: usize,
+        setup_stride: usize,
+        witness_start: usize,
+        witness_stride: usize,
+        len: usize,
+        fold_digit: Option<usize>,
+        setup_len: usize,
+        witness_len: usize,
+    ) -> Result<Self, AkitaError> {
+        if setup_stride == 0 || witness_stride == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution span stride must be positive".into(),
+            ));
+        }
+        if len != 0 {
+            let last_setup = checked_span_index(setup_start, setup_stride, len)?;
+            if last_setup >= setup_len {
+                return Err(AkitaError::InvalidSetup(
+                    "setup contribution span exceeds role columns".into(),
+                ));
+            }
+            let last_witness = checked_span_index(witness_start, witness_stride, len)?;
+            checked_opening_source_index(witness_len, last_witness)?;
+        }
+        Ok(Self {
+            setup_start,
+            setup_stride,
+            witness_start,
+            witness_stride,
+            len,
+            fold_digit,
+        })
+    }
+
+    #[inline]
+    fn witness_index_for_setup(&self, setup_index: usize) -> Result<Option<usize>, AkitaError> {
+        let Some(delta) = setup_index.checked_sub(self.setup_start) else {
+            return Ok(None);
+        };
+        let offset = if self.setup_stride == 1 {
+            delta
+        } else if delta.is_multiple_of(self.setup_stride) {
+            delta / self.setup_stride
+        } else {
+            return Ok(None);
+        };
+        if offset >= self.len {
+            return Ok(None);
+        }
+        let witness_offset = offset.checked_mul(self.witness_stride).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup contribution witness span overflow".into())
+        })?;
+        self.witness_start
+            .checked_add(witness_offset)
+            .map(Some)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup contribution witness span overflow".into())
+            })
+    }
+}
+
+fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, AkitaError> {
+    let last = len.checked_sub(1).ok_or_else(|| {
+        AkitaError::InvalidSetup("setup contribution span length must be positive".into())
+    })?;
+    stride
+        .checked_mul(last)
+        .and_then(|offset| start.checked_add(offset))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup contribution span overflow".into()))
+}
+
+#[derive(Clone)]
 pub(crate) struct SetupContributionGroupPlan<E> {
-    pub(crate) depth_fold: usize,
+    pub(crate) group_id: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
     pub(crate) d_col_range: Range<usize>,
@@ -355,9 +440,9 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) e_eq_slice: Vec<E>,
     pub(crate) t_eq_slice: Vec<E>,
     pub(crate) z_eq_slice: Vec<E>,
-    pub(crate) d_spans: Vec<(usize, usize, usize)>,
-    pub(crate) b_spans: Vec<(usize, usize, usize)>,
-    pub(crate) a_spans: Vec<(usize, usize, usize, usize)>,
+    pub(crate) d_spans: Vec<SetupContributionSpan>,
+    pub(crate) b_spans: Vec<SetupContributionSpan>,
+    pub(crate) a_spans: Vec<SetupContributionSpan>,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
@@ -369,9 +454,9 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         if column >= self.d_col_range.len() {
             return Err(AkitaError::InvalidProof);
         }
-        for &(setup_start, witness_start, len) in &self.d_spans {
-            if column >= setup_start && column < setup_start + len {
-                return Ok(eq_window.eval(witness_start + column - setup_start));
+        for span in &self.d_spans {
+            if let Some(witness_index) = span.witness_index_for_setup(column)? {
+                return Ok(eq_window.eval(witness_index));
             }
         }
         Ok(E::zero())
@@ -385,9 +470,9 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         if column >= self.t_cols {
             return Err(AkitaError::InvalidProof);
         }
-        for &(setup_start, witness_start, len) in &self.b_spans {
-            if column >= setup_start && column < setup_start + len {
-                return Ok(eq_window.eval(witness_start + column - setup_start));
+        for span in &self.b_spans {
+            if let Some(witness_index) = span.witness_index_for_setup(column)? {
+                return Ok(eq_window.eval(witness_index));
             }
         }
         Ok(E::zero())
@@ -403,13 +488,13 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
             return Err(AkitaError::InvalidProof);
         }
         let mut weight = E::zero();
-        for &(setup_start, witness_start, len, fold_digit) in &self.a_spans {
-            if column >= setup_start && column < setup_start + len {
-                let offset = column - setup_start;
+        for span in &self.a_spans {
+            if let Some(witness_index) = span.witness_index_for_setup(column)? {
+                let fold_digit = span.fold_digit.ok_or(AkitaError::InvalidProof)?;
                 let fold = *fold_gadget
                     .get(fold_digit)
                     .ok_or(AkitaError::InvalidProof)?;
-                weight -= eq_window.eval(witness_start + offset * self.depth_fold) * fold;
+                weight -= eq_window.eval(witness_index) * fold;
             }
         }
         Ok(weight)

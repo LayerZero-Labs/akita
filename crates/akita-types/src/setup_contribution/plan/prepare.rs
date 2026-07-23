@@ -176,20 +176,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                 .ok_or_else(|| {
                                     AkitaError::InvalidSetup("setup D span overflow".into())
                                 })?;
-                        validate_opening_span(
-                            opening_source_len,
-                            d_witness_start,
-                            d_len,
-                            1,
-                            "witness D address overflow",
-                        )?;
-                        validate_role_span(
-                            d_col_range.len(),
+                        d_spans.push(SetupContributionSpan::new(
                             d_setup_start,
+                            1,
+                            d_witness_start,
+                            1,
                             d_len,
-                            "setup D span overflow",
-                        )?;
-                        d_spans.push((d_setup_start, d_witness_start, d_len));
+                            None,
+                            d_col_range.len(),
+                            opening_source_len,
+                        )?);
 
                         let b_setup_start = claim
                             .checked_mul(num_live_blocks)
@@ -215,15 +211,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup("setup B span overflow".into())
                             })?;
-                        validate_opening_span(
-                            opening_source_len,
-                            b_witness_start,
-                            b_len,
+                        b_spans.push(SetupContributionSpan::new(
+                            b_setup_start,
                             1,
-                            "witness B address overflow",
-                        )?;
-                        validate_role_span(t_cols, b_setup_start, b_len, "setup B span overflow")?;
-                        b_spans.push((b_setup_start, b_witness_start, b_len));
+                            b_witness_start,
+                            1,
+                            b_len,
+                            None,
+                            t_cols,
+                            opening_source_len,
+                        )?);
                     }
                     for fold_digit in 0..group.depth_fold {
                         let a_witness_start = unit.z_index(
@@ -234,18 +231,20 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             0,
                             fold_digit,
                         )?;
-                        validate_opening_span(
-                            opening_source_len,
+                        a_spans.push(SetupContributionSpan::new(
+                            0,
+                            1,
                             a_witness_start,
-                            z_cols,
                             group.depth_fold,
-                            "witness A address overflow",
-                        )?;
-                        a_spans.push((0, a_witness_start, z_cols, fold_digit));
+                            z_cols,
+                            Some(fold_digit),
+                            z_cols,
+                            opening_source_len,
+                        )?);
                     }
                 }
                 Ok(SetupContributionGroupPlan {
-                    depth_fold: group.depth_fold,
+                    group_id: group.group_id,
                     a_row_start: group.a_row_start,
                     b_row_start: group.b_row_start,
                     d_col_range,
@@ -324,39 +323,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
         self.projection_geometry
     }
-}
-
-fn validate_opening_span(
-    opening_source_len: usize,
-    base: usize,
-    len: usize,
-    stride: usize,
-    context: &'static str,
-) -> Result<(), AkitaError> {
-    if len == 0 {
-        return Ok(());
-    }
-    let max_address = stride
-        .checked_mul(len - 1)
-        .and_then(|delta| base.checked_add(delta))
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
-    crate::checked_opening_source_index(opening_source_len, max_address)?;
-    Ok(())
-}
-
-fn validate_role_span(
-    role_len: usize,
-    start: usize,
-    len: usize,
-    context: &'static str,
-) -> Result<(), AkitaError> {
-    let end = start
-        .checked_add(len)
-        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
-    if end > role_len {
-        return Err(AkitaError::InvalidSetup(context.into()));
-    }
-    Ok(())
 }
 
 fn validate_static_inputs<E: FieldCore>(

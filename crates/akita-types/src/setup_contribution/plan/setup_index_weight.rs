@@ -144,12 +144,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             return Ok(E::zero());
         }
         let mut acc = E::zero();
-        for &(setup_start, witness_start, len) in &group.d_spans {
+        for span in &group.d_spans {
             let setup_col = group
                 .d_col_range
                 .start
-                .checked_add(setup_start)
+                .checked_add(span.setup_start)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
+            let setup_stride = self
+                .projection_geometry
+                .d_ratio()
+                .checked_mul(span.setup_stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D stride overflow".into()))?;
             for row in 0..self.d_rows {
                 let row_weight = *self
                     .eq_tau1
@@ -166,11 +171,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     let pair = eval_compact_pair_eq(
                         rho_setup_idx,
                         setup_index,
-                        self.projection_geometry.d_ratio(),
+                        setup_stride,
                         &self.x_challenges,
-                        witness_start,
-                        1,
-                        len,
+                        span.witness_start,
+                        span.witness_stride,
+                        span.len,
                     )?;
                     acc += row_weight * scale * pair;
                 }
@@ -189,7 +194,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             return Ok(E::zero());
         }
         let mut acc = E::zero();
-        for &(setup_start, witness_start, len) in &group.b_spans {
+        for span in &group.b_spans {
+            let setup_stride = self
+                .projection_geometry
+                .b_ratio()
+                .checked_mul(span.setup_stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup B stride overflow".into()))?;
             for row in 0..group.n_b {
                 let row_weight = *self
                     .eq_tau1
@@ -200,17 +210,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         self.projection_geometry.b_ratio(),
                         group.t_cols,
                         row,
-                        setup_start,
+                        span.setup_start,
                         lane,
                     )?;
                     let pair = eval_compact_pair_eq(
                         rho_setup_idx,
                         setup_index,
-                        self.projection_geometry.b_ratio(),
+                        setup_stride,
                         &self.x_challenges,
-                        witness_start,
-                        1,
-                        len,
+                        span.witness_start,
+                        span.witness_stride,
+                        span.len,
                     )?;
                     acc += row_weight * scale * pair;
                 }
@@ -229,11 +239,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             return Ok(E::zero());
         }
         let mut acc = E::zero();
-        for &(setup_start, witness_start, len, fold_digit) in &group.a_spans {
+        for span in &group.a_spans {
+            let fold_digit = span.fold_digit.ok_or(AkitaError::InvalidProof)?;
             let fold = *self
                 .fold_gadget
                 .get(fold_digit)
                 .ok_or(AkitaError::InvalidProof)?;
+            let setup_stride = self
+                .projection_geometry
+                .a_ratio()
+                .checked_mul(span.setup_stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A stride overflow".into()))?;
             for row in 0..group.n_a {
                 let row_weight = *self
                     .eq_tau1
@@ -244,17 +260,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         self.projection_geometry.a_ratio(),
                         group.z_cols,
                         row,
-                        setup_start,
+                        span.setup_start,
                         lane,
                     )?;
                     let pair = eval_compact_pair_eq(
                         rho_setup_idx,
                         setup_index,
-                        self.projection_geometry.a_ratio(),
+                        setup_stride,
                         &self.x_challenges,
-                        witness_start,
-                        group.depth_fold,
-                        len,
+                        span.witness_start,
+                        span.witness_stride,
+                        span.len,
                     )?;
                     acc -= row_weight * scale * fold * pair;
                 }
