@@ -1,4 +1,57 @@
 use super::*;
+use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
+
+fn prepare_budget_fixture(ownership_units: usize) -> Result<SetupContributionPlan<F>, AkitaError> {
+    const POSITIONS_PER_BLOCK: usize = 2048;
+    const ROLE_DIMS: CommitmentRingDims = CommitmentRingDims {
+        inner: 2048,
+        outer: 16,
+        opening: 16,
+    };
+    let inputs = test_inputs(
+        1,
+        0,
+        0,
+        1,
+        ownership_units,
+        POSITIONS_PER_BLOCK,
+        1,
+        1,
+        1,
+        4,
+        vec![test_scalar(11); 4],
+    );
+    let rows = inputs
+        .level_params
+        .relation_matrix_row_count(inputs.opening_batch.num_groups())?;
+    let witness_layout = test_witness_layout(
+        1,
+        ownership_units,
+        POSITIONS_PER_BLOCK,
+        1,
+        1,
+        1,
+        1,
+        ownership_units,
+        rows,
+        1,
+    );
+    let opening_source_len = witness_layout.total_len();
+    let randomness_bits = crate::opening_domain_len(opening_source_len)?.trailing_zeros() as usize;
+    let full_vec_randomness = (0..randomness_bits)
+        .map(|index| test_scalar(101 + index as u128))
+        .collect::<Vec<_>>();
+    let group = test_single_group_descriptor(&inputs)?;
+    prepare_test_plan(
+        &inputs,
+        &witness_layout,
+        opening_source_len,
+        &[group],
+        &full_vec_randomness,
+        None,
+        ROLE_DIMS,
+    )
+}
 
 #[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
@@ -63,4 +116,25 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .is_ok());
+}
+
+#[test]
+fn prepare_enforces_setup_point_evaluation_budget() {
+    const TERMS_PER_UNIT: usize = 2048 * (2048 / 16);
+    const UNITS_AT_CAP: usize = MAX_COMPACT_STRIDE_TERMS / TERMS_PER_UNIT;
+    assert_eq!(UNITS_AT_CAP * TERMS_PER_UNIT, MAX_COMPACT_STRIDE_TERMS);
+
+    let plan = prepare_budget_fixture(UNITS_AT_CAP).expect("budget cap accepted");
+    assert_eq!(
+        plan.projection_geometry().evaluation_terms(),
+        MAX_COMPACT_STRIDE_TERMS
+    );
+
+    assert!(matches!(
+        prepare_budget_fixture(UNITS_AT_CAP + 1),
+        Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual,
+        }) if actual > MAX_COMPACT_STRIDE_TERMS
+    ));
 }
