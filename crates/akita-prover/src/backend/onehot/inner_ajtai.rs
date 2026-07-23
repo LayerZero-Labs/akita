@@ -67,6 +67,7 @@ where
 /// Wide inner Ajtai with entry-boundary flushing for blocks whose total
 /// shift-accumulate count would overflow a single wide accumulator.
 #[allow(non_snake_case)]
+#[allow(dead_code, reason = "superseded by sub-block chunking in column_sweep; kept as the overflow-safety reference")]
 pub(crate) fn inner_ajtai_wide_onehot_safe<E, F, const D: usize>(
     a_view: &RingMatrixView<'_, F, D>,
     entries: &[E],

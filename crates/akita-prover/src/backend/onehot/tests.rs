@@ -1288,3 +1288,145 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
         dense.fold_blocks_ring(&position_weights, num_positions_per_block)
     );
 }
+
+/// Sweep-structure microbench at the one-column 2^26 / K=256 shape.
+/// Run: cargo test -p akita-prover --release --features parallel --lib \
+///   sweep_structure_bench -- --ignored --nocapture
+#[test]
+#[ignore = "perf microbench"]
+fn sweep_structure_bench() {
+    use std::time::Instant;
+    type F = Prime128Offset275;
+    const D: usize = 64;
+
+    let n_a = 8;
+    let num_digits_inner = 2;
+    let log_positions_per_block = 16usize;
+    let num_parent_blocks = 1usize << 10;
+    let positions_per_block = 1usize << log_positions_per_block;
+    let active_a_cols = positions_per_block * num_digits_inner;
+
+    let mut rng = StdRng::seed_from_u64(0xbeef);
+    eprintln!(
+        "[bench] building A: {} rings ({} MB)",
+        n_a * active_a_cols,
+        n_a * active_a_cols * D * 16 / (1 << 20)
+    );
+    let a_rings: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
+        .map(|_| CyclotomicRing::random(&mut rng))
+        .collect();
+    let a_flat = FlatMatrix::from_ring_slice(&a_rings);
+    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
+
+    // One dense one-hot column: every position hot, chunked at the wide cap.
+    let cap = MAX_WIDE_SHIFT_ACCUMULATIONS;
+    let mut buckets: Vec<Vec<SingleChunkEntry>> = Vec::new();
+    for _parent in 0..num_parent_blocks {
+        let mut pos = 0usize;
+        while pos < positions_per_block {
+            let seg = cap.min(positions_per_block - pos);
+            buckets.push(
+                (pos..pos + seg)
+                    .map(|p| SingleChunkEntry::new(p as u32, (p % D) as u16))
+                    .collect(),
+            );
+            pos += seg;
+        }
+    }
+    let blocks = super::test_helpers::from_buckets(buckets);
+    let views: Vec<&[SingleChunkEntry]> = (0..blocks.num_live_blocks())
+        .map(|i| blocks.block(i))
+        .collect();
+    let total_entries: usize = views.iter().map(|v| v.len()).sum();
+    eprintln!(
+        "[bench] {} sub-blocks, {} entries ({}M accumulations x n_a={})",
+        views.len(),
+        total_entries,
+        total_entries / 1_000_000,
+        n_a
+    );
+
+    let mut reference: Option<Vec<Vec<CyclotomicRing<F, D>>>> = None;
+    for (variant, budget_kb) in [
+        ("row_pass", 64),
+        ("row_pass", 128),
+        ("row_pass", 256),
+        ("row_pass", 512),
+        ("row_pass", 1024),
+        ("row_pass", 2048),
+        ("row_outer", 2048),
+    ] {
+        let start = Instant::now();
+        let out = super::column_sweep::sweep_bench_entry::<SingleChunkEntry, F, D>(
+            variant,
+            &a_view,
+            &views,
+            n_a,
+            active_a_cols,
+            num_digits_inner,
+            budget_kb << 10,
+        );
+        let elapsed = start.elapsed();
+        let gadds = (total_entries * n_a * D) as f64 / 1e9;
+        eprintln!(
+            "[bench] {variant:>9} budget {budget_kb:>4} KB: {elapsed:>8.2?}  ({:.1} G wide-adds/s)",
+            gadds / elapsed.as_secs_f64()
+        );
+        match &reference {
+            None => reference = Some(out),
+            Some(reference) => assert_eq!(reference, &out, "{variant} diverges"),
+        }
+    }
+}
+
+/// Isolates the shift-accumulate inner loop: L1-resident accumulator vs
+/// accumulators strided over a tile-sized working set. Run with --ignored.
+#[test]
+#[ignore = "perf microbench"]
+fn shift_accumulate_throughput_probe() {
+    use std::time::Instant;
+    type F = Prime128Offset275;
+    const D: usize = 64;
+
+    let mut rng = StdRng::seed_from_u64(7);
+    let a: CyclotomicRing<F, D> = CyclotomicRing::random(&mut rng);
+    let a_wide = WideCyclotomicRing::from_ring(&a);
+    let iters = 20_000_000usize;
+
+    // (1) single hot accumulator (registers/L1)
+    let mut acc = WideCyclotomicRing::<<F as HasWide>::Wide, D>::zero();
+    let t0 = Instant::now();
+    for i in 0..iters {
+        a_wide.shift_accumulate_into(&mut acc, i % D);
+        if i % 32_000 == 0 {
+            acc = WideCyclotomicRing::zero(); // stay inside headroom
+        }
+    }
+    let hot = t0.elapsed();
+    std::hint::black_box(&acc);
+
+    // (2) accumulators strided over 2 MB (1024 rings), pseudo-random order
+    let mut accs = vec![WideCyclotomicRing::<<F as HasWide>::Wide, D>::zero(); 1024];
+    let t0 = Instant::now();
+    let mut idx = 0usize;
+    for i in 0..iters {
+        idx = (idx.wrapping_mul(1664525).wrapping_add(1013904223)) & 1023;
+        a_wide.shift_accumulate_into(&mut accs[idx], i % D);
+        if i % 16_000_000 == 0 {
+            for a in &mut accs {
+                *a = WideCyclotomicRing::zero();
+            }
+        }
+    }
+    let strided = t0.elapsed();
+    std::hint::black_box(&accs);
+
+    let per = |d: std::time::Duration| d.as_nanos() as f64 / iters as f64;
+    eprintln!(
+        "[probe] hot-L1: {:.1} ns/accum ({:.1} G i32-adds/s)   2MB-strided: {:.1} ns/accum ({:.1} G i32-adds/s)",
+        per(hot),
+        512.0 / per(hot),
+        per(strided),
+        512.0 / per(strided),
+    );
+}

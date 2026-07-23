@@ -422,7 +422,17 @@ impl Add for Fp128x8i32 {
 impl AddAssign for Fp128x8i32 {
     #[inline]
     fn add_assign(&mut self, rhs: Self) {
-        *self = *self + rhs;
+        // In-place NEON: no value round-trip through a stack temporary (the
+        // accumulate kernels call this in their innermost loop).
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vaddq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vaddq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
@@ -449,7 +459,16 @@ impl Sub for Fp128x8i32 {
 impl SubAssign for Fp128x8i32 {
     #[inline]
     fn sub_assign(&mut self, rhs: Self) {
-        *self = *self - rhs;
+        // In-place NEON; see `AddAssign`.
+        unsafe {
+            use std::arch::aarch64::*;
+            let p = self.0.as_mut_ptr();
+            vst1q_s32(p, vsubq_s32(vld1q_s32(p), vld1q_s32(rhs.0.as_ptr())));
+            vst1q_s32(
+                p.add(4),
+                vsubq_s32(vld1q_s32(p.add(4)), vld1q_s32(rhs.0.as_ptr().add(4))),
+            );
+        }
     }
 }
 
