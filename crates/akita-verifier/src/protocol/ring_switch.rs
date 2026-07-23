@@ -61,7 +61,7 @@ pub struct RelationMatrixEvaluator<E: FieldCore> {
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis_open: u32,
     pub(crate) eq_tau1: Arc<[E]>,
-    pub(crate) flat_context: Option<FlatRelationContext<E>>,
+    pub(crate) flat_context: FlatRelationContext<E>,
 }
 
 #[derive(Clone)]
@@ -427,7 +427,7 @@ where
         groups,
         log_basis_open: lp.log_basis_open,
         eq_tau1,
-        flat_context: Some(FlatRelationContext {
+        flat_context: FlatRelationContext {
             level_params: lp.clone(),
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
@@ -436,7 +436,7 @@ where
             tau1: tau1.to_vec(),
             relation_matrix_row_layout: relation.relation_matrix_row_layout(),
             opening_ring_dim: replay.opening_ring_dim,
-        }),
+        },
     })
 }
 
@@ -571,7 +571,7 @@ where
         groups,
         log_basis_open: log_basis,
         eq_tau1,
-        flat_context: Some(FlatRelationContext {
+        flat_context: FlatRelationContext {
             level_params: lp.clone(),
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
@@ -580,7 +580,7 @@ where
             tau1: tau1.to_vec(),
             relation_matrix_row_layout,
             opening_ring_dim,
-        }),
+        },
     })
 }
 
@@ -628,7 +628,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         if context.opening_ring_dim == D && self.role_dims == CommitmentRingDims::uniform(D) {
             let coefficient_bits = D.trailing_zeros() as usize;
             if point.len() < coefficient_bits {
@@ -668,7 +668,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     where
         F: FieldCore + CanonicalField,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let setup_groups = self.setup_contribution_inputs();
         Ok(shared_setup_fold_gadget(
             &context.level_params,
@@ -686,7 +686,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let setup_groups = self.setup_contribution_inputs();
         SetupContributionPlan::prepare::<F>(
             &context.level_params,
@@ -714,7 +714,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore,
         E: MulBase<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let setup_groups = self.setup_contribution_inputs();
         akita_types::SetupIndexWeightEvaluator::new::<F>(
             plan,
@@ -732,7 +732,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     }
 
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         context.level_params.relation_matrix_row_count_for(
             context.opening_batch.num_groups(),
             context.relation_matrix_row_layout,
@@ -740,7 +740,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
     }
 
     pub(crate) fn opening_source_len(&self) -> Result<usize, AkitaError> {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         Ok(context.opening_source_len)
     }
 
@@ -770,7 +770,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
+        let context = &self.flat_context;
         let _ring_bits = validate_ring_dispatch::<D>()?;
         validate_role_dispatch::<D>(self.role_dims, RingRole::Inner)?;
         let d_b = self.role_dims.d_b();

@@ -239,7 +239,7 @@ impl SetupContributionFixture {
             groups,
             log_basis_open: shape.log_basis,
             eq_tau1,
-            flat_context: Some(FlatRelationContext {
+            flat_context: FlatRelationContext {
                 level_params: lp,
                 opening_batch,
                 witness_layout: layout,
@@ -248,7 +248,7 @@ impl SetupContributionFixture {
                 tau1: Vec::new(),
                 relation_matrix_row_layout: shape.relation_matrix_row_layout,
                 opening_ring_dim: TEST_RING_DIM,
-            }),
+            },
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)
