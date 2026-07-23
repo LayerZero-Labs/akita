@@ -928,8 +928,9 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .eq_tau1
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                let (e_eq_slice, t_eq_slice, z_slice) =
-                    setup_plan.materialize_group_eq_slices(group_index)?;
+                let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
+                    .group_column_eq_slices(group_index)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let (e_contribution, t_contribution) = {
                     let _span = tracing::info_span!("structured_group_et", group_index).entered();
                     evaluate_group_et_from_eq_slices::<F, E>(
@@ -938,8 +939,8 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                         a_row_weights,
                         g_open_ext,
                         g_t_commit_ext,
-                        &e_eq_slice,
-                        &t_eq_slice,
+                        e_eq_slice,
+                        t_eq_slice,
                     )?
                 };
                 e_structured_contribution += e_contribution;

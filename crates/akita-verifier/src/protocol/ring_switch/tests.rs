@@ -166,7 +166,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         CommitmentRingDims::uniform(D),
     )
     .unwrap();
-    let (e_eq_slice, t_eq_slice, _) = setup_plan.materialize_group_eq_slices(0).unwrap();
+    let (e_eq_slice, t_eq_slice, _) = setup_plan.group_column_eq_slices(0).unwrap();
     let g_open_ext = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
     let g_t_commit_ext = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
 
@@ -176,8 +176,8 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
         &a_row_weights,
         &g_open_ext,
         &g_t_commit_ext,
-        &e_eq_slice,
-        &t_eq_slice,
+        e_eq_slice,
+        t_eq_slice,
     )
     .unwrap();
 

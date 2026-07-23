@@ -324,17 +324,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self.eq_window
     }
 
-    #[allow(clippy::type_complexity)]
-    pub fn materialize_group_eq_slices(
-        &self,
-        index: usize,
-    ) -> Result<(Vec<E>, Vec<E>, Vec<E>), AkitaError> {
-        let group = self.groups.get(index).ok_or(AkitaError::InvalidProof)?;
-        Ok((
-            group.e_eq_slice.clone(),
-            group.t_eq_slice.clone(),
-            group.z_eq_slice.clone(),
-        ))
+    /// Prepared D/B/A column equality slices for the group at `index` in plan
+    /// order.
+    #[must_use]
+    pub fn group_column_eq_slices(&self, index: usize) -> Option<(&[E], &[E], &[E])> {
+        self.groups.get(index).map(|group| {
+            (
+                group.e_eq_slice.as_slice(),
+                group.t_eq_slice.as_slice(),
+                group.z_eq_slice.as_slice(),
+            )
+        })
     }
 }
 

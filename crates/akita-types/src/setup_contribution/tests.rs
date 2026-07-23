@@ -782,7 +782,10 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.materialize_group_eq_slices(0).unwrap().2, expected);
+    assert_eq!(
+        plan.group_column_eq_slices(0).unwrap().2,
+        expected.as_slice()
+    );
 }
 #[test]
 fn setup_a_z_weights_do_not_include_commit_gadget() {
@@ -836,10 +839,11 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-    let z_eq_slice = plan.materialize_group_eq_slices(0).unwrap().2;
-    assert_eq!(z_eq_slice, expected);
+    let z_eq_slice = plan.group_column_eq_slices(0).unwrap().2;
+    assert_eq!(z_eq_slice, expected.as_slice());
     assert_ne!(
-        z_eq_slice, wrong_with_commit_gadget,
+        z_eq_slice,
+        wrong_with_commit_gadget.as_slice(),
         "A setup weights are for A * G_fold * z_hat, not A * G_commit * G_fold * z_hat"
     );
 }

@@ -5,15 +5,18 @@
 //! resulting setup contribution. Internally, the shape is:
 //!
 //! - `prepare`: static and challenge-dependent plan construction.
-//! - `segments`: the packed D/B/A segment partition used by the direct scanner.
+//! - `segments`: the packed D/B/A partition used by the specialized
+//!   single-group direct scanner.
 //! - `setup_index_weight`: the setup-index weight polynomial used by the
 //!   recursive stage-3 setup-product sumcheck.
-//! - `scan`: direct verifier evaluation of the setup matrix against cached
-//!   segment weights.
+//! - `scan`: direct verifier evaluation of the setup matrix. Multi-group scans
+//!   add every group's weight before evaluating each shared setup ring once.
 //!
 //! The direct scanner and `setup_index_weight` implement the same additive
 //! setup-position weight. Direct setup evaluation always projects role
-//! dimensions onto one base ring dimension, then scans cached group segments.
+//! dimensions onto one base ring dimension. A singleton retains the specialized
+//! segment hot loop; a multi-group evaluation fuses overlapping group views into
+//! one base-dimension scan.
 
 mod kernels;
 mod prepare;
@@ -39,6 +42,6 @@ use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 
 use kernels::{
-    base_ring_segment_inner_sum_typed, dispatch_segment_roles, role_projection, GroupSetupSegment,
-    RoleProjection,
+    base_ring_segment_inner_sum_typed, dispatch_segment_roles,
+    for_each_base_ring_segment_weight_typed, role_projection, GroupSetupSegment, RoleProjection,
 };
