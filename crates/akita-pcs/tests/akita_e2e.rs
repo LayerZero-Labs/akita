@@ -305,7 +305,10 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
 }
 
 /// End-to-end chunked prove→verify: the multi-chunk preset stamps
-/// `num_chunks = 8` on the two leading fold levels (NV=16 ⇒ 64 blocks each).
+/// `num_chunks = 8` on the two leading fold levels. `D64FullMultiChunk` pins the
+/// root to `log_basis = 2`, whose weaker shrink cannot fold `nv = 16` into a
+/// valid schedule, so this uses `NV = 18` (the dense chunked family supports
+/// `nv >= 17` under the root pin).
 /// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
 /// verifier evaluates the chunked row-MLE; the proof must verify.
 #[test]
@@ -315,7 +318,7 @@ fn chunked_multi_chunk_prove_verify() {
     run_on_large_stack(|| {
         type Cfg = fp128::D64FullMultiChunk;
         const D: usize = Cfg::D;
-        const NV: usize = 16;
+        const NV: usize = 18;
 
         // Confirm the schedule actually activates chunking on the leading folds.
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
