@@ -52,7 +52,7 @@ profile-ci = [
   "akita-config/schedules-fp128-d64-onehot-recursive",
   "akita-config/schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2",
   "akita-config/schedules-fp128-d64-onehot-tensor",
-  "akita-config/schedules-fp128-d64-full",
+  "akita-config/schedules-fp128-d64-dense",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w2r2",
   "akita-config/schedules-fp128-d64-onehot-multi-chunk-w4r2",

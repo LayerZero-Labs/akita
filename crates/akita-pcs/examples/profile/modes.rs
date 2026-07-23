@@ -368,7 +368,7 @@ fn small_field_dense_title(field_label: &str, d: usize) -> String {
 }
 
 fn run_profile_dense_fp128_d64(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D64Full;
+    type Cfg = fp128::D64Dense;
     assert_singleton_mode("dense_fp128_d64", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
@@ -499,7 +499,7 @@ fn run_profile_onehot_fp128_d64_tensor(nv: usize, num_polys: usize) {
 
 #[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp128_d128(nv: usize, num_polys: usize) {
-    type Cfg = fp128::D128Full;
+    type Cfg = fp128::D128Dense;
     assert_singleton_mode("dense_fp128_d128", num_polys);
     let prime = fp128_prime_label();
     run_dense_mode::<{ Cfg::D }, Cfg>(
@@ -527,7 +527,7 @@ fn run_profile_onehot_fp32_d64(nv: usize, num_polys: usize) {
 
 #[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
-    type Cfg = fp32::D64Full;
+    type Cfg = fp32::D64Dense;
     assert_singleton_mode("dense_fp32_d64", num_polys);
     let title = small_field_dense_title("fp32", Cfg::D);
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d64", &title, nv);
@@ -535,7 +535,7 @@ fn run_profile_dense_fp32_d64(nv: usize, num_polys: usize) {
 
 #[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp32_d128(nv: usize, num_polys: usize) {
-    type Cfg = fp32::D128Full;
+    type Cfg = fp32::D128Dense;
     assert_singleton_mode("dense_fp32_d128", num_polys);
     let title = small_field_dense_title("fp32", Cfg::D);
     run_dense_mode_for::<fp32::Field, { Cfg::D }, Cfg>("dense_fp32_d128", &title, nv);
@@ -562,7 +562,7 @@ fn run_profile_onehot_fp64_d128(nv: usize, num_polys: usize) {
 
 #[cfg(not(feature = "profile-ci"))]
 fn run_profile_dense_fp64_d64(nv: usize, num_polys: usize) {
-    type Cfg = fp64::D64Full;
+    type Cfg = fp64::D64Dense;
     assert_singleton_mode("dense_fp64_d64", num_polys);
     let title = small_field_dense_title("fp64", Cfg::D);
     run_dense_mode_for::<fp64::Field, { Cfg::D }, Cfg>("dense_fp64_d64", &title, nv);
@@ -603,6 +603,19 @@ fn resolve_layout<FF, Cfg: CommitmentConfig<Field = FF>>(nv: usize) -> Committed
     )
     .expect("layout")
 }
+#[cfg(feature = "profile-onehot-fp128-d64")]
+pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
+    assert_eq!(
+        mode, "onehot_fp128_d64",
+        "profile-onehot-fp128-d64 only supports AKITA_MODE=onehot_fp128_d64",
+    );
+    assert_eq!(
+        num_polys, 1,
+        "profile-onehot-fp128-d64 only supports singleton commitments"
+    );
+    run_profile_onehot_fp128_d64(nv, num_polys);
+}
+
 #[cfg(feature = "profile-onehot-fp128-d64")]
 pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     assert_eq!(

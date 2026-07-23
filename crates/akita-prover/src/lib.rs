@@ -184,6 +184,7 @@ impl<F: FieldCore> CommitInnerWitness<F> {
         recomposed_inner_rows: Vec<Vec<CyclotomicRing<F, D>>>,
         decomposed_inner_rows: DigitBlocks,
     ) -> Result<Self, AkitaError> {
+        let _span = tracing::info_span!("commit_inner_witness_conversion").entered();
         decomposed_inner_rows.ensure_stride::<D>()?;
         Ok(Self {
             recomposed_inner_rows: recomposed_inner_rows

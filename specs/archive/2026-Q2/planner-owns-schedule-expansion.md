@@ -127,7 +127,7 @@ also owns the `policy → table` mapping; `akita-config` no longer carries a
 `shipped_table` is a `match` on `(sis_modulus_profile, ring_dimension)` plus two binary
 discriminators, both derivable without naming any `Cfg`:
 
-- `onehot = (decomposition.log_commit_bound == 1)` — full-field presets carry
+- `onehot = (decomposition.log_commit_bound == 1)` — dense presets carry
   `log_commit_bound == field_bits` (16/32/64/128), onehot presets `== 1`.
 - `root_fold_is_tensor` — evaluated from the `fold_shape` closure at level 0.
   This is the *only* discriminator between the otherwise byte-identical
@@ -366,7 +366,7 @@ from the trait. Presets no longer declare their table (the `$table` macro
 argument is gone); the planner registry is the single source of the
 `policy → table` binding. The drift-guard family list keeps a `schedule_table`
 function pointer per family, now pointing directly at the concrete planner table
-constructor (e.g. `|| Some(akita_planner::generated::fp128_d32_full_table())`)
+constructor (e.g. `|| Some(akita_planner::generated::fp128_d32_dense_table())`)
 rather than `Cfg::schedule_table`. The former trait-override test seam (a stub
 `Cfg` injecting a synthetic uncommittable entry through `resolve_schedule`) is
 replaced by a direct unit test of the extracted `root_commit_params(&Schedule)`
@@ -411,7 +411,7 @@ The user specifically worried about `generated_families.rs`. Analysis: it does
   `akita-config` can name presets.
 - Its dependencies all point **downward**: `akita_planner::find_schedule`
   (config → planner), the planner's `GeneratedScheduleTable` type (config →
-  planner), and the in-crate presets (`fp128::D32Full`, …).
+  planner), and the in-crate presets (`fp128::D32Dense`, …).
 - The `schedule_table` function-pointer field becomes
   `fn() -> Option<akita_planner::GeneratedScheduleTable>` = `Cfg::schedule_table`;
   still downward.

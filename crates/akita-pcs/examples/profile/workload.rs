@@ -496,6 +496,9 @@ fn run_prove<
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit(setup, std::slice::from_ref(poly), stack).unwrap();
         report_timing(label, "commit", t0.elapsed().as_secs_f64());
+        if std::env::var_os("AKITA_PROFILE_COMMIT_ONLY").is_some() {
+            return;
+        }
 
         let commitments = [commitment];
         let t0 = Instant::now();

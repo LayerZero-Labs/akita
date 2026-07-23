@@ -2,7 +2,7 @@ use super::inner_ajtai::{inner_ajtai_wide_onehot, inner_ajtai_wide_onehot_safe};
 use super::*;
 
 /// L2 cache budget (in bytes) for the tile of wide accumulators in the
-/// column-sweep commit.  Each tile's `accums` allocation is capped to this
+/// column-sweep commit. Each tile's `accums` allocation is capped to this
 /// size so the scatter loop stays L2-resident.
 ///
 /// 2 MB is a conservative middle ground: fits in Apple M-series L2
@@ -128,9 +128,10 @@ where
                     }
                 }
 
-                let mut accums: Vec<Vec<WideCyclotomicRing<F::Wide, D>>> = (0..tile_len)
-                    .map(|_| vec![WideCyclotomicRing::zero(); n_a])
-                    .collect();
+                // The sweep is A-row-major, so keep the corresponding block
+                // accumulators contiguous. Besides matching the traversal,
+                // this replaces one allocation per block with one per tile.
+                let mut accums = vec![WideCyclotomicRing::<F::Wide, D>::zero(); n_a * tile_len];
 
                 {
                     let _span = tracing::info_span!("onehot_column_bucket_sweep").entered();
@@ -145,7 +146,7 @@ where
                             for &entry in &packed_entries[start..end] {
                                 let (local_block, coefficient) = unpack_col_entry(entry);
                                 a_wide.shift_accumulate_into(
-                                    &mut accums[local_block][a_idx],
+                                    &mut accums[a_idx * tile_len + local_block],
                                     coefficient,
                                 );
                             }
@@ -153,9 +154,10 @@ where
                     }
                 }
 
-                for (local_b, row_accums) in accums.into_iter().enumerate() {
-                    result[tile_start + local_b] =
-                        row_accums.into_iter().map(|w| w.reduce()).collect();
+                for local_b in 0..tile_len {
+                    result[tile_start + local_b] = (0..n_a)
+                        .map(|a_idx| accums[a_idx * tile_len + local_b].reduce())
+                        .collect();
                 }
             }
 
@@ -193,6 +195,9 @@ where
         active_a_cols <= a_view.num_cols(),
         "active A width exceeds setup envelope"
     );
+    if num_live_blocks == 0 {
+        return Vec::new();
+    }
 
     if blocks
         .iter()

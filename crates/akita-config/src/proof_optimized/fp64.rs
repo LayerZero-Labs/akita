@@ -7,32 +7,32 @@ pub type Field = Prime64Offset59;
 /// ring-subfield used for fp64 public claims and Fiat-Shamir challenges.
 pub type ExtensionField = Ext2<Field>;
 
-/// Full-field `D=64` preset.
+/// Dense `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D64Full;
+pub struct D64Dense;
 
 /// Onehot `D=64` preset.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHot;
 
-/// Full-field `D=128` preset for planner-backed fp64 experiments.
+/// Dense `D=128` preset for planner-backed fp64 experiments.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D128Full;
+pub struct D128Dense;
 
 /// Onehot `D=128` preset for planner-backed fp64 experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
-/// Full-field `D=256` preset for planner-backed fp64 experiments.
+/// Dense `D=256` preset for planner-backed fp64 experiments.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct D256Full;
+pub struct D256Dense;
 
 /// Onehot `D=256` preset for planner-backed fp64 experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
 impl_proof_optimized_preset!(
-    D64Full,
+    D64Dense,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
@@ -50,14 +50,18 @@ impl_proof_optimized_preset!(
     1
 );
 impl_proof_optimized_preset!(
-    D128Full,
+    D128Dense,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,
     128,
     64,
     64,
-    schedules = ("schedules-fp64-d128", "fp64_d128", fp64_d128_table)
+    schedules = (
+        "schedules-fp64-d128-dense",
+        "fp64_d128_dense",
+        fp64_d128_dense_table
+    )
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -74,7 +78,7 @@ impl_proof_optimized_preset!(
     )
 );
 impl_proof_optimized_preset!(
-    D256Full,
+    D256Dense,
     Field,
     ExtensionField,
     akita_types::SisModulusProfileId::Q64Offset59,

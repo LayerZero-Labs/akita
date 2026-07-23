@@ -12,7 +12,7 @@ use super::{
 };
 
 #[rustfmt::skip]
-pub(crate) static FP128_D64_FULL_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
+pub(crate) static FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldScheduleEntry] = &[
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup { layout: PolynomialGroupLayout::new(16, 1), source: GeneratedRootSource::Dense { coefficient_bits: 128 }, challenge: GeneratedRootFinalChallenge::Flat,
@@ -1312,7 +1312,7 @@ pub(crate) static FP128_D64_FULL_MULTI_CHUNK_SCHEDULES: &[GeneratedFoldScheduleE
 pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[64];
 #[rustfmt::skip]
 pub(crate) static CATALOG_IDENTITY: GeneratedScheduleCatalogIdentity = GeneratedScheduleCatalogIdentity {
-    family_name: "fp128_d64_full_multi_chunk",
+    family_name: "fp128_d64_dense_multi_chunk",
     protocol_epoch: 1,
     cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
     selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
