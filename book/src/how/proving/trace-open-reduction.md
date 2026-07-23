@@ -1,49 +1,34 @@
 # Multilinear evaluation reduction
 
-This page considers the base case in which both the multilinear polynomial and
-its opening point are defined over the base field \(F\):
+This page considers one base-field evaluation claim:
 
 $$
 f:\{0,1\}^n\rightarrow F,
 \qquad
-r\in F^n.
+r\in F^n,
+\qquad
+\widetilde f(r)=v.
 $$
 
-Akita commits data through the cyclotomic ring
+Both the polynomial table and the opening point are defined over the base
+field $F$. Akita commits the table through the cyclotomic ring
 
 $$
 R=F[X]/(X^D+1).
 $$
 
-The protocol must therefore reduce the field claim
+The goal is to turn the multilinear evaluation into a multiplication of two
+ring elements, define that multiplication as a `TraceOpen` operation, and then
+write the same evaluation claim directly as a linear relation on the committed
+fold witness.
 
-$$
-\widetilde f(r)=v
-$$
-
-to a claim about committed ring elements. The reduction has three steps:
-
-1. fold two outer parts of the evaluation point to obtain a ring \(Y\);
-2. encode the remaining inner part of the point as a ring \(P\); and
-3. recover the scalar evaluation with
-   \(\operatorname{TraceOpen}_P(Y)\).
-
-In this base-field setting, `TraceOpen` is a constant-coefficient pairing.
+Base-field polynomials evaluated at extension-field points are left as a stub
+at the end of the page.
 
 ## The evaluation problem
 
-The multilinear extension of \(f\) is
-
-$$
-\widetilde f(r)
-=
-\sum_{x\in\{0,1\}^n}
-\operatorname{eq}(r,x)f(x).
-\tag{1}
-$$
-
-Choose a ring dimension \(D=2^d\) and a power-of-two number \(M\) of positions
-per block. Re-index the table as
+Choose a ring dimension $D=2^d$ and a power-of-two number of positions per
+block. Re-index the polynomial table as
 
 $$
 f[\ell,p,b],
@@ -51,35 +36,45 @@ $$
 
 where:
 
-- \(\ell\in[D]\) is the inner index that becomes a ring coefficient;
-- \(p\in[M]\) is a position inside a block; and
-- \(b\) is a block index.
+- $\ell\in[D]$ is an inner index that will become a ring coefficient;
+- $p$ is a position inside a block; and
+- $b$ is a block index.
 
 Missing entries in a partial final block are public zeros.
 
-Split the evaluation point in the same order:
+Split the opening point in the same order:
 
 $$
 r=(r_{\mathrm{in}},r_{\mathrm{pos}},r_{\mathrm{blk}}).
 $$
 
-Let
+Write the corresponding interpolation weights as
 
 $$
-q_\ell=\operatorname{eq}(r_{\mathrm{in}},\ell),
+I_\ell,
 \qquad
-a_p=\operatorname{eq}(r_{\mathrm{pos}},p),
+Q_p,
 \qquad
-c_b=\operatorname{eq}(r_{\mathrm{blk}},b).
+B_b.
 $$
 
-Then Equation (1) becomes
+For a multilinear opening in the Lagrange basis, these are equality weights:
+
+$$
+I_\ell=\operatorname{eq}(r_{\mathrm{in}},\ell),
+\qquad
+Q_p=\operatorname{eq}(r_{\mathrm{pos}},p),
+\qquad
+B_b=\operatorname{eq}(r_{\mathrm{blk}},b).
+$$
+
+The evaluation claim is therefore
 
 $$
 \widetilde f(r)
 =
-\sum_{\ell,p,b}q_\ell a_pc_bf[\ell,p,b].
-\tag{2}
+\sum_{\ell,p,b}I_\ell Q_pB_bf[\ell,p,b].
+\tag{1}
 $$
 
 Akita evaluates the three axes in the order
@@ -92,49 +87,45 @@ $$
 
 ### Pack the inner axis
 
-For each position \(p\) and block \(b\), pack the inner slice into
+For each position $p$ and block $b$, pack the inner slice into a ring:
 
 $$
-F_{b,p}(X)
+F_{p,b}(X)
 =
 \sum_{\ell=0}^{D-1}f[\ell,p,b]X^\ell
 \in R.
-\tag{3}
+\tag{2}
 $$
 
-This is a change of representation: \(f[\ell,p,b]\) becomes the coefficient
-of \(X^\ell\).
+This is only a change of representation. The table entry
+$f[\ell,p,b]$ becomes the coefficient of $X^\ell$.
 
-### First outer fold
+### Fold the position and block axes
 
-Apply the position weights inside each block:
+First evaluate the position coordinate independently inside every block:
 
 $$
 E_b(X)
 =
-\sum_p a_pF_{b,p}(X)
+\sum_pQ_pF_{p,b}(X).
+\tag{3}
+$$
+
+The coefficient of $X^\ell$ in $E_b$ is
+
+$$
+[E_b]_\ell
 =
-\langle a,F_b\rangle.
-\tag{4}
+\sum_pQ_pf[\ell,p,b].
 $$
 
-Its coefficients are
-
-$$
-[E_b]_\ell=\sum_p a_pf[\ell,p,b].
-$$
-
-### Second outer fold
-
-Apply the block weights:
+Next evaluate the block coordinate:
 
 $$
 Y(X)
 =
-\sum_b c_bE_b(X)
-=
-\langle c,E\rangle.
-\tag{5}
+\sum_bB_bE_b(X).
+\tag{4}
 $$
 
 Now
@@ -142,80 +133,97 @@ Now
 $$
 [Y]_\ell
 =
-\sum_{p,b}a_pc_bf[\ell,p,b].
-\tag{6}
+\sum_{p,b}Q_pB_bf[\ell,p,b].
+\tag{5}
 $$
 
-Thus \(Y\) is derived from \(f\) after evaluating every coordinate except
-\(r_{\mathrm{in}}\).
+Thus $Y$ contains the polynomial after evaluating the position and block
+parts of $r$. Only the inner coordinate remains.
 
-### Encode the inner fold
+### Pack the inner opening weights
 
-Pack the remaining inner weights into a second ring:
+Pack the remaining weights into a second ring:
 
 $$
 P(X)
 =
-\sum_{\ell=0}^{D-1}q_\ell X^\ell.
-\tag{7}
+\sum_{\ell=0}^{D-1}I_\ell X^\ell.
+\tag{6}
 $$
 
 The two rings have different sources:
 
 | Ring | Derived from | Meaning |
 |---|---|---|
-| \(Y\) | \(f\), \(r_{\mathrm{pos}}\), and \(r_{\mathrm{blk}}\) | the polynomial after the two outer folds |
-| \(P\) | \(r_{\mathrm{in}}\) | the weights for the remaining inner fold |
+| $Y$ | $f$, $r_{\mathrm{pos}}$, and $r_{\mathrm{blk}}$ | the polynomial after the two outer folds |
+| $P$ | $r_{\mathrm{in}}$ | the weights for the remaining inner fold |
 
-## Base-field `TraceOpen`
+Using Equation (5), the original evaluation can already be written as
 
-Let \(\sigma_{-1}\) be the ring automorphism
+$$
+\widetilde f(r)
+=
+\sum_{\ell=0}^{D-1}I_\ell[Y]_\ell.
+\tag{7}
+$$
+
+## Base-field trace opening
+
+Let $\sigma_{-1}$ be the ring automorphism
 
 $$
 \sigma_{-1}(X)=X^{-1}.
 $$
 
-Akita defines
+For any $Z\in R$, define
 
 $$
 \boxed{
-\operatorname{TraceOpen}_P(Y)
-=
-\left[Y(X)\sigma_{-1}(P(X))\right]_0,
+\operatorname{TraceOpen}_P(Z)
+:=
+\left[Z(X)\sigma_{-1}(P(X))\right]_0,
 }
 \tag{8}
 $$
 
-where \([\cdot]_0\) means the constant coefficient in
-\(F[X]/(X^D+1)\).
+where $[\cdot]_0$ denotes the constant coefficient in
+$F[X]/(X^D+1)$.
 
-The term \([Y]_\ell X^\ell\) pairs with
-\(q_\ell X^{-\ell}\), so
+If
+
+$$
+Z(X)=\sum_\ell[Z]_\ell X^\ell,
+$$
+
+then the matching terms in $Z\sigma_{-1}(P)$ are
+
+$$
+[Z]_\ell X^\ell\cdot I_\ell X^{-\ell}
+=
+[Z]_\ell I_\ell.
+$$
+
+They contribute to the constant coefficient, giving
+
+$$
+\operatorname{TraceOpen}_P(Z)
+=
+\sum_{\ell=0}^{D-1}[Z]_\ell I_\ell.
+\tag{9}
+$$
+
+Applying this definition to $Y$ and using Equation (7),
 
 $$
 \operatorname{TraceOpen}_P(Y)
 =
-\sum_{\ell=0}^{D-1}[Y]_\ell q_\ell.
-\tag{9}
-$$
-
-Substituting Equation (6) gives
-
-$$
-\begin{aligned}
-\operatorname{TraceOpen}_P(Y)
-&=
-\sum_\ell q_\ell
-\left(\sum_{p,b}a_pc_bf[\ell,p,b]\right)\\
-&=
-\sum_{\ell,p,b}q_\ell a_pc_bf[\ell,p,b]\\
-&=
+\sum_\ell[Y]_\ell I_\ell
+=
 \widetilde f(r).
-\end{aligned}
 \tag{10}
 $$
 
-Therefore
+Therefore:
 
 $$
 \boxed{
@@ -226,107 +234,198 @@ $$
 \tag{11}
 $$
 
-This is not the univariate evaluation \(Y(\alpha)\) used during ring
-switching. `TraceOpen` is a coefficient pairing determined by the multilinear
-opening point.
+`TraceOpen` is a coefficient pairing. It is not the univariate evaluation
+$Y(\alpha)$ used to reduce ring-valued relations to the field.
 
-## Fuse the trace claim into Stage 2
+## Eliminate the virtual ring $Y$
 
-The committed Stage-2 witness does not contain \(Y\) directly. It contains
-digit decompositions of the first-fold rings:
+A direct protocol could expose $Y$ and check two statements:
 
 $$
-E_b(X)=\sum_hG_h\widehat e_{b,h}(X),
+Y=\sum_bB_bE_b,
 \tag{12}
 $$
 
-where \(G_h\) are public gadget weights. By Equation (5) and linearity of
-`TraceOpen`,
+and
 
 $$
-\begin{aligned}
-v_{\mathrm{tr}}
-&=
-\operatorname{TraceOpen}_P(Y)\\
-&=
-\sum_{b,h,\ell}
-\widehat e_{b,h,\ell}c_bG_hq_\ell.
-\end{aligned}
+\operatorname{TraceOpen}_P(Y)=v.
 \tag{13}
 $$
 
-After flattening the digit witness into Boolean addresses \(x\), the public
-factors in Equation (13) define a transparent weight function \(T(x)\):
+But Equation (12) already determines $Y$ from the folded rings $E_b$.
+Sending $Y$ would introduce a redundant ring element and an extra interface
+between the two checks.
+
+Akita instead composes the two linear maps. The witness committed for this fold
+contains digit decompositions of the position-folded rings:
 
 $$
-v_{\mathrm{tr}}=\sum_xw(x)T(x).
+E_b(X)
+=
+\sum_hG_h\hat e_{b,h}(X),
 \tag{14}
 $$
 
-This trace equation is **not** added to the ring-relation matrix. The physical
-matrix and its relation-weight factorization contain only the consistency,
-\(A\), \(B\), and \(D\) rows.
-
-The protocol reserves the next index \(i_{\mathrm{tr}}\) in the padded
-\(\tau_1\) domain and derives the scalar
+where $G_h$ are public gadget weights. Consequently,
 
 $$
-\beta_{\mathrm{tr}}
+Y(X)
 =
-\operatorname{eq}(\tau_1,i_{\mathrm{tr}}).
+\sum_{b,h}B_bG_h\hat e_{b,h}(X).
 \tag{15}
 $$
 
-Only this scalar comes from the relation-row domain. Akita builds \(T\)
-separately and directly fuses
+The ring $Y$ is now only a convenient name for this public linear
+combination. It does not need to appear in the proof.
+
+Apply `TraceOpen` directly to Equation (15):
 
 $$
-\beta_{\mathrm{tr}}v_{\mathrm{tr}}
-=
-\sum_x\beta_{\mathrm{tr}}w(x)T(x)
+\begin{aligned}
+v
+&=
+\operatorname{TraceOpen}_P(Y)\\
+&=
+\sum_{b,h}B_bG_h
+\operatorname{TraceOpen}_P(\hat e_{b,h}).
+\end{aligned}
 \tag{16}
 $$
 
-into the Stage-2 sumcheck over the same flat witness address used by the
-relation and range-image terms. The reserved index lets the trace reuse the
-existing row-batching randomness without becoming a physical or evaluated
-matrix row.
+Write each digit ring as
 
-See [Sumcheck stages](./sumcheck-stages.md#add-the-opening-trace) for the full
-fused identity.
+$$
+\hat e_{b,h}(X)
+=
+\sum_{\ell=0}^{D-1}\hat e_{b,h,\ell}X^\ell
+$$
+
+and define the public inner trace weight
+
+$$
+J_\ell
+:=
+\operatorname{TraceOpen}_P(X^\ell).
+\tag{17}
+$$
+
+By linearity,
+
+$$
+\operatorname{TraceOpen}_P(\hat e_{b,h})
+=
+\sum_\ell\hat e_{b,h,\ell}J_\ell.
+$$
+
+Equation (16) becomes the direct evaluation-consistency relation
+
+$$
+\boxed{
+v
+=
+\sum_{b,h,\ell}
+\hat e_{b,h,\ell}B_bG_hJ_\ell.
+}
+\tag{18}
+$$
+
+In the base-field setting, Equation (9) gives
+
+$$
+J_\ell
+=
+\operatorname{TraceOpen}_P(X^\ell)
+=
+I_\ell.
+\tag{19}
+$$
+
+Thus every factor in Equation (18) has a simple role:
+
+- $G_h$ recomposes the digit planes;
+- $B_b$ evaluates across blocks; and
+- $J_\ell=I_\ell$ evaluates inside the packed ring.
+
+The two possible protocol views are:
+
+```text
+Expose Y:
+
+committed ê  ──recompose──>  E_b  ──block fold──>  Y
+                                                    │
+                                                 TraceOpen
+                                                    │
+                                                    v
+
+Eliminate Y:
+
+committed ê  ───────composed public linear map──────>  v
+```
+
+## Write the relation as a sumcheck claim
+
+The committed fold witness is stored as one flat table $w$. Flatten the
+indices $(b,h,\ell)$ into a Boolean address $x$, and define the public
+weight function
+
+$$
+T(x)
+=
+\begin{cases}
+B_bG_hJ_\ell,
+&\text{if }x\text{ addresses the coefficient }\hat e_{b,h,\ell},\\
+0,
+&\text{if }x\text{ lies outside the }\hat e\text{ segment.}
+\end{cases}
+\tag{20}
+$$
+
+Then Equation (18) is
+
+$$
+\boxed{
+v
+=
+\sum_{x\in\{0,1\}^{\mu}}w(x)T(x).
+}
+\tag{21}
+$$
+
+This is the evaluation-correctness relation consumed by the later sumcheck
+protocol. It is already a field-valued linear relation on the committed
+witness. It therefore needs neither evaluation at $\alpha$ nor a ring-switch
+quotient.
+
+[Sumcheck stages](./sumcheck-stages.md#add-the-opening-trace) explains how this
+claim is row-batched and fused with the other Stage-2 terms.
 
 ## Code reference
 
-The base-field execution path follows the reduction above:
+The base-field path follows the reduction above:
 
 1. [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/batch.rs#L687-L750)
-   splits \(r\), constructs the outer weights, and packs \(P\).
+   constructs $Q_p$, $B_b$, and $P$.
 2. [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold_kernels.rs#L61-L89)
-   returns both the first-fold rings \(E_b\) and the final ring \(Y\).
+   returns the position-folded rings $E_b$ and the virtual ring $Y$.
 3. [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold_kernels.rs#L224-L274)
-   computes the constant coefficient of \(Y\sigma_{-1}(P)\) for \(E=F\).
+   computes $\operatorname{TraceOpen}_P(Y)$.
 4. [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs#L101-L168)
-   constructs \(T\) independently of the ring-relation weights.
+   constructs $T(x)$ on the committed $\hat e$ segment.
 5. [`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L281-L300)
-   adds the trace weight directly to the relation weight during the shared
-   Stage-2 witness scan.
-6. [`PreparedEvaluationTrace::evaluate_at_point`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/protocol/evaluation_trace.rs#L45-L104)
-   evaluates \(T\) at the final Stage-2 point.
+   hands the relation to the fused Stage-2 sumcheck.
 
-The layout API makes the matrix separation explicit:
-[`relation_matrix_row_count`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/layout/params.rs#L1126-L1150)
-counts the physical rows, while
-[`evaluation_trace_row_index`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/layout/params.rs#L1152-L1170)
-returns the next index used only to derive \(\beta_{\mathrm{tr}}\).
-
-The main code values are:
+The main values are:
 
 | Code value | Mathematical object |
 |---|---|
-| `OpeningFoldOutput::folded` | \(E_0,E_1,\ldots\) |
-| `OpeningFoldOutput::eval` / `folded_ring` | \(Y\) |
-| `PreparedOpeningPoint::packed_inner_point` | \(P\) |
-| `trace_eval_target` | \(\operatorname{TraceOpen}_P(Y)\) |
+| `PreparedOpeningPoint::ring_opening_point.position_weights` | $Q_p$ |
+| `PreparedOpeningPoint::ring_opening_point.live_block_weights` | $B_b$ |
+| `PreparedOpeningPoint::packed_inner_point` | $P$ |
+| `OpeningFoldOutput::folded` | $E_0,E_1,\ldots$ |
+| `OpeningFoldOutput::eval` | $Y$ |
+| `trace_eval_target` | $\operatorname{TraceOpen}_P(Y)$ |
+| `EvaluationTraceWeights` | $T$ |
 
 ## Base-field polynomial at an extension-field point
 
