@@ -303,7 +303,7 @@ holds in code.
   every `*_onehot*` schedule table is byte-identical; only the dense
   (`*_full`, `fp{32,64}_d{32,64}`) families' root collision rises one notch
   (`b/2−1 → b/2` on the `min` side), occasionally bumping the root A-rank.
-- **`fp16::D32Full` now ships fully cleartext (`commit: None`) for
+- **`fp16::D32Dense` now ships fully cleartext (`commit: None`) for
   `num_vars >= 6`.** Previously it root-committed (`commit: Some`); the one-notch
   collision bump pushes the dense root A-rank above the 16-bit modulus's secure
   ceiling, so the DP drops even the root commitment. It still commits at the
@@ -510,7 +510,7 @@ inline inside the `min`:
 /// Worst-case L1 mass of one committed witness ring element (block):
 ///   ||s||_1 <= nonzeros · ||s||_inf,
 /// where `nonzeros` is the max number of hot coefficients per block:
-///   - dense / full-field        : D            (every coefficient can be hot)
+///   - dense                     : D            (every coefficient can be hot)
 ///   - one-hot, chunk size K >= D : 1            (single-chunk: <= 1 hot coeff)
 ///   - one-hot, chunk size K < D  : D / K        (multi-chunk: <= D/K hot coeffs)
 fn witness_block_l1_norm(

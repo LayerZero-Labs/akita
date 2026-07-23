@@ -79,7 +79,7 @@ fn fold_compact_range_image_prefix_x_reference(
     out
 }
 
-fn fold_compact_range_image_to_full_reference(compact_range_image: &[i16], r: F) -> Vec<F> {
+fn fold_compact_range_image_to_materialized_reference(compact_range_image: &[i16], r: F) -> Vec<F> {
     (0..compact_range_image.len() / 2)
         .map(|j| {
             let s_0 = F::from_i64(i64::from(compact_range_image[2 * j]));
@@ -109,11 +109,11 @@ fn stage1_compact_fold_lookup_matches_direct_formula() {
     let dense_range_image = vec![2, 6, 12, 2, 6, 12];
     let dense_lut = LowBasisRangeCheckProver::<F>::build_range_image_fold_lut(basis, r);
     assert_eq!(
-        LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_full(
+        LowBasisRangeCheckProver::<F>::fold_compact_range_image_to_materialized(
             &dense_range_image,
             &dense_lut
         ),
-        fold_compact_range_image_to_full_reference(&dense_range_image, r)
+        fold_compact_range_image_to_materialized_reference(&dense_range_image, r)
     );
 }
 
@@ -314,7 +314,7 @@ fn stage1_fused_round2_transition_matches_two_pass_reference() {
         expected.split_eq.bind(r0);
         expected.split_eq.bind(r1);
         expected.rounds_completed = 2;
-        let expected_round2 = expected.compute_round_full_prefix_x(&expected_range_image);
+        let expected_round2 = expected.compute_round_materialized_prefix_x(&expected_range_image);
 
         prover.ingest_challenge(1, r1);
 
@@ -391,7 +391,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
         reference.split_eq.bind(r0);
         reference.split_eq.bind(r1);
         reference.rounds_completed = 2;
-        let reference_round2 = reference.compute_round_full_sparse_x_y(&round2_range_image);
+        let reference_round2 = reference.compute_round_materialized_sparse_x_y(&round2_range_image);
         assert_eq!(deferred_round2, reference_round2);
 
         let expected_round3_range_image =
@@ -414,7 +414,7 @@ fn stage1_low_basis_range_image_third_round_deferral_matches_materialized_refere
 }
 
 #[test]
-fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
+fn stage1_later_materialized_prefix_fusion_matches_two_pass_reference() {
     let col_bits = 5usize;
     let ring_bits = 2usize;
     let live_x_cols = 12usize;
@@ -499,7 +499,8 @@ fn stage1_later_full_prefix_fusion_matches_two_pass_reference() {
         expected.live_x_cols = expected.live_x_cols.div_ceil(2);
         expected.rounds_completed += 1;
         let _ = claim3;
-        let expected_round3 = expected.compute_round_full_prefix_x(&expected_next_range_image);
+        let expected_round3 =
+            expected.compute_round_materialized_prefix_x(&expected_next_range_image);
 
         prover.ingest_challenge(2, r2);
 
@@ -606,7 +607,8 @@ fn stage1_sparse_x_y_fusion_matches_two_pass_reference() {
         );
         expected.split_eq.bind(r2);
         expected.rounds_completed += 1;
-        let expected_round3 = expected.compute_round_full_sparse_x_y(&expected_next_range_image);
+        let expected_round3 =
+            expected.compute_round_materialized_sparse_x_y(&expected_next_range_image);
 
         prover.ingest_challenge(2, r2);
 

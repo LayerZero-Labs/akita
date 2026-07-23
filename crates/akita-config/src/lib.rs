@@ -599,8 +599,8 @@ mod fp128_policy_tests {
     const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
 
     #[test]
-    fn current_d64_full_schedule_stays_within_audited_sis_widths() {
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(
+    fn current_d64_dense_schedule_stays_within_audited_sis_widths() {
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(
             CI_SIS_WIDTH_NUM_VARS,
         );
     }
@@ -614,9 +614,9 @@ mod fp128_policy_tests {
 
     #[test]
     #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
-    fn current_d64_full_schedule_stays_within_audited_sis_widths_full_range() {
+    fn current_d64_dense_schedule_stays_within_audited_sis_widths_full_range() {
         let num_vars: Vec<usize> = (13..=50).collect();
-        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Full>(&num_vars);
+        assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(&num_vars);
     }
 
     #[test]
@@ -632,7 +632,7 @@ mod fp128_policy_tests {
 
         type SmallCfg = fp32::D128OneHot;
         assert_eq!(
-            <fp128::D64Full as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
+            <fp128::D64Dense as CommitmentConfig>::ring_subfield_embedding_norm_bound(),
             1
         );
         assert_eq!(
@@ -655,17 +655,17 @@ mod fp128_policy_tests {
     fn fp128_family_selector_uses_generated_singleton_plans() {
         let key = PolynomialGroupLayout::singleton(32);
 
-        let full = fp128::best_full_schedule(key)
-            .expect("selector should resolve full schedules")
-            .expect("selector should find a generated full schedule");
+        let dense = fp128::best_dense_schedule(key)
+            .expect("selector should resolve dense schedules")
+            .expect("selector should find a generated dense schedule");
         let onehot = fp128::best_onehot_schedule(key)
             .expect("selector should resolve onehot schedules")
             .expect("selector should find a generated onehot schedule");
 
-        for selection in [&full, &onehot] {
+        for selection in [&dense, &onehot] {
             assert_eq!(selection.schedule.initial_witness_len(), 1usize << 32);
         }
-        assert!(!full.preset.is_onehot());
+        assert!(!dense.preset.is_onehot());
         assert!(onehot.preset.is_onehot());
     }
 

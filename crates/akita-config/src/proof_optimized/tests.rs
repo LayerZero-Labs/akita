@@ -14,7 +14,7 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
-    let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
     ))
     .expect("generated fp128 schedule");
@@ -48,7 +48,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_includes_terminal_inner_matrix() {
-    let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");

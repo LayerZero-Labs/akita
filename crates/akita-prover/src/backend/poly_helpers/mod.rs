@@ -459,7 +459,7 @@ mod tests {
     use akita_challenges::SparseChallenge;
     use akita_field::CanonicalField;
     use akita_field::{Fp64, Prime128Offset275};
-    use akita_types::sis::compute_num_digits_full_field;
+    use akita_types::sis::compute_num_digits_field_width;
 
     /// SIMD-vs-scalar parity for the sparse-multiply-accumulate decompose-fold
     /// kernel, exercising whichever SIMD backend is active (NEON / AVX2 /
@@ -815,7 +815,7 @@ mod tests {
         const D: usize = 32;
 
         let log_basis = 4u32;
-        let num_digits = compute_num_digits_full_field(128, log_basis);
+        let num_digits = compute_num_digits_field_width(128, log_basis);
         let q = (-F::one()).to_canonical_u128() + 1;
         let threshold = akita_algebra::ring::cyclotomic::decompose_centering_threshold(
             num_digits, log_basis, q,

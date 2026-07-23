@@ -124,7 +124,7 @@ was higher. Three lenient defaults combined to hide this:
   returned `None`).
 
 Net: the per-`(m, r)` audit always saw `0` and never ran, so insecure rows
-shipped. **Example** (`fp16::D32Full`, `nv=32`, `t=w=4`): outer split `(m=16,
+shipped. **Example** (`fp16::D32Dense`, `nv=32`, `t=w=4`): outer split `(m=16,
 r=11)` needs rank 17 but inherited rank 15 from the inner `(14, 13)` split and
 passed the bypassed audit. The drift guard didn't catch it because both the
 shipped table and the from-scratch regen consulted the same buggy code.

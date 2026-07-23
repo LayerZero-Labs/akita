@@ -41,7 +41,7 @@ pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 // per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
 pub(super) const ONEHOT_K: usize = 256;
 
-pub(super) type DenseCfg = fp128::D64Full;
+pub(super) type DenseCfg = fp128::D64Dense;
 pub(super) const DENSE_D: usize = DenseCfg::D;
 
 static INIT_RAYON: Once = Once::new();
