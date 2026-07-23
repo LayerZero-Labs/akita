@@ -17,7 +17,7 @@ fn sample_level_params() -> CommittedGroupParams {
 }
 
 fn prefix_eligible_level_params() -> CommittedGroupParams {
-    let full_field_digits = crate::sis::compute_num_digits_full_field(128, 3);
+    let field_element_digits = crate::sis::compute_num_digits_field_width(128, 3);
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q32Offset99,
         64,
@@ -27,7 +27,7 @@ fn prefix_eligible_level_params() -> CommittedGroupParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(2, 3, full_field_digits, 2, 2)
+    .with_decomp(2, 3, field_element_digits, 2, 2)
     .expect("prefix eligible level params")
 }
 

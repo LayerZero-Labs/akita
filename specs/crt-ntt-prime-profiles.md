@@ -234,7 +234,7 @@ larger ring degree.
     `2048 | (p - 1)`.
     `D = 512` and `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
     `dispatch_for_field!` arms, the fp16/fp32
-    `D512Full` / `D512OneHot` public config presets, and the generated
+    `D512Dense` / `D512OneHot` public config presets, and the generated
     family/table lists; no production path may instantiate them.
     The `D512*` config preset names are removed rather than left as dead public
     aliases, so downstream attempts to use them fail at compile time instead of
@@ -384,7 +384,7 @@ Criteria sections above, with #134 providing the chunking implementation.
       Q64").
 - [ ] `D = 512` / `D = 1024` are removed from `SUPPORTED_RING_DIMS`, the
       `dispatch_for_field!` macro arms, the fp16/fp32
-      `D512Full` / `D512OneHot` public config presets, `generated_families`, and
+      `D512Dense` / `D512OneHot` public config presets, `generated_families`, and
       any generated table/drift-guard list, with `cargo test -q` and the drift
       guard green.
       The `D512*` preset names are not kept as deprecated aliases.
@@ -405,8 +405,8 @@ Criteria sections above, with #134 providing the chunking implementation.
 - [ ] `max_safe_crt_accumulation_width` unit tests for Q16, reduced Q32, and
       reduced Q64 cover balanced-i8 and centered-i32 (`z_pre_max_abs`) RHS
       bounds at concrete `D` and `log_basis` values.
-      Walk every committed generated schedule table entry for `fp16_d32_full`,
-      `fp16_d32_onehot`, `fp16_d64_full`, `fp16_d64_onehot`, `fp32_d32`,
+      Walk every committed generated schedule table entry for `fp16_d32_dense`,
+      `fp16_d32_onehot`, `fp16_d64_dense`, `fp16_d64_onehot`, `fp32_d32`,
       `fp32_d32_onehot`, `fp32_d64`, `fp32_d64_onehot`, `fp64_d32`,
       `fp64_d32_onehot`, `fp64_d64`, and `fp64_d64_onehot` (these are the only
       committed tables; `D in {128, 256}` tables do not exist yet).

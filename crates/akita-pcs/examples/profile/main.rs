@@ -45,7 +45,7 @@ fn main() {
         .unwrap_or(25);
     let num_polys = env_usize("AKITA_NUM_POLYS", 1);
 
-    // Keep the default explicit: old adaptive `full`/`onehot` selectors are
+    // Keep the default explicit: adaptive `dense`/`onehot` selectors are
     // intentionally not part of the profile surface. D64 is the default fp128
     // profile preset (`onehot_fp128_d64`); use best_*_schedule to compare D64 vs D128.
     let mode = env::var("AKITA_MODE").unwrap_or_else(|_| "onehot_fp128_d64".to_string());

@@ -371,5 +371,5 @@ The implementation should keep these checks pinned:
 - `crates/akita-challenges/src/sampler/xof.rs`
 - `crates/akita-challenges/tests/sparse_challenge.rs`
 - `crates/akita-config/src/proof_optimized.rs`
-- `crates/akita-types/src/generated/fp128_d32_full.rs`
+- `crates/akita-types/src/generated/fp128_d32_dense.rs`
 - `crates/akita-types/src/generated/fp128_d32_onehot.rs`

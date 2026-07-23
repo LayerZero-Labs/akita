@@ -545,15 +545,15 @@ macro_rules! preset_module {
 // default `runtime_schedule` fallback, so bare presets suffice — even
 // tables-only configs (`D128*` has no table at all).
 preset_module!(
-    d128_full,
-    fp128::D128Full,
+    d128_dense,
+    fp128::D128Dense,
     128,
     run_dense_e2e,
     run_dense_batched_e2e
 );
 preset_module!(
-    d64_full,
-    fp128::D64Full,
+    d64_dense,
+    fp128::D64Dense,
     64,
     run_dense_e2e,
     run_dense_batched_e2e
