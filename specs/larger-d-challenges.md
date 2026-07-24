@@ -1,10 +1,10 @@
-# Spec: D=256 fp128 A-role dispatch for future mixed-ring schedules
+# Spec: D=256 and D=512 fp128 A-role readiness for future mixed-ring schedules
 
 | Field         | Value                          |
 |---------------|--------------------------------|
 | Author(s)     |                                |
 | Created       | 2026-07-24                     |
-| Status        | implemented                    |
+| Status        | active                         |
 | PR            |                                |
 | Supersedes    |                                |
 | Superseded-by |                                |
@@ -12,172 +12,340 @@
 
 ## Summary
 
-Future mixed-ring-dimension schedules may assign `D = 256` to the inner
-(A) commitment role at selected levels while assigning smaller dimensions to
-other roles or later levels. The fp128 protocol dispatch policy currently
-prevents that experiment because its A-role arms stop at `D = 128`, even though
-the existing production challenge ladder and audited A-role SIS tables already
-cover `D = 256`.
+Future mixed-ring-dimension schedules may assign a larger ring dimension to the
+inner (A) commitment role at selected levels while retaining smaller dimensions
+for other roles and later levels. This spec records two incremental capability
+extensions for fp128:
 
-This PR adds only the missing fp128 A-role `D = 256` dispatch arm. It does not
-make `D = 256` a uniform fp128 configuration, add a preset, generate or resolve
-a `D = 256` schedule, or import mixed-ring implementation code. Those are
-separate features that can decide independently which levels and roles should
-use the larger dimension.
+1. `D = 256` inner-role dispatch, already implemented without adding a preset or
+   schedule; and
+2. `D = 512` inner-role support, to be added under the same mixed-ring-only
+   motivation.
+
+The `D = 512` extension is not only another dispatch literal. Its production
+challenge, sampler, fold-tail certificate, fp128 NTT dispatch, and q128 CRT/NTT
+profile already support `512`, but the audited SIS table and canonical A-role
+coverage stop at `256`. Therefore `D = 512` dispatch must land only with
+q128-inner `D = 512` SIS certification. The rollout must preserve existing
+schedule identities; it must not create or regenerate a uniform `D = 512`
+schedule.
 
 ## Intent
 
 ### Goal
 
-Allow fp128 protocol code to dispatch the inner (A) role at `D = 256`, so a
-later production-ready mixed-ring feature can use that role/dimension pair
-without first widening the uniform configuration surface.
+Make fp128 inner/A-role protocol code callable at `D ∈ {256, 512}` so later
+production mixed-ring features can select either dimension for only the levels
+and roles that benefit, without exposing a uniform fp128 `D256` or `D512`
+configuration.
 
-The implementation surface is intentionally limited to:
+### Delivered slice: D=256 dispatch
 
-- `crates/akita-types/src/dispatch/policy.rs` — add `256` to both sources of
+The `D = 256` slice changed only:
+
+- `crates/akita-types/src/dispatch/policy.rs` — added `256` to the fp128
+  `__dispatch_for_field_inner!` arms and `protocol_dispatch_policy!` `inner`
+  list.
+- `crates/akita-types/src/dispatch/mod.rs` — updated focused role-dispatch
+  acceptance/rejection tests.
+
+This was sufficient because the production challenge ladder and audited
+A-role SIS table already covered `D = 256`.
+
+### Proposed slice: D=512 certification and dispatch
+
+The `D = 512` slice has two ordered parts.
+
+#### 1. Certify the exact role cell
+
+- Extend canonical SIS coverage for exactly
+  `(role = Inner, modulus = Q128OffsetA7F7, D = 512)`.
+- Keep q128 outer/opening at their current dimensions. Do not make `D = 512`
+  reachable for fp32/fp64 or for B/D merely because it is added for fp128 A.
+- Add `512` to the estimator's ring-dimension generation union, then rely on
+  the canonical role/profile coverage filter to generate only reachable cells.
+- Generate and exhaustively certify the q128 `D = 512` A-role rows for the
+  existing A-role coefficient-`L∞` bucket set and ranks.
+- Give the expanded table a distinct digest while continuing to recognize the
+  existing digest for existing schedules.
+
+The current `A_ROLE_RING_DIMS` list is role-aware but not modulus-profile-aware.
+It must not simply become `[64, 128, 256, 512]`, because that would declare and
+generate unused q32/q64 A-role `D = 512` cells. The canonical coverage predicate
+must express the q128-only extension directly.
+
+#### 2. Add fp128 inner dispatch
+
+- `crates/akita-types/src/dispatch/policy.rs` — add `512` to both sources of
   fp128 inner-role dispatch policy:
   `__dispatch_for_field_inner!` and the `protocol_dispatch_policy!` `inner`
   list.
-- `crates/akita-types/src/dispatch/mod.rs` — update the role-specific dispatch
-  tests to accept fp128 inner `D = 256` while preserving all existing
-  acceptance and rejection boundaries.
+- `crates/akita-types/src/dispatch/mod.rs` — accept fp128 inner `D = 512` and
+  continue rejecting `D = 32` and `D = 1024`.
 
-The existing `D = 256` production challenge configuration
-`SparseChallengeConfig { count_pm1: 23, count_pm2: 0 }` and the audited
-`A_ROLE_RING_DIMS` entry are unchanged.
+The dispatch change must not land before the security table can price the new
+role cell.
+
+### Existing prerequisites that remain unchanged
+
+- `crates/akita-challenges/src/config.rs` already defines the production
+  `D = 512` challenge as
+  `SparseChallengeConfig { count_pm1: 19, count_pm2: 0 }`, validates its
+  128-bit entropy floor, and certifies it for fold-`L∞` tail sizing.
+- The sparse sampler already has a `257..=512` stack tier.
+- fp128 NTT dispatch already includes `D = 512`.
+- The q128 CRT/NTT profile already sets `Q128_MAX_RING_D = 512`; its i32 primes
+  and universal i16 tail prime have the required transform order.
+
+None of those surfaces needs a production change for this spec.
 
 ### Invariants
 
-- **Role-specific capability only.** The change widens only fp128 inner/A-role
-  dispatch. It must not widen another role, field tier, envelope, or NTT
-  policy.
-- **No configuration becomes selectable.** No preset, planner candidate,
-  schedule catalog entry, generated table, or runtime fallback is added or
-  changed. Existing user-facing configurations therefore remain unchanged.
-- **Existing dispatch is stable.** fp128 inner `D = 64` and `D = 128` continue
-  to dispatch identically. Unsupported dimensions, including `D = 32` and
-  `D = 512`, remain rejected for that role.
-- **The two dispatch authorities agree.** The macro arms used for
-  monomorphization and the declarative protocol policy list contain the same
-  fp128 inner dimensions: `{64, 128, 256}`.
-- **Security remains fail-closed.** The change relies on the existing audited
-  A-role SIS coverage for `D = 256`; it does not change SIS bounds, estimator
-  inputs, challenge parameters, or certification logic.
-- **No proof or transcript change.** Because no schedule can newly select this
-  arm in this PR, existing proofs, transcript bytes, schedule identities, and
-  generated artifacts remain unchanged.
+- **Role- and profile-specific capability.** The new security cell and dispatch
+  arm apply only to fp128 inner/A at `D = 512`. No B/D role and no fp32/fp64
+  protocol role is widened.
+- **No uniform configuration becomes selectable.** No preset, planner
+  candidate, schedule catalog entry, generated schedule table, or runtime
+  fallback is added or changed.
+- **Existing dispatch is stable.** Existing fp128 inner `D = 64`, `128`, and
+  `256` behavior is unchanged. `D = 32` and `D = 1024` remain rejected.
+- **The two dispatch authorities agree.** The concrete macro arms and
+  declarative policy list contain the same fp128 inner dimensions:
+  `{64, 128, 256, 512}`.
+- **Security remains fail-closed.** A `D = 512` table row is usable only under
+  the new table digest and only after the accepted boundary and first rejected
+  successor pass the existing ADPS16 quantum exhaustive certification rules.
+  `CostValue::Infinity` is not accepted as evidence of security.
+- **Existing schedule identities remain stable.** Checked-in schedules retain
+  their existing SIS table digest and catalog identities. The expanded table
+  digest is additive and is reserved for a later mixed-ring configuration.
+- **No proof or transcript change.** Because this spec adds no schedule that
+  selects `D = 512`, existing proof bytes, transcript bytes, and instance
+  descriptors remain unchanged.
+- **One coverage authority.** Runtime SIS lookup and offline table generation
+  use the same role/profile/dimension predicate. There is no independent
+  q128-D512 special case in the generator.
 
 ### Non-Goals
 
-- A uniform fp128 `D = 256` preset or schedule.
-- Any generated `D = 256` schedule table or runtime-DP-backed `D = 256`
-  schedule.
+- A uniform fp128 `D = 256` or `D = 512` preset or schedule.
+- Any generated or runtime-DP-backed `D = 256`/`D = 512` schedule.
 - Mixed ring dimensions per level or per role, schedule splicing, role
   compression, or a three-band schedule.
 - Deciding which roles or levels a future mixed-ring configuration assigns
-  `D = 256`.
-- Prover, verifier, planner, config, profile-harness, or end-to-end PCS changes.
-- Changes to the challenge ladder, sampler, entropy floor, SIS tables, NTT
-  limits, or backend kernels.
-- Support for `D = 512` or larger dimensions.
+  `D = 256` or `D = 512`.
+- Adding a config hook that selects the expanded SIS digest; that belongs to
+  the first mixed-ring configuration that consumes `D = 512`.
+- Prover, verifier, planner, profile-harness, or end-to-end PCS changes.
+- Changes to challenge parameters, sampling, entropy policy, fold-tail policy,
+  NTT primes, CRT profiles, or backend kernels.
+- fp32/fp64 `D = 512` protocol-role support.
+- fp128 B/D `D = 512` support.
+- `D = 1024` or larger fp128 inner-role support.
 - Copying or adapting implementation from the mixed-dimension demo branch.
 
 ## Evaluation
 
-### Acceptance Criteria
+### D=256 acceptance criteria
 
-- [x] fp128 inner-role dispatch accepts exactly `D ∈ {64, 128, 256}`.
-- [x] fp128 inner-role dispatch continues to reject `D = 32` and `D = 512`.
-- [x] The fp128 outer, opening, envelope, and NTT policies are byte-for-byte
-      unchanged.
-- [x] The fp64 and fp32 dispatch policies are byte-for-byte unchanged.
-- [x] No file under `crates/akita-config/`, `crates/akita-planner/`,
+- [x] fp128 inner-role dispatch accepts `D ∈ {64, 128, 256}`.
+- [x] The fp128 outer, opening, envelope, and NTT policies are unchanged.
+- [x] The fp64 and fp32 dispatch policies are unchanged.
+- [x] No preset, schedule, generated artifact, planner, prover, verifier, or
+      PCS change was required.
+- [x] Repository formatting, dependency, unit-test, and Clippy gates passed.
+
+### D=512 acceptance criteria
+
+- [ ] Canonical SIS coverage contains q128 inner/A `D = 512`, but rejects q128
+      outer/opening `D = 512` and every q32/q64 role at `D = 512`.
+- [ ] The infinity-width generator's dimension union contains `512`, and its
+      role/profile filter emits q128 `D = 512` A-role cells only.
+- [ ] Every required q128 `D = 512` A-role coefficient-bound/rank row is
+      generated, exhaustively boundary-certified, and included in the
+      monotonicity checks.
+- [ ] The expanded table has a distinct digest. The existing digest remains
+      valid for existing cells but cannot authorize `D = 512`; the expanded
+      digest authorizes the new q128 inner cell.
+- [ ] Existing generated schedule sources and catalog identities are
+      byte-for-byte unchanged.
+- [ ] fp128 inner-role dispatch accepts exactly
+      `D ∈ {64, 128, 256, 512}` and rejects `D = 32` and `D = 1024`.
+- [ ] fp128 outer/opening/envelope policies and every fp32/fp64 protocol policy
+      are byte-for-byte unchanged.
+- [ ] Focused tests confirm the existing q128 CRT/NTT selector accepts
+      `D = 512`; no NTT parameter change is needed.
+- [ ] No file under `crates/akita-config/`, `crates/akita-planner/`,
       `crates/akita-schedules/`, `crates/akita-prover/`, `crates/akita-verifier/`,
       or `crates/akita-pcs/` changes.
-- [x] No generated artifact or schedule catalog identity changes.
-- [x] Repository formatting, dependency, unit-test, and Clippy gates pass.
+- [ ] Repository formatting, dependency, unit-test, Clippy, SIS-generation, and
+      documentation gates pass.
 
 ### Testing Strategy
 
-Add or update the focused `akita-types` dispatch unit test so it exercises the
-fp128 inner slot at `32`, `64`, `128`, `256`, and `512`. The test must prove
-acceptance of `64`, `128`, and `256` and rejection of `32` and `512`.
+The `D = 512` slice needs focused coverage at four boundaries:
 
-Run the cheap repository preflight first, then the focused `akita-types` tests
-and the three CI Clippy feature graphs. Existing schedule identity tests may be
-run as a regression check, but this PR must not require regeneration or new
-schedule fixtures.
+1. **Canonical security coverage**
+   - q128 Inner/512 is accepted for A-role coefficient buckets;
+   - q128 Outer/Open/512 are rejected;
+   - q32 and q64 Inner/512 are rejected.
+2. **Generated SIS table**
+   - the new digest resolves q128 Inner/512 rows;
+   - the old digest rejects 512;
+   - both digests resolve their intended existing cells identically;
+   - generated rows pass accepted-boundary, rejected-successor, rank
+     monotonicity, and coefficient-bound monotonicity checks.
+3. **Arithmetic prerequisite**
+   - `select_crt_ntt_params::<Prime128OffsetA7F7, 512>()` succeeds using the
+     unchanged q128 profile;
+   - prime-order tests continue to cover `Q128_MAX_RING_D = 512`.
+4. **Protocol dispatch**
+   - fp128 Inner accepts `64`, `128`, `256`, and `512`;
+   - fp128 Inner rejects `32` and `1024`;
+   - all other role/tier lists remain unchanged.
 
-An end-to-end `D = 256` proof test belongs to the later PR that introduces a
-mixed schedule capable of selecting the new arm. Adding such a schedule here
-would violate this spec's scope.
+Run the offline SIS generator with the production local-minimum discovery plus
+exhaustive boundary certification, validate the generated rows, then run the
+repository preflight, focused crate tests, all three CI Clippy graphs, and the
+CI Nextest target set. No end-to-end `D = 512` proof is required until a later
+mixed schedule can select the arm.
 
 ### Performance
 
-There is no runtime or proof-size claim. The new monomorphization is unreachable
-from existing configurations, so existing benchmark modes and proof artifacts
-must be unaffected. Any performance claim for selectively using `D = 256`
-belongs to the mixed-ring feature that selects it.
+There is no proof-time, proof-size, or memory claim because no configuration
+selects `D = 512` in this spec. Existing benchmark modes and proof artifacts
+must be unaffected.
+
+Offline SIS generation time and generated q128 table size may increase. The
+change must not generate unused q32/q64 or B/D `D = 512` cells; this is both a
+scope and generation-cost constraint.
 
 ## Design
 
 ### Architecture
 
-`dispatch_for_field!` maps a runtime field tier, protocol role, and ring
-dimension to a const-generic protocol implementation. For the inner role, the
-fp128 tier currently exposes only `D = 64` and `D = 128`. Adding the `256` arm
-makes the already-certified implementation available to future callers without
-creating such a caller in this PR.
+The path to a usable future fp128 A-role `D = 512` cell is:
 
-The policy is duplicated intentionally in two macro sites:
+```text
+canonical role/profile coverage
+        │
+        ├──> offline SIS row generation + certification
+        │          │
+        │          └──> expanded table digest
+        │
+        └──> runtime SIS role-cell validation
+                         │
+fp128 inner dispatch ────┴──> const-generic D=512 protocol code
+```
 
-1. `__dispatch_for_field_inner!` defines the concrete const-generic match arms.
-2. `protocol_dispatch_policy!` defines the role-aware validation policy.
+The challenge and NTT layers are already ready. The missing security-table
+edge must be added before the dispatch edge.
 
-Both sites must be changed together. No wrapper API or new abstraction is
-needed.
+#### Profile-aware SIS coverage
+
+`SisRoleCell` already contains `modulus_profile`, but `sis_role_cell` currently
+chooses dimensions from global `A_ROLE_RING_DIMS` / `BD_ROLE_RING_DIMS` lists.
+The implementation should make dimension eligibility a predicate of
+`(role, modulus_profile, ring_dimension)`. Existing dimensions keep their
+current behavior; only `(Inner, Q128OffsetA7F7, 512)` is added.
+
+The estimator's `RING_DIMS` remains the union of dimensions that generation may
+visit. Adding `512` to that union is safe only because
+`generate_infinity_width_rows` calls the canonical role-cell predicate before
+creating work.
+
+#### Versioned SIS digest
+
+Changing `SisTableDigest::CURRENT` globally would force every checked-in
+schedule to regenerate because the digest is embedded in schedule identity.
+That would violate this spec's scope.
+
+Instead, retain the existing digest for existing schedules and add a second
+named digest for the expanded q128-inner-512 coverage. Runtime lookup must:
+
+- reject `D = 512` under the old digest;
+- accept the old coverage under the old digest;
+- accept the expanded coverage under the new digest; and
+- return `None` for unknown digests.
+
+The generated runtime table may be a single superset artifact if lookup gates
+rows by digest and canonical coverage. Do not duplicate identical old rows or
+introduce wrapper APIs that merely forward to the same lookup.
+
+#### Dispatch
+
+After certification, add `512` to:
+
+1. the fp128 branch of `__dispatch_for_field_inner!`; and
+2. the fp128 `inner` list in `protocol_dispatch_policy!`.
+
+No other dispatch list changes. The q128 NTT list already includes `512`.
 
 ### Alternatives Considered
 
-- **Add an fp128 `D256` preset.** Rejected because a preset represents a
-  selectable uniform configuration and pulls schedule resolution into scope.
-  The intended consumer is a later mixed-ring configuration, not a uniform
-  `D = 256` mode.
-- **Generate a `D = 256` schedule now.** Rejected because no schedule is needed
-  to establish the role-specific dispatch capability, and a generated table
-  would prematurely encode policy for all levels and roles.
-- **Import the mixed-dimension demo.** Rejected because the demo combines
-  several independently reviewable features. Production mixed schedules,
-  per-role compression, and their prover/verifier changes require separate
-  specs and PRs.
-- **Widen every fp128 role together.** Rejected. Dispatch support is
-  role-specific, and future mixed schedules may need `D = 256` for only a
-  subset of roles.
+- **Only add the dispatch literal.** Rejected. Unlike `D = 256`, `D = 512`
+  currently has no audited A-role SIS row, so dispatch alone would expose a
+  const-generic arm that runtime security validation cannot price.
+- **Add `512` to global `A_ROLE_RING_DIMS`.** Rejected because it would also
+  declare unused q32/q64 A-role cells. The requested capability is q128
+  inner-only.
+- **Replace the existing table digest and regenerate all schedules.** Rejected
+  because the existing schedule behavior and identities do not depend on the
+  new unreachable cell. Versioning isolates the security-table extension from
+  schedule rollout.
+- **Add a `D512` preset or generated schedule.** Rejected because a preset
+  represents a selectable uniform configuration. The intended consumer is a
+  later mixed-ring feature.
+- **Modify challenge or NTT policy.** Rejected because both already cover
+  fp128 `D = 512`.
+- **Import the mixed-dimension demo.** Rejected because production mixed
+  schedules and their prover/verifier changes are separate features.
 
 ## Documentation
 
-No Book, `AGENTS.md`, or architecture documentation change is required because
-this PR does not expose a new configuration or change proof behavior. Update
-this spec's status and PR field when the implementation lands.
+Update this spec as each slice lands. Because SIS coverage is security-relevant,
+also update `specs/sis-quantum128-scalar-n-table.md` with the profile-aware
+coverage rule and versioned-digest rollout. Update the Akita Book security page
+only if its stated supported SIS coverage becomes inaccurate.
+
+No `AGENTS.md` or architecture change is expected. No schedule or configuration
+documentation should advertise `D = 512`, because this spec does not make it
+selectable.
 
 ## Execution
 
-1. Add `256` to the fp128 branch of `__dispatch_for_field_inner!`.
-2. Add `256` to the fp128 `inner` list in `protocol_dispatch_policy!`.
-3. Update only the focused role-dispatch unit test.
-4. Verify that the diff contains no preset, schedule, planner, prover,
-   verifier, PCS, challenge-policy, SIS-table, or generated-artifact changes.
-5. Run the required repository checks.
+1. Make canonical SIS dimension coverage role- and modulus-profile-aware.
+2. Add only q128 Inner/512 to that coverage and add `512` to the estimator
+   dimension union.
+3. Generate and exhaustively certify the new q128 `D = 512` A-role rows.
+4. Add the expanded table digest while preserving the existing digest and
+   schedule identities.
+5. Add focused coverage, digest, generated-table, and q128-NTT tests.
+6. Add `512` to the two fp128 inner-dispatch policy sites and update the focused
+   dispatch test.
+7. Verify that no config, planner, schedule, prover, verifier, PCS, challenge,
+   NTT-parameter, or backend file changed.
+8. Run the full required repository checks.
 
 ## References
 
-- Dispatch policy: `crates/akita-types/src/dispatch/policy.rs`
-- Dispatch tests: `crates/akita-types/src/dispatch/mod.rs`
-- Existing D=256 challenge entry:
-  `crates/akita-challenges/src/config.rs`
-  (`PRODUCTION_FOLD_CHALLENGE_LADDER`)
-- Existing audited A-role coverage:
-  `crates/akita-types/src/sis/ajtai_key.rs` (`A_ROLE_RING_DIMS`)
+- Dispatch policy and tests:
+  `crates/akita-types/src/dispatch/policy.rs`,
+  `crates/akita-types/src/dispatch/mod.rs`
+- Challenge ladder and sampler:
+  `crates/akita-challenges/src/config.rs`,
+  `crates/akita-challenges/src/sampler/position_sample.rs`
+- Canonical SIS coverage and runtime lookup:
+  `crates/akita-types/src/sis/ajtai_key.rs`
+- Generated SIS table:
+  `crates/akita-types/src/sis/generated_sis_table/`
+- SIS generator and certification:
+  `crates/akita-sis-estimator/src/width_table.rs`,
+  `crates/akita-sis-estimator/examples/infinity_width_table.rs`
+- q128 NTT capacity:
+  `crates/akita-algebra/src/ntt/tables.rs`,
+  `crates/akita-types/src/ntt_cache.rs`
+- SIS security contract:
+  `specs/sis-quantum128-scalar-n-table.md`
 - Mixed-ring architectural context only:
   `specs/runtime-ring-cutover.md`
