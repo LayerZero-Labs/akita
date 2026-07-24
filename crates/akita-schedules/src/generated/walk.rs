@@ -18,7 +18,7 @@ use crate::generated::{
     validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
-use crate::schedule_params::{
+use crate::runtime::{
     materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
     CandidateFoldStep, CandidateTerminalResponse,
 };
@@ -58,7 +58,7 @@ pub(crate) fn walk_generated_schedule_entry(
             fold_low_len: fold_low_len as usize,
         },
     };
-    let configured_root_shape = crate::schedule_params::optimize_fold_challenge_shape(
+    let configured_root_shape = crate::runtime::optimize_fold_challenge_shape(
         fold_challenge_shape_at_level(AkitaScheduleInputs {
             num_vars: key.final_group.num_vars(),
             level: 0,

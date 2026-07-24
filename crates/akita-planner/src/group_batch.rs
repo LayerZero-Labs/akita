@@ -250,17 +250,6 @@ fn multi_group_root_precommitted_group_seeds(
         .collect::<Result<Vec<_>, _>>()
 }
 
-pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'_>,
-    log_basis_open: u32,
-) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let commit_groups = multi_group_root_precommitted_group_seeds(key, policy)?;
-    precommitted_groups_for_open_basis(&commit_groups, policy, &ring_challenge_cfg, log_basis_open)
-}
-
 fn precommitted_groups_for_open_basis(
     seeds: &[PrecommittedGroupSeed],
     policy: &PlannerPolicy,

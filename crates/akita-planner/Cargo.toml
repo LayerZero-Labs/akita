@@ -17,11 +17,21 @@ readme = "../../README.md"
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-config = { version = "0.1.0", path = "../akita-config", optional = true, default-features = false, features = [
+  "all-schedules",
+] }
 akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [features]
 default = []
+catalog-gen = ["dep:akita-config"]
+
+[[bin]]
+name = "gen_schedule_tables"
+path = "src/bin/gen_schedule_tables.rs"
+required-features = ["catalog-gen"]
 
 [lints]
 workspace = true

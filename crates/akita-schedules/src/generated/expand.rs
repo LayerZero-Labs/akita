@@ -15,7 +15,7 @@ use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
-use crate::schedule_params::optimize_fold_challenge_shape;
+use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,

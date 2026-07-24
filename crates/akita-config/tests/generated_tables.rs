@@ -7,7 +7,7 @@
 //! planner changes such as the K256 one-hot migration regenerate tables).
 //!
 //! Coverage is metadata-driven: every entry in
-//! [`akita_config::generated_families::ALL_GENERATED_FAMILIES`] is checked,
+//! [`akita_planner::generated_families::ALL_GENERATED_FAMILIES`] is checked,
 //! so adding a new family to the generator picks it up here automatically
 //! (no per-family handwritten row mirror).
 //!
@@ -35,20 +35,20 @@
 
 #![allow(missing_docs)]
 
-use akita_config::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
-};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
+use akita_planner::generated_families::{
+    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+};
 use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
-use akita_planner::generated::table_entry;
+use akita_schedules::generated::table_entry;
 #[cfg(feature = "all-schedules")]
-use akita_planner::{
+use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
     validate_generated_schedule_table,
 };
@@ -102,7 +102,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
 #[cfg(feature = "all-schedules")]
 fn assert_table_hit(
     module_name: &str,
-    catalog: &akita_planner::GeneratedScheduleTable,
+    catalog: &akita_schedules::GeneratedScheduleTable,
     keys: &[PolynomialGroupLayout],
 ) {
     if keys.is_empty() {
@@ -121,7 +121,7 @@ fn assert_table_hit(
 fn prepare_family_catalog<Cfg: CommitmentConfig>(
     module_name: &str,
     keys: &[PolynomialGroupLayout],
-) -> akita_planner::GeneratedScheduleTable {
+) -> akita_schedules::GeneratedScheduleTable {
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
@@ -160,7 +160,7 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 fn catalog_identity_rejects_planner_policy_changes() {
     let policy = policy_of::<fp128::D64Dense>();
     let catalog = fp128::D64Dense::schedule_catalog().expect("shipped catalog");
-    let assert_rejected = |label: &str, mutated: akita_planner::GeneratedScheduleTable| {
+    let assert_rejected = |label: &str, mutated: akita_schedules::GeneratedScheduleTable| {
         let error = validate_catalog_identity(
             &mutated,
             &policy,
@@ -176,7 +176,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;
@@ -211,7 +211,7 @@ fn recursive_companion_catalogs_contain_only_grouped_keys() {
 fn family_catalog(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
-) -> akita_planner::GeneratedScheduleTable {
+) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
         "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family.module_name, keys),
         "fp128_d128_onehot" => {
@@ -316,7 +316,7 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
 #[cfg(feature = "all-schedules")]
 fn table_backed_group_batch_schedule(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
     if let Some(entry) = table_entry(catalog, key) {
@@ -341,7 +341,7 @@ fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
     table_backed_group_batch_schedule(family, catalog, key)
@@ -378,7 +378,7 @@ fn resolve_family_group_batch_schedule(
 #[cfg(feature = "all-schedules")]
 fn table_backed_expanded(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
@@ -463,7 +463,7 @@ fn compare_schedule_results(
 #[cfg(feature = "all-schedules")]
 fn compare_scalar_key(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Option<Mismatch> {
     compare_schedule_results(
@@ -483,7 +483,7 @@ fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> O
 fn check_scalar_keys(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     into: &mut Vec<Mismatch>,
 ) {
     let workers = worker_count();
@@ -561,7 +561,7 @@ fn check_scalar_keys(
 #[cfg(feature = "all-schedules")]
 fn compare_group_batch_key(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Option<Mismatch> {
     let table_backed =
@@ -621,7 +621,7 @@ fn compare_group_batch_key(
 #[cfg(feature = "all-schedules")]
 fn check_group_batch_keys(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     keys: &[AkitaScheduleLookupKey],
     into: &mut Vec<Mismatch>,
 ) {

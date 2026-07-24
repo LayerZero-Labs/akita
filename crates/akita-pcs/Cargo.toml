@@ -94,6 +94,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "test-support",
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", features = ["html_reports"] }

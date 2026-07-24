@@ -3,13 +3,12 @@
 use std::collections::BTreeSet;
 
 use akita_field::AkitaError;
-use akita_planner::suffix_opening_layout;
+use akita_schedules::suffix_opening_layout;
 use akita_types::{
-    active_setup_field_len, padded_setup_prefix_len, FoldSchedule, SetupPrefixSlotId,
-    SETUP_OFFLOAD_D_SETUP,
+    active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,
+    SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP,
 };
 
-use crate::generated_families::recursive_group_batch_candidates_for_capacity;
 use crate::CommitmentConfig;
 
 fn setup_prefix_slot_matches(
@@ -83,7 +82,7 @@ pub(crate) fn extract_setup_prefix_slot_ids_from_schedule(
 /// Enumerate every exact setup-prefix slot required by selected recursive schedules.
 ///
 /// Selected keys are the bounded catalog/profile set from
-/// [`crate::generated_families::recursive_group_batch_candidates_for_capacity`],
+/// `recursive_group_batch_candidates_for_capacity`,
 /// not a dense capacity grid.
 pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
@@ -110,10 +109,65 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     Ok(ids.into_iter().collect())
 }
 
+fn key_within_setup_capacity(
+    key: &AkitaScheduleLookupKey,
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> bool {
+    !key.precommitteds.is_empty()
+        && key.final_group.num_vars() <= max_num_vars
+        && key.final_group.num_polynomials() <= max_num_batched_polys
+}
+
+fn push_unique_schedule_key(
+    keys: &mut Vec<AkitaScheduleLookupKey>,
+    candidate: AkitaScheduleLookupKey,
+) {
+    if !keys.contains(&candidate) {
+        keys.push(candidate);
+    }
+}
+
+pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
+    max_num_vars: usize,
+    max_num_batched_polys: usize,
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if !Cfg::recursive_setup_planning()
+        || Cfg::decomposition().log_commit_bound != 1
+        || Cfg::D != SETUP_OFFLOAD_D_SETUP
+        || max_num_batched_polys == 0
+    {
+        return Ok(Vec::new());
+    }
+
+    let mut keys = Vec::new();
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        for entry in catalog.entries {
+            if entry.root.precommitted_groups.is_empty() {
+                continue;
+            }
+            let candidate = AkitaScheduleLookupKey {
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
+            };
+            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
+                push_unique_schedule_key(&mut keys, candidate);
+            }
+        }
+    }
+
+    keys.sort_by(akita_schedules::runtime_schedule_key_cmp);
+    Ok(keys)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated_families::recursive_group_batch_candidates_for_capacity;
     use crate::proof_optimized::fp128;
     use crate::RecursiveCommitmentConfig;
     use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, PrecommittedGroupDescriptor};

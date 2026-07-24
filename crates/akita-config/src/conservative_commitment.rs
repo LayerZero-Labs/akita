@@ -78,7 +78,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for ConservativeCommitmentConfig<Cf
         Cfg::onehot_chunk_size()
     }
 
-    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         Cfg::schedule_catalog()
     }
 
@@ -122,7 +122,8 @@ pub(crate) fn conservative_precommitted_group_params<Cfg: CommitmentConfig>(
     Ok(PrecommittedGroupDescriptor::from_params(group, &params))
 }
 
-pub(crate) fn conservative_commit_params<Cfg: CommitmentConfig>(
+#[doc(hidden)]
+pub fn conservative_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupParams, AkitaError> {
     let schedule = conservative_commit_schedule::<Cfg>(key)?;
@@ -139,30 +140,12 @@ pub(crate) fn conservative_commit_schedule<Cfg: CommitmentConfig>(
     }
     key.validate()?;
 
-    let (min_basis, _) = Cfg::basis_range();
-    let mut policy = policy_of::<Cfg>();
-    policy.basis_range = (min_basis, min_basis);
-    policy.decomposition.log_basis = min_basis;
-    // A precommitted group is a pre-existing, independently formed commitment;
-    // the distributed multi-chunk layout only refines the *fold* witness, not how
-    // an earlier commitment was formed. Freeze precommits single-chunk so a
-    // multi-chunk base config (e.g. the W8R2 preset used for recursive
-    // setup-offloading) produces the same frozen params as its single-chunk
-    // sibling. Otherwise the frozen precommit diverges from the shipped
-    // (single-chunk-frozen) recursive catalog key and the multi-group planner
-    // can fall back to an invalid grouped root-direct.
-    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let mut planned = akita_planner::find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
+    let mut schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
     let widened = widen_conservative_commit_params::<Cfg>(
-        planned.schedule.root.params.final_group.commitment.clone(),
+        schedule.root.params.final_group.commitment.clone(),
     )?;
-    planned.schedule.root.params.final_group.commitment = widened;
-    Ok(planned.schedule)
+    schedule.root.params.final_group.commitment = widened;
+    Ok(schedule)
 }
 
 fn widen_conservative_commit_params<Cfg: CommitmentConfig>(

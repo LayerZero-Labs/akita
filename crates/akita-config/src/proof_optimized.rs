@@ -28,6 +28,8 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// hundred scalar shapes.
 const MAX_VERIFIER_SETUP_SCHEDULE_SCANS: usize = 1 << 14;
 
+const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
+
 /// Shared short ring-challenge policy for every proof-optimized preset.
 ///
 /// Fixed-weight sparse families keyed on ring degree `d` via
@@ -132,7 +134,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
     // keys. Size their shared matrices from the same keys directly: converting
     // through `OpeningClaimsLayout` would discard frozen precommitted params
     // and could resolve a different schedule.
-    for key in crate::generated_families::recursive_group_batch_candidates_for_capacity::<Cfg>(
+    for key in crate::setup_prefix_slots::recursive_group_batch_candidates_for_capacity::<Cfg>(
         max_num_vars,
         max_num_batched_polys,
     )? {
@@ -176,8 +178,7 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
     let mut layouts = Vec::new();
     let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
     let precommitted_group = PolynomialGroupLayout::new(max_num_vars, 1);
-    let precommitted_groups = [precommitted_group;
-        crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS];
+    let precommitted_groups = [precommitted_group; DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS];
 
     let mut push_layout = |layout| {
         if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
@@ -195,8 +196,7 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
             push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
             if supports_multi_group_root {
-                let num_precommitted =
-                    crate::generated_families::DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
+                let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
                 let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted) else {
                     continue;
                 };
@@ -410,7 +410,7 @@ macro_rules! impl_proof_optimized_preset {
     };
     (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
-        fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+        fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
             #[cfg(feature = $feat)]
             {
                 Some(akita_schedules::$table())
