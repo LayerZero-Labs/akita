@@ -1430,3 +1430,110 @@ fn shift_accumulate_throughput_probe() {
         512.0 / per(strided),
     );
 }
+
+#[test]
+fn merge_sweep_matches_bucketed_core_across_polys() {
+    use super::column_sweep::{column_sweep_core, column_sweep_core_merge, L2_TILE_BUDGET};
+    use akita_field::unreduced::HasCommitAccum;
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+
+    let mut rng = StdRng::seed_from_u64(0x5eed_0a5);
+    let n_a = 3;
+    let num_positions_per_block = 96;
+    let num_digits_inner = 1;
+    let active_a_cols = num_positions_per_block * num_digits_inner;
+
+    let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
+        .map(|_| CyclotomicRing::random(&mut rng))
+        .collect();
+    let a_flat = FlatMatrix::from_ring_slice(&a_rows);
+    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
+
+    // Three "polys" with varying block counts, sparse sorted entries, and
+    // some empty blocks — the shapes the fused sweep must round-trip.
+    let mut polys_buckets: Vec<Vec<Vec<SingleChunkEntry>>> = Vec::new();
+    for poly in 0..3usize {
+        let num_blocks = 40 + poly * 17;
+        let buckets = (0..num_blocks)
+            .map(|block| {
+                if (block + poly) % 7 == 0 {
+                    return Vec::new();
+                }
+                (0..num_positions_per_block)
+                    .filter(|pos| (pos + block + poly) % 3 != 0)
+                    .map(|pos| SingleChunkEntry::new(pos as u32, ((pos * 11 + block) % D) as u16))
+                    .collect()
+            })
+            .collect::<Vec<_>>();
+        polys_buckets.push(buckets);
+    }
+    let polys_blocks: Vec<FlatBlocks<SingleChunkEntry>> = polys_buckets
+        .iter()
+        .map(|buckets| super::test_helpers::from_buckets(buckets.clone()))
+        .collect();
+    let polys_views: Vec<Vec<&[SingleChunkEntry]>> = polys_blocks
+        .iter()
+        .map(|blocks| {
+            (0..blocks.num_live_blocks())
+                .map(|i| blocks.block(i))
+                .collect()
+        })
+        .collect();
+
+    // Direct core-vs-core equality over the concatenated batch.
+    let flat: Vec<&[SingleChunkEntry]> = polys_views.iter().flatten().copied().collect();
+    let merge = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+        &a_view,
+        &flat,
+        n_a,
+        active_a_cols,
+        num_digits_inner,
+        L2_TILE_BUDGET,
+    );
+    let bucketed = column_sweep_core::<SingleChunkEntry, F, D>(
+        &a_view,
+        &flat,
+        n_a,
+        active_a_cols,
+        num_digits_inner,
+    );
+    assert_eq!(merge, bucketed, "merge sweep must match the bucketed core");
+
+    // Wrapper equality: fused multi output must equal per-poly sweeps.
+    let multi = column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
+        &a_view,
+        &polys_views,
+        n_a,
+        active_a_cols,
+        num_digits_inner,
+    );
+    let per_poly: Vec<Vec<Vec<CyclotomicRing<F, D>>>> = polys_views
+        .iter()
+        .map(|views| {
+            column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
+                &a_view,
+                views,
+                n_a,
+                active_a_cols,
+                num_digits_inner,
+            )
+        })
+        .collect();
+    assert_eq!(multi, per_poly, "fused multi must match per-poly sweeps");
+
+    // Tiny tiles force multi-tile merge paths and cursor resets.
+    let merge_tiny_tiles = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+        &a_view,
+        &flat,
+        n_a,
+        active_a_cols,
+        num_digits_inner,
+        3 * D * std::mem::size_of::<<F as HasCommitAccum>::CommitAccum>(),
+    );
+    assert_eq!(
+        merge_tiny_tiles, bucketed,
+        "merge sweep must be tile-size independent"
+    );
+}

@@ -5,7 +5,7 @@ use crate::compute::plans::{
 };
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{dispatch_for_field, AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
@@ -209,8 +209,29 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>;
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>;
+
+    /// One-hot A-side commit rows for a same-shape batch of polynomials.
+    ///
+    /// Every polynomial of a committed group multiplies the same A matrix, so
+    /// a backend can stream A once for the whole batch. The default loops
+    /// [`Self::onehot_commit_rows`]; results are per-polynomial in plan
+    /// order.
+    fn onehot_commit_rows_multi<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plans: Vec<OneHotCommitRowsPlan<'_>>,
+    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
+    where
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        plans
+            .into_iter()
+            .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
+            .collect()
+    }
 
     /// Sparse signed-ring A-side commit rows.
     fn sparse_ring_commit_rows<const D: usize>(

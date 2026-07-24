@@ -35,7 +35,7 @@ use akita_algebra::ring::cyclotomic::WideCyclotomicRing;
 use akita_algebra::CyclotomicRing;
 use akita_challenges::{SparseChallenge, TensorChallenges as TensorChallengeSet};
 use akita_field::parallel::*;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
 };
@@ -74,7 +74,7 @@ pub(crate) mod test_helpers;
 mod tests;
 
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
-pub(crate) use column_sweep::column_sweep_ajtai_onehot;
+pub(crate) use column_sweep::{column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi};
 pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]

@@ -1,4 +1,6 @@
-use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
+use crate::backend::onehot::{
+    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi, MultiChunkEntry, SingleChunkEntry,
+};
 use crate::backend::sparse_ring::column_sweep_sparse;
 #[cfg(feature = "compression-diagnostics")]
 use crate::compute::backend::CompressionDiagnosticBackend;
@@ -21,7 +23,7 @@ use crate::kernels::linear::{
     CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::unreduced::{HasWide, ReduceTo};
+use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
@@ -446,8 +448,8 @@ where
         plan: OneHotCommitRowsPlan<'_>,
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>
     where
-        F: HasWide,
-        F::Wide: AdditiveGroup + From<F> + ReduceTo<F>,
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
     {
         let active_a_cols = plan
             .num_positions_per_block
@@ -477,6 +479,80 @@ where
                 )
             }
         })
+    }
+
+    fn onehot_commit_rows_multi<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plans: Vec<OneHotCommitRowsPlan<'_>>,
+    ) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
+    where
+        F: HasCommitAccum,
+        F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+    {
+        let Some(first) = plans.first() else {
+            return Ok(Vec::new());
+        };
+        let uniform_shape = plans.iter().all(|plan| {
+            plan.n_a == first.n_a
+                && plan.num_positions_per_block == first.num_positions_per_block
+                && plan.num_digits_inner == first.num_digits_inner
+        });
+        let all_single = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::SingleChunk(_)));
+        let all_multi = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunk(_)));
+        if !uniform_shape || !(all_single || all_multi) {
+            return plans
+                .into_iter()
+                .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
+                .collect();
+        }
+
+        let active_a_cols = first
+            .num_positions_per_block
+            .checked_mul(first.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
+        let a_view = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(first.n_a, active_a_cols)?;
+        let n_a = first.n_a;
+        let num_digits_inner = first.num_digits_inner;
+
+        if all_single {
+            let polys_blocks: Vec<Vec<&[SingleChunkEntry]>> = plans
+                .iter()
+                .map(|plan| match &plan.blocks {
+                    OneHotCommitBlocks::SingleChunk(blocks) => blocks.block_slices(),
+                    OneHotCommitBlocks::MultiChunk(_) => unreachable!("checked all_single"),
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
+                &a_view,
+                &polys_blocks,
+                n_a,
+                active_a_cols,
+                num_digits_inner,
+            ))
+        } else {
+            let polys_blocks: Vec<Vec<&[MultiChunkEntry]>> = plans
+                .iter()
+                .map(|plan| match &plan.blocks {
+                    OneHotCommitBlocks::MultiChunk(blocks) => blocks.block_slices(),
+                    OneHotCommitBlocks::SingleChunk(_) => unreachable!("checked all_multi"),
+                })
+                .collect::<Result<_, _>>()?;
+            Ok(column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
+                &a_view,
+                &polys_blocks,
+                n_a,
+                active_a_cols,
+                num_digits_inner,
+            ))
+        }
     }
 
     fn sparse_ring_commit_rows<const D: usize>(

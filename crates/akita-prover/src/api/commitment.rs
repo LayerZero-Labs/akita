@@ -419,16 +419,21 @@ where
             let per_poly_flat_len = b_input_len_per_poly.checked_mul(D_A).ok_or_else(|| {
                 AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
             })?;
+            // Group commit: the whole batch multiplies the same A matrix, so
+            // the kernel streams it once for every polynomial (fused sweep).
+            let views = polys
+                .iter()
+                .map(|poly| RootCommitSource::<F, D_A>::commit_view(poly))
+                .collect::<Result<Vec<_>, _>>()?;
+            let inners =
+                RootCommitKernel::<_, F, D_A>::commit_inner_group(backend, prepared, views, plan)?;
             let mut b_input_flat = vec![0i8; flat_len];
             let mut decomposed_digit_blocks: Vec<DigitBlocks> =
                 (0..polys.len()).map(|_| DigitBlocks::empty(D_A)).collect();
             cfg_chunks_mut!(b_input_flat, per_poly_flat_len)
-                .zip(cfg_iter!(polys))
+                .zip(cfg_into_iter!(inners))
                 .zip(cfg_iter_mut!(decomposed_digit_blocks))
-                .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
-                    let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
-                    let inner =
-                        RootCommitKernel::<_, F, D_A>::commit_inner(backend, prepared, view, plan)?;
+                .try_for_each(|((dst, inner), decomposed)| -> Result<(), AkitaError> {
                     validate_commit_inner_shape::<F, D_A>(
                         &inner,
                         num_live_blocks,

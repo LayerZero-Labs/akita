@@ -815,5 +815,32 @@ impl<const P: u128> HasWide for Fp128<P> {
     type Wide = Fp128x8i32;
 }
 
+/// Associates a field with the accumulator used by unit-scale commitment
+/// streams and the number of additions it can absorb before reduction.
+pub trait HasCommitAccum: FieldCore {
+    /// Accumulator representation used by commitment streams.
+    type CommitAccum: AdditiveGroup + From<Self> + ReduceTo<Self>;
+
+    /// Maximum additions before the accumulator must be reduced.
+    const MAX_COMMIT_ACCUMULATIONS: usize;
+}
+
+const MAX_WIDE_LANE_ACCUMULATIONS: usize = 1 << 15;
+
+impl<const P: u32> HasCommitAccum for Fp32<P> {
+    type CommitAccum = Fp32x2i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u64> HasCommitAccum for Fp64<P> {
+    type CommitAccum = Fp64x4i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
+impl<const P: u128> HasCommitAccum for Fp128<P> {
+    type CommitAccum = Fp128x8i32;
+    const MAX_COMMIT_ACCUMULATIONS: usize = MAX_WIDE_LANE_ACCUMULATIONS;
+}
+
 #[cfg(test)]
 mod tests;
