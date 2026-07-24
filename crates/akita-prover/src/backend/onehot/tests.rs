@@ -1591,3 +1591,71 @@ fn merge_sweep_self_reduces_oversized_blocks() {
         "self-reducing merge must match the splitting wrapper"
     );
 }
+
+/// Merge-sweep tuning matrix: times the fused-batch kernel across
+/// (tile budget x column chunk) at a scaled trace-like shape.
+/// `cargo test -p akita-prover --release --features parallel --lib merge_sweep_bench -- --ignored --nocapture`
+#[test]
+#[ignore = "release-only tuning bench"]
+#[expect(clippy::print_stdout, reason = "bench prints its matrix")]
+fn merge_sweep_bench() {
+    use super::column_sweep::{column_sweep_core_merge, L2_TILE_BUDGET};
+    use std::time::Instant;
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+
+    let n_a = 6;
+    let num_positions_per_block = 1 << 18;
+    let active_a_cols = num_positions_per_block;
+    let num_blocks = 928;
+
+    // Deterministic A matrix; contents don't affect timing.
+    let mut rng = StdRng::seed_from_u64(0xbe9c);
+    let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
+        .map(|_| CyclotomicRing::random(&mut rng))
+        .collect();
+    let a_flat = FlatMatrix::from_ring_slice(&a_rows);
+    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
+
+    // Quarter-density sorted entries per block (K=256/D=64 one-hot shape).
+    let buckets: Vec<Vec<SingleChunkEntry>> = (0..num_blocks)
+        .map(|block| {
+            (0..num_positions_per_block)
+                .step_by(4)
+                .map(|pos| SingleChunkEntry::new(pos as u32, ((pos * 13 + block) % D) as u16))
+                .collect()
+        })
+        .collect();
+    let blocks = super::test_helpers::from_buckets(buckets);
+    let views: Vec<&[SingleChunkEntry]> =
+        (0..blocks.num_live_blocks()).map(|i| blocks.block(i)).collect();
+    let total_accums: usize = views.iter().map(|v| v.len()).sum::<usize>() * n_a;
+
+    let accum_bytes = D * std::mem::size_of::<<F as HasCommitAccum>::CommitAccum>();
+    let mut reference: Option<Vec<Vec<CyclotomicRing<F, D>>>> = None;
+    for tile_blocks in [32usize, 64, 128, 256, 1024] {
+        for col_chunk in [8usize, 16, 32, 64, 128] {
+            let budget = (tile_blocks * accum_bytes).min(L2_TILE_BUDGET);
+            let start = Instant::now();
+            let out = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+                &a_view,
+                &views,
+                n_a,
+                active_a_cols,
+                1,
+                budget,
+                col_chunk,
+            );
+            let secs = start.elapsed().as_secs_f64();
+            println!(
+                "[bench] tile={tile_blocks:4} chunk={col_chunk:3}: {secs:6.2}s  ({:5.1} ns/accum x16t)",
+                secs * 16.0 / total_accums as f64 * 1e9,
+            );
+            match &reference {
+                None => reference = Some(out),
+                Some(reference) => assert_eq!(&out, reference, "tuning must not change results"),
+            }
+        }
+    }
+}

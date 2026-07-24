@@ -347,10 +347,10 @@ where
     }
 }
 
-/// Number of A columns widened together by the merge sweep. 16 columns of
-/// wide rings is a 32 KB scratch buffer, leaving L1 room for the accumulator
-/// tile it shares the cache with.
-pub(super) const MERGE_COL_CHUNK: usize = 16;
+/// Number of A columns widened together by the merge sweep. Bench-tuned:
+/// the (tile, chunk) matrix is flat within ~5-30% and (64 blocks, 32 cols)
+/// is its minimum at trace-like sparse shapes.
+pub(super) const MERGE_COL_CHUNK: usize = 32;
 
 /// Split blocks whose shift-accumulation count exceeds `cap` into segments
 /// that each respect it, tracking each segment's parent block.
@@ -582,7 +582,7 @@ where
             // The kernel self-reduces at the accumulation cap, so oversized
             // blocks need no splitting.
             let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
-            let merge_tile_budget = (accum_bytes * 32).min(L2_TILE_BUDGET);
+            let merge_tile_budget = (accum_bytes * 64).min(L2_TILE_BUDGET);
             column_sweep_core_merge::<E, F, D>(
                 a_view,
                 &flat,
