@@ -1,8 +1,4 @@
-#[cfg(test)]
-use akita_algebra::ring::eval_flat_ring_at_pows_fast;
-use akita_algebra::ring::eval_ring_at_pows_fast;
-use akita_algebra::CyclotomicRing;
-use akita_field::{AkitaError, ExtField, FieldCore, MulBaseUnreduced};
+use akita_field::{AkitaError, FieldCore};
 
 #[derive(Clone)]
 pub(crate) struct GroupSetupSegment<E> {
@@ -124,55 +120,6 @@ pub(super) fn role_projection<E: FieldCore>(
         shift: ratio.trailing_zeros() as usize,
         mask: ratio - 1,
     })
-}
-
-#[inline(always)]
-#[allow(clippy::too_many_arguments)]
-pub(super) fn base_ring_segment_inner_sum_typed<
-    F,
-    E,
-    const D: usize,
-    const HAS_D: bool,
-    const HAS_B: bool,
-    const HAS_A: bool,
->(
-    range: std::ops::Range<usize>,
-    setup_flat: &[CyclotomicRing<F, D>],
-    base_pows: &[E],
-    segment: &GroupSetupSegment<E>,
-    e_eq: &[E],
-    t_eq: &[E],
-    z_eq: &[E],
-    d_projection: &RoleProjection<E>,
-    b_projection: &RoleProjection<E>,
-    a_projection: &RoleProjection<E>,
-) -> Result<E, AkitaError>
-where
-    F: FieldCore,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-{
-    let setup = setup_flat
-        .get(range.clone())
-        .ok_or(AkitaError::InvalidProof)?;
-    let mut acc = E::zero();
-    for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
-        range,
-        segment,
-        e_eq,
-        t_eq,
-        z_eq,
-        d_projection,
-        b_projection,
-        a_projection,
-        |offset, weight| {
-            if !weight.is_zero() {
-                let ring = setup.get(offset).ok_or(AkitaError::InvalidProof)?;
-                acc += eval_ring_at_pows_fast(ring, base_pows) * weight;
-            }
-            Ok(())
-        },
-    )?;
-    Ok(acc)
 }
 
 #[inline(always)]
@@ -333,36 +280,4 @@ fn projected_role_weight_at<E: FieldCore>(
         .checked_sub(start_abs)
         .ok_or(AkitaError::InvalidProof)?;
     Ok(row_weight * scale * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?)
-}
-
-#[cfg(test)]
-pub(super) fn evaluate_weighted_setup_row<Base, E>(
-    row: &[Base],
-    col_offset: usize,
-    col_weights: &[E],
-    row_weight: E,
-    alpha_pows: &[E],
-) -> Result<E, AkitaError>
-where
-    Base: FieldCore,
-    E: ExtField<Base> + MulBaseUnreduced<Base>,
-{
-    use super::super::checked_slice;
-
-    let ring_d = alpha_pows.len();
-    let mut acc = E::zero();
-    for (col, &col_weight) in col_weights.iter().enumerate() {
-        if col_weight.is_zero() {
-            continue;
-        }
-        let setup_col = col_offset
-            .checked_add(col)
-            .ok_or_else(|| AkitaError::InvalidSetup("weighted setup column overflow".into()))?;
-        let coeff_start = setup_col.checked_mul(ring_d).ok_or_else(|| {
-            AkitaError::InvalidSetup("weighted setup coeff start overflow".into())
-        })?;
-        let coeffs = checked_slice(row, coeff_start, ring_d, "weighted setup coeffs")?;
-        acc += row_weight * col_weight * eval_flat_ring_at_pows_fast::<Base, E>(coeffs, alpha_pows);
-    }
-    Ok(acc)
 }

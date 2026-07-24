@@ -3,9 +3,8 @@
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
+    r_decomp_levels, CommitmentRingDims, CommittedGroupParams, OpeningClaimsLayout,
+    SetupContributionPlan, SisModulusProfileId, WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -19,7 +18,6 @@ const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
     plan: SetupContributionPlan<F>,
-    evaluator: SetupIndexWeightEvaluator<F>,
     rho: Vec<F>,
     alpha: F,
 }
@@ -67,9 +65,6 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         depth_open,
     )
     .unwrap();
-    let depth_fold = level_params
-        .num_digits_fold(num_claims, level_params.field_bits_for_cache())
-        .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let layout = WitnessLayout::new(
         &level_params,
@@ -84,59 +79,29 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let eq_tau1 = EqPolynomial::evals(&tau1).unwrap().into();
-    let opening_source_len = layout.total_len();
-    let groups = vec![SetupContributionGroupInputs {
-        group_id: 0,
-        num_claims,
-        depth_fold,
-        a_row_start: 1,
-        b_row_start: 1 + n_a,
-    }];
     let full_vec_randomness = (0..24)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
         eq_tau1,
         &layout,
-        opening_source_len,
-        &groups,
+        layout.total_len(),
         &full_vec_randomness,
-        Some(&fold_gadget),
         CommitmentRingDims::uniform(D),
+        D,
     )
     .unwrap();
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &level_params,
-        &opening_batch,
-        &layout,
-        opening_source_len,
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    let rho_bits = evaluator.required().next_power_of_two().trailing_zeros() as usize;
+    let rho_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
     let rho = (0..rho_bits)
         .map(|idx| test_scalar(901 + idx as u128))
         .collect::<Vec<_>>();
 
-    let packed = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
-    let succinct = evaluator.evaluate(&rho).unwrap();
-    assert_eq!(succinct, packed);
+    let _ = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
 
-    SetupIndexWeightBenchCase {
-        plan,
-        evaluator,
-        rho,
-        alpha,
-    }
+    SetupIndexWeightBenchCase { plan, rho, alpha }
 }
 
 fn bench_setup_index_weight(c: &mut Criterion) {
@@ -150,7 +115,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
         ] {
             let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/packed_path"), num_live_blocks),
+                BenchmarkId::new(format!("{layout}/plan_point_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -163,13 +128,6 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                                 .unwrap(),
                         )
                     })
-                },
-            );
-            group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/succinct_path"), num_live_blocks),
-                &case,
-                |b, case| {
-                    b.iter(|| black_box(case.evaluator.evaluate(black_box(&case.rho)).unwrap()))
                 },
             );
         }

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};

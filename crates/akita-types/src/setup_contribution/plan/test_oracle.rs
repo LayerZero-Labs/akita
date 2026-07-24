@@ -1,4 +1,5 @@
 use super::*;
+use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 
 #[cfg(test)]
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -14,67 +15,31 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
-        let d_d = alpha_pows_d.len();
-        let d_b = alpha_pows_b.len();
+        let alpha = alpha_pows_a
+            .get(1)
+            .or_else(|| alpha_pows_b.get(1))
+            .or_else(|| alpha_pows_d.get(1))
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        let weights = self.materialize_setup_index_weights(alpha)?;
+        let base_d = self.projection_geometry.base_ring_dim();
+        let base_pows = alpha_pows_d.get(..base_d).ok_or(AkitaError::InvalidProof)?;
+        let view = setup
+            .shared_matrix
+            .ring_view_dyn(1, self.required(), base_d)?;
+        let row = view.row_flat(0)?;
         let mut acc = E::zero();
-        if self.d_rows != 0 {
-            let d_view =
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
-            for group in &self.groups {
-                for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
-                    if row_weight.is_zero() {
-                        continue;
-                    }
-                    let row = d_view.row_flat(row_idx)?;
-                    acc += evaluate_weighted_setup_row::<F, E>(
-                        row,
-                        group.d_col_range.start,
-                        &group.e_eq_slice,
-                        row_weight,
-                        alpha_pows_d,
-                    )?;
-                }
+        for (setup_idx, &weight) in weights.iter().enumerate() {
+            if !weight.is_zero() {
+                let start = setup_idx
+                    .checked_mul(base_d)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let end = start.checked_add(base_d).ok_or(AkitaError::InvalidProof)?;
+                let ring = row.get(start..end).ok_or(AkitaError::InvalidProof)?;
+                acc += weight * eval_flat_ring_at_pows_fast::<F, E>(ring, base_pows);
             }
         }
-
-        for group in &self.groups {
-            let a_view = setup
-                .shared_matrix
-                .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
-            for (row_idx, &row_weight) in group.a_row_weights.iter().enumerate() {
-                if row_weight.is_zero() {
-                    continue;
-                }
-                let row = a_view.row_flat(row_idx)?;
-                acc += evaluate_weighted_setup_row::<F, E>(
-                    row,
-                    0,
-                    &group.z_eq_slice,
-                    row_weight,
-                    alpha_pows_a,
-                )?;
-            }
-
-            let b_view = setup
-                .shared_matrix
-                .ring_view_dyn(group.n_b, group.t_cols, d_b)?;
-            for (row_idx, &row_weight) in group.b_weights.iter().enumerate() {
-                if row_weight.is_zero() {
-                    continue;
-                }
-                let row = b_view.row_flat(row_idx)?;
-                acc += evaluate_weighted_setup_row::<F, E>(
-                    row,
-                    0,
-                    &group.t_eq_slice,
-                    row_weight,
-                    alpha_pows_b,
-                )?;
-            }
-        }
-
+        let _ = (alpha_pows_a, alpha_pows_b, d_a);
         Ok(acc)
     }
 }

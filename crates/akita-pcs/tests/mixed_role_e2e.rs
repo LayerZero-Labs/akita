@@ -1,30 +1,27 @@
-// MERGE-FLAG(#314<->317): disabled during the Stage-2=#314 / schedule=317 merge.
-// This relation/Stage-2 eval test targets an API that no longer exists after the
-// merge (317's compute_relation_weight_evals / eval_at_point, or #314's Schedule/folds).
-// Re-derive against the merged relation_range_image Stage-2 API before re-enabling.
-#![cfg(any())]
-
 //! Direct-setup E2E coverage for mixed commitment-role ring dimensions.
 //!
 //! The root fold uses `d_a/d_b/d_d = 128/64/32`; later folds retain the
-//! shipped D128 schedule. The proof is committed, produced, and verified only
-//! through the public PCS API.
+//! shipped D128 schedule. Recursive setup offload intentionally requires
+//! uniform predecessor role dimensions, so this fixture exercises the
+//! supported mixed-role path: direct root setup contraction followed by the
+//! ordinary recursive fold suffix. The proof is committed, produced,
+//! serialized, and verified only through the public PCS API.
 
 #![allow(missing_docs)]
 
 mod common;
 
-use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
+use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
-use akita_types::sis::{min_secure_rank, SisTableKey};
+use akita_types::sis::SisTableKey;
 use akita_types::{
-    intermediate_w_ring_element_count_with_counts_bits, level_proof_bytes,
-    validate_schedule_ring_dims, AjtaiKeyParams, AkitaScheduleLookupKey, CommitmentRingDims,
-    NextWitnessBindingPolicy, OpeningClaimsLayout, PolynomialGroupLayout, RelationMatrixRowLayout,
-    Schedule,
+    intermediate_w_ring_element_count_with_counts_bits, validate_schedule_ring_dims,
+    AkitaBatchedProof, AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule,
+    OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 use common::*;
 
@@ -43,82 +40,85 @@ const TRANSCRIPT_LABEL: &[u8] = b"test/mixed_role_e2e";
 #[derive(Clone, Copy, Debug, Default)]
 struct MixedRoleRoot;
 
-fn retarget_key(key: &AjtaiKeyParams, ring_dimension: usize) -> Result<AjtaiKeyParams, AkitaError> {
+fn retarget_matrix_shape(
+    key: SisTableKey,
+    input_width: usize,
+    ring_dimension: usize,
+) -> Result<(SisTableKey, usize), AkitaError> {
+    if ring_dimension == 0 || !D.is_multiple_of(ring_dimension) {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-role matrix dimension must divide the setup envelope".into(),
+        ));
+    }
     let column_scale = D.checked_div(ring_dimension).ok_or_else(|| {
-        AkitaError::InvalidSetup("mixed-role key dimension must divide the envelope".into())
+        AkitaError::InvalidSetup("mixed-role matrix dimension must divide the envelope".into())
     })?;
-    let col_len = key
-        .col_len()
+    let input_width = input_width
         .checked_mul(column_scale)
-        .ok_or_else(|| AkitaError::InvalidSetup("mixed-role key width overflow".into()))?;
-    let table_key = SisTableKey {
-        ring_dimension: ring_dimension as u32,
-        ..key.sis_table_key()
-    };
-    let row_len = min_secure_rank(table_key, col_len as u64).ok_or_else(|| {
-        AkitaError::InvalidSetup("mixed-role key is outside the audited SIS table".into())
-    })?;
-    AjtaiKeyParams::try_new(
-        key.security_policy(),
-        table_key.table_digest,
-        key.sis_modulus_profile(),
-        table_key.role,
-        row_len,
-        col_len,
-        key.coeff_linf_bound(),
-        ring_dimension,
-    )
+        .ok_or_else(|| AkitaError::InvalidSetup("mixed-role matrix width overflow".into()))?;
+    Ok((
+        SisTableKey {
+            ring_dimension: ring_dimension as u32,
+            ..key
+        },
+        input_width,
+    ))
 }
 
-fn mixed_role_schedule(num_vars: usize, num_polynomials: usize) -> Result<Schedule, AkitaError> {
+fn retarget_outer_matrix(
+    matrix: &OuterCommitMatrixParams,
+    ring_dimension: usize,
+) -> Result<OuterCommitMatrixParams, AkitaError> {
+    let (key, input_width) =
+        retarget_matrix_shape(matrix.sis_table_key(), matrix.input_width(), ring_dimension)?;
+    OuterCommitMatrixParams::try_new_with_min_rank(key, input_width)
+}
+
+fn retarget_open_matrix(
+    matrix: &OpenCommitMatrixParams,
+    ring_dimension: usize,
+) -> Result<OpenCommitMatrixParams, AkitaError> {
+    let (key, input_width) =
+        retarget_matrix_shape(matrix.sis_table_key(), matrix.input_width(), ring_dimension)?;
+    OpenCommitMatrixParams::try_new_with_min_rank(key, input_width)
+}
+
+fn mixed_role_schedule(
+    num_vars: usize,
+    num_polynomials: usize,
+) -> Result<FoldSchedule, AkitaError> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
     let mut schedule = Envelope::runtime_schedule(key)?;
-    let root = schedule
-        .folds
-        .first_mut()
-        .ok_or_else(|| AkitaError::InvalidSetup("mixed-role fixture needs a root fold".into()))?;
-    root.params.b_key = retarget_key(&root.params.b_key, ROLE_DIMS.d_b())?;
-    root.params.d_key = retarget_key(&root.params.d_key, ROLE_DIMS.d_d())?;
-    root.params.stamp_role_dims_from_keys();
-
     let field_bits = Envelope::decomposition().field_bits();
-    let next_w_len = intermediate_w_ring_element_count_with_counts_bits(
-        field_bits,
-        &schedule.folds[0].params,
-        num_polynomials,
-        1,
-    )?
-    .checked_mul(schedule.folds[1].params.d_a())
-    .ok_or_else(|| AkitaError::InvalidSetup("mixed-role next witness length overflow".into()))?;
-    schedule.folds[0].next_w_len = next_w_len;
-    schedule.folds[1].current_w_len = next_w_len;
 
-    let root = &schedule.folds[0];
-    let next = schedule.folds.get(1).ok_or_else(|| {
-        AkitaError::InvalidSetup("mixed-role fixture needs a recursive successor".into())
-    })?;
-    let binding = if schedule.folds.len() == 2 {
-        NextWitnessBindingPolicy::TerminalInnerState
+    {
+        let root = &mut schedule.root.params.final_group.commitment;
+        root.outer_commit_matrix =
+            retarget_outer_matrix(&root.outer_commit_matrix, ROLE_DIMS.d_b())?;
+        root.open_commit_matrix = retarget_open_matrix(&root.open_commit_matrix, ROLE_DIMS.d_d())?;
+        schedule.root.params.open_commit_matrix = root.open_commit_matrix.clone();
+    }
+
+    let root = &schedule.root.params.final_group.commitment;
+    let successor_d = schedule
+        .recursive_folds
+        .first()
+        .map_or(schedule.terminal.params.witness.d_a(), |step| {
+            step.params.witness.d_a()
+        });
+    let next_w_len =
+        intermediate_w_ring_element_count_with_counts_bits(field_bits, root, num_polynomials, 1)?
+            .checked_mul(successor_d)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("mixed-role next witness length overflow".into())
+            })?;
+    schedule.root.output_witness_len = next_w_len;
+    if let Some(successor) = schedule.recursive_folds.first_mut() {
+        successor.input_witness_len = next_w_len;
     } else {
-        NextWitnessBindingPolicy::OuterCommitment
-    };
-    let challenge_field_bits = field_bits * policy_of::<Envelope>().chal_ext_degree as u32;
-    schedule.folds[0].level_bytes = level_proof_bytes(
-        field_bits,
-        challenge_field_bits,
-        &root.params,
-        Some(&next.params),
-        root.next_w_len,
-        RelationMatrixRowLayout::WithDBlock,
-        Some(binding),
-    )?;
-    schedule.total_bytes = schedule
-        .folds
-        .iter()
-        .map(|fold| fold.level_bytes)
-        .try_fold(0usize, |total, bytes| total.checked_add(bytes))
-        .and_then(|total| total.checked_add(schedule.terminal.terminal_bytes))
-        .ok_or_else(|| AkitaError::InvalidSetup("mixed-role proof size overflow".into()))?;
+        schedule.terminal.input_witness_len = next_w_len;
+    }
+    schedule.validate_structure()?;
     Ok(schedule)
 }
 
@@ -153,7 +153,9 @@ impl CommitmentConfig for MixedRoleRoot {
         Envelope::basis_range()
     }
 
-    fn get_params_for_prove(opening_batch: &OpeningClaimsLayout) -> Result<Schedule, AkitaError> {
+    fn get_params_for_prove(
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
         mixed_role_schedule(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
@@ -161,21 +163,50 @@ impl CommitmentConfig for MixedRoleRoot {
     }
 }
 
+fn verify_proof(
+    proof: &AkitaBatchedProof<F, F>,
+    verifier_setup: &akita_types::AkitaVerifierSetup<F>,
+    point: &[F],
+    opening: F,
+    commitment: &akita_types::Commitment<F>,
+) -> Result<(), AkitaError> {
+    let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
+    Scheme::batched_verify(
+        proof,
+        verifier_setup,
+        &mut verifier_transcript,
+        verify_input(point, &[opening], commitment),
+        BasisMode::Lagrange,
+    )
+}
+
 #[test]
-fn direct_setup_mixed_role_root_proves_and_verifies() {
+fn direct_setup_mixed_role_root_proves_serializes_and_verifies() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
         let schedule = mixed_role_schedule(NUM_VARS, 1).expect("mixed-role schedule");
-        let root = &schedule.folds[0].params;
+        let root = &schedule.root.params.final_group.commitment;
         assert_eq!(root.role_dims(), ROLE_DIMS);
         assert_eq!(
-            root.setup_contribution_mode,
-            akita_types::SetupContributionMode::Direct
+            schedule
+                .recursive_folds
+                .first()
+                .map_or(akita_types::SetupContributionMode::Direct, |successor| {
+                    successor.params.predecessor_setup_contribution_mode()
+                }),
+            akita_types::SetupContributionMode::Direct,
         );
         assert_eq!(ROLE_DIMS.common_relation_coeff_count(), 32);
         assert_eq!(
-            ROLE_DIMS.common_relation_witness_coeff_count(schedule.folds[1].params.d_a()),
+            ROLE_DIMS.common_relation_witness_coeff_count(
+                schedule
+                    .recursive_folds
+                    .first()
+                    .map_or(schedule.terminal.params.witness.d_a(), |step| {
+                        step.params.witness.d_a()
+                    })
+            ),
             32
         );
 
@@ -199,25 +230,29 @@ fn direct_setup_mixed_role_root_proves_and_verifies() {
         let (commitment, hint) =
             Scheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
-        let poly_refs = [&poly];
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         let proof = Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, hint),
+            prove_input(&point, &[&poly], &commitment, hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
         .expect("mixed-role prove");
+        verify_proof(&proof, &verifier_setup, &point, opening, &commitment)
+            .expect("verify in-memory mixed-role proof");
 
-        let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
-        Scheme::batched_verify(
-            &proof,
-            &verifier_setup,
-            &mut verifier_transcript,
-            verify_input(&point, &[opening], &commitment),
-            BasisMode::Lagrange,
+        let mut bytes = Vec::new();
+        proof
+            .serialize_compressed(&mut bytes)
+            .expect("serialize mixed-role proof");
+        let decoded = AkitaBatchedProof::deserialize_compressed(
+            &mut std::io::Cursor::new(&bytes),
+            &proof.shape(),
         )
-        .expect("mixed-role verify");
+        .expect("deserialize mixed-role proof");
+        assert_eq!(decoded, proof, "mixed-role proof serialization roundtrip");
+        verify_proof(&decoded, &verifier_setup, &point, opening, &commitment)
+            .expect("verify decoded mixed-role proof");
     });
 }
