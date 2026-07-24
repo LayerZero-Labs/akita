@@ -61,6 +61,9 @@ profile-ci = [
 # configuration. Run with `--no-default-features` so unrelated schedule tables
 # and profile-mode monomorphizations stay out of the binary.
 profile-onehot-fp128-d64 = ["akita-config/schedules-fp128-d64-onehot"]
+schedules-fp128-d64-dense-multi-chunk = [
+  "akita-config/schedules-fp128-d64-dense-multi-chunk",
+]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",
