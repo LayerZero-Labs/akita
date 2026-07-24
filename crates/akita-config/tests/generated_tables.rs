@@ -1,13 +1,13 @@
-//! Guard test: for every `(family, key)` covered by the shipped schedule
+//! Guard test: for every `(family, key)` covered by the generated schedule
 //! tables, the **table-hit** expansion must reproduce exactly the schedule
 //! the pure DP regenerates **on this branch**.
 //!
-//! This compares shipped tables against the current planner DP only — it does
+//! This compares generated tables against the current planner DP only — it does
 //! **not** detect divergence from historical `main` (expected when bundled
 //! planner changes such as the K256 one-hot migration regenerate tables).
 //!
 //! Coverage is metadata-driven: every entry in
-//! [`akita_config::generated_families::ALL_GENERATED_FAMILIES`] is checked,
+//! [`akita_planner::generated_families::ALL_GENERATED_FAMILIES`] is checked,
 //! so adding a new family to the generator picks it up here automatically
 //! (no per-family handwritten row mirror).
 //!
@@ -35,20 +35,20 @@
 
 #![allow(missing_docs)]
 
-use akita_config::generated_families::{
-    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
-};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::CommitmentConfig;
 use akita_field::AkitaError;
+use akita_planner::generated_families::{
+    emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
+};
 use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
-use akita_planner::generated::table_entry;
+use akita_schedules::generated::table_entry;
 #[cfg(feature = "all-schedules")]
-use akita_planner::{
+use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
     validate_generated_schedule_table,
 };
@@ -102,7 +102,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
 #[cfg(feature = "all-schedules")]
 fn assert_table_hit(
     module_name: &str,
-    catalog: &akita_planner::GeneratedScheduleTable,
+    catalog: &akita_schedules::GeneratedScheduleTable,
     keys: &[PolynomialGroupLayout],
 ) {
     if keys.is_empty() {
@@ -113,7 +113,7 @@ fn assert_table_hit(
         .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
     assert!(
         hit,
-        "family {module_name} must have at least one shipped-table key hit (non-vacuous catalog guard)"
+        "family {module_name} must have at least one generated-table key hit (non-vacuous catalog guard)"
     );
 }
 
@@ -121,7 +121,7 @@ fn assert_table_hit(
 fn prepare_family_catalog<Cfg: CommitmentConfig>(
     module_name: &str,
     keys: &[PolynomialGroupLayout],
-) -> akita_planner::GeneratedScheduleTable {
+) -> akita_schedules::GeneratedScheduleTable {
     let catalog = Cfg::schedule_catalog().unwrap_or_else(|| {
         panic!("family {module_name} must expose schedule_catalog() under all-schedules")
     });
@@ -143,7 +143,7 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 #[test]
 fn catalog_identity_rejects_non_v1_protocol_epoch() {
-    let mut catalog = fp128::D64Dense::schedule_catalog().expect("shipped catalog");
+    let mut catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
         &catalog,
@@ -159,8 +159,8 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 #[test]
 fn catalog_identity_rejects_planner_policy_changes() {
     let policy = policy_of::<fp128::D64Dense>();
-    let catalog = fp128::D64Dense::schedule_catalog().expect("shipped catalog");
-    let assert_rejected = |label: &str, mutated: akita_planner::GeneratedScheduleTable| {
+    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let assert_rejected = |label: &str, mutated: akita_schedules::GeneratedScheduleTable| {
         let error = validate_catalog_identity(
             &mutated,
             &policy,
@@ -176,7 +176,7 @@ fn catalog_identity_rejects_planner_policy_changes() {
 
     let mut mutated = catalog;
     mutated.identity.selection_policy =
-        akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
+        akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope;
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;
@@ -211,7 +211,7 @@ fn recursive_companion_catalogs_contain_only_grouped_keys() {
 fn family_catalog(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
-) -> akita_planner::GeneratedScheduleTable {
+) -> akita_schedules::GeneratedScheduleTable {
     match family.module_name {
         "fp128_d128_dense" => prepare_family_catalog::<fp128::D128Dense>(family.module_name, keys),
         "fp128_d128_onehot" => {
@@ -266,7 +266,7 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "family {module_name} must have shipped grouped-table hits for every enumerated multi-group key; first missing keys: {}",
+        "family {module_name} must have generated grouped-table hits for every enumerated multi-group key; first missing keys: {}",
         missing.join("\n  ")
     );
 }
@@ -294,6 +294,18 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, keys),
+        "fp128_d64_onehot_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_multi_chunk_w2r2" => assert_group_batch_table_hits::<
+            fp128::D64OneHotMultiChunkW2R2,
+        >(family.module_name, keys),
+        "fp128_d64_onehot_multi_chunk_w4r2" => assert_group_batch_table_hits::<
+            fp128::D64OneHotMultiChunkW4R2,
+        >(family.module_name, keys),
+        "fp128_d64_dense_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::D64DenseMultiChunk>(family.module_name, keys)
+        }
         "fp64_d128_dense" => {
             assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, keys)
         }
@@ -316,7 +328,7 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
 #[cfg(feature = "all-schedules")]
 fn table_backed_group_batch_schedule(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
     if let Some(entry) = table_entry(catalog, key) {
@@ -341,7 +353,7 @@ fn table_backed_group_batch_schedule<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 fn resolve_family_group_batch_schedule(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
     table_backed_group_batch_schedule(family, catalog, key)
@@ -366,6 +378,18 @@ fn resolve_family_group_batch_schedule(
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
         }
+        "fp128_d64_onehot_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(key)
+        }
+        "fp128_d64_onehot_multi_chunk_w2r2" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW2R2>(key)
+        }
+        "fp128_d64_onehot_multi_chunk_w4r2" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW4R2>(key)
+        }
+        "fp128_d64_dense_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::D64DenseMultiChunk>(key)
+        }
         "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(key),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(key),
         "fp64_d256_onehot" => table_backed_group_batch_schedule::<fp64::D256OneHot>(key),
@@ -378,7 +402,7 @@ fn resolve_family_group_batch_schedule(
 #[cfg(feature = "all-schedules")]
 fn table_backed_expanded(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, akita_field::AkitaError> {
     let lookup_key = AkitaScheduleLookupKey::single(key);
@@ -463,7 +487,7 @@ fn compare_schedule_results(
 #[cfg(feature = "all-schedules")]
 fn compare_scalar_key(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Option<Mismatch> {
     compare_schedule_results(
@@ -483,7 +507,7 @@ fn compare_scalar_key(family: &GeneratedFamily, key: PolynomialGroupLayout) -> O
 fn check_scalar_keys(
     family: &GeneratedFamily,
     keys: &[PolynomialGroupLayout],
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     into: &mut Vec<Mismatch>,
 ) {
     let workers = worker_count();
@@ -561,7 +585,7 @@ fn check_scalar_keys(
 #[cfg(feature = "all-schedules")]
 fn compare_group_batch_key(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     key: &AkitaScheduleLookupKey,
 ) -> Option<Mismatch> {
     let table_backed =
@@ -621,7 +645,7 @@ fn compare_group_batch_key(
 #[cfg(feature = "all-schedules")]
 fn check_group_batch_keys(
     family: &GeneratedFamily,
-    catalog: akita_planner::GeneratedScheduleTable,
+    catalog: akita_schedules::GeneratedScheduleTable,
     keys: &[AkitaScheduleLookupKey],
     into: &mut Vec<Mismatch>,
 ) {
@@ -745,11 +769,10 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
 }
 
 fn regen_hint() -> &'static str {
-    "cargo run --release -p akita-config --bin gen_schedule_tables -- \
-     crates/akita-schedules/src/generated"
+    "scripts/generate-schedule-tables.sh"
 }
 
-/// The shipped tables must expand to exactly what the key-shaped DP produces.
+/// The generated tables must expand to exactly what the key-shaped DP produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
 #[test]
@@ -781,7 +804,7 @@ fn generated_schedule_tables_match_key_planner() {
         "{count} schedule-table issue(s) disagree with key-shaped DP output.\n\
          Per-family counts:\n  {summary}\n\n\
          First issues:\n{preview}\n\
-         Regenerate the shipped tables with:\n  {hint}",
+         Regenerate the generated tables with:\n  {hint}",
         count = mismatches.len(),
         hint = regen_hint(),
     );

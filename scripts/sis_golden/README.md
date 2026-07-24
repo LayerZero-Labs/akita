@@ -219,9 +219,8 @@ cargo run -p akita-sis-estimator --release --features parallel \
 Regenerate all dependent schedule catalogs after the SIS table:
 
 ```bash
-cargo run --release -p akita-config --no-default-features \
-  --bin gen_schedule_tables -- crates/akita-schedules/src/generated
-cargo run --release -p akita-config --no-default-features \
+scripts/generate-schedule-tables.sh
+cargo run --release -p akita-planner --features catalog-gen \
   --bin gen_schedule_tables -- crates/akita-schedules/src/generated --wiring-only
 ```
 

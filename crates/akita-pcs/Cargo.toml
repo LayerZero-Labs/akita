@@ -61,6 +61,9 @@ profile-ci = [
 # configuration. Run with `--no-default-features` so unrelated schedule tables
 # and profile-mode monomorphizations stay out of the binary.
 profile-onehot-fp128-d64 = ["akita-config/schedules-fp128-d64-onehot"]
+schedules-fp128-d64-dense-multi-chunk = [
+  "akita-config/schedules-fp128-d64-dense-multi-chunk",
+]
 disk-persistence = ["akita-setup/disk-persistence"]
 logging-transcript = [
   "akita-transcript/logging-transcript",
@@ -94,6 +97,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", default-features =
   "test-support",
 ] }
 akita-planner = { version = "0.1.0", path = "../akita-planner" }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 rand = "0.8"
 rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", features = ["html_reports"] }

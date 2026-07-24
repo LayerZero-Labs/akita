@@ -1,6 +1,6 @@
 //! Catalog identity validation for generated schedule tables.
 //!
-//! Each shipped table embeds a [`GeneratedScheduleCatalogIdentity`] that must
+//! Each generated table embeds a [`GeneratedScheduleCatalogIdentity`] that must
 //! match the runtime [`PlannerPolicy`] and hook closures before lookup proceeds.
 //! Identity mismatch is a hard error; a row miss after validation falls back to
 //! the offline DP search.
@@ -153,7 +153,7 @@ struct CatalogIdentityExpectation {
 }
 
 impl CatalogIdentityExpectation {
-    /// The owned mirror of a shipped catalog's embedded identity.
+    /// The owned mirror of a generated catalog's embedded identity.
     fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
         Self {
             family_name: identity.family_name,

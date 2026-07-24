@@ -12,26 +12,24 @@ fi
 if [ "$#" -gt 0 ]; then
   forbidden=("$@")
 else
-  # Note: `akita-planner` is intentionally NOT forbidden here. The DP search now
-  # sits *below* `akita-config` (`akita-config → akita-planner`) and serves as a
-  # verifier-reachable runtime fallback, so it legitimately appears in the
-  # dependency tree of every config-consuming crate.
   case "${pkg}" in
     akita-verifier)
-      forbidden=(akita-prover akita-pcs)
+      forbidden=(akita-planner akita-prover akita-pcs)
       ;;
     akita-prover)
       forbidden=(akita-verifier akita-pcs)
       ;;
     akita-config)
-      forbidden=(akita-prover akita-verifier akita-pcs)
+      forbidden=(akita-planner akita-prover akita-verifier akita-pcs)
+      ;;
+    akita-schedules)
+      forbidden=(akita-planner akita-config akita-prover akita-verifier akita-setup akita-pcs)
       ;;
     akita-planner)
-      # `akita-planner` is the `Cfg`-free schedule owner and sits *below*
-      # `akita-config` in the inverted dependency arrow. It is verifier-reachable
-      # via the runtime DP fallback, so it must never pull in a config- or
-      # protocol-layer crate, which would undo the dependency inversion.
-      forbidden=(akita-config akita-prover akita-verifier akita-setup akita-pcs)
+      # `akita-planner` is offline-only. It may use `akita-config` behind its
+      # catalog-generation feature, but it must never pull in protocol-layer
+      # prover/verifier/setup crates.
+      forbidden=(akita-prover akita-verifier akita-setup akita-pcs)
       ;;
     akita-setup)
       forbidden=(akita-verifier akita-pcs)

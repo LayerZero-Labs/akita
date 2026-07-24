@@ -10,6 +10,7 @@
 //! opening), so a successful proof exercises the mix: chunked folds that also
 //! run the offloaded setup-contribution path.
 
+#![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
 
 mod common;
