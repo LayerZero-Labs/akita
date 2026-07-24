@@ -731,6 +731,7 @@ impl RingRelationProver {
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
+        let _grind_span = tracing::info_span!("fold_grind_sample").entered();
         let (grind_outputs, fold_grind_nonce) =
             fold_grind::sample_multi_group_fold_decompose_witnesses::<F, _, OB, T>(
                 opening_backend,
@@ -742,6 +743,7 @@ impl RingRelationProver {
                 None,
             )
             .map_err(|err| AkitaError::InvalidInput(format!("fold grind failed: {err:?}")))?;
+        drop(_grind_span);
         let mut group_challenges = Vec::with_capacity(num_groups);
         let mut group_z = Vec::with_capacity(num_groups);
         for output in grind_outputs {

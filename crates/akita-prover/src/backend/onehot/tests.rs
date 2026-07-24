@@ -1433,7 +1433,9 @@ fn shift_accumulate_throughput_probe() {
 
 #[test]
 fn merge_sweep_matches_bucketed_core_across_polys() {
-    use super::column_sweep::{column_sweep_core, column_sweep_core_merge, L2_TILE_BUDGET};
+    use super::column_sweep::{
+        column_sweep_core, column_sweep_core_merge, L2_TILE_BUDGET, MERGE_COL_CHUNK,
+    };
     use akita_field::unreduced::HasCommitAccum;
 
     type F = Prime128Offset275;
@@ -1491,6 +1493,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         active_a_cols,
         num_digits_inner,
         L2_TILE_BUDGET,
+        MERGE_COL_CHUNK,
     );
     let bucketed = column_sweep_core::<SingleChunkEntry, F, D>(
         &a_view,
@@ -1531,6 +1534,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         active_a_cols,
         num_digits_inner,
         3 * D * std::mem::size_of::<<F as HasCommitAccum>::CommitAccum>(),
+        5,
     );
     assert_eq!(
         merge_tiny_tiles, bucketed,

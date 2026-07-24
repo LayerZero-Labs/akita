@@ -347,9 +347,10 @@ where
     }
 }
 
-/// Number of A columns widened together by the merge sweep. 32 columns of
-/// wide rings is a 64 KB scratch buffer — L1-resident on every target core.
-const MERGE_COL_CHUNK: usize = 32;
+/// Number of A columns widened together by the merge sweep. 16 columns of
+/// wide rings is a 32 KB scratch buffer, leaving L1 room for the accumulator
+/// tile it shares the cache with.
+pub(super) const MERGE_COL_CHUNK: usize = 16;
 
 /// Split blocks whose shift-accumulation count exceeds `cap` into segments
 /// that each respect it, tracking each segment's parent block.
@@ -403,6 +404,7 @@ pub(super) fn column_sweep_core_merge<E, F, const D: usize>(
     active_a_cols: usize,
     num_digits_inner: usize,
     tile_budget: usize,
+    col_chunk: usize,
 ) -> Vec<Vec<CyclotomicRing<F, D>>>
 where
     E: OneHotEntry,
@@ -434,7 +436,7 @@ where
             result.resize_with(my_count, || Vec::with_capacity(n_a));
 
             let mut chunk_buf: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
-                vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
+                vec![WideCyclotomicRing::zero(); col_chunk];
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
@@ -452,8 +454,8 @@ where
                     }
                     cursors.fill(0);
 
-                    for chunk_start in (0..active_a_cols).step_by(MERGE_COL_CHUNK) {
-                        let chunk_end = (chunk_start + MERGE_COL_CHUNK).min(active_a_cols);
+                    for chunk_start in (0..active_a_cols).step_by(col_chunk) {
+                        let chunk_end = (chunk_start + col_chunk).min(active_a_cols);
 
                         // Skip widening chunks no block has entries in.
                         let live = tile_blocks.iter().zip(&cursors).any(|(entries, &cur)| {
@@ -553,13 +555,20 @@ where
                 .collect()
         } else {
             let (sub_blocks, parents) = split_oversized_blocks(&flat, F::MAX_COMMIT_ACCUMULATIONS);
+            // Keep the accumulator tile plus the widened-column chunk inside
+            // L1: the accumulators are read-modify-written for every column
+            // chunk, so pushing them to L2 costs ~1.5x per accumulate. Extra
+            // tiles re-stream A, but the fused batch makes that negligible.
+            let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
+            let merge_tile_budget = (accum_bytes * 32).min(L2_TILE_BUDGET);
             let sub_out = column_sweep_core_merge::<E, F, D>(
                 a_view,
                 &sub_blocks,
                 n_a,
                 active_a_cols,
                 num_digits_inner,
-                L2_TILE_BUDGET,
+                merge_tile_budget,
+                MERGE_COL_CHUNK,
             );
             let mut merged: Vec<Vec<CyclotomicRing<F, D>>> = vec![Vec::new(); num_flat];
             for (parent, rows) in parents.into_iter().zip(sub_out) {
