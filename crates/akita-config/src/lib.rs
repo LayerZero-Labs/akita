@@ -23,7 +23,7 @@ use akita_types::{
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
-/// and the shipped schedule catalog.
+/// and the generated schedule catalog.
 ///
 /// The companion shares the base's field, ring dimension, decomposition,
 /// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
@@ -315,10 +315,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         false
     }
 
-    /// Optional shipped schedule catalog for this preset.
+    /// Optional generated schedule catalog for this preset.
     ///
     /// Presets with generated tables override this when the matching
-    /// `schedules-*` feature is enabled. The default is `None` (DP-only).
+    /// `schedules-*` feature is enabled. The default is `None`, so runtime
+    /// schedule resolution rejects catalog-backed requests.
     fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         None
     }

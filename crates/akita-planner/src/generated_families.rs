@@ -7,7 +7,7 @@
 //! artifact and the regression guard.
 //!
 //! This list is the one place a preset `Cfg` type is bound to its regen
-//! hook and shipped table. It is behind the `catalog-gen` feature because
+//! hook and generated table. It is behind the `catalog-gen` feature because
 //! that offline path is allowed to name `akita-config` presets. Normal
 //! runtime callers consume the generated tables from `akita-schedules`.
 
@@ -20,12 +20,9 @@ use akita_types::{
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
-use akita_config::{
-    policy_of, tensor_verifier, CommitmentConfig, PrecommittedCommitmentConfig,
-    RecursiveCommitmentConfig,
-};
+use akita_config::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
 
-/// Default batched opening sizes emitted for every Akita shipped family.
+/// Default batched opening sizes emitted for every Akita generated family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 2, 4];
 
 /// Maximum number of precommitted groups emitted for multi-group-root generated tables.
@@ -52,17 +49,17 @@ pub struct GeneratedFamily {
     pub max_num_vars: usize,
     /// Opening-batch sizes (`num_polys`) enumerated for this family.
     pub num_polys: &'static [usize],
-    /// Pure DP regeneration that ignores any shipped table
+    /// Pure DP regeneration that ignores any generated table
     /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
-    /// Pure multi-group DP regeneration that ignores any shipped table.
+    /// Pure multi-group DP regeneration that ignores any generated table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
-    /// Whether this family ships multi-group-root rows in its generated table.
+    /// Whether this family emits multi-group-root rows in its generated table.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
     pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
     /// `Cfg::runtime_schedule(key)` — strict table-backed runtime resolution.
-    /// Used by diagnostic comparisons against the shipped table.
+    /// Used by diagnostic comparisons against the generated table.
     pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub policy: fn() -> PlannerPolicy,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -110,7 +107,7 @@ pub fn emitted_scalar_keys(
     }
 }
 
-/// Pure DP regeneration for `Cfg` — never consults the shipped table.
+/// Pure DP regeneration for `Cfg` — never consults the generated table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     let planned = find_group_batch_schedule(
         &AkitaScheduleLookupKey::single(key),
@@ -122,7 +119,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     Ok(planned.schedule)
 }
 
-/// Pure multi-group DP regeneration for `Cfg` — never consults the shipped table.
+/// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
 fn regen_group_batch<Cfg: CommitmentConfig>(
     key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
@@ -229,10 +226,16 @@ fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupParams, AkitaError> {
     key.validate()?;
-    let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-    <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-        &opening_batch,
-    )
+    let mut policy = policy_of::<Cfg>().direct_only();
+    policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
+    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
+    let planned = find_group_batch_schedule(
+        &AkitaScheduleLookupKey::single(*key),
+        &policy,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+    Ok(planned.schedule.root.params.final_group.commitment)
 }
 
 fn key_within_setup_capacity(
@@ -425,7 +428,7 @@ pub fn emit_spec_for_family(
     })
 }
 
-/// Every `Cfg` that ships with a generated schedule table.
+/// Every `Cfg` that has a generated schedule table.
 ///
 /// Adding a new preset with a generated table requires adding a row
 /// here; both the table emitter and the drift-guard test pick it up

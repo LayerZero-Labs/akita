@@ -1,8 +1,8 @@
-//! Guard test: for every `(family, key)` covered by the shipped schedule
+//! Guard test: for every `(family, key)` covered by the generated schedule
 //! tables, the **table-hit** expansion must reproduce exactly the schedule
 //! the pure DP regenerates **on this branch**.
 //!
-//! This compares shipped tables against the current planner DP only — it does
+//! This compares generated tables against the current planner DP only — it does
 //! **not** detect divergence from historical `main` (expected when bundled
 //! planner changes such as the K256 one-hot migration regenerate tables).
 //!
@@ -113,7 +113,7 @@ fn assert_table_hit(
         .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
     assert!(
         hit,
-        "family {module_name} must have at least one shipped-table key hit (non-vacuous catalog guard)"
+        "family {module_name} must have at least one generated-table key hit (non-vacuous catalog guard)"
     );
 }
 
@@ -143,7 +143,7 @@ fn prepare_family_catalog<Cfg: CommitmentConfig>(
 #[cfg(feature = "all-schedules")]
 #[test]
 fn catalog_identity_rejects_non_v1_protocol_epoch() {
-    let mut catalog = fp128::D64Dense::schedule_catalog().expect("shipped catalog");
+    let mut catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
     catalog.identity.protocol_epoch -= 1;
     let error = validate_catalog_identity(
         &catalog,
@@ -159,7 +159,7 @@ fn catalog_identity_rejects_non_v1_protocol_epoch() {
 #[test]
 fn catalog_identity_rejects_planner_policy_changes() {
     let policy = policy_of::<fp128::D64Dense>();
-    let catalog = fp128::D64Dense::schedule_catalog().expect("shipped catalog");
+    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
     let assert_rejected = |label: &str, mutated: akita_schedules::GeneratedScheduleTable| {
         let error = validate_catalog_identity(
             &mutated,
@@ -266,7 +266,7 @@ fn assert_group_batch_table_hits<Cfg: CommitmentConfig>(
         .collect::<Vec<_>>();
     assert!(
         missing.is_empty(),
-        "family {module_name} must have shipped grouped-table hits for every enumerated multi-group key; first missing keys: {}",
+        "family {module_name} must have generated grouped-table hits for every enumerated multi-group key; first missing keys: {}",
         missing.join("\n  ")
     );
 }
@@ -769,11 +769,10 @@ fn check_family(family: &GeneratedFamily, into: &mut Vec<Mismatch>) {
 }
 
 fn regen_hint() -> &'static str {
-    "cargo run --release -p akita-config --bin gen_schedule_tables -- \
-     crates/akita-schedules/src/generated"
+    "scripts/generate-schedule-tables.sh"
 }
 
-/// The shipped tables must expand to exactly what the key-shaped DP produces.
+/// The generated tables must expand to exactly what the key-shaped DP produces.
 /// Rolled into one test so the panic message can summarize per-family
 /// mismatch counts.
 #[test]
@@ -805,7 +804,7 @@ fn generated_schedule_tables_match_key_planner() {
         "{count} schedule-table issue(s) disagree with key-shaped DP output.\n\
          Per-family counts:\n  {summary}\n\n\
          First issues:\n{preview}\n\
-         Regenerate the shipped tables with:\n  {hint}",
+         Regenerate the generated tables with:\n  {hint}",
         count = mismatches.len(),
         hint = regen_hint(),
     );

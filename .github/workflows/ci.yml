@@ -26,6 +26,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           components: rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -58,7 +60,9 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
-          components: clippy
+          components: clippy,rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Clippy (transparent default features)
         run: cargo clippy --all --all-targets --release --no-default-features --features parallel,disk-persistence -- -D warnings
       - name: Clippy (no default features)
@@ -76,6 +80,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
+        with:
+          components: rustfmt
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-machete
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # cargo-machete
         with:
@@ -119,12 +128,15 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           cache: false
+          components: rustfmt
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: ci-test-release
           add-job-id-key: false
           cache-on-failure: true
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Install cargo-nextest
         uses: taiki-e/install-action@50414676f9f5d50a65992c6dd2ed02641263226c # carg-nextest
         with:
@@ -168,12 +180,15 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a0b538fa0b742a6aa35d6e2c169b4bd06d225a98 # v1
         with:
           cache: false
+          components: rustfmt
       - name: Cache Rust build artifacts
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           shared-key: ci-test-all-schedules-drift
           add-job-id-key: false
           cache-on-failure: true
+      - name: Generate schedule tables
+        run: scripts/generate-schedule-tables.sh
       - name: Drift guard (all-schedules)
         run: |
           cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner

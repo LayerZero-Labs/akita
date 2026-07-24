@@ -3,7 +3,7 @@
 //! These cover the behaviors the planner refactor introduces:
 //!
 //! - **Table-miss rejection:** `Cfg::runtime_schedule` rejects a key that no
-//!   shipped table contains.
+//!   generated table contains.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
 //!   embedded in generated catalog identities (single source of truth).
 //! - **No-panic boundary:** adversarial-but-bounded keys through
@@ -16,7 +16,7 @@ use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-/// A one-point 3-poly key that no shipped table carries (shipped tables only
+/// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
 /// must reject it.
 fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
@@ -51,8 +51,8 @@ fn assert_schedule_eq(
 fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
-    // The shipped table must NOT carry this key — otherwise the test is not
-    // exercising the catalog-miss path. Shipped tables only hold singleton /
+    // The generated table must NOT carry this key — otherwise the test is not
+    // exercising the catalog-miss path. Generated tables only hold singleton /
     // 2-batched / 4-batched scalar keys; this 3-poly key misses every table.
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
