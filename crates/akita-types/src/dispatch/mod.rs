@@ -178,8 +178,8 @@ mod tests {
     }
 
     #[test]
-    fn inner_dispatch_fp128_accepts_d64_d128_d256_only() {
-        for d in [64usize, 128, 256] {
+    fn inner_dispatch_fp128_accepts_through_d512() {
+        for d in [64usize, 128, 256, 512] {
             assert_eq!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -191,7 +191,7 @@ mod tests {
                 d
             );
         }
-        for d in [32usize, 512] {
+        for d in [32usize, 1024] {
             assert!(
                 dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -325,5 +325,12 @@ mod tests {
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_b).is_err());
+
+        let fp128_high_a = CommitmentRingDims {
+            inner: 512,
+            outer: 256,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
     }
 }
