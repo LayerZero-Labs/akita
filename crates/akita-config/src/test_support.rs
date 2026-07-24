@@ -804,6 +804,7 @@ where
 /// set the A-band dims (e.g. 256/128/64); `ROOT_BD`/`L1_BD` compress B/D at
 /// L0/L1. `Root::D` sets the setup generation ring dimension.
 #[derive(Debug)]
+#[allow(clippy::type_complexity)]
 pub struct ThreeBandRoleSwitchConfig<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize>(
     PhantomData<fn() -> (Root, Mid, Suffix)>,
 );
