@@ -308,6 +308,7 @@ fn assert_invalid_proof<T: core::fmt::Debug>(
 /// `num_chunks = 8` on the two leading fold levels (NV=16 ⇒ 64 blocks each).
 /// The single prover assembles the modified `[zᵢ|eᵢ|t̂ᵢ]…|r̂` relation and the
 /// verifier evaluates the chunked row-MLE; the proof must verify.
+#[cfg(feature = "schedules-fp128-d64-dense-multi-chunk")]
 #[test]
 fn chunked_multi_chunk_prove_verify() {
     init_rayon_pool();

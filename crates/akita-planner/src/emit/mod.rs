@@ -17,8 +17,9 @@ use akita_types::{
     RootSource, SetupPrefixSlotId, WitnessPartition,
 };
 
-use crate::catalog_identity::expected_catalog_identity;
-use crate::generated::{
+use crate::PlannerPolicy;
+use akita_schedules::expected_catalog_identity;
+use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
@@ -26,7 +27,6 @@ use crate::generated::{
     GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
     GeneratedWitnessPartition,
 };
-use crate::PlannerPolicy;
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -523,8 +523,7 @@ fn materialized_entries(
             }
         }
     }
-    entries
-        .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
+    entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
     Ok(entries)
 }
 
@@ -564,7 +563,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
         emit_schedule_entry(&mut out, &key, &schedule)?;
         memory_entries.push(generated_entry(&key, &schedule));
     }
-    debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(
+    debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries
     ));
 

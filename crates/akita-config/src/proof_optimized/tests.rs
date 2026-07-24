@@ -5,9 +5,9 @@ use crate::proof_optimized::{fp128, fp32};
 #[cfg(feature = "schedules-default")]
 use crate::CommitmentConfig;
 #[cfg(feature = "schedules-default")]
-use akita_planner::{generated::GeneratedScheduleTable, schedule_from_entry};
-#[cfg(feature = "schedules-default")]
 use akita_schedules::{fp32_d128_onehot_table, fp32_d256_onehot_table};
+#[cfg(feature = "schedules-default")]
+use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
 use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, PolynomialGroupLayout};
 

@@ -15,7 +15,7 @@ use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
-use crate::schedule_params::optimize_fold_challenge_shape;
+use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -276,7 +276,7 @@ impl GeneratedCommittedGroup {
     /// # Errors
     ///
     /// Returns an error when the stored ring dimension disagrees with the
-    /// policy, bucket/width resolution fails, or a shipped rank fails its SIS
+    /// policy, bucket/width resolution fails, or a generated rank fails its SIS
     /// audit against the (batched) width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
@@ -349,7 +349,7 @@ impl GeneratedCommittedGroup {
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
         // batch factor (the root commits `num_claims` polynomials); `n_a` is the
         // A-matrix row count. Unlike the planner DP, expansion audits the
-        // *shipped* ranks against these (norm, width) via `try_new`.
+        // generated ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
@@ -492,7 +492,7 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
 
-        // Audit each shipped rank against its width + bucket as we build the
+        // Audit each generated rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {

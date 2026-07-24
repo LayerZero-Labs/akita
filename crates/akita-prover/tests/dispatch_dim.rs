@@ -1,5 +1,6 @@
 //! Runtime ring-dimension dispatch against real typed schedules.
 
+#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
@@ -44,10 +45,10 @@ fn assert_schedule_geometry(schedule: &FoldSchedule, expected_d: usize) {
 }
 
 #[test]
-fn accepts_real_fp64_d64_schedule() {
-    let schedule = schedule::<fp64::D64Dense>(20);
-    validate_schedule_ring_dims(&schedule, &seed(64)).expect("D64 schedule");
-    assert_schedule_geometry(&schedule, 64);
+fn accepts_real_fp64_d128_schedule() {
+    let schedule = schedule::<fp64::D128Dense>(20);
+    validate_schedule_ring_dims(&schedule, &seed(128)).expect("D128 schedule");
+    assert_schedule_geometry(&schedule, 128);
 }
 
 #[test]

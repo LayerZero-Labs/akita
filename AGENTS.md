@@ -11,6 +11,7 @@ Akita is a lattice-based polynomial commitment scheme (PCS) with transparent set
 Run the cheap repository-wide gates before starting expensive compilation:
 
 ```bash
+scripts/generate-schedule-tables.sh
 cargo fmt --all --check
 taplo fmt --check
 scripts/test-rust-file-lines.sh

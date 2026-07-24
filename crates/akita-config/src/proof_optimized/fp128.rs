@@ -194,18 +194,36 @@ fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    // Planner failures, including unsupported schedules that cannot profitably
-    // fold twice, propagate rather than being swallowed into a missing candidate.
-    let planned = akita_planner::find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        &crate::policy_of::<Cfg>(),
+    let lookup_key = AkitaScheduleLookupKey::single(key);
+    let Some(catalog) = Cfg::schedule_catalog() else {
+        return Ok(None);
+    };
+    let Some(entry) = akita_schedules::generated::table_entry(catalog, &lookup_key) else {
+        return Ok(None);
+    };
+    let policy = crate::policy_of::<Cfg>();
+    let estimate = akita_schedules::estimate_proof_bytes(
+        entry,
+        &lookup_key,
+        &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
     )?;
+    let schedule = Cfg::runtime_schedule(lookup_key)?;
     Ok(Some(Fp128ScheduleSelection {
         preset,
-        schedule: planned.schedule,
-        estimate: planned.estimate,
+        schedule,
+        estimate: akita_types::FoldScheduleEstimate {
+            estimated_root_direct_payload_bytes: estimate,
+            estimated_root_stage3_payload_bytes: 0,
+            estimated_recursive_direct_payload_bytes: Vec::new(),
+            estimated_recursive_stage3_payload_bytes: Vec::new(),
+            estimated_terminal_direct_payload_bytes: 0,
+            estimated_terminal_response_payload_bytes: 0,
+            estimated_setup_envelope_ring_elements: 0,
+            first_direct_setup_field_len: None,
+            selected_offload_edges: 0,
+        },
     }))
 }
 
