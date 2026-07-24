@@ -5,9 +5,10 @@ witness:
 
 1. **Stage 1 — digit range check.** Proves that every witness entry is a valid
    balanced digit and outputs one evaluation of the virtual range-image table.
-2. **Stage 2 — fused relation sumcheck.** Binds that virtual evaluation to the
-   committed witness while proving the fold relation, then produces the next
-   opening claim.
+2. **Stage 2 — fused relation sumcheck.** Proves the ring-switched fold
+   relation and binds both Stage 1's virtual range-image value and the opening
+   claim carried into the fold to the committed witness; the resulting witness
+   evaluation becomes the next opening claim.
 3. **Stage 3 — setup product sumcheck.** Optionally carries a recursive setup
    contribution together with the next opening.
 
@@ -18,7 +19,7 @@ remaining witness and runs none of these sumchecks
 This chapter explains the Stage-1 range protocol and the Stage-2 fused
 relation protocol in detail. Stage 3 is summarized at the end.
 
-## Stage 1: the digit range check
+## Stage 1: digit range check
 
 ### What it certifies
 
@@ -342,17 +343,17 @@ reduces the final leaf to `range_image_evaluation`. It does **not** by itself
 tie that virtual value to the committed witness.
 
 
-## Stage 2: bind the range image and prove the fold relation
+## Stage 2: fused relation sumcheck
 
-Stage 2 proves three statements about the same committed digit witness:
+Stage 2 proves three statements about the same committed digit witness $w$:
 
-1. the ring-switched fold relation is satisfied;
-2. Stage 1's virtual range-image value really comes from $w(w+1)$; and
-3. the witness is consistent with the opening claim carried into this fold.
+1. $w$ satisfies the ring-switched fold relation;
+2. Stage 1's virtual range-image value is correctly derived from $w(w+1)$; and
+3. the opening claim for this fold is consistent with $w$.
 
-They are fused into one sumcheck. We first describe the relation term by
-itself, with the matrix-row dimension visible, and then add the other two
-terms.
+The protocol fuses all three statements into one sumcheck. We first isolate
+the fold-relation term to make its matrix-row dimension explicit, then
+incorporate the range-image and opening-consistency terms.
 
 ### Start with the ring relation
 
@@ -497,7 +498,7 @@ $s_1=\widetilde w(r_1)(\widetilde w(r_1)+1)$, which is generally false.
 After absorbing $s_1$, the transcript samples a fresh scalar $\gamma$. The
 protocol uses $\gamma$ to batch Equation (8) with the relation claim.
 
-### Add the opening trace
+### Add the opening claim consistency
 
 The protocol also has an incoming opening target $v_{\mathrm{tr}}$.
 [Multilinear evaluation reduction](./trace-open-reduction.md) derives how
