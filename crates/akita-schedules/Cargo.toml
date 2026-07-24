@@ -57,7 +57,9 @@ fp64-d128-onehot = []
 fp64-d256-onehot = []
 
 [dependencies]
-akita-planner = { version = "0.1.0", path = "../akita-planner" }
+akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
+akita-field = { version = "0.1.0", path = "../akita-field" }
+akita-types = { version = "0.1.0", path = "../akita-types" }
 
 [lints]
 workspace = true

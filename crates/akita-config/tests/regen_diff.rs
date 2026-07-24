@@ -4,7 +4,7 @@
 
 #![allow(missing_docs)]
 
-use akita_config::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
+use akita_planner::generated_families::{family_keys, ALL_GENERATED_FAMILIES};
 
 #[test]
 #[ignore = "diagnostic"]

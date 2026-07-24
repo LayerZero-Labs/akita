@@ -1,13 +1,11 @@
-//! Runtime schedule DP-fallback guards for the `Cfg`-free planner.
+//! Runtime schedule catalog-boundary guards.
 //!
 //! These cover the behaviors the planner refactor introduces:
 //!
-//! - **Table-miss fallback:** `Cfg::runtime_schedule` returns `Some` for a
-//!   key that no shipped table contains, and the schedule it returns is
-//!   exactly what the pure DP `akita_planner::find_group_batch_schedule` produces from
-//!   the `Cfg`-derived policy.
+//! - **Table-miss rejection:** `Cfg::runtime_schedule` rejects a key that no
+//!   shipped table contains.
 //! - **Policy-bridge parity:** `policy_of::<Cfg>()` reproduces the values
-//!   the DP reads off the `Cfg` impl (invariant 4, single source of truth).
+//!   embedded in generated catalog identities (single source of truth).
 //! - **No-panic boundary:** adversarial-but-bounded keys through
 //!   `runtime_schedule` return `Result`, never panic.
 
@@ -15,14 +13,14 @@
 
 use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
-use akita_planner::{find_group_batch_schedule, PlannerPolicy};
+use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-/// A one-point 2-poly key that no shipped table carries (shipped tables only
-/// hold singleton / 4-batched keys), so it forces the DP fallback path on both
-/// prover and verifier.
+/// A one-point 3-poly key that no shipped table carries (shipped tables only
+/// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
+/// must reject it.
 fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
-    PolynomialGroupLayout::new(num_vars, 2)
+    PolynomialGroupLayout::new(num_vars, 3)
 }
 
 fn assert_schedule_eq(
@@ -50,46 +48,40 @@ fn assert_schedule_eq(
     );
 }
 
-fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
+fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
     // The shipped table must NOT carry this key — otherwise the test is not
-    // exercising the DP fallback path. (Shipped tables only hold
-    // singleton / 4-batched keys; this 2-poly key misses every table.)
+    // exercising the catalog-miss path. Shipped tables only hold singleton /
+    // 2-batched / 4-batched scalar keys; this 3-poly key misses every table.
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
-            akita_planner::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
+            akita_schedules::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
         })
         .is_some();
     assert!(
         !table_has_key,
-        "expected a table miss for the 2-poly key; the table unexpectedly carries it"
+        "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
-    let from_runtime = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
-        .expect("runtime_schedule must not error on a valid one-point 2-poly key");
-
-    let from_dp = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )
-    .expect("pure DP must succeed for a valid key");
-
-    assert_schedule_eq("table-miss fallback", &from_runtime, &from_dp.schedule);
+    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+        .expect_err("runtime_schedule must reject uncataloged keys");
+    assert!(
+        matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
+        "expected UnsupportedSchedule for catalog miss, got {err:?}"
+    );
 }
 
 #[test]
-fn dp_fallback_fires_for_non_shipped_keys() {
-    check_table_miss_fallback::<fp128::D64OneHot>(14);
-    check_table_miss_fallback::<fp128::D64Dense>(16);
-    check_table_miss_fallback::<fp32::D128OneHot>(16);
+fn catalog_miss_rejects_non_shipped_keys() {
+    check_table_miss_rejection::<fp128::D64OneHot>(14);
+    check_table_miss_rejection::<fp128::D64Dense>(16);
+    check_table_miss_rejection::<fp32::D128OneHot>(16);
 }
 
 #[test]
-fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_planner() {
+fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
     let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
         .expect("ordinary scalar schedule must resolve");
@@ -101,11 +93,11 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_planner() {
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
-        cost_model: akita_planner::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: if Cfg::recursive_setup_planning() {
-            akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
         } else {
-            akita_planner::SelectionPolicyId::MinEstimatedProofPayload
+            SelectionPolicyId::MinEstimatedProofPayload
         },
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,

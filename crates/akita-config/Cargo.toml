@@ -3,6 +3,7 @@ name = "akita-config"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.95"
+autobins = false
 authors = [
   "Markos Georghiades <mgeorghiades@a16z.com>",
   "Quang Dao <qvd@andrew.cmu.edu>",
@@ -39,85 +40,49 @@ all-schedules = [
   "schedules-fp128-d64-onehot-multi-chunk-w4r2",
   "schedules-fp128-d64-dense-multi-chunk",
 ]
-schedules-fp128-d64-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d64-onehot",
-]
+schedules-fp128-d64-onehot = ["akita-schedules/fp128-d64-onehot"]
 schedules-fp128-d64-onehot-recursive = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-recursive",
 ]
 schedules-fp128-d64-onehot-recursive-multi-chunk-w8r2 = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-recursive-multi-chunk-w8r2",
 ]
-schedules-fp128-d64-dense = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d64-dense",
-]
-schedules-fp128-d128-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d128-onehot",
-]
-schedules-fp128-d128-dense = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d128-dense",
-]
-schedules-fp128-d64-onehot-tensor = [
-  "dep:akita-schedules",
-  "akita-schedules/fp128-d64-onehot-tensor",
-]
+schedules-fp128-d64-dense = ["akita-schedules/fp128-d64-dense"]
+schedules-fp128-d128-onehot = ["akita-schedules/fp128-d128-onehot"]
+schedules-fp128-d128-dense = ["akita-schedules/fp128-d128-dense"]
+schedules-fp128-d64-onehot-tensor = ["akita-schedules/fp128-d64-onehot-tensor"]
 schedules-fp128-d64-onehot-multi-chunk = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-multi-chunk",
 ]
 schedules-fp128-d64-onehot-multi-chunk-w2r2 = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-multi-chunk-w2r2",
 ]
 schedules-fp128-d64-onehot-multi-chunk-w4r2 = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-onehot-multi-chunk-w4r2",
 ]
 schedules-fp128-d64-dense-multi-chunk = [
-  "dep:akita-schedules",
   "akita-schedules/fp128-d64-dense-multi-chunk",
 ]
 
-schedules-fp32-d128-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp32-d128-onehot",
-]
-schedules-fp32-d256-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp32-d256-onehot",
-]
-schedules-fp64-d128-dense = [
-  "dep:akita-schedules",
-  "akita-schedules/fp64-d128-dense",
-]
-schedules-fp64-d128-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp64-d128-onehot",
-]
-schedules-fp64-d256-onehot = [
-  "dep:akita-schedules",
-  "akita-schedules/fp64-d256-onehot",
-]
+schedules-fp32-d128-onehot = ["akita-schedules/fp32-d128-onehot"]
+schedules-fp32-d256-onehot = ["akita-schedules/fp32-d256-onehot"]
+schedules-fp64-d128-dense = ["akita-schedules/fp64-d128-dense"]
+schedules-fp64-d128-onehot = ["akita-schedules/fp64-d128-onehot"]
+schedules-fp64-d256-onehot = ["akita-schedules/fp64-d256-onehot"]
 
 [dependencies]
 akita-challenges = { version = "0.1.0", path = "../akita-challenges" }
 akita-field = { version = "0.1.0", path = "../akita-field" }
-akita-planner = { version = "0.1.0", path = "../akita-planner" }
-akita-schedules = { version = "0.1.0", path = "../akita-schedules", optional = true, default-features = false }
+akita-schedules = { version = "0.1.0", path = "../akita-schedules", default-features = false }
 akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
 tracing = "0.1"
 
-[[bin]]
-name = "gen_schedule_tables"
-path = "src/bin/gen_schedule_tables.rs"
+[dev-dependencies]
+akita-planner = { version = "0.1.0", path = "../akita-planner", features = [
+  "catalog-gen",
+] }
 
 [[test]]
 name = "schedule_catalog_miswire"

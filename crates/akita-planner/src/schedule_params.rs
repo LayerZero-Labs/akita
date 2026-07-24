@@ -5,9 +5,8 @@
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
-//! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
-//! DP a pure function of `(policy, key)` so `akita-config` can call it
-//! directly on a schedule-table miss without a dependency cycle.
+//! exactly the shape generated catalog emission consumes. This keeps the DP a
+//! pure function of `(policy, key)` for offline table generation.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -36,12 +35,9 @@ mod suffix_dp;
 
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, planned_next_witness_len,
-    scalar_root_fold_level_params_candidate,
+    derive_candidate_level_params, scalar_root_fold_level_params_candidate,
 };
-pub(crate) use suffix_dp::{
-    derive_optimal_suffix_schedule, FoldSuffix, ScheduleMemo, SuffixCtx, SuffixState,
-};
+pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -404,6 +400,7 @@ fn find_schedule_inner(
         num_vars: key.num_vars(),
         key,
         setup_envelope_budget: None,
+        root_lookup_key: None,
     };
 
     if policy.recursive_setup_planning {

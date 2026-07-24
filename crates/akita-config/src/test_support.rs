@@ -17,9 +17,9 @@ use crate::CommitmentConfig;
 /// Derive the per-polynomial commitment layout optimized for a batch of
 /// `num_polynomials` polynomials with `num_vars` variables.
 ///
-/// First reads the runtime schedule (table hit or DP fallback). When the
-/// schedule is a root fold it returns that root layout; for a direct-only
-/// schedule it falls back to the batched root commit layout
+/// First reads the runtime schedule. When the schedule is a root fold it
+/// returns that root layout; for a direct-only schedule it derives the batched
+/// root commit layout
 /// `Cfg::get_params_for_batched_commitment` derives for the same
 /// `num_polynomials` (so the fallback layout is sized for the requested batch,
 /// not a singleton).

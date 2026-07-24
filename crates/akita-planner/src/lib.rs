@@ -5,215 +5,33 @@
 //! minimize proof size for a schedule lookup key. Every per-preset input is
 //! carried by the plain-value [`PlannerPolicy`] plus a `ring_challenge_config` /
 //! `fold_challenge_shape_at_level` closure pair, so the planner names no `CommitmentConfig`
-//! types and depends only on `akita-types` / `akita-challenges` /
-//! `akita-field`.
+//! types and depends only on `akita-schedules` / `akita-types` /
+//! `akita-challenges` / `akita-field`.
 //!
-//! The preset family list, the `gen_schedule_tables` binary, and the
-//! `policy_of::<Cfg>()` bridge that derives a [`PlannerPolicy`] from a preset
-//! live in `akita-config`, the only crate that can name the presets.
+//! With the `catalog-gen` feature enabled, this crate also owns the offline
+//! generated-table family list and `gen_schedule_tables` binary. That feature
+//! is allowed to name `akita-config` presets; normal planner use remains
+//! preset-free.
 
-pub use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId, SisSecurityPolicyId,
-    DEFAULT_SIS_SECURITY_POLICY,
+pub use akita_schedules::{
+    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, PlannerPolicy, SelectionPolicyId,
+    SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 
-pub mod catalog_identity;
 pub mod emit;
-pub mod generated;
+#[cfg(feature = "catalog-gen")]
+pub mod generated_families;
 mod group_batch;
-mod resolve;
 pub mod schedule_params;
 
 pub use akita_challenges::TensorChallengeShape;
-pub use catalog_identity::{
-    expected_catalog_identity, identity_digest, key_digest, policy_digest,
-    ring_challenge_config_digest, validate_catalog_identity,
-};
-pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
-pub use generated::{
-    catalog_entries_sorted_for_lookup, runtime_schedule_key_cmp, validate_generated_schedule_entry,
+pub use akita_schedules::{
+    catalog_entries_sorted_for_lookup, estimate_proof_bytes, expected_catalog_identity,
+    identity_digest, key_digest, policy_digest, resolve_group_batch_schedule, resolve_schedule,
+    ring_challenge_config_digest, runtime_schedule_key_cmp, schedule_from_entry,
+    validate_catalog_identity, validate_generated_schedule_entry,
     validate_generated_schedule_table, GeneratedScheduleCatalogIdentity, GeneratedScheduleTable,
 };
+pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use group_batch::find_group_batch_schedule;
-pub use resolve::{
-    estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
-};
 pub use schedule_params::{find_schedule, suffix_opening_layout};
-
-/// Quantities materialized and checked by the current bounded planner cost model.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlannerCostModelId {
-    ExactPayloadAndSetupEnvelope,
-}
-
-impl PlannerCostModelId {
-    pub const fn tag(self) -> u32 {
-        match self {
-            Self::ExactPayloadAndSetupEnvelope => 1,
-        }
-    }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::ExactPayloadAndSetupEnvelope => "ExactPayloadAndSetupEnvelope",
-        }
-    }
-}
-
-/// Deterministic schedule-selection policy bound into generated catalogs.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SelectionPolicyId {
-    MinEstimatedProofPayload,
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
-}
-
-impl SelectionPolicyId {
-    pub const fn tag(self) -> u32 {
-        match self {
-            Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
-        }
-    }
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
-                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
-            }
-        }
-    }
-}
-
-/// Plain-value brute-force inputs the planner DP needs.
-///
-/// This is the `Cfg`-free projection of a `CommitmentConfig` preset that
-/// the DP and SIS sizing read. `akita-config` derives it from a preset via
-/// its `policy_of::<Cfg>()` bridge.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PlannerPolicy {
-    pub cost_model: PlannerCostModelId,
-    pub selection_policy: SelectionPolicyId,
-    /// Maximum supported setup-matrix envelope in base-field elements.
-    ///
-    /// This is a candidate-feasibility input, so generated catalogs bind it
-    /// alongside the selection policy that consumes it.
-    pub max_setup_envelope_field_elements: usize,
-    /// Minimum whole-number contraction required when a successor consumes an
-    /// offloaded setup prefix.
-    ///
-    /// The input price includes the balanced recursive witness and the padded
-    /// full-field prefix. The output price includes the complete balanced
-    /// successor witness.
-    pub min_offloaded_witness_contraction: usize,
-    /// Ring degree `D` (`Cfg::D`).
-    pub ring_dimension: usize,
-    /// Gadget base + coefficient bounds (`Cfg::decomposition()`).
-    pub decomposition: DecompositionParams,
-    /// Exact SIS modulus profile (`Cfg::sis_modulus_profile()`).
-    pub sis_modulus_profile: SisModulusProfileId,
-    /// SIS security policy for generated SIS-width tables.
-    pub sis_security_policy: SisSecurityPolicyId,
-    /// Digest of the generated scalar SIS table and coverage certificate.
-    pub sis_table_digest: akita_types::SisTableDigest,
-    /// `psi`-embedding infinity-norm expansion
-    /// (`Cfg::ring_subfield_embedding_norm_bound()`).
-    pub ring_subfield_norm_bound: u32,
-    /// Opening-reduction extension width (`Cfg::EXT_DEGREE`).
-    pub claim_ext_degree: usize,
-    /// Fiat-Shamir scalar extension width (`Cfg::EXT_DEGREE`).
-    pub chal_ext_degree: usize,
-    /// Inclusive `(min, max)` log-basis search range (`Cfg::basis_range()`).
-    pub basis_range: (u32, u32),
-    /// One-hot chunk size `K` (`Cfg::onehot_chunk_size()`).
-    ///
-    /// Used to bound the committed one-hot witness L1 mass per ring element
-    /// (`nonzeros = ceil(D/K)`) for the weak-binding collision norm and the
-    /// folded-witness digit count. Only consulted at a root level whose
-    /// `log_commit_bound == 1`; dense levels use `nonzeros = D`.
-    pub onehot_chunk_size: usize,
-    /// Multi-chunk witness layout settings (`Cfg::chunked_witness_cfg()`).
-    ///
-    /// Drives chunked-vs-single-chunk witness pricing in the DP and is embedded
-    /// in the generated-table catalog identity so a chunked policy never aliases
-    /// a single-chunk table. `ChunkedWitnessCfg::default()` (single chunk) leaves
-    /// every schedule byte-identical to the historical layout.
-    pub witness_chunk: ChunkedWitnessCfg,
-    /// Whether the DP is allowed to plan recursive setup offloading edges.
-    ///
-    /// Ordinary configs keep this false and emit direct-only schedules. The
-    /// recursion config adapter sets it true and gets a separate catalog identity.
-    pub recursive_setup_planning: bool,
-}
-
-impl PlannerPolicy {
-    /// Direct-only counterpart used when resolving a scalar schedule through
-    /// the proof-payload policy.
-    pub fn direct_only(self) -> Self {
-        Self {
-            recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
-            ..self
-        }
-    }
-    /// Chunk count of fold level `fold_level`'s own fold: the number of
-    /// per-chunk folded responses `zᵢ` this level produces, hence the chunk
-    /// count of the witness it emits. `build_w_coeffs` lays that witness out as
-    /// `zᵢ ‖ eᵢ ‖ t̂ᵢ` per chunk, and `output_witness_len(L)` is priced with
-    /// `chunks_at_level(L)` to match it (the verifier sizes the same witness
-    /// from `lp.witness_chunk.num_chunks`).
-    ///
-    /// Returns `num_chunks` for the leading `num_activated_levels` fold levels
-    /// when multi-chunk layout is active, and `1` (single chunk) otherwise.
-    /// There is no cross-level chunk handoff: level `L+1` folds level `L`'s
-    /// emitted witness as a flat vector into its own `chunks_at_level(L+1)`
-    /// windows, so a single-chunk level stays byte-identical regardless of its
-    /// predecessor's chunk count.
-    pub fn chunks_at_level(&self, fold_level: usize) -> usize {
-        let mc = self.witness_chunk;
-        if mc.uses_multi_chunk() && fold_level < mc.num_activated_levels {
-            mc.num_chunks
-        } else {
-            1
-        }
-    }
-
-    /// Per-level [`ChunkedWitnessCfg`] for the witness committed at absolute fold
-    /// level `fold_level` (the **input** shape the relation MLE sees).
-    ///
-    /// Chunked levels carry the resolved chunk count and the policy's activated
-    /// level count; single-chunk and tail levels carry
-    /// [`ChunkedWitnessCfg::default`], keeping them byte-identical to today.
-    pub fn witness_chunk_for_level(&self, fold_level: usize) -> ChunkedWitnessCfg {
-        let num_chunks = self.chunks_at_level(fold_level);
-        if num_chunks > 1 {
-            ChunkedWitnessCfg {
-                num_chunks,
-                num_activated_levels: self.witness_chunk.num_activated_levels,
-            }
-        } else {
-            ChunkedWitnessCfg::default()
-        }
-    }
-
-    /// Inclusive `(min, max)` `log_basis` values the DP may evaluate at absolute
-    /// fold `level`.
-    ///
-    /// The root fold is fixed to the smallest basis supported by the existing
-    /// policy, `basis_range.0`. Deeper folds search the full configured range;
-    /// the suffix DP separately enforces that the basis is non-decreasing from
-    /// the preceding fold, and candidate validation remains responsible for
-    /// setup and SIS feasibility. Field width and the decomposition's default
-    /// basis do not impose planner floors.
-    ///
-    /// This is the single source of truth the root DP, suffix DP, and
-    /// group-batch root scorer all consult; there is no other per-level
-    /// `log_basis` range computation.
-    pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
-        let (configured_min, max) = self.basis_range;
-        if level == 0 {
-            return (configured_min, configured_min);
-        }
-        (configured_min, max)
-    }
-}

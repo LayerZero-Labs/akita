@@ -2,8 +2,8 @@
 //!
 //! This adapter is for staggered workflows that need ordinary commit calls to
 //! freeze the A/source and B/outer commitment layout before the final multi-group
-//! root is known. The root basis is deterministic from the base config's existing
-//! planner policy, so precommitments use the exact root layout rather than a
+//! root is known. The root basis is deterministic from the base config's runtime
+//! catalog policy, so precommitments use the exact root layout rather than a
 //! worst-case envelope over every supported basis.
 
 use crate::{policy_of, CommitmentConfig};
@@ -119,8 +119,86 @@ pub(crate) fn precommitted_group_params<Cfg: CommitmentConfig>(
 pub(crate) fn precommitted_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupParams, AkitaError> {
+    if let Some(params) = catalog_precommitted_commit_params::<Cfg>(key)? {
+        return Ok(params);
+    }
     let schedule = precommitted_commit_schedule::<Cfg>(key)?;
     Ok(schedule.root.params.final_group.commitment.clone())
+}
+
+fn catalog_precommitted_commit_params<Cfg: CommitmentConfig>(
+    key: &PolynomialGroupLayout,
+) -> Result<Option<CommittedGroupParams>, AkitaError> {
+    let Some(catalog) = Cfg::schedule_catalog() else {
+        return Ok(None);
+    };
+    let policy = policy_of::<Cfg>();
+    akita_schedules::validate_catalog_identity(
+        &catalog,
+        &policy,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?;
+
+    for entry in catalog.entries {
+        let Some((group_idx, _)) = entry
+            .root
+            .precommitted_groups
+            .iter()
+            .enumerate()
+            .find(|(_, group)| group.descriptor.group == *key)
+        else {
+            continue;
+        };
+        let runtime_key = AkitaScheduleLookupKey {
+            final_group: entry.root.final_group.layout,
+            precommitteds: entry
+                .root
+                .precommitted_groups
+                .iter()
+                .map(|group| group.descriptor)
+                .collect(),
+        };
+        let schedule = akita_schedules::schedule_from_entry(
+            entry,
+            &runtime_key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+        )?;
+        let Some(precommitted) = schedule.root.params.precommitted_groups.get(group_idx) else {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit row did not expand the expected group".to_string(),
+            ));
+        };
+        if precommitted.descriptor.group != *key {
+            return Err(AkitaError::InvalidSetup(
+                "generated precommit row expanded a different group".to_string(),
+            ));
+        }
+
+        let mut params = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?
+            .root
+            .params
+            .final_group
+            .commitment;
+        let group = &precommitted.commitment;
+        params.log_basis_inner = group.layout.log_basis_inner;
+        params.log_basis_outer = group.layout.log_basis_outer;
+        params.log_basis_open = group.log_basis_open;
+        params.inner_commit_matrix = group.inner_commit_matrix.clone();
+        params.outer_commit_matrix = group.outer_commit_matrix.clone();
+        params.num_live_ring_elements_per_claim = group.layout.num_live_ring_elements_per_claim;
+        params.num_positions_per_block = group.layout.num_positions_per_block;
+        params.num_live_blocks = group.layout.num_live_blocks;
+        params.num_digits_inner = group.num_digits_inner;
+        params.num_digits_outer = group.num_digits_outer;
+        params.num_digits_open = group.num_digits_open;
+        params.num_digits_fold_one = group.num_digits_fold_one;
+        return Ok(Some(params));
+    }
+
+    Ok(None)
 }
 
 pub(crate) fn precommitted_commit_schedule<Cfg: CommitmentConfig>(
@@ -133,30 +211,9 @@ pub(crate) fn precommitted_commit_schedule<Cfg: CommitmentConfig>(
     }
     key.validate()?;
 
-    // Freeze the whole planning probe to the known root basis. Allowing a
-    // hypothetical standalone suffix to choose larger bases feeds back into the
-    // root geometry and can collapse a small precommit below the live-block
-    // count required by a later multi-chunk root. Only the probe is
-    // single-basis: the returned value is its root commitment params. Unlike the
-    // former conservative adapter, those exact ranks and bounds are kept rather
-    // than widened across alternative opening bases.
-    let mut policy = policy_of::<Cfg>();
-    let root_basis = policy.basis_range.0;
-    policy.basis_range = (root_basis, root_basis);
-    // A precommitted group is a pre-existing, independently formed commitment;
-    // the distributed multi-chunk layout only refines the *fold* witness, not how
-    // an earlier commitment was formed. Freeze precommits single-chunk so a
-    // multi-chunk base config (e.g. the W8R2 preset used for recursive
-    // setup-offloading) produces the same frozen params as its single-chunk
-    // sibling. Otherwise the frozen precommit diverges from the shipped
-    // (single-chunk-frozen) recursive catalog key and the multi-group planner
-    // can fall back to an invalid grouped root-direct.
-    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let planned = akita_planner::find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-    Ok(planned.schedule)
+    // Runtime config must remain planner-free. The generated catalog identity
+    // already fixes the root basis to the configured minimum, so resolving the
+    // singleton runtime key yields the exact frozen root params without the
+    // former conservative widening pass.
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))
 }

@@ -583,6 +583,7 @@ fn multi_group_root_folded_group_binding_round_trips() {
 }
 
 #[test]
+#[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,

@@ -1,3 +1,5 @@
+#![cfg(any(feature = "schedules-default", feature = "profile-ci"))]
+
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;

@@ -225,18 +225,20 @@ Recursive levels use the flat fold shape in the current planner search.
 The dependency direction is:
 
 ```text
-akita-config -> akita-planner -> akita-types / akita-challenges / akita-field
-akita-config -> akita-schedules -> akita-planner
+akita-config -> akita-schedules -> akita-types / akita-challenges / akita-field
+akita-planner -> akita-schedules
+akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_planner::resolve_schedule`. The planner never names a preset type.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_schedules::resolve_schedule`. Runtime resolution is strict and never invokes planner search.
 
-This boundary avoids a circular dependency while keeping a single source of truth for preset policy. It also means the DP fallback is verifier-reachable through config, so planner code follows the verifier no-panic contract: malformed verifier-facing input must return `AkitaError` rather than panic.
+This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 
 ## Source Map
 
 - `src/lib.rs`: public planner surface and `PlannerPolicy`.
-- `src/resolve.rs`: cache-then-generate resolution, catalog validation, compact entry expansion, and proof-byte estimation.
+- `src/generated_families.rs`: offline generated-table family registry behind `catalog-gen`.
+- `src/emit/`: generated table emission and wiring refresh helpers.
 - `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
 - `src/generated/mod.rs`: generated table types and table lookup helpers.
 - `src/generated/expand.rs`: typed compact root/recursive/terminal expansion to

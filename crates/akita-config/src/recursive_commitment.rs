@@ -71,7 +71,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         true
     }
 
-    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
         {
             if TypeId::of::<Cfg>() == TypeId::of::<crate::proof_optimized::fp128::D64OneHot>() {
@@ -100,7 +100,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         if key.precommitteds.is_empty() {
             return Cfg::runtime_schedule(key);
         }
-        akita_planner::resolve_group_batch_schedule(
+        akita_schedules::resolve_group_batch_schedule(
             &key,
             &crate::policy_of::<Self>(),
             Self::ring_challenge_config,
