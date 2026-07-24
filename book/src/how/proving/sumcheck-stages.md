@@ -500,23 +500,21 @@ protocol uses $\gamma$ to batch Equation (8) with the relation claim.
 
 ### Add the opening claim consistency
 
-The protocol also has an incoming opening target $v_{\mathrm{tr}}$.
-[Multilinear evaluation reduction](./trace-open-reduction.md) derives how
-evaluating the
-outer-folded polynomial ring against the inner opening point becomes a public
-linear function of the $\hat e$ digits. Write that function as $T(x)$. Then
+Stage 2 also verifies the incoming opening claim $v_{\mathrm{tr}}$ against the
+committed witness $w$. [Multilinear evaluation
+reduction](./trace-open-reduction.md) derives the public trace weight $T(x)$
+and establishes the evaluation-consistency relation
 
 $$
 v_{\mathrm{tr}}=\sum_x w(x)T(x).
 \tag{9}
 $$
 
-The opening trace is **not** inserted into the ring-relation matrix. The
-physical matrix and its relation-weight factorization contain only the
-consistency, $A$, $B$, and $D$ rows.
-
-The protocol nevertheless reserves the next index $i_{\mathrm{tr}}$ in the
-padded row domain used by $\tau_1$. Its batching weight is
+Here we focus only on how this relation is fused into Stage 2. Equation (9)
+has the same linear form in $w$ as a row of the ring-switched relation, so the
+protocol treats it as a **virtual row** placed immediately after the physical
+relation rows. If $i_{\mathrm{tr}}$ is that row's index in the padded row
+domain, the shared row challenge $\tau_1$ assigns it the weight
 
 $$
 \beta_{\mathrm{tr}}
@@ -524,11 +522,19 @@ $$
 \operatorname{eq}(\tau_1,i_{\mathrm{tr}}).
 $$
 
-Only this scalar comes from the row domain. The trace function $T(x)$ is built
-separately from the matrix weights, and
-$\beta_{\mathrm{tr}}w(x)T(x)$ is fused directly into the Stage-2 sumcheck over
-the flat witness address $x$. Thus the trace reuses $\tau_1$ without becoming
-an evaluated matrix row.
+The virtual row is not inserted into the physical matrix or its
+relation-weight factorization. Only its batching weight
+$\beta_{\mathrm{tr}}$ comes from the row domain. Stage 2 directly fuses
+
+$$
+\beta_{\mathrm{tr}}v_{\mathrm{tr}}
+=
+\sum_x\beta_{\mathrm{tr}}w(x)T(x)
+$$
+
+into the sumcheck over the flat witness address $x$. In this way, the opening
+claim reuses the same row randomness $\tau_1$ as the ring-switched relation
+without becoming a physical matrix row.
 
 ### The fused Stage-2 claim
 

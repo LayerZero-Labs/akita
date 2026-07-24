@@ -397,8 +397,8 @@ protocol. It is already a field-valued linear relation on the committed
 witness. It therefore needs neither evaluation at $\alpha$ nor a ring-switch
 quotient.
 
-[Sumcheck stages](./sumcheck-stages.md#add-the-opening-trace) explains how this
-claim is row-batched and fused with the other Stage-2 terms.
+[Sumcheck stages](./sumcheck-stages.md#add-the-opening-claim-consistency)
+explains how this claim is row-batched and fused with the other Stage-2 terms.
 
 ## Code reference
 
