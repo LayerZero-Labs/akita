@@ -195,4 +195,25 @@ impl PlannerPolicy {
             ChunkedWitnessCfg::default()
         }
     }
+
+    /// Inclusive `(min, max)` `log_basis` values the DP may evaluate at absolute
+    /// fold `level`.
+    ///
+    /// The root fold is fixed to the smallest basis supported by the existing
+    /// policy, `basis_range.0`. Deeper folds search the full configured range;
+    /// the suffix DP separately enforces that the basis is non-decreasing from
+    /// the preceding fold, and candidate validation remains responsible for
+    /// setup and SIS feasibility. Field width and the decomposition's default
+    /// basis do not impose planner floors.
+    ///
+    /// This is the single source of truth the root DP, suffix DP, and
+    /// group-batch root scorer all consult; there is no other per-level
+    /// `log_basis` range computation.
+    pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
+        let (configured_min, max) = self.basis_range;
+        if level == 0 {
+            return (configured_min, configured_min);
+        }
+        (configured_min, max)
+    }
 }

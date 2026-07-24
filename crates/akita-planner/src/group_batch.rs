@@ -568,14 +568,7 @@ fn find_group_batch_schedule_inner(
         })?;
     let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
     let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
-    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
-    let min_log_basis = configured_min_log_basis
-        .max(policy.decomposition.log_basis)
-        .max(if policy.decomposition.field_bits() < 128 {
-            5
-        } else {
-            0
-        });
+    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
 
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let (candidate_precommitted_groups, candidate_precommitted_d_width) =

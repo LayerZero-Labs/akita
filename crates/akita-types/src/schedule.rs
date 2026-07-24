@@ -49,13 +49,13 @@ pub struct PrecommittedGroupDescriptor {
     pub log_basis_inner: u32,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
-    /// Conservative A-role row count frozen at precommit time.
+    /// Exact A-role row count frozen at precommit time.
     pub n_a: usize,
-    /// Conservative A-role collision bucket frozen at precommit time.
+    /// Exact A-role collision bucket frozen at precommit time.
     pub a_coeff_linf_bound: u128,
-    /// Conservative B-role row count frozen at precommit time.
+    /// Exact B-role row count frozen at precommit time.
     pub n_b: usize,
-    /// Conservative B-role collision bucket frozen at precommit time.
+    /// Exact B-role collision bucket frozen at precommit time.
     pub b_coeff_linf_bound: u128,
 }
 
@@ -105,8 +105,7 @@ impl PrecommittedGroupDescriptor {
             || self.b_coeff_linf_bound == 0
         {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero conservative A/B rows and bounds"
-                    .to_string(),
+                "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
             ));
         }
         if self.log_basis_inner == 0 {
@@ -167,7 +166,7 @@ impl PrecommittedGroupDescriptor {
     }
 }
 
-/// Freezes conservative root-commit metadata for each precommitted group when
+/// Freezes exact root-commit metadata for each precommitted group when
 /// building a schedule lookup key from an opening layout.
 pub trait ScheduleKeyPrecommitSource {
     /// Resolve frozen standalone-commit params for one precommitted group.
@@ -201,7 +200,7 @@ impl AkitaScheduleLookupKey {
     /// Build the canonical schedule lookup key for `layout`.
     ///
     /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
-    /// earlier group through `S` (production uses the conservative commit
+    /// earlier group through `S` (production uses the exact precommit
     /// adapter wired by `akita-config`'s `opening_schedule_key`).
     pub fn from_layout<S: ScheduleKeyPrecommitSource>(
         layout: &OpeningClaimsLayout,

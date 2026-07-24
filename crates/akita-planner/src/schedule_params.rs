@@ -440,14 +440,7 @@ fn find_schedule_inner(
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
 
-    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
-    let min_log_basis = configured_min_log_basis
-        .max(policy.decomposition.log_basis)
-        .max(if policy.decomposition.field_bits() < 128 {
-            5
-        } else {
-            0
-        });
+    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
             let Some(candidate_params) = scalar_root_fold_level_params_candidate(

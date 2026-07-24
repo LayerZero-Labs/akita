@@ -137,6 +137,21 @@ fn policy_bridge_matches_cfg_hooks() {
 }
 
 #[test]
+fn root_basis_is_derived_from_existing_policy_inputs() {
+    let fp128 = policy_of::<fp128::D64OneHot>();
+    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.decomposition.log_basis, 3);
+    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
+
+    let fp32 = policy_of::<fp32::D64OneHot>();
+    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.decomposition.log_basis, 3);
+    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
+}
+
+#[test]
 fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     // Degenerate vector counts must be rejected with `AkitaError`, not by
     // panicking. Large-but-bounded
