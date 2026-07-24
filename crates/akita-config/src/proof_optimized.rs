@@ -3,14 +3,14 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
-use super::CommitmentConfig;
+use super::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
     setup_matrix_envelope_for_schedule, AkitaExpandedSetup, AkitaScheduleLookupKey,
     CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    SetupMatrixEnvelope,
+    PrecommittedGroupDescriptor, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -66,7 +66,15 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
         .root_precommitted_group_layouts()?
         .iter()
         .copied()
-        .map(crate::precommitted_commitment::precommitted_group_params::<Cfg>)
+        .map(|group| {
+            group.validate()?;
+            let singleton =
+                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )?;
+            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let key = AkitaScheduleLookupKey {
         final_group,

@@ -1,12 +1,12 @@
 //! Recursive setup-offloading config adapter.
 
-use crate::CommitmentConfig;
+use crate::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
-    SETUP_OFFLOAD_D_SETUP,
+    FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor, SetupMatrixEnvelope,
+    SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -126,7 +126,15 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
         .root_precommitted_group_layouts()?
         .iter()
         .copied()
-        .map(crate::precommitted_commitment::precommitted_group_params::<Cfg>)
+        .map(|group| {
+            group.validate()?;
+            let singleton =
+                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )?;
+            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let key = AkitaScheduleLookupKey {
         final_group,

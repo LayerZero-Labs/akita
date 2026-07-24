@@ -169,16 +169,23 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use crate::RecursiveCommitmentConfig;
-    use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, PrecommittedGroupDescriptor};
+    use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
+    use akita_types::{
+        AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+        PrecommittedGroupDescriptor,
+    };
 
     type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
 
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
+        let singleton =
+            OpeningClaimsLayout::new(pre.num_vars(), pre.num_polynomials()).expect("singleton");
         let pre_params =
-            crate::precommitted_commitment::precommitted_commit_params::<SetupCfg>(&pre)
-                .expect("precommit params");
+            <PrecommittedCommitmentConfig<SetupCfg> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )
+            .expect("precommit params");
         let precommitted = PrecommittedGroupDescriptor::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),

@@ -682,9 +682,15 @@ mod precommit_tests {
     #[test]
     fn exact_precommit_params_freeze_standalone_metadata() {
         let group = PolynomialGroupLayout::new(16, 1);
-        let precommitted =
-            precommitted_commitment::precommitted_group_params::<fp128::D64OneHot>(group)
-                .expect("precommitted group params");
+        group.validate().expect("group layout");
+        let singleton =
+            OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
+        let params =
+            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )
+            .expect("precommitted group params");
+        let precommitted = akita_types::PrecommittedGroupDescriptor::from_params(group, &params);
         let mut policy = policy_of::<fp128::D64OneHot>();
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();

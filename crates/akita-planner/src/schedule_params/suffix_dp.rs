@@ -53,42 +53,6 @@ impl SuffixResult {
     }
 }
 
-fn make_terminal_direct_step(
-    input_witness_len: usize,
-    terminal_lp: &CommittedGroupParams,
-    field_bits: u32,
-    num_polynomials: usize,
-    opening_layout: Option<&OpeningClaimsLayout>,
-) -> Result<CandidateTerminalResponse, AkitaError> {
-    // The terminal-direct (cleartext) witness is single-chunk by construction:
-    // the prover emits the global folded response and one shared `r̂` tail, so
-    // chunking the cleartext tail is unsupported. The last fold level must be
-    // single-chunk (only the leading activated levels are chunked). Reject here
-    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
-    if terminal_lp.witness_chunk.num_chunks > 1 {
-        return Err(AkitaError::InvalidSetup(
-            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
-        ));
-    }
-    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
-        return Err(AkitaError::InvalidSetup(
-            "terminal direct response must be a scalar flat fold".to_string(),
-        ));
-    }
-    let (terminal_params, admission_cap) =
-        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
-    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
-    Ok(CandidateTerminalResponse {
-        params: terminal_params,
-        sparse_challenge_config: terminal_lp.fold_challenge_config,
-        input_witness_len,
-        estimated_direct_payload_bytes: 0,
-        response_shape: witness_shape,
-        estimated_payload_bytes: terminal_bytes,
-    })
-}
-
 /// Like [`terminal_direct_suffix_cost`], but returns `None` when the fold at
 /// `terminal_fold_level` is multi-chunk. The suffix DP uses this to skip the
 /// fold-then-direct branch without aborting fold-then-fold exploration.
@@ -135,14 +99,33 @@ pub(crate) fn terminal_direct_suffix_cost(
     } else {
         1
     };
-    let direct = make_terminal_direct_step(
+    // The terminal-direct (cleartext) witness is single-chunk by construction:
+    // the prover emits the global folded response and one shared `r̂` tail, so
+    // chunking the cleartext tail is unsupported. The last fold level must be
+    // single-chunk (only the leading activated levels are chunked). Reject here
+    // to match `resolve.rs` and avoid a cryptic prover-side layout mismatch.
+    if terminal_lp.witness_chunk.num_chunks > 1 {
+        return Err(AkitaError::InvalidSetup(
+            "terminal-direct witness does not support a multi-chunk last fold level".to_string(),
+        ));
+    }
+    if opening_layout.is_some() || num_polynomials != 1 || terminal_lp.has_precommitted_groups() {
+        return Err(AkitaError::InvalidSetup(
+            "terminal direct response must be a scalar flat fold".to_string(),
+        ));
+    }
+    let (terminal_params, admission_cap) =
+        akita_types::TerminalCommittedGroupParams::try_from_expanded_group(terminal_lp.clone())?;
+    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
+    let terminal_bytes = terminal_response_bytes(field_bits, &witness_shape);
+    let direct = CandidateTerminalResponse {
+        params: terminal_params,
+        sparse_challenge_config: terminal_lp.fold_challenge_config,
         input_witness_len,
-        terminal_lp,
-        field_bits,
-        num_polynomials,
-        opening_layout,
-    )?;
-    let terminal_bytes = direct.estimated_payload_bytes;
+        estimated_direct_payload_bytes: 0,
+        response_shape: witness_shape,
+        estimated_payload_bytes: terminal_bytes,
+    };
     Ok((direct, terminal_bytes))
 }
 
@@ -169,41 +152,6 @@ fn terminal_setup_envelope(
     let mut envelope = akita_types::SetupMatrixEnvelope::minimum();
     akita_types::accumulate_terminal_matrix_envelope(params, &mut envelope.max_setup_len)?;
     Ok(envelope.max_setup_len)
-}
-
-fn update_best_suffix_choices(
-    first_direct_setup_field_len: usize,
-    total_bytes: usize,
-    setup_envelope_ring_elements: usize,
-    folds: Vec<CandidateFoldStep>,
-    terminal: CandidateTerminalResponse,
-    best_by_setup: &mut Option<CandidateSuffixChoice>,
-    best_by_proof: &mut Option<CandidateSuffixChoice>,
-) {
-    let candidate = CandidateSuffixChoice {
-        first_direct_setup_field_len,
-        total_bytes,
-        setup_envelope_ring_elements,
-        folds,
-        terminal,
-    };
-    if best_by_setup
-        .as_ref()
-        .map(|best| {
-            (first_direct_setup_field_len, total_bytes)
-                < (best.first_direct_setup_field_len, best.total_bytes)
-        })
-        .unwrap_or(true)
-    {
-        *best_by_setup = Some(candidate.clone());
-    }
-    if best_by_proof
-        .as_ref()
-        .map(|best| total_bytes < best.total_bytes)
-        .unwrap_or(true)
-    {
-        *best_by_proof = Some(candidate);
-    }
 }
 
 fn offloaded_witness_contracts(
@@ -390,7 +338,7 @@ fn price_level_candidate_with_children(
     offloaded_child: Option<&SuffixResult>,
     require_child_fold: bool,
     best_for_this_lb: &mut Option<CandidateSuffixChoice>,
-    best_proof_for_this_lb: &mut Option<CandidateSuffixChoice>,
+    best_payload_for_this_lb: &mut Option<CandidateSuffixChoice>,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Branch A: terminate directly on the witness entering this state.
@@ -414,15 +362,29 @@ fn price_level_candidate_with_children(
                 AkitaError::InvalidSetup("terminal proof size overflow".to_string())
             })?;
             direct_step.estimated_direct_payload_bytes = level_proof_size;
-            update_best_suffix_choices(
-                natural_len,
-                total,
-                terminal_setup_envelope(&direct_step.params)?,
-                Vec::new(),
-                direct_step,
-                best_for_this_lb,
-                best_proof_for_this_lb,
-            );
+            let candidate = CandidateSuffixChoice {
+                first_direct_setup_field_len: natural_len,
+                total_bytes: total,
+                setup_envelope_ring_elements: terminal_setup_envelope(&direct_step.params)?,
+                folds: Vec::new(),
+                terminal: direct_step,
+            };
+            if best_for_this_lb
+                .as_ref()
+                .map(|best| {
+                    (natural_len, total) < (best.first_direct_setup_field_len, best.total_bytes)
+                })
+                .unwrap_or(true)
+            {
+                *best_for_this_lb = Some(candidate.clone());
+            }
+            if best_payload_for_this_lb
+                .as_ref()
+                .map(|best| total < best.total_bytes)
+                .unwrap_or(true)
+            {
+                *best_payload_for_this_lb = Some(candidate);
+            }
         }
     }
 
@@ -447,7 +409,7 @@ fn price_level_candidate_with_children(
         &direct_edge,
         &direct_child.best_by_payload_per_lb,
         SuffixObjective::Payload,
-        best_proof_for_this_lb,
+        best_payload_for_this_lb,
     )?;
 
     if let Some(offloaded_child) = offloaded_child {
@@ -465,7 +427,7 @@ fn price_level_candidate_with_children(
             &offloaded_edge,
             &offloaded_child.best_by_payload_per_lb,
             SuffixObjective::Payload,
-            best_proof_for_this_lb,
+            best_payload_for_this_lb,
         )?;
     }
 
@@ -549,7 +511,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             continue;
         }
         let mut best_for_this_lb: Option<CandidateSuffixChoice> = None;
-        let mut best_proof_for_this_lb: Option<CandidateSuffixChoice> = None;
+        let mut best_payload_for_this_lb: Option<CandidateSuffixChoice> = None;
 
         let (current_opening_layout, eor_key, candidates, require_child_fold) =
             if let Some(root_key) = root_level_key {
@@ -656,7 +618,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 offloaded_child.as_ref(),
                 require_child_fold,
                 &mut best_for_this_lb,
-                &mut best_proof_for_this_lb,
+                &mut best_payload_for_this_lb,
             )?;
         }
 
@@ -681,7 +643,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 },
             );
         }
-        if let Some(choice) = best_proof_for_this_lb {
+        if let Some(choice) = best_payload_for_this_lb {
             let CandidateSuffixChoice {
                 first_direct_setup_field_len,
                 total_bytes,

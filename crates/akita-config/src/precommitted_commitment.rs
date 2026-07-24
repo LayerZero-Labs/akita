@@ -11,8 +11,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
-    SetupMatrixEnvelope, SisModulusProfileId,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
+    SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -100,30 +100,12 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
             ));
         }
         let key = opening_batch.root_final_group_layout()?;
-        precommitted_commit_params::<Cfg>(&key)
+        if let Some(params) = catalog_precommitted_commit_params::<Cfg>(&key)? {
+            return Ok(params);
+        }
+        let schedule = precommitted_commit_schedule::<Cfg>(&key)?;
+        Ok(schedule.root.params.final_group.commitment.clone())
     }
-}
-
-pub(crate) fn precommitted_group_params<Cfg: CommitmentConfig>(
-    group: PolynomialGroupLayout,
-) -> Result<PrecommittedGroupDescriptor, AkitaError> {
-    group.validate()?;
-    let singleton = OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-    let params =
-        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-            &singleton,
-        )?;
-    Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-}
-
-pub(crate) fn precommitted_commit_params<Cfg: CommitmentConfig>(
-    key: &PolynomialGroupLayout,
-) -> Result<CommittedGroupParams, AkitaError> {
-    if let Some(params) = catalog_precommitted_commit_params::<Cfg>(key)? {
-        return Ok(params);
-    }
-    let schedule = precommitted_commit_schedule::<Cfg>(key)?;
-    Ok(schedule.root.params.final_group.commitment.clone())
 }
 
 fn catalog_precommitted_commit_params<Cfg: CommitmentConfig>(
