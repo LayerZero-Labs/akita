@@ -178,35 +178,31 @@ mod tests {
     }
 
     #[test]
-    fn inner_dispatch_fp128_rejects_d32_and_d256() {
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            64usize,
-            |D| Ok(D)
-        )
-        .is_ok());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            128usize,
-            |D| Ok(D)
-        )
-        .is_ok());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            32usize,
-            |D| Ok(D)
-        )
-        .is_err());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            256usize,
-            |D| Ok(D)
-        )
-        .is_err());
+    fn inner_dispatch_fp128_accepts_d64_d128_d256_only() {
+        for d in [64usize, 128, 256] {
+            assert_eq!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime128OffsetA7F7,
+                    d,
+                    |D| Ok(D)
+                )
+                .expect("supported fp128 inner dimension"),
+                d
+            );
+        }
+        for d in [32usize, 512] {
+            assert!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime128OffsetA7F7,
+                    d,
+                    |D| Ok(D)
+                )
+                .is_err(),
+                "unsupported fp128 inner d={d} must be rejected"
+            );
+        }
     }
 
     #[test]

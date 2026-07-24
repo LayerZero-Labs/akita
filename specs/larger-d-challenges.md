@@ -4,7 +4,7 @@
 |---------------|--------------------------------|
 | Author(s)     |                                |
 | Created       | 2026-07-24                     |
-| Status        | proposed                       |
+| Status        | implemented                    |
 | PR            |                                |
 | Supersedes    |                                |
 | Superseded-by |                                |
@@ -87,16 +87,16 @@ The existing `D = 256` production challenge configuration
 
 ### Acceptance Criteria
 
-- [ ] fp128 inner-role dispatch accepts exactly `D ∈ {64, 128, 256}`.
-- [ ] fp128 inner-role dispatch continues to reject `D = 32` and `D = 512`.
-- [ ] The fp128 outer, opening, envelope, and NTT policies are byte-for-byte
+- [x] fp128 inner-role dispatch accepts exactly `D ∈ {64, 128, 256}`.
+- [x] fp128 inner-role dispatch continues to reject `D = 32` and `D = 512`.
+- [x] The fp128 outer, opening, envelope, and NTT policies are byte-for-byte
       unchanged.
-- [ ] The fp64 and fp32 dispatch policies are byte-for-byte unchanged.
-- [ ] No file under `crates/akita-config/`, `crates/akita-planner/`,
+- [x] The fp64 and fp32 dispatch policies are byte-for-byte unchanged.
+- [x] No file under `crates/akita-config/`, `crates/akita-planner/`,
       `crates/akita-schedules/`, `crates/akita-prover/`, `crates/akita-verifier/`,
       or `crates/akita-pcs/` changes.
-- [ ] No generated artifact or schedule catalog identity changes.
-- [ ] Repository formatting, dependency, unit-test, and Clippy gates pass.
+- [x] No generated artifact or schedule catalog identity changes.
+- [x] Repository formatting, dependency, unit-test, and Clippy gates pass.
 
 ### Testing Strategy
 
