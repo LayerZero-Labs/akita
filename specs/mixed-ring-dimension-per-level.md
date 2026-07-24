@@ -416,17 +416,82 @@ the B matrix width; the adapter therefore overrides `max_setup_matrix_size` to
 size the setup from the actual compressed schedule. Compressing only `d_d`
 (keeping `d_b = 128`) leaves the setup at the uniform-`D128` footprint.
 
-### Results (nv = 36; A-role stays `d_a = 128`; after Fix B)
+### Results (nv = 36; A-role stays `d_a = 128`; after Fix B; timings are 2-run means on an idle machine, post-main-merge)
 
-| Metric | A: `D = 64` all | B: `D = 128` folds 0–1 (`switch = 2`) | C: `d_b=d_d=64` | D: `d_b=128, d_d=64` |
-|---|---|---|---|---|
-| Commit                   | 26.38 s | 13.87 s | 15.28 s | 14.19 s |
-| Prove                    | 3.14 s  | 3.10 s  | 3.27 s (was 7.54 s) | 3.26 s (was 7.15 s) |
-| Verify                   | 0.053 s | 0.028 s | 0.058 s (was 0.217 s) | 0.059 s (was 0.210 s) |
-| Proof size               | 93,400 B | 97,800 B | **108,160 B** | **108,179 B** |
-| Setup vector / NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | **2.16 GB / 5.41 GB** | 1.08 GB / 2.71 GB |
-| Root ranks (`n_a/n_b/n_d`) | — | `3/1/1` | `3/2/1` | `3/1/1` |
-| Fold levels (incl. terminal) | 9 | 7 | 6 | 6 |
+| Metric | A: `D = 64` all | A′: `D = 128` root only (`switch = 1`) | B: `D = 128` folds 0–1 (`switch = 2`) | E: fold-1 A-band (`128/128/128 → 128/64/64 → 64`) | C: `d_b=d_d=64` | D: `d_b=128, d_d=64` |
+|---|---|---|---|---|---|---|
+| Commit                   | 23.99 s | 14.49 s | 14.34 s | 13.65 s | 14.93 s | 14.45 s |
+| Prove                    | 2.97 s  | 3.37 s  | 3.17 s  | 3.12 s | 3.25 s (was 7.54 s) | 3.26 s (was 7.15 s) |
+| Verify                   | 0.038 s | 0.027 s | 0.026 s | 0.024 s | 0.045 s (was 0.217 s) | 0.036 s (was 0.210 s) |
+| Proof size               | 93,400 B | 94,428 B | 97,824 B | 95,768 B | **108,160 B** | **108,179 B** |
+| Setup vector / NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | **2.16 GB / 5.41 GB** | 1.08 GB / 2.71 GB |
+| Root ranks (`n_a/n_b/n_d`) | — | `3/1/1` | `3/1/1` | `3/1/1` | `3/2/1` | `3/1/1` |
+| Fold levels (incl. terminal) | 9 | 9 | 7 | 7 | 6 | 6 |
+
+Every timing above is the mean of two back-to-back runs on an otherwise idle
+machine; the two passes agreed to within run-to-run noise (e.g. baseline commit
+23.98 s / 23.99 s), and proof size, setup footprint, root ranks, and fold-level
+counts are deterministic and identical across passes. This supersedes an earlier
+measurement pass whose commit/verify numbers (baseline commit ≈ 26 s, verify
+≈ 0.05–0.06 s) were inflated by background load.
+
+### `switch = 1` (root only) vs `switch = 2`
+
+Committing only the root at `D = 128` and dropping to `D = 64` at level 1
+(`switch = 1`, column A′) keeps essentially all of the commit and setup win of a
+`D = 128` leading band — commit ≈ 14.5 s and setup 1.08 GB / 2.71 GB, tied with
+`switch = 2` and ~40% below the `D = 64` baseline (24.0 s, 2.16 GB / 5.41 GB) —
+and it produces a **smaller proof than `switch = 2`** (94,428 B vs 97,824 B). The
+proof-size edge comes from the tail: `switch = 1`'s terminal response is
+52,392 B versus 62,868 B for `switch = 2`, which more than offsets its larger
+folded section (42,036 B vs 34,956 B). The cost is that `switch = 1` reverts to
+the `D = 64` fold geometry one level earlier, so it runs the full 9-level ladder
+(vs 7) with a marginally slower prove (≈3.37 s vs ≈3.17 s) and verify (≈0.027 s
+vs ≈0.026 s). Both roots are uniform-per-role (`3/1/1`), so both take the fast
+fused relation evaluator on verify.
+
+Neither strictly dominates: `switch = 1` trades ~0.2 s of prove latency and two
+extra fold levels for ~3.4 KB of proof size; `switch = 2` trades proof size for
+fewer levels and slightly lower prover/verifier latency. The `switch = 2`
+recommendation elsewhere in this spec optimizes for prove/verify latency and
+level count; pick `switch = 1` when minimizing proof size matters more.
+
+### `E`: fold-1 A-band (role-switch, root = 128)
+
+Column E keeps the whole root uniform at `D = 128` (like `switch = 2`) but at
+**fold 1** compresses only the B/D roles to `64` while the A role stays at `128`
+(`d_a/d_b/d_d = 128/64/64`); every deeper level is uniform `D = 64`. It is the
+`RoleSwitchConfig<D128OneHot, D64OneHot, 64, 128>` adapter
+(`AKITA_MIXED_ROLESWITCH=1 AKITA_MIXED_ROLESWITCH_ROOT_D=128`). The measured
+per-level geometry is:
+
+| Level | `d_a/d_b/d_d` | `n_a/n_b/n_d` |
+|---|---|---|
+| 0 (root) | 128/128/128 | 3/1/1 |
+| 1 | 128/64/64 | 3/1/1 |
+| 2 | 64/64/64 | 5/1/1 |
+| 3+ | 64/64/64 | 5–6/1/1 |
+
+Both levels 0 and 1 keep the A path at `128` and the B/D roles are already at
+their rank floor (`n_b = n_d = 1`), so verify still takes the fast fused
+evaluator (≈0.024 s — the fastest of the `D = 128`-root variants) and the setup
+stays at the compressed 1.08 GB / 2.71 GB footprint. Commit (≈13.7 s) is at the
+low end of the `D = 128`-root group, but since every variant here commits the
+same `D = 128` root the differences are within run-to-run noise.
+
+The useful comparison is against its two neighbors:
+
+- **vs `switch = 2` (B):** E compresses the fold-1 B/D roles to `64` instead of
+  keeping them at `128`, which shrinks the proof to **95,768 B (−2,056 B)** at the
+  **same 7 levels** and the same commit / prove / verify — so E strictly improves
+  on `switch = 2` on proof size here at no other cost.
+- **vs `switch = 1` (A′):** E holds the A-band one level deeper, which cuts the
+  ladder from 9 to **7 levels** and gives the fastest verify (0.024 s vs 0.027 s),
+  at the cost of a slightly larger proof (95,768 B vs 94,428 B, +1,340 B).
+
+So among the `D = 128`-root variants, E is the best "balanced" point: it keeps
+`switch = 2`'s short 7-level ladder and fast verify while taking a smaller proof,
+and it costs nothing extra on setup or commit.
 
 ### Why it is (still) dominated
 
@@ -473,6 +538,13 @@ AKITA_MIXED_SWITCH=2 AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
 # Per-role root: A = 128, B = AKITA_MIXED_OUTER_D, D = AKITA_MIXED_OPEN_D
 # (both default 64). E.g. d_b = 128, d_d = 64:
 AKITA_MIXED_ROLE=1 AKITA_MIXED_OUTER_D=128 AKITA_MIXED_OPEN_D=64 \
+  AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
+  AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
+  cargo run --release -p akita-pcs --example profile
+
+# Column E: fold-1 A-band (root 128/128/128, fold 1 128/64/64, then 64).
+# AKITA_MIXED_ROLESWITCH_ROOT_D=128 keeps the root fully uniform.
+AKITA_MIXED_ROLESWITCH=1 AKITA_MIXED_ROLESWITCH_ROOT_D=128 \
   AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
