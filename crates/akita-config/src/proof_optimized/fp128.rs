@@ -26,6 +26,14 @@ pub struct D64OneHotK16;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
+/// Binary onehot `D=256` preset (DP-backed) for the mixed-ring experiment.
+/// NOTE: fp128 only certifies the inner (A-role) commitment up to `D = 128`
+/// (see `protocol_dispatch_policy!`), so a `D = 256` *root* is expected to be
+/// rejected at schedule resolution; this preset exists to make that boundary
+/// explicit and testable.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D256OneHot;
+
 /// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
 /// layout parameter with its sibling but prices the chunked witness layout.
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,6 +117,16 @@ impl_proof_optimized_preset!(
     128,
     1,
     16
+);
+impl_proof_optimized_preset!(
+    D256OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    256
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

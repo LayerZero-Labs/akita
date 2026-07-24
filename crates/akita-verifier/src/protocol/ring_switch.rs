@@ -223,14 +223,12 @@ where
             coeff_count.trailing_zeros() as usize,
         )
     };
-    // This is the Stage-1 transcript permutation boundary, not the Stage-2
-    // coefficient split. On mixed paths tau0 is already sampled in flat
-    // physical-address order, so zero means "no permutation," not "no low bits."
-    let digit_range_equality_low_variable_count = if uniform {
-        opening_ring_dim.trailing_zeros() as usize
-    } else {
-        0
-    };
+    // Bind the shared low coefficient block (`ring_bits = log2(coeff_count)`)
+    // as the digit range check's ring phase on every path. On uniform schedules
+    // this equals `log2(opening_ring_dim)` (byte-identical replay); on
+    // non-uniform schedules it mirrors the prover's fast compact ring phase
+    // (see `ring_switch_finalize`) instead of the dense flat sweep.
+    let digit_range_equality_low_variable_count = ring_bits;
     let num_sc_vars = col_bits + ring_bits;
     let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
@@ -635,8 +633,21 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        if context.opening_ring_dim == D && self.role_dims == CommitmentRingDims::uniform(D) {
+        // Uniform-role fast path. This fires whenever all three roles share the
+        // dispatch dimension `D`, regardless of the outgoing witness ring
+        // (`opening_ring_dim`). When `opening_ring_dim < D` the relation carries
+        // `D / opening_ring_dim` lanes per ring element, but for uniform roles
+        // the point is laid out `[coeff][lane][column]` with coeff+lane
+        // occupying the low `log2(D)` bits (the address is
+        // `witness_column·lanes + lane`, coeff below), so the low `log2(D)` bits
+        // are exactly the `D`-ring coefficient block. Hence
+        // `coefficient_eval(D) = coeff_eval · lane_eval` and the column
+        // structure is identical to the `opening_ring_dim == D` case: the
+        // succinct evaluator returns the same value the lane-factored mixed scan
+        // would, without the explicit O(setup-columns) multiply. (Validated by
+        // `mixed_d_per_level_e2e`, whose level-1 fold is a uniform-role,
+        // `opening_ring_dim = D/2` step, plus tamper rejection.)
+        if self.role_dims == CommitmentRingDims::uniform(D) {
             let coefficient_bits = D.trailing_zeros() as usize;
             if point.len() < coefficient_bits {
                 return Err(AkitaError::InvalidProof);
@@ -683,6 +694,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         &self,
         x_challenges: &[E],
         fold_gadget: Option<&[F]>,
+        alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -700,6 +712,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             x_challenges,
             fold_gadget,
             self.role_dims,
+            alpha,
         )
     }
 
@@ -822,6 +835,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             Some(self.setup_contribution_plan::<F>(
                 x_challenges,
                 (!fold_gadget.is_empty()).then_some(fold_gadget),
+                alpha,
             )?)
         } else {
             None

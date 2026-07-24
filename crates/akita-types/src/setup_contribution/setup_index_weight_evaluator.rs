@@ -32,6 +32,13 @@ pub struct SetupIndexWeightEvaluator<E> {
     d_projection: SetupRoleProjection<E>,
     fold_gadget: Vec<E>,
     required: usize,
+    /// Per-role fallback: materialized `setup_index_weight` from the plan's
+    /// (subcolumn-expanded, α-lane-summed) slices. The compact-pair recurrence
+    /// only models the uniform ring-projection geometry, so for genuinely
+    /// per-role commitments (`a_ratio > 1`) we evaluate the MLE directly from the
+    /// plan weights — the same weights the prover's `materialize_setup_index_weights`
+    /// produces, keeping prover and verifier consistent. `None` for uniform roles.
+    per_role_weights: Option<Vec<E>>,
 }
 
 #[derive(Clone)]
@@ -93,6 +100,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             .copied()
             .map(|fold| E::one().mul_base(fold))
             .collect::<Vec<_>>();
+        // Genuinely per-role commitments (`a_ratio > 1`) carry subcolumn-expanded
+        // D/B columns and α-lane-summed A weights that the compact-pair recurrence
+        // does not model; fall back to the plan's materialized weights so the
+        // recursive verifier matches the prover exactly.
+        let per_role_weights = if geometry.a_ratio() > 1 {
+            Some(plan.materialize_setup_index_weights(alpha)?)
+        } else {
+            None
+        };
         Ok(Self {
             tau1: tau1.to_vec(),
             x_challenges: x_challenges.to_vec(),
@@ -109,6 +125,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             d_projection,
             fold_gadget,
             required: geometry.required(),
+            per_role_weights,
         })
     }
 
@@ -127,6 +144,15 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                 expected: setup_idx_bits,
                 actual: rho_setup_idx.len(),
             });
+        }
+
+        // Per-role fallback: direct MLE over the plan's materialized weights.
+        if let Some(weights) = &self.per_role_weights {
+            let mut acc = E::zero();
+            for (setup_idx, &weight) in weights.iter().enumerate() {
+                acc += eq_eval_at_index(rho_setup_idx, setup_idx) * weight;
+            }
+            return Ok(acc);
         }
 
         // Each role's inner sum contracts two affine equality-address streams:

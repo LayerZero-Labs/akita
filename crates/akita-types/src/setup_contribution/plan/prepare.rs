@@ -1,4 +1,88 @@
 use super::*;
+use akita_algebra::ring::scalar_powers;
+
+/// Per-role relation lane geometry derived from `role_dims` and the folding
+/// challenge `alpha`. For uniform roles every ratio is 1 and every spec reduces
+/// to the pre-existing single-`eq` fast path.
+struct RelationLaneGeometry<E> {
+    /// `d_a / base_ring_dim` (total relation lanes per inner ring element).
+    a_ratio: usize,
+    /// Distinct physical subcolumns per role: `a_ratio / (d_role / base)`.
+    d_subcolumns: usize,
+    b_subcolumns: usize,
+    /// `α^{base_ring_dim · l}` tables, one per role (length `d_role / base`).
+    a_lane_alpha: Vec<E>,
+    b_lane_alpha: Vec<E>,
+    d_lane_alpha: Vec<E>,
+}
+
+impl<E: FieldCore> RelationLaneGeometry<E> {
+    fn new(role_dims: CommitmentRingDims, alpha: E) -> Result<Self, AkitaError> {
+        let base = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
+        if base == 0 {
+            return Err(AkitaError::InvalidSetup("zero base ring dimension".into()));
+        }
+        let ratio = |d: usize| -> Result<usize, AkitaError> {
+            if !d.is_multiple_of(base) {
+                return Err(AkitaError::InvalidSetup(
+                    "role dimension does not decompose over the Stage 3 base".into(),
+                ));
+            }
+            Ok(d / base)
+        };
+        let a_ratio = ratio(role_dims.d_a())?;
+        let b_lanes = ratio(role_dims.d_b())?;
+        let d_lanes = ratio(role_dims.d_d())?;
+        let subcolumns = |lanes: usize| -> Result<usize, AkitaError> {
+            a_ratio
+                .checked_div(lanes)
+                .filter(|s| *s != 0 && a_ratio == s * lanes)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("role lanes do not divide the inner witness".into())
+                })
+        };
+        // `α^base`, then per-role lane tables `[1, α^base, α^{2·base}, …]`.
+        let alpha_base = *scalar_powers(alpha, base + 1)
+            .get(base)
+            .ok_or(AkitaError::InvalidProof)?;
+        let lane_alpha = |lanes: usize| scalar_powers(alpha_base, lanes);
+        Ok(Self {
+            a_ratio,
+            d_subcolumns: subcolumns(d_lanes)?,
+            b_subcolumns: subcolumns(b_lanes)?,
+            a_lane_alpha: lane_alpha(a_ratio),
+            b_lane_alpha: lane_alpha(b_lanes),
+            d_lane_alpha: lane_alpha(d_lanes),
+        })
+    }
+
+    fn a_spec(&self) -> RoleLaneSpec<'_, E> {
+        RoleLaneSpec {
+            a_ratio: self.a_ratio,
+            role_subcolumns: 1,
+            role_lanes: self.a_lane_alpha.len(),
+            role_lane_alpha: &self.a_lane_alpha,
+        }
+    }
+
+    fn b_spec(&self) -> RoleLaneSpec<'_, E> {
+        RoleLaneSpec {
+            a_ratio: self.a_ratio,
+            role_subcolumns: self.b_subcolumns,
+            role_lanes: self.b_lane_alpha.len(),
+            role_lane_alpha: &self.b_lane_alpha,
+        }
+    }
+
+    fn d_spec(&self) -> RoleLaneSpec<'_, E> {
+        RoleLaneSpec {
+            a_ratio: self.a_ratio,
+            role_subcolumns: self.d_subcolumns,
+            role_lanes: self.d_lane_alpha.len(),
+            role_lane_alpha: &self.d_lane_alpha,
+        }
+    }
+}
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     #[allow(clippy::too_many_arguments)]
@@ -12,12 +96,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         full_vec_randomness: &[E],
         fold_gadget: Option<&[F]>,
         role_dims: CommitmentRingDims,
+        alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
+        let lanes = RelationLaneGeometry::new(role_dims, alpha)?;
         let rows = {
             let _span = tracing::info_span!("setup_prepare_validate").entered();
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
@@ -29,7 +115,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             let d_row_start = rows.checked_sub(d_rows).ok_or_else(|| {
                 AkitaError::InvalidSetup("setup D rows exceed relation rows".into())
             })?;
-            let d_physical_cols = get_total_d(level_params, opening_batch, groups)?;
+            let d_physical_cols = get_total_d(level_params, opening_batch, groups)?
+                .checked_mul(lanes.d_subcolumns)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup D subcolumn width overflow".into())
+                })?;
             let d_weights: std::sync::Arc<[E]> = if d_rows == 0 {
                 Vec::new().into()
             } else {
@@ -65,11 +155,23 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let n_a = group.n_a(level_params, opening_batch)?;
                 let n_b = group.n_b(level_params, opening_batch)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
-                let d_col_range =
-                    get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
+                let d_col_range = {
+                    let range =
+                        get_d_col_range(level_params, opening_batch, groups, group.group_id)?;
+                    // Expand the physical D range by the per-role subcolumn count
+                    // (1 for uniform roles), keeping groups contiguous.
+                    let start = range.start.checked_mul(lanes.d_subcolumns).ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup D subcolumn range overflow".into())
+                    })?;
+                    let end = range.end.checked_mul(lanes.d_subcolumns).ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup D subcolumn range overflow".into())
+                    })?;
+                    start..end
+                };
                 let t_cols = group
                     .num_claims
                     .checked_mul(t_vector_width)
+                    .and_then(|cols| cols.checked_mul(lanes.b_subcolumns))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".into()))?;
                 let z_cols = num_positions_per_block
                     .checked_mul(depth_witness)
@@ -93,6 +195,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         group.num_claims,
                         depth_open,
                         &eq_window,
+                        &lanes.d_spec(),
                     )?
                 };
                 let t_eq_slice = {
@@ -106,6 +209,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         n_a,
                         group.num_claims,
                         &eq_window,
+                        &lanes.b_spec(),
                     )?
                 };
                 let fold_gadget_storage;
@@ -137,6 +241,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         group.depth_fold,
                         &eq_window,
                         fold_gadget,
+                        &lanes.a_spec(),
                         &mut z_eq_slice,
                     )?;
                 }
@@ -161,7 +266,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .zip(groups)
             .map(|(planned, group)| {
-                let d_active_cols = group.d_active_cols(level_params, opening_batch)?;
+                let d_active_cols = group
+                    .d_active_cols(level_params, opening_batch)?
+                    .checked_mul(lanes.d_subcolumns)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup D active subcolumn overflow".into())
+                    })?;
                 Ok(SetupProjectionGroupGeometry {
                     a_rows: planned.n_a,
                     a_cols: planned.z_cols,

@@ -271,6 +271,7 @@ impl SetupContributionFixture {
             .setup_contribution_plan::<TestField>(
                 &self.full_vec_randomness,
                 Some(&self.fold_gadget),
+                self.alpha_pows[1],
             )
             .unwrap();
         let alpha = self.alpha_pows[1];
@@ -314,6 +315,7 @@ impl SetupContributionFixture {
             .setup_contribution_plan::<TestField>(
                 &self.full_vec_randomness,
                 Some(&self.fold_gadget),
+                self.alpha_pows[1],
             )
             .unwrap();
         let alpha = self.alpha_pows[1];

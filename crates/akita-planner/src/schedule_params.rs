@@ -298,6 +298,123 @@ pub fn find_schedule(
     )
 }
 
+/// One recursive fold of an independently planned suffix
+/// ([`plan_optimal_suffix`]).
+#[derive(Clone, Debug)]
+pub struct PlannedSuffixFold {
+    /// Committed-group params for this fold level (already priced at
+    /// `policy.ring_dimension`).
+    pub params: CommittedGroupParams,
+    /// Field-element witness length entering this fold.
+    pub input_witness_len: usize,
+    /// Field-element witness length produced for the next level.
+    pub output_witness_len: usize,
+}
+
+/// Terminal (cleartext) response of an independently planned suffix.
+#[derive(Clone, Debug)]
+pub struct PlannedSuffixTerminal {
+    /// Terminal committed-group params.
+    pub params: akita_types::TerminalCommittedGroupParams,
+    /// Short ring challenge family for the terminal fold.
+    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Field-element witness length entering the terminal fold.
+    pub input_witness_len: usize,
+    /// Cleartext response wire shape.
+    pub response_shape: TerminalResponseShape,
+}
+
+/// Optimal recursive suffix planned from an intermediate witness.
+#[derive(Clone, Debug)]
+pub struct PlannedSuffix {
+    /// Recursive fold levels, starting at `start_level`.
+    pub folds: Vec<PlannedSuffixFold>,
+    /// Terminal fold.
+    pub terminal: PlannedSuffixTerminal,
+    /// Header-stripped direct-mode proof bytes of the suffix (folds + terminal).
+    pub total_bytes: usize,
+}
+
+/// Plan the proof-size-optimal recursive suffix that folds a witness of
+/// `start_witness_len` field elements (produced by some predecessor fold at
+/// `start_level - 1`) down to a cleartext terminal, at `policy.ring_dimension`.
+///
+/// This is the exact suffix DP [`find_schedule`] runs after choosing a root,
+/// exposed so callers can splice an optimal suffix onto a differently sized
+/// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
+/// folds at a larger ring dimension than the suffix. `start_lb` is the
+/// predecessor level's `log_basis` (fold `log_basis` is non-decreasing), and
+/// `num_vars` is the opening arity (used for the singleton opening layout the
+/// suffix prices against).
+///
+/// # Errors
+///
+/// Returns [`AkitaError::UnsupportedSchedule`] if no terminating suffix exists
+/// for the requested state, or propagates SIS-sizing / overflow failures.
+pub fn plan_optimal_suffix(
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    num_vars: usize,
+    start_level: usize,
+    start_witness_len: usize,
+    start_lb: u32,
+) -> Result<PlannedSuffix, AkitaError> {
+    validate_policy_witness_chunk(policy)?;
+    if policy.recursive_setup_planning {
+        return Err(AkitaError::InvalidSetup(
+            "recursive setup planning is not supported by plan_optimal_suffix".to_string(),
+        ));
+    }
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let ctx = SuffixCtx {
+        policy,
+        ring_challenge_cfg: &ring_challenge_cfg,
+        fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
+        num_vars,
+        key: PolynomialGroupLayout::singleton(num_vars),
+    };
+    let mut memo = ScheduleMemo::new();
+    let result = derive_optimal_suffix_schedule(
+        &ctx,
+        &mut memo,
+        SuffixState {
+            level: start_level,
+            current_witness_len: start_witness_len,
+            current_lb: start_lb,
+            incoming_setup_prefix: None,
+        },
+        0,
+    )?;
+    let best = result
+        .best_fold_per_lb
+        .values()
+        .min_by_key(|suffix| suffix.total_bytes)
+        .ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
+            ))
+        })?;
+    Ok(PlannedSuffix {
+        folds: best
+            .folds
+            .iter()
+            .map(|fold| PlannedSuffixFold {
+                params: fold.params.clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: PlannedSuffixTerminal {
+            params: best.terminal.params.clone(),
+            sparse_challenge_config: best.terminal.sparse_challenge_config,
+            input_witness_len: best.terminal.input_witness_len,
+            response_shape: best.terminal.response_shape.clone(),
+        },
+        total_bytes: best.total_bytes,
+    })
+}
+
 fn find_schedule_inner(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,

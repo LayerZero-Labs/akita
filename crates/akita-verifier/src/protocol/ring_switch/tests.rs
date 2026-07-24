@@ -61,6 +61,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         &[],
         None,
         CommitmentRingDims::uniform(D),
+        F::one(),
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
         Err(err) => err,

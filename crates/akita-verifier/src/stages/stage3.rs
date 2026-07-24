@@ -52,8 +52,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F>,
     {
         let fold_gadget = relation_matrix_evaluator.setup_contribution_fold_gadget::<F>()?;
-        let plan = relation_matrix_evaluator
-            .setup_contribution_plan::<F>(x_challenges, fold_gadget.as_deref())?;
+        let plan = relation_matrix_evaluator.setup_contribution_plan::<F>(
+            x_challenges,
+            fold_gadget.as_deref(),
+            alpha,
+        )?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator = fold_gadget

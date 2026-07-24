@@ -99,15 +99,18 @@ where
         let live_x_cols = w.len() / coeff_count;
         let col_bits = lane_capacity.trailing_zeros() as usize;
         let ring_bits = coeff_count.trailing_zeros() as usize;
-        // This is the Stage-1 transcript permutation boundary, not the Stage-2
-        // coefficient split. On mixed paths tau0 is already sampled in flat
-        // physical-address order, so zero means "no permutation," not "no low bits."
-        let digit_range_equality_low_variable_count =
-            if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
-                opening_ring_dim.trailing_zeros() as usize
-            } else {
-                0
-            };
+        // Bind the shared low coefficient block (`coeff_count`) as the digit
+        // range check's ring phase on every path. On uniform schedules
+        // `coeff_count == opening_ring_dim`, so this equals the historical value
+        // and the proof is byte-identical. On non-uniform schedules (per-level
+        // ring switch, e.g. a D=128 root folding into a D=64 tail, or per-role
+        // compression) it lets the range check exploit the same low ring block
+        // the witness is actually stored in — the fast compact ring phase —
+        // instead of collapsing to the dense flat x-sweep (`low = 0`). The
+        // Stage-1 challenge point folds the ring block first in both cases; the
+        // downstream Stage-2 relation reads that point through the same
+        // `col_bits`/`ring_bits` split, so the ordering stays consistent.
+        let digit_range_equality_low_variable_count = ring_bits;
         let num_sc_vars = col_bits + ring_bits;
         let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 

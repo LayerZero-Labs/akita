@@ -76,9 +76,40 @@ where
 
     let setup_evaluation = {
         let _span = tracing::info_span!("mixed_relation_setup_scan").entered();
-        evaluate_setup_contribution::<F, E>(evaluator, setup, &prepared_point).map_err(|error| {
-            AkitaError::InvalidInput(format!("mixed relation setup scan failed: {error:?}"))
-        })?
+        let base_ring_dim = evaluator.role_dims.common_relation_coeff_count();
+        if prepared_point.coeff_count() == base_ring_dim {
+            // Succinct per-role setup evaluation. When the coefficient block
+            // equals the shared base ring dimension, `address_point()` is the
+            // column-challenge vector the setup-contribution plan expects, and
+            // `prepare` (given the same `alpha`) builds subcolumn-expanded,
+            // α-lane-summed eq-slices so `evaluate_direct` reproduces the dense
+            // per-role contribution in a single base-ring pass instead of three
+            // per-role dense multiplies. (Validated by `compressed_role_e2e`.)
+            let setup_groups = evaluator.setup_contribution_inputs();
+            let fold_gadget = akita_types::shared_setup_fold_gadget::<F>(
+                &context.level_params,
+                &context.opening_batch,
+                &setup_groups,
+            );
+            let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
+            let plan = evaluator.setup_contribution_plan::<F>(
+                prepared_point.address_point(),
+                (!fold_gadget.is_empty()).then_some(fold_gadget),
+                alpha,
+            )?;
+            plan.evaluate_direct::<F>(
+                setup,
+                prepared_point.inner().powers.as_ref(),
+                prepared_point.outer().powers.as_ref(),
+                prepared_point.opening().powers.as_ref(),
+            )?
+        } else {
+            evaluate_setup_contribution::<F, E>(evaluator, setup, &prepared_point).map_err(
+                |error| {
+                    AkitaError::InvalidInput(format!("mixed relation setup scan failed: {error:?}"))
+                },
+            )?
+        }
     };
     let quotient_evaluation =
         evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
@@ -225,40 +256,57 @@ where
     }
 
     let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
-    for unit in units {
-        for (position, &opening_evaluation) in group.opening_a_evals.iter().enumerate() {
-            for (commit_digit, &commit_weight) in witness_gadget.iter().enumerate() {
-                for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
-                    let z_column = unit.z_index(
-                        group.opening_a_evals.len(),
-                        group.depth_witness,
-                        group.depth_fold,
-                        position,
-                        commit_digit,
-                        fold_digit,
-                    )?;
-                    let z_lane_start = canonical_relation_lane_index(
-                        opening_source_len,
-                        opening_ring_dimension,
-                        inner_ring_dimension,
-                        coeff_count,
-                        z_column,
-                        0,
-                    )?;
-                    let lane_equality = evaluate_lane_segment(
-                        equality_window,
-                        z_lane_start,
-                        inner_lane_alpha_powers,
-                    )?;
-                    evaluation -= lane_equality
-                        * consistency_weight
-                        * opening_evaluation
-                        * <E as LiftBase<F>>::lift_base(commit_weight)
-                        * <E as LiftBase<F>>::lift_base(fold_weight);
+    // The Z-consistency term is a sum of independent (position, digit) products.
+    // Parallelize over the position axis (the large dimension at the root);
+    // field addition is associative/commutative, so the reduced value is
+    // identical to the serial `evaluation -= …` accumulation.
+    let num_positions = group.opening_a_evals.len();
+    let z_contribution = cfg_fold_reduce!(
+        0..num_positions,
+        || Ok(E::zero()),
+        |acc: Result<E, AkitaError>, position| {
+            let opening_evaluation = *group
+                .opening_a_evals
+                .get(position)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut local = E::zero();
+            for unit in units {
+                for (commit_digit, &commit_weight) in witness_gadget.iter().enumerate() {
+                    for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
+                        let z_column = unit.z_index(
+                            num_positions,
+                            group.depth_witness,
+                            group.depth_fold,
+                            position,
+                            commit_digit,
+                            fold_digit,
+                        )?;
+                        let z_lane_start = canonical_relation_lane_index(
+                            opening_source_len,
+                            opening_ring_dimension,
+                            inner_ring_dimension,
+                            coeff_count,
+                            z_column,
+                            0,
+                        )?;
+                        let lane_equality = evaluate_lane_segment(
+                            equality_window,
+                            z_lane_start,
+                            inner_lane_alpha_powers,
+                        )?;
+                        local += lane_equality
+                            * consistency_weight
+                            * opening_evaluation
+                            * <E as LiftBase<F>>::lift_base(commit_weight)
+                            * <E as LiftBase<F>>::lift_base(fold_weight);
+                    }
                 }
             }
-        }
-    }
+            Ok(acc? + local)
+        },
+        |left: Result<E, AkitaError>, right: Result<E, AkitaError>| Ok(left? + right?)
+    )?;
+    evaluation -= z_contribution;
     Ok(evaluation)
 }
 
@@ -307,70 +355,44 @@ where
     let mut d_column_weights = Vec::new();
     for group in &evaluator.groups {
         let units = context.witness_layout.units_for_group(group.group_id)?;
-        let group_native_columns = group
-            .num_claims
-            .checked_mul(group.num_live_blocks)
+        let num_claims = group.num_claims;
+        let num_live_blocks = group.num_live_blocks;
+        let depth_open = group.depth_open;
+        let group_native_columns = num_claims
+            .checked_mul(num_live_blocks)
             .and_then(|count| count.checked_mul(opening_subcolumns))
-            .and_then(|count| count.checked_mul(group.depth_open))
+            .and_then(|count| count.checked_mul(depth_open))
             .ok_or_else(|| AkitaError::InvalidSetup("D column count overflow".into()))?;
-        let group_start = d_column_weights.len();
-        let group_end = group_start
-            .checked_add(group_native_columns)
-            .ok_or_else(|| AkitaError::InvalidSetup("D column range overflow".into()))?;
-        d_column_weights.resize(group_end, E::zero());
-        for unit in units {
-            for claim in 0..group.num_claims {
-                for local_block in 0..unit.num_live_blocks() {
-                    let global_block = unit
-                        .global_block_start()
-                        .checked_add(local_block)
-                        .ok_or_else(|| AkitaError::InvalidSetup("D block overflow".into()))?;
-                    let logical_block = claim
-                        .checked_mul(group.num_live_blocks)
-                        .and_then(|base| base.checked_add(global_block))
-                        .ok_or_else(|| AkitaError::InvalidSetup("D block index overflow".into()))?;
-                    for opening_subcolumn in 0..opening_subcolumns {
-                        for digit in 0..group.depth_open {
-                            let witness_column = unit.e_index(
-                                group.num_claims,
-                                group.depth_open,
-                                claim,
-                                global_block,
-                                digit,
-                            )?;
-                            let lane_start = canonical_relation_lane_index(
-                                context.opening_source_len,
-                                context.opening_ring_dim,
-                                inner_ring_dimension,
-                                coeff_count,
-                                witness_column,
-                                opening_subcolumn * opening_lanes,
-                            )?;
-                            let weight = evaluate_lane_segment(
-                                equality_window,
-                                lane_start,
-                                opening_lane_alpha_powers,
-                            )?;
-                            let local_column = logical_block
-                                .checked_mul(opening_subcolumns)
-                                .and_then(|base| base.checked_add(opening_subcolumn))
-                                .and_then(|base| base.checked_mul(group.depth_open))
-                                .and_then(|base| base.checked_add(digit))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidSetup("D column index overflow".into())
-                                })?;
-                            let native_column =
-                                group_start.checked_add(local_column).ok_or_else(|| {
-                                    AkitaError::InvalidSetup("D native column overflow".into())
-                                })?;
-                            *d_column_weights
-                                .get_mut(native_column)
-                                .ok_or(AkitaError::InvalidProof)? = weight;
-                        }
-                    }
-                }
-            }
-        }
+        // Build the D-role column weights in parallel over the native column
+        // index (same bijection as the serial form; uncovered blocks stay zero).
+        let group_weights = cfg_into_iter!(0..group_native_columns)
+            .map(|local_column| -> Result<E, AkitaError> {
+                let digit = local_column % depth_open;
+                let t = local_column / depth_open;
+                let opening_subcolumn = t % opening_subcolumns;
+                let logical_block = t / opening_subcolumns;
+                let claim = logical_block / num_live_blocks;
+                let global_block = logical_block % num_live_blocks;
+                let Some(unit) = units.iter().copied().find(|u| {
+                    let start = u.global_block_start();
+                    global_block >= start && global_block - start < u.num_live_blocks()
+                }) else {
+                    return Ok(E::zero());
+                };
+                let witness_column =
+                    unit.e_index(num_claims, depth_open, claim, global_block, digit)?;
+                let lane_start = canonical_relation_lane_index(
+                    context.opening_source_len,
+                    context.opening_ring_dim,
+                    inner_ring_dimension,
+                    coeff_count,
+                    witness_column,
+                    opening_subcolumn * opening_lanes,
+                )?;
+                evaluate_lane_segment(equality_window, lane_start, opening_lane_alpha_powers)
+            })
+            .collect::<Result<Vec<E>, AkitaError>>()?;
+        d_column_weights.extend(group_weights);
     }
     let d_evaluation = if active_d_rows == 0 {
         E::zero()
@@ -403,77 +425,54 @@ where
                 .and_then(|count| count.checked_mul(group.n_a))
                 .and_then(|count| count.checked_mul(group.depth_commit))
                 .ok_or_else(|| AkitaError::InvalidSetup("B column count overflow".into()))?;
-            let mut b_column_weights = vec![
-                E::zero();
-                semantic_t_columns
-                    .checked_mul(outer_subcolumns)
-                    .ok_or_else(|| AkitaError::InvalidSetup(
-                        "B native column count overflow".into()
-                    ))?
-            ];
-            for unit in &units {
-                for claim in 0..group.num_claims {
-                    for local_block in 0..unit.num_live_blocks() {
-                        let global_block = unit
-                            .global_block_start()
-                            .checked_add(local_block)
-                            .ok_or_else(|| AkitaError::InvalidSetup("B block overflow".into()))?;
-                        let block_claim = claim
-                            .checked_mul(group.num_live_blocks)
-                            .and_then(|base| base.checked_add(global_block))
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup("B block index overflow".into())
-                            })?;
-                        for a_row in 0..group.n_a {
-                            for digit in 0..group.depth_commit {
-                                let witness_column = unit.t_index(
-                                    group.num_claims,
-                                    group.n_a,
-                                    group.depth_commit,
-                                    claim,
-                                    global_block,
-                                    a_row,
-                                    digit,
-                                )?;
-                                let semantic_column = block_claim
-                                    .checked_mul(group.n_a)
-                                    .and_then(|base| base.checked_add(a_row))
-                                    .and_then(|base| base.checked_mul(group.depth_commit))
-                                    .and_then(|base| base.checked_add(digit))
-                                    .ok_or_else(|| {
-                                        AkitaError::InvalidSetup("B column index overflow".into())
-                                    })?;
-                                for outer_subcolumn in 0..outer_subcolumns {
-                                    let first_lane = outer_subcolumn * outer_lanes;
-                                    let lane_start = canonical_relation_lane_index(
-                                        context.opening_source_len,
-                                        context.opening_ring_dim,
-                                        inner_ring_dimension,
-                                        coeff_count,
-                                        witness_column,
-                                        first_lane,
-                                    )?;
-                                    let native_column = semantic_column
-                                        .checked_mul(outer_subcolumns)
-                                        .and_then(|base| base.checked_add(outer_subcolumn))
-                                        .ok_or_else(|| {
-                                            AkitaError::InvalidSetup(
-                                                "B native column index overflow".into(),
-                                            )
-                                        })?;
-                                    *b_column_weights
-                                        .get_mut(native_column)
-                                        .ok_or(AkitaError::InvalidProof)? = evaluate_lane_segment(
-                                        equality_window,
-                                        lane_start,
-                                        outer_lane_alpha_powers,
-                                    )?;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            let b_native_columns = semantic_t_columns
+                .checked_mul(outer_subcolumns)
+                .ok_or_else(|| AkitaError::InvalidSetup("B native column count overflow".into()))?;
+            // Build the B-role column weights in parallel over the native column
+            // index. Each native column is written exactly once in the serial
+            // form, so inverting `native_column → (claim, block, a_row, digit,
+            // outer_subcolumn)` and mapping independently produces the identical
+            // vector. Blocks not covered by any unit stay zero (as before).
+            let num_claims = group.num_claims;
+            let num_live_blocks = group.num_live_blocks;
+            let n_a = group.n_a;
+            let depth_commit = group.depth_commit;
+            let b_column_weights = cfg_into_iter!(0..b_native_columns)
+                .map(|native_column| -> Result<E, AkitaError> {
+                    let outer_subcolumn = native_column % outer_subcolumns;
+                    let semantic_column = native_column / outer_subcolumns;
+                    let digit = semantic_column % depth_commit;
+                    let rest = semantic_column / depth_commit;
+                    let a_row = rest % n_a;
+                    let block_claim = rest / n_a;
+                    let claim = block_claim / num_live_blocks;
+                    let global_block = block_claim % num_live_blocks;
+                    let Some(unit) = units.iter().copied().find(|u| {
+                        let start = u.global_block_start();
+                        global_block >= start && global_block - start < u.num_live_blocks()
+                    }) else {
+                        return Ok(E::zero());
+                    };
+                    let witness_column = unit.t_index(
+                        num_claims,
+                        n_a,
+                        depth_commit,
+                        claim,
+                        global_block,
+                        a_row,
+                        digit,
+                    )?;
+                    let lane_start = canonical_relation_lane_index(
+                        context.opening_source_len,
+                        context.opening_ring_dim,
+                        inner_ring_dimension,
+                        coeff_count,
+                        witness_column,
+                        outer_subcolumn * outer_lanes,
+                    )?;
+                    evaluate_lane_segment(equality_window, lane_start, outer_lane_alpha_powers)
+                })
+                .collect::<Result<Vec<E>, AkitaError>>()?;
             grouped_evaluation += evaluate_weighted_setup_matrix(
                 setup,
                 b_row_weights.len(),
@@ -504,19 +503,25 @@ where
         if active_a_columns > a_columns {
             return Err(AkitaError::InvalidProof);
         }
-        let mut a_column_weights = vec![E::zero(); a_columns];
+        // Build the A-role column weights in parallel over the (position,
+        // commit_digit) column index. Each column accumulates independently
+        // over units and fold digits; the per-column sum is identical to the
+        // serial `-=` accumulation (associative field addition). Columns
+        // `[active_a_columns, a_columns)` stay zero (padding), matching the
+        // original.
+        let depth_witness = group.depth_witness;
+        let num_positions = group.opening_a_evals.len();
         let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
-        for unit in units {
-            for position in 0..group.opening_a_evals.len() {
-                for commit_digit in 0..group.depth_witness {
-                    let a_column = position
-                        .checked_mul(group.depth_witness)
-                        .and_then(|base| base.checked_add(commit_digit))
-                        .ok_or_else(|| AkitaError::InvalidSetup("A column overflow".into()))?;
+        let mut a_column_weights = cfg_into_iter!(0..active_a_columns)
+            .map(|a_column| -> Result<E, AkitaError> {
+                let position = a_column / depth_witness;
+                let commit_digit = a_column % depth_witness;
+                let mut column_weight = E::zero();
+                for &unit in &units {
                     for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
                         let witness_column = unit.z_index(
-                            group.opening_a_evals.len(),
-                            group.depth_witness,
+                            num_positions,
+                            depth_witness,
                             group.depth_fold,
                             position,
                             commit_digit,
@@ -530,10 +535,7 @@ where
                             witness_column,
                             0,
                         )?;
-                        let column_weight = a_column_weights
-                            .get_mut(a_column)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        *column_weight -= E::lift_base(fold_weight)
+                        column_weight -= E::lift_base(fold_weight)
                             * evaluate_lane_segment(
                                 equality_window,
                                 lane_start,
@@ -541,8 +543,10 @@ where
                             )?;
                     }
                 }
-            }
-        }
+                Ok(column_weight)
+            })
+            .collect::<Result<Vec<E>, AkitaError>>()?;
+        a_column_weights.resize(a_columns, E::zero());
         grouped_evaluation += evaluate_weighted_setup_matrix(
             setup,
             group.n_a,
@@ -697,30 +701,38 @@ where
     let rows = (0..row_count)
         .map(|row| view.row_flat(row))
         .collect::<Result<Vec<_>, _>>()?;
+    // Parallelize over the **column** axis rather than the row axis. The
+    // full sum `Σ_row Σ_col row_weight·col_weight·⟨ring[row][col], α⟩` is
+    // associative/commutative, so summing column-major is numerically
+    // identical, but non-uniform levels (e.g. the D role with `n_d = 1`) have
+    // only a handful of rows and hundreds of thousands of columns — folding
+    // over rows leaves that inner loop serial. This is a mixed-path-only
+    // helper, so uniform schedules are unaffected and the value is unchanged.
     cfg_fold_reduce!(
-        0..row_count,
+        0..column_weights.len(),
         || Ok(E::zero()),
-        |acc: Result<E, AkitaError>, row| {
-            let coefficients = *rows.get(row).ok_or(AkitaError::InvalidProof)?;
-            let row_weight = *row_weights.get(row).ok_or(AkitaError::InvalidProof)?;
-            let mut row_evaluation = E::zero();
-            for (column, &column_weight) in column_weights.iter().enumerate() {
-                if column_weight.is_zero() {
-                    continue;
-                }
-                let start = column
-                    .checked_mul(ring_dimension)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup column overflow".into()))?;
-                let end = start
-                    .checked_add(ring_dimension)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup column overflow".into()))?;
+        |acc: Result<E, AkitaError>, column| {
+            let column_weight = *column_weights.get(column).ok_or(AkitaError::InvalidProof)?;
+            if column_weight.is_zero() {
+                return acc;
+            }
+            let start = column
+                .checked_mul(ring_dimension)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup column overflow".into()))?;
+            let end = start
+                .checked_add(ring_dimension)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup column overflow".into()))?;
+            let mut column_evaluation = E::zero();
+            for row in 0..row_count {
+                let coefficients = *rows.get(row).ok_or(AkitaError::InvalidProof)?;
+                let row_weight = *row_weights.get(row).ok_or(AkitaError::InvalidProof)?;
                 let ring = coefficients
                     .get(start..end)
                     .ok_or(AkitaError::InvalidProof)?;
-                row_evaluation +=
-                    column_weight * eval_flat_ring_at_pows_fast::<F, E>(ring, alpha_powers);
+                column_evaluation +=
+                    row_weight * eval_flat_ring_at_pows_fast::<F, E>(ring, alpha_powers);
             }
-            Ok(acc? + row_weight * row_evaluation)
+            Ok(acc? + column_weight * column_evaluation)
         },
         |left: Result<E, AkitaError>, right: Result<E, AkitaError>| Ok(left? + right?)
     )

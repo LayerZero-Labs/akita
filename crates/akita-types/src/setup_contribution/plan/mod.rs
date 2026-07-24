@@ -32,7 +32,7 @@ pub(crate) use types::{get_d_col_range, get_total_d, validate_setup_inputs};
 pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
 
 use super::geometry::SetupProjectionGroupGeometry;
-use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
+use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights, RoleLaneSpec};
 use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
 use crate::layout::{CommitmentRingDims, CommittedGroupParams, RingMatrixView};

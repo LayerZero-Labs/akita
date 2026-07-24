@@ -61,6 +61,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         &[],
         None,
         CommitmentRingDims::uniform(TEST_D),
+        test_scalar(3),
     )
     .is_ok());
 }

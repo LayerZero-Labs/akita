@@ -1,5 +1,5 @@
 use super::plan::SetupContributionGroupPlan;
-use super::weights::setup_z_col_weights;
+use super::weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
@@ -252,6 +252,9 @@ fn prepare_test_plan(
         full_vec_randomness,
         fold_gadget,
         role_dims,
+        // All `prepare_test_plan` callers are uniform-role, so the folding
+        // challenge only affects the (unexercised) per-role A lane sum.
+        test_scalar(3),
     )
 }
 fn finalize_test_plan(
@@ -949,6 +952,13 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
     let mut got = vec![F::zero(); num_positions_per_block * depth_commit];
     let eq_window = akita_algebra::offset_eq::OffsetEqWindow::new(&point).unwrap();
+    let uniform_lane_alpha = [F::one()];
+    let uniform_spec = RoleLaneSpec {
+        a_ratio: 1,
+        role_subcolumns: 1,
+        role_lanes: 1,
+        role_lane_alpha: &uniform_lane_alpha,
+    };
     setup_z_col_weights(
         &layout,
         opening_source_len,
@@ -958,6 +968,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         depth_fold,
         &eq_window,
         &fold_gadget,
+        &uniform_spec,
         &mut got,
     )
     .unwrap();

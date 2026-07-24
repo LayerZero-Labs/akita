@@ -489,7 +489,7 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges)?;
+    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges, alpha)?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
@@ -502,6 +502,7 @@ fn prepare_setup_contribution_plan<F, E>(
     lp: &CommittedGroupParams,
     tau1: &[E],
     x_challenges: &[E],
+    alpha: E,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -561,6 +562,7 @@ where
         x_challenges,
         fold_gadget.as_deref(),
         relation.role_dims(),
+        alpha,
     )?;
     Ok(plan)
 }

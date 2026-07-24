@@ -16,10 +16,9 @@
 #![allow(missing_docs)]
 
 mod common;
-#[path = "mixed_d_per_level/fixture.rs"]
-mod mixed_d_per_level_fixture;
 
 use akita_config::proof_optimized::fp128;
+use akita_config::test_support::{mixed_d_per_level_schedule, MixedDConfig};
 use akita_field::AkitaError;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
@@ -30,7 +29,6 @@ use akita_types::{
     OpeningClaimsLayout, RingVec,
 };
 use common::*;
-use mixed_d_per_level_fixture::mixed_d_per_level_schedule;
 
 /// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
 type Envelope = fp128::D128Full;
@@ -51,50 +49,7 @@ const TRANSCRIPT_LABEL: &[u8] = b"test/mixed_d_per_level_e2e";
 /// `batched_prove` and `batched_verify` resolve their schedule through
 /// `effective_batched_schedule::<Cfg>` → `Cfg::get_params_for_prove`, so this
 /// override is the normal public plumbing, not a test-only side door.
-#[derive(Clone, Copy, Debug, Default)]
-struct MixedD128To64;
-
-impl akita_config::CommitmentConfig for MixedD128To64 {
-    type Field = <Envelope as akita_config::CommitmentConfig>::Field;
-    type ExtField = <Envelope as akita_config::CommitmentConfig>::ExtField;
-
-    const D: usize = <Envelope as akita_config::CommitmentConfig>::D;
-
-    fn decomposition() -> akita_types::DecompositionParams {
-        Envelope::decomposition()
-    }
-
-    fn ring_challenge_config(
-        d: usize,
-    ) -> Result<akita_challenges::SparseChallengeConfig, AkitaError> {
-        Envelope::ring_challenge_config(d)
-    }
-
-    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-        Envelope::sis_modulus_profile()
-    }
-
-    fn max_setup_matrix_size(
-        max_num_vars: usize,
-        max_num_batched_polys: usize,
-    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
-        Envelope::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
-    }
-
-    fn basis_range() -> (u32, u32) {
-        Envelope::basis_range()
-    }
-
-    fn get_params_for_prove(
-        opening_batch: &OpeningClaimsLayout,
-    ) -> Result<FoldSchedule, AkitaError> {
-        mixed_d_per_level_schedule::<Envelope, Suffix>(
-            opening_batch.max_num_vars(),
-            opening_batch.num_total_polynomials(),
-            MIXED_D_SWITCH_FOLD,
-        )
-    }
-}
+type MixedD128To64 = MixedDConfig<Envelope, Suffix, MIXED_D_SWITCH_FOLD>;
 
 /// Like [`MixedD128To64`], but one suffix fold level advertises a ring
 /// dimension that does not divide the setup's `gen_ring_dim`. Entry

@@ -107,6 +107,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         &full_vec_randomness,
         Some(&fold_gadget),
         CommitmentRingDims::uniform(D),
+        alpha,
     )
     .unwrap();
     let evaluator = SetupIndexWeightEvaluator::new::<F>(
