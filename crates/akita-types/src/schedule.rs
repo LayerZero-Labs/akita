@@ -265,9 +265,9 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            if layout.group.num_vars() > self.final_group.num_vars() / 2 {
+            if layout.group.num_vars() > self.final_group.num_vars() {
                 return Err(AkitaError::InvalidInput(
-                    "multi-group root requires precommitted groups to have at most half the final num_vars"
+                    "multi-group root requires precommitted groups to have at most the final num_vars"
                         .to_string(),
                 ));
             }
