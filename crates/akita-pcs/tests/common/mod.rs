@@ -2,7 +2,7 @@
 
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
-use akita_config::{ConservativeCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
@@ -309,12 +309,12 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
 }
 
 /// Drives the shared recursive setup-offload profile end to end: two precommitted
-/// singleton groups at `nv=16` frozen with conservative ranks, a two-polynomial
+/// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
 /// a serialization round-trip, an honest verify, and a tampered-opening rejection.
 ///
 /// `BaseCfg` selects the physical witness layout (single-chunk vs chunked); the
-/// recursion adapter and conservative-precommit adapter are derived from it.
+/// recursion adapter and exact-precommit adapter are derived from it.
 /// `on_schedule` runs profile-specific assertions against the resolved schedule.
 pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     transcript_domain: &'static [u8],
@@ -323,7 +323,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     BaseCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
     type Recursive<BaseCfg> = AkitaCommitmentScheme<RecursiveCommitmentConfig<BaseCfg>>;
-    type Conservative<BaseCfg> = AkitaCommitmentScheme<ConservativeCommitmentConfig<BaseCfg>>;
+    type Precommitted<BaseCfg> = AkitaCommitmentScheme<PrecommittedCommitmentConfig<BaseCfg>>;
 
     const PRE_NV: usize = 16;
     const FINAL_NV: usize = 32;
@@ -336,10 +336,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
     run_on_large_stack(move || {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
         let pre_layout =
-            ConservativeCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(
+            PrecommittedCommitmentConfig::<BaseCfg>::get_params_for_batched_commitment(
                 &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
             )
-            .expect("conservative precommit params");
+            .expect("precommit params");
         let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
@@ -375,7 +375,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let mut pre_hints = Vec::new();
         for group_idx in 0..PRE_GROUPS {
             let poly = make_onehot_poly(&pre_layout, 0x0bee_fcaf_2026_0000 + group_idx as u64);
-            let (commitment, hint) = Conservative::<BaseCfg>::batched_commit(
+            let (commitment, hint) = Precommitted::<BaseCfg>::batched_commit(
                 &setup,
                 std::slice::from_ref(&poly),
                 &stack,

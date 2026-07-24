@@ -7,7 +7,7 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
-use akita_config::{ensure_schedule_fits_setup, CommitmentConfig, ConservativeCommitmentConfig};
+use akita_config::{ensure_schedule_fits_setup, CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
@@ -684,7 +684,8 @@ where
     ))
 }
 
-/// Commit one standalone one-hot commitment group with conservative B rank.
+/// Commit one standalone one-hot commitment group with the exact fixed-root
+/// commitment layout.
 ///
 /// Grouped proving is still guarded until the opening phase lands; this API only
 /// produces the precommit metadata and commitment object required by that later
@@ -693,7 +694,7 @@ where
 /// # Errors
 ///
 /// Returns an error if the group is empty, dense, unsupported by the setup, or
-/// cannot be planned under the conservative-rank policy.
+/// cannot be planned under the precommitment policy.
 pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
@@ -711,7 +712,10 @@ where
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-    let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
+    let params =
+        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            &opening_batch,
+        )?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     validate_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
     let (commitment, hint) =
@@ -755,7 +759,7 @@ where
         .map(|key| {
             key.validate()?;
             let singleton = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-            let params = <ConservativeCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
                 &singleton,
             )?;
             Ok(PrecommittedGroupDescriptor::from_params(key, &params))
@@ -805,7 +809,7 @@ where
 ///
 /// The final group shape is derived from `polys`; `precommitteds` supplies the
 /// schedule keys for prior groups in transcript order. Each precommitted key is
-/// resolved through the conservative commitment config to freeze its layout
+/// resolved through the exact precommitment config to freeze its layout
 /// before selecting the final group's multi-group root commitment layout.
 ///
 /// # Errors

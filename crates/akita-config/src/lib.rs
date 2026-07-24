@@ -98,8 +98,8 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod conservative_commitment;
 pub mod generated_families;
+pub mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
 pub mod schedule_selection;
@@ -108,7 +108,7 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
-pub use conservative_commitment::ConservativeCommitmentConfig;
+pub use precommitted_commitment::PrecommittedCommitmentConfig;
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
@@ -126,7 +126,7 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// Build the canonical schedule key for a root opening batch under `Cfg`.
 ///
 /// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
-/// freeze each earlier group through the conservative commit adapter.
+/// freeze each earlier group through the exact precommit adapter.
 pub fn opening_schedule_key<Cfg: CommitmentConfig>(
     layout: &OpeningClaimsLayout,
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
@@ -331,7 +331,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Whether multi-group `commit_final_group` may run under this config adapter.
     ///
-    /// Conservative precommit adapters return `false`; multi-group final commits
+    /// Precommit adapters return `false`; multi-group final commits
     /// require the regular preset config.
     fn supports_multi_group_final_commit() -> bool {
         true
@@ -683,30 +683,51 @@ mod fp128_policy_tests {
 }
 
 #[cfg(test)]
-mod conservative_precommit_tests {
+mod precommit_tests {
     use super::proof_optimized::fp128;
     use super::*;
 
     #[test]
-    fn conservative_precommit_params_freeze_standalone_metadata() {
-        let precommitted = conservative_commitment::conservative_precommitted_group_params::<
-            fp128::D64OneHot,
-        >(PolynomialGroupLayout::new(16, 1))
-        .expect("precommitted group params");
-        assert_eq!(precommitted.group, PolynomialGroupLayout::new(16, 1));
-        assert_ne!(precommitted.log_basis_outer, 0);
+    fn exact_precommit_params_freeze_standalone_metadata() {
+        let group = PolynomialGroupLayout::new(16, 1);
+        let precommitted =
+            precommitted_commitment::precommitted_group_params::<fp128::D64OneHot>(group)
+                .expect("precommitted group params");
+        let mut policy = policy_of::<fp128::D64OneHot>();
+        policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
+        policy.witness_chunk = ChunkedWitnessCfg::default();
+        let planned = akita_planner::find_group_batch_schedule(
+            &AkitaScheduleLookupKey::single(group),
+            &policy,
+            fp128::D64OneHot::ring_challenge_config,
+            fp128::D64OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("singleton-basis planning probe");
+        let root = &planned.schedule.root.params.final_group.commitment;
+
+        assert_eq!(
+            precommitted,
+            akita_types::PrecommittedGroupDescriptor::from_params(group, root)
+        );
+        let root_basis = fp128::D64OneHot::basis_range().0;
+        assert_eq!(precommitted.log_basis_inner, root_basis);
+        assert_eq!(precommitted.log_basis_outer, root_basis);
+        assert!(
+            precommitted.num_live_blocks >= 8,
+            "the frozen nv=16 precommit must remain distributable at a W8R2 root"
+        );
         assert_ne!(precommitted.n_a, 0);
         assert_ne!(precommitted.n_b, 0);
     }
 
     #[test]
-    fn conservative_config_rejects_prove_schedule() {
+    fn precommit_config_rejects_prove_schedule() {
         let layout = OpeningClaimsLayout::new(2, 1).expect("opening layout");
         let err =
-            <ConservativeCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
+            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_prove(
                 &layout,
             )
-            .expect_err("conservative config must not prove");
+            .expect_err("precommit config must not prove");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
     }
 }
