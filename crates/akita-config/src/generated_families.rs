@@ -13,6 +13,12 @@
 //! derives a [`akita_planner::PlannerPolicy`] from each preset via
 //! [`crate::policy_of`].
 
+use std::{
+    any::TypeId,
+    collections::HashMap,
+    sync::{LazyLock, Mutex, MutexGuard},
+};
+
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_planner::{find_group_batch_schedule, EmitSpec, PlannerPolicy};
@@ -27,6 +33,18 @@ use crate::{
     policy_of, tensor_verifier, CommitmentConfig, ConservativeCommitmentConfig,
     RecursiveCommitmentConfig,
 };
+
+type RegenScheduleCacheMap = HashMap<(TypeId, AkitaScheduleLookupKey), FoldSchedule>;
+type RegenScheduleCache = LazyLock<Mutex<RegenScheduleCacheMap>>;
+type RegenScheduleCacheGuard = MutexGuard<'static, RegenScheduleCacheMap>;
+
+static REGEN_SCHEDULE_CACHE: RegenScheduleCache = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn lock_regen_schedule_cache() -> Result<RegenScheduleCacheGuard, AkitaError> {
+    REGEN_SCHEDULE_CACHE
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("schedule regen cache poisoned".to_string()))
+}
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
@@ -114,10 +132,11 @@ pub fn emitted_scalar_keys(
     }
 }
 
-/// Pure DP regeneration for `Cfg` — never consults the shipped table.
-fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+fn plan_regen<Cfg: CommitmentConfig>(
+    key: &AkitaScheduleLookupKey,
+) -> Result<FoldSchedule, AkitaError> {
     let planned = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
+        key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -126,18 +145,23 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     Ok(planned.schedule)
 }
 
+/// Pure DP regeneration for `Cfg` — never consults the shipped table.
+fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key))
+}
+
 /// Pure multi-group DP regeneration for `Cfg` — never consults the shipped table.
-fn regen_group_batch<Cfg: CommitmentConfig>(
+fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     key: AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    let planned = find_group_batch_schedule(
-        &key,
-        &policy_of::<Cfg>(),
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-    planned.schedule.validate_structure()?;
-    Ok(planned.schedule)
+    let cache_key = (TypeId::of::<Cfg>(), key.clone());
+    if let Some(schedule) = lock_regen_schedule_cache()?.get(&cache_key).cloned() {
+        return Ok(schedule);
+    }
+
+    let schedule = plan_regen::<Cfg>(&key)?;
+    lock_regen_schedule_cache()?.insert(cache_key, schedule.clone());
+    Ok(schedule)
 }
 
 /// Table-backed resolution for `Cfg` — table hit when present, otherwise
@@ -152,7 +176,52 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
     policy_of::<Cfg>()
 }
 
-fn group_batch_keys<Cfg: CommitmentConfig>(
+fn supported_group_batch_key<Cfg: CommitmentConfig + 'static>(
+    candidate: AkitaScheduleLookupKey,
+) -> Option<AkitaScheduleLookupKey> {
+    regen_group_batch::<Cfg>(candidate.clone())
+        .is_ok()
+        .then_some(candidate)
+}
+
+fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
+    candidates: Vec<AkitaScheduleLookupKey>,
+) -> Vec<AkitaScheduleLookupKey> {
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(candidates.len().max(1));
+
+    if workers > 1 && candidates.len() >= 2 * workers {
+        let chunk_size = candidates.len().div_ceil(workers);
+        let mut keys = Vec::new();
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = candidates
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        chunk
+                            .iter()
+                            .cloned()
+                            .filter_map(supported_group_batch_key::<Cfg>)
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            for handle in handles {
+                keys.extend(handle.join().expect("group-batch key worker panicked"));
+            }
+        });
+        keys
+    } else {
+        candidates
+            .into_iter()
+            .filter_map(supported_group_batch_key::<Cfg>)
+            .collect()
+    }
+}
+
+fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     family: &GeneratedFamily,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     if !family.emit_group_batch {
@@ -175,7 +244,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             mains.push(PolynomialGroupLayout::new(nv, 2));
         }
     }
-    let mut keys = Vec::new();
+    let mut candidates = Vec::new();
     for main in mains {
         let pre_num_vars = main.num_vars() / 2;
         if pre_num_vars < min_precommitted_num_vars {
@@ -202,10 +271,9 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
             final_group: main,
             precommitteds,
         };
-        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-            keys.push(candidate);
-        }
+        candidates.push(candidate);
     }
+    let mut keys = supported_group_batch_keys::<Cfg>(candidates);
     keys.sort_by(akita_planner::runtime_schedule_key_cmp);
     Ok(keys)
 }

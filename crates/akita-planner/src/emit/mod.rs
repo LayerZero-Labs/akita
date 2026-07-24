@@ -501,31 +501,79 @@ fn output_const_name(spec: &EmitSpec) -> String {
 fn materialized_entries(
     spec: &EmitSpec,
 ) -> Result<Vec<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
+    let mut keys = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
+    keys.extend(
+        spec.keys
+            .iter()
+            .copied()
+            .map(AkitaScheduleLookupKey::single),
+    );
+    keys.extend(spec.group_batch_keys.iter().cloned());
+
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(keys.len().max(1));
     let mut entries = Vec::new();
-    for key in &spec.keys {
-        match (spec.regen)(*key) {
-            Ok(schedule) => entries.push((AkitaScheduleLookupKey::single(*key), schedule)),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
-            Err(error) => {
-                return Err(format!("{}: regen {key:?}: {error}", spec.module_name));
+    if workers > 1 && keys.len() >= 2 * workers {
+        let chunk_size = keys.len().div_ceil(workers);
+        std::thread::scope(|scope| -> Result<(), String> {
+            let handles: Vec<_> = keys
+                .chunks(chunk_size)
+                .map(|chunk| {
+                    scope.spawn(move || {
+                        let mut local = Vec::new();
+                        for key in chunk.iter().cloned() {
+                            if let Some(entry) = materialized_entry(spec, key)? {
+                                local.push(entry);
+                            }
+                        }
+                        Ok::<_, String>(local)
+                    })
+                })
+                .collect();
+            for handle in handles {
+                let local = handle
+                    .join()
+                    .map_err(|_| format!("{}: regen worker panicked", spec.module_name))??;
+                entries.extend(local);
+            }
+            Ok(())
+        })?;
+    } else {
+        for key in keys {
+            if let Some(entry) = materialized_entry(spec, key)? {
+                entries.push(entry);
             }
         }
     }
-    for key in &spec.group_batch_keys {
-        match (spec.regen_group_batch)(key.clone()) {
-            Ok(schedule) => entries.push((key.clone(), schedule)),
-            Err(akita_field::AkitaError::UnsupportedSchedule(_)) => {}
-            Err(error) => {
-                return Err(format!(
-                    "{}: regen multi-group {key:?}: {error}",
-                    spec.module_name
-                ));
-            }
-        }
-    }
+
     entries
         .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
     Ok(entries)
+}
+
+fn materialized_entry(
+    spec: &EmitSpec,
+    key: AkitaScheduleLookupKey,
+) -> Result<Option<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
+    let result = if key.precommitteds.is_empty() {
+        (spec.regen)(key.final_group)
+    } else {
+        (spec.regen_group_batch)(key.clone())
+    };
+    match result {
+        Ok(schedule) => Ok(Some((key, schedule))),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_)) => Ok(None),
+        Err(error) => {
+            let kind = if key.precommitteds.is_empty() {
+                "regen"
+            } else {
+                "regen multi-group"
+            };
+            Err(format!("{}: {kind} {key:?}: {error}", spec.module_name))
+        }
+    }
 }
 
 /// Emit one family module (entries + embedded catalog identity).

@@ -561,6 +561,15 @@ fn find_group_batch_schedule_inner(
     let mut memo = ScheduleMemo::new();
     let total_polys = key.num_polynomials()?;
     let root_eor_key = PolynomialGroupLayout::new(key.final_group.num_vars(), total_polys);
+    let root_eor_bytes = extension_opening_reduction_level_bytes(
+        challenge_field_bits,
+        policy.claim_ext_degree,
+        0,
+        root_eor_key,
+        root_input_witness_len,
+    )
+    .ok();
+    let root_num_chunks = policy.chunks_at_level(0);
     let initial_witness_len_bits = root_input_witness_len
         .checked_mul(field_bits as usize)
         .ok_or_else(|| {
@@ -599,7 +608,6 @@ fn find_group_batch_schedule_inner(
             else {
                 continue;
             };
-            let root_num_chunks = policy.chunks_at_level(0);
             // A chunked root fold distributes both the main folded witness and
             // every precommitted group's folded response across `num_chunks`
             // block windows, so each needs at least one live block per chunk
@@ -644,13 +652,7 @@ fn find_group_batch_schedule_inner(
                 },
                 0,
             )?;
-            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                policy.claim_ext_degree,
-                0,
-                root_eor_key,
-                root_input_witness_len,
-            ) else {
+            let Some(eor_bytes) = root_eor_bytes else {
                 continue;
             };
 
@@ -675,12 +677,10 @@ fn find_group_batch_schedule_inner(
                             continue;
                         }
                     }
-                    let suffix_fold = suffix_fold.clone();
-                    let fold_candidate_params = candidate_params.clone();
                     let root_direct_payload_bytes = level_proof_bytes(
                         field_bits,
                         challenge_field_bits,
-                        &fold_candidate_params,
+                        &candidate_params,
                         suffix_fold.first_fold_params.as_ref(),
                         output_witness_len,
                         Some(if child_is_terminal {
@@ -713,7 +713,7 @@ fn find_group_batch_schedule_inner(
                     let mut root_envelope =
                         akita_types::SetupMatrixEnvelope::minimum().max_setup_len;
                     akita_types::accumulate_matrix_envelope_for_level(
-                        &fold_candidate_params,
+                        &candidate_params,
                         &mut root_envelope,
                     )?;
                     let setup_envelope =
@@ -763,7 +763,7 @@ fn find_group_batch_schedule_inner(
                     if is_better {
                         let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                         folds.push(CandidateFoldStep {
-                            params: fold_candidate_params,
+                            params: candidate_params.clone(),
                             input_witness_len: root_input_witness_len,
                             output_witness_len,
                             estimated_direct_payload_bytes: root_direct_payload_bytes,

@@ -439,6 +439,14 @@ fn find_schedule_inner(
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
+    let root_eor_bytes = extension_opening_reduction_level_bytes(
+        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+        policy.claim_ext_degree,
+        0,
+        key,
+        witness_len,
+    )
+    .ok();
 
     let (configured_min_log_basis, max_log_basis) = policy.basis_range;
     let min_log_basis = configured_min_log_basis
@@ -499,13 +507,7 @@ fn find_schedule_inner(
             if suffix.is_empty() {
                 continue;
             }
-            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                policy.claim_ext_degree,
-                0,
-                key,
-                witness_len,
-            ) else {
+            let Some(eor_bytes) = root_eor_bytes else {
                 continue;
             };
 
