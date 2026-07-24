@@ -616,19 +616,6 @@ pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
     run_profile_onehot_fp128_d64(nv, num_polys);
 }
 
-#[cfg(feature = "profile-onehot-fp128-d64")]
-pub(crate) fn run_profile_mode(mode: &str, nv: usize, num_polys: usize) {
-    assert_eq!(
-        mode, "onehot_fp128_d64",
-        "profile-onehot-fp128-d64 only supports AKITA_MODE=onehot_fp128_d64",
-    );
-    assert_eq!(
-        num_polys, 1,
-        "profile-onehot-fp128-d64 only supports singleton commitments"
-    );
-    run_profile_onehot_fp128_d64(nv, num_polys);
-}
-
 pub(crate) fn log_active_fp128_prime_probe() {
     tracing::info!(
         "fp128 protocol prime active: modulus_offset = 0x{:x}, probe(2^128 + 1) = 0x{:x}",

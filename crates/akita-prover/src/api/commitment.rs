@@ -391,10 +391,11 @@ where
     let n_a = params.inner_commit_matrix.output_rank();
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
-    // A-role operation: per-poly inner commit + digit decomposition. The
-    // resulting D-free `DigitBlocks` are the canonical hint payload. The outer
-    // B-role operation borrows the singleton stream directly and only stages a
-    // concatenated carrier for an actual polynomial batch.
+    // A-role operation: per-poly inner commit + digit decomposition. The digit
+    // planes leave the arm as one FLAT `Vec<i8>` carrier (the per-matrix seam
+    // between the inner A-role and outer B-role commitment halves) plus the
+    // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
+    // on demand from the digit stream (S5 re-home), not cached here.
     let gen_ring_dim = backend
         .prepared_expanded_setup(prepared)
         .seed()
@@ -406,31 +407,43 @@ where
             warmed_ring_dim = ring_dim;
         }
     }
-    let decomposed_digit_blocks = dispatch_for_field!(
+    let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         dims.d_a(),
         |D_A| {
-            cfg_iter!(polys)
-                .map(|poly| -> Result<DigitBlocks, AkitaError> {
+            let flat_len = total_b_input_len.checked_mul(D_A).ok_or_else(|| {
+                AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
+            })?;
+            let per_poly_flat_len = b_input_len_per_poly.checked_mul(D_A).ok_or_else(|| {
+                AkitaError::InvalidSetup("commit inner digit carrier length overflow".to_string())
+            })?;
+            let mut b_input_flat = vec![0i8; flat_len];
+            let mut decomposed_digit_blocks: Vec<DigitBlocks> =
+                (0..polys.len()).map(|_| DigitBlocks::empty(D_A)).collect();
+            cfg_chunks_mut!(b_input_flat, per_poly_flat_len)
+                .zip(cfg_iter!(polys))
+                .zip(cfg_iter_mut!(decomposed_digit_blocks))
+                .try_for_each(|((dst, poly), decomposed)| -> Result<(), AkitaError> {
                     let view = RootCommitSource::<F, D_A>::commit_view(poly)?;
                     let inner =
                         RootCommitKernel::<_, F, D_A>::commit_inner(backend, prepared, view, plan)?;
-                    {
-                        let _span = tracing::info_span!("commit_inner_validation").entered();
-                        validate_commit_inner_shape::<F, D_A>(
-                            &inner,
-                            num_live_blocks,
-                            n_a,
-                            num_digits_open,
-                            log_basis,
-                        )?;
-                    }
-                    Ok(inner.decomposed_inner_rows)
-                })
-                .collect::<Result<Vec<_>, _>>()
+                    validate_commit_inner_shape::<F, D_A>(
+                        &inner,
+                        num_live_blocks,
+                        n_a,
+                        num_digits_open,
+                        log_basis,
+                    )?;
+                    let typed_digits = inner.decomposed_inner_rows_trusted::<D_A>()?;
+                    dst.copy_from_slice(typed_digits.typed_planes::<D_A>()?.as_flattened());
+                    *decomposed = typed_digits.clone();
+                    Ok(())
+                })?;
+            Ok::<_, AkitaError>((b_input_flat, decomposed_digit_blocks))
         }
     )?;
+    validate_commit_outer_input_nonempty(b_input_flat.len())?;
     let n_b = params.outer_commit_matrix.output_rank();
     // B-role operation: the sent commitment rows `u = B·t̂`.
     let commitment = dispatch_for_field!(
@@ -438,42 +451,13 @@ where
         F,
         dims.d_b(),
         |D_B| {
-            let mut staged_b_input = Vec::new();
-            let b_input_flat = if let [singleton] = decomposed_digit_blocks.as_slice() {
-                singleton.digits()
-            } else {
-                let _span = tracing::info_span!(
-                    "commit_b_carrier_staging",
-                    num_polys = decomposed_digit_blocks.len()
-                )
-                .entered();
-                let flat_len = total_b_input_len.checked_mul(dims.d_a()).ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "commit inner digit carrier length overflow".to_string(),
-                    )
-                })?;
-                staged_b_input.reserve_exact(flat_len);
-                for digits in &decomposed_digit_blocks {
-                    digits.extend_digits(&mut staged_b_input);
-                }
-                staged_b_input.as_slice()
-            };
-            validate_commit_outer_input_nonempty(b_input_flat.len())?;
             let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
             if !remainder.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "commit digit carrier is not aligned to the outer ring dimension".to_string(),
                 ));
             }
-            let u = {
-                let _span = tracing::info_span!(
-                    "commit_outer_b_ntt_matvec",
-                    rows = n_b,
-                    input_planes = b_input_digits.len()
-                )
-                .entered();
-                backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?
-            };
+            let u = backend.digit_rows::<D_B>(prepared, n_b, b_input_digits, log_basis)?;
             if u.len() != n_b {
                 return Err(AkitaError::InvalidSetup(format!(
                     "backend returned {} B commitment rows, expected {n_b}",
@@ -483,10 +467,7 @@ where
             Ok::<_, AkitaError>(Commitment::from_ring_elems(&u))
         }
     )?;
-    let hint = {
-        let _span = tracing::info_span!("commit_hint_construction").entered();
-        AkitaCommitmentHint::new(decomposed_digit_blocks)
-    };
+    let hint = AkitaCommitmentHint::new(decomposed_digit_blocks);
     Ok((commitment, hint))
 }
 
