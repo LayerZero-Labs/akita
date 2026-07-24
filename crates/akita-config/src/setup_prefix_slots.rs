@@ -165,7 +165,7 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
     Ok(keys)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "schedules-fp128-d64-onehot-recursive"))]
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;

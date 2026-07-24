@@ -192,6 +192,9 @@ jobs:
       - name: Drift guard (all-schedules)
         run: |
           cargo test --release -p akita-config --features all-schedules generated_schedule_tables_match_key_planner
+      - name: Recursive setup-prefix slots
+        run: |
+          cargo test --release -p akita-config --features all-schedules setup_prefix_slots::tests
       - name: Schedule catalog wiring
         run: |
           cargo test --release -p akita-config --no-default-features --test schedule_catalog_feature_off
