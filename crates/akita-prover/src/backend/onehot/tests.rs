@@ -1541,3 +1541,53 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
         "merge sweep must be tile-size independent"
     );
 }
+
+#[test]
+fn merge_sweep_self_reduces_oversized_blocks() {
+    use super::column_sweep::{column_sweep_core_merge, L2_TILE_BUDGET, MERGE_COL_CHUNK};
+
+    type F = Prime128Offset275;
+    const D: usize = 64;
+
+    let mut rng = StdRng::seed_from_u64(0x05e2_517e);
+    let n_a = 2;
+    let num_positions_per_block = MAX_WIDE_SHIFT_ACCUMULATIONS + 129;
+    let active_a_cols = num_positions_per_block;
+
+    let a_rows: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
+        .map(|_| CyclotomicRing::random(&mut rng))
+        .collect();
+    let a_flat = FlatMatrix::from_ring_slice(&a_rows);
+    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
+
+    // One oversized dense block (exceeds the wide-accumulator cap) plus a
+    // small one; the merge kernel must self-reduce mid-row instead of
+    // relying on the block-splitting wrapper.
+    let big: Vec<SingleChunkEntry> = (0..num_positions_per_block)
+        .map(|pos| SingleChunkEntry::new(pos as u32, ((pos * 7) % D) as u16))
+        .collect();
+    let small: Vec<SingleChunkEntry> = (0..97)
+        .map(|pos| SingleChunkEntry::new((pos * 11) as u32, (pos % D) as u16))
+        .collect();
+    let blocks = super::test_helpers::from_buckets(vec![big, small]);
+    let views: Vec<&[SingleChunkEntry]> = (0..blocks.num_live_blocks())
+        .map(|i| blocks.block(i))
+        .collect();
+
+    let merge = column_sweep_core_merge::<SingleChunkEntry, F, D>(
+        &a_view,
+        &views,
+        n_a,
+        active_a_cols,
+        1,
+        L2_TILE_BUDGET,
+        MERGE_COL_CHUNK,
+    );
+    // Reference: the splitting wrapper (overflow-safe by segmentation).
+    let wrapper =
+        column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(&a_view, &views, n_a, active_a_cols, 1);
+    assert_eq!(
+        merge, wrapper,
+        "self-reducing merge must match the splitting wrapper"
+    );
+}

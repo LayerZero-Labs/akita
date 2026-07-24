@@ -445,6 +445,12 @@ where
 
                 let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
                     vec![WideCyclotomicRing::zero(); tile_len];
+                // Overflow control without block splitting: fold each wide
+                // accumulator into a canonical partial whenever it reaches
+                // the accumulation cap (a handful of reduces per block-row).
+                let mut partials: Vec<CyclotomicRing<F, D>> =
+                    vec![CyclotomicRing::zero(); tile_len];
+                let mut accum_counts: Vec<usize> = vec![0usize; tile_len];
                 let mut cursors: Vec<usize> = vec![0usize; tile_len];
 
                 let _span = tracing::info_span!("onehot_merge_sweep").entered();
@@ -452,6 +458,10 @@ where
                     for accum in &mut row_accums {
                         *accum = WideCyclotomicRing::zero();
                     }
+                    for partial in &mut partials {
+                        *partial = CyclotomicRing::zero();
+                    }
+                    accum_counts.fill(0);
                     cursors.fill(0);
 
                     for chunk_start in (0..active_a_cols).step_by(col_chunk) {
@@ -482,7 +492,16 @@ where
                                     "one-hot entries must be sorted by position within a block"
                                 );
                                 let a_wide = &chunk_buf[col - chunk_start];
-                                for &coefficient in entry.coeffs() {
+                                let coeffs = entry.coeffs();
+                                if accum_counts[local_b] + coeffs.len()
+                                    > F::MAX_COMMIT_ACCUMULATIONS
+                                {
+                                    partials[local_b] += row_accums[local_b].reduce();
+                                    row_accums[local_b] = WideCyclotomicRing::zero();
+                                    accum_counts[local_b] = 0;
+                                }
+                                accum_counts[local_b] += coeffs.len();
+                                for &coefficient in coeffs {
                                     a_wide.shift_accumulate_into(
                                         &mut row_accums[local_b],
                                         usize::from(coefficient),
@@ -494,7 +513,9 @@ where
                     }
 
                     for (local_b, accum) in row_accums.iter().enumerate() {
-                        result[tile_start + local_b].push(accum.reduce());
+                        let mut row = partials[local_b].clone();
+                        row += accum.reduce();
+                        result[tile_start + local_b].push(row);
                     }
                 }
             }
@@ -554,33 +575,23 @@ where
                 })
                 .collect()
         } else {
-            let (sub_blocks, parents) = split_oversized_blocks(&flat, F::MAX_COMMIT_ACCUMULATIONS);
             // Keep the accumulator tile plus the widened-column chunk inside
             // L1: the accumulators are read-modify-written for every column
             // chunk, so pushing them to L2 costs ~1.5x per accumulate. Extra
             // tiles re-stream A, but the fused batch makes that negligible.
+            // The kernel self-reduces at the accumulation cap, so oversized
+            // blocks need no splitting.
             let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
             let merge_tile_budget = (accum_bytes * 32).min(L2_TILE_BUDGET);
-            let sub_out = column_sweep_core_merge::<E, F, D>(
+            column_sweep_core_merge::<E, F, D>(
                 a_view,
-                &sub_blocks,
+                &flat,
                 n_a,
                 active_a_cols,
                 num_digits_inner,
                 merge_tile_budget,
                 MERGE_COL_CHUNK,
-            );
-            let mut merged: Vec<Vec<CyclotomicRing<F, D>>> = vec![Vec::new(); num_flat];
-            for (parent, rows) in parents.into_iter().zip(sub_out) {
-                if merged[parent].is_empty() {
-                    merged[parent] = rows;
-                } else {
-                    for (dst, src) in merged[parent].iter_mut().zip(rows) {
-                        *dst += src;
-                    }
-                }
-            }
-            merged
+            )
         };
 
     let mut flat_rows = flat_rows.into_iter();
