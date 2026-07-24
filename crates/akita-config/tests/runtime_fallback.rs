@@ -16,10 +16,11 @@ use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
-/// A one-point 2-poly key that no shipped table carries (shipped tables only
-/// hold singleton / 4-batched keys), so strict runtime resolution must reject it.
+/// A one-point 3-poly key that no shipped table carries (shipped tables only
+/// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
+/// must reject it.
 fn table_miss_key(num_vars: usize) -> PolynomialGroupLayout {
-    PolynomialGroupLayout::new(num_vars, 2)
+    PolynomialGroupLayout::new(num_vars, 3)
 }
 
 fn assert_schedule_eq(
@@ -51,8 +52,8 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let key = table_miss_key(num_vars);
 
     // The shipped table must NOT carry this key — otherwise the test is not
-    // exercising the catalog-miss path. (Shipped tables only hold
-    // singleton / 4-batched keys; this 2-poly key misses every table.)
+    // exercising the catalog-miss path. Shipped tables only hold singleton /
+    // 2-batched / 4-batched scalar keys; this 3-poly key misses every table.
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
@@ -61,7 +62,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
         .is_some();
     assert!(
         !table_has_key,
-        "expected a table miss for the 2-poly key; the table unexpectedly carries it"
+        "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
     let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
@@ -125,6 +126,21 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn root_basis_is_derived_from_existing_policy_inputs() {
+    let fp128 = policy_of::<fp128::D64OneHot>();
+    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.decomposition.log_basis, 3);
+    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
+
+    let fp32 = policy_of::<fp32::D64OneHot>();
+    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.decomposition.log_basis, 3);
+    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]

@@ -125,6 +125,20 @@ impl PlannerPolicy {
             ChunkedWitnessCfg::default()
         }
     }
+
+    /// Inclusive `(min, max)` `log_basis` values to evaluate at an absolute fold
+    /// level.
+    ///
+    /// The root fold is fixed to the configured minimum basis. Deeper folds can
+    /// search the full configured range, while the suffix DP separately enforces
+    /// non-decreasing bases across adjacent folds.
+    pub fn log_basis_search_range_at_level(&self, level: usize) -> (u32, u32) {
+        let (configured_min, max) = self.basis_range;
+        if level == 0 {
+            return (configured_min, configured_min);
+        }
+        (configured_min, max)
+    }
 }
 
 /// Suffix-DP depth cap carried into runtime validation for chunk policy bounds.

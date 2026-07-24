@@ -6,6 +6,7 @@
 //! setup-prefix metadata, so a successful recursive proof exercises the
 //! offloaded setup-contribution path rather than the inline direct setup scan.
 
+#![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
 
 mod common;

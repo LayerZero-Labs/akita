@@ -14,26 +14,22 @@
 use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::sis::{
-    decomposed_t_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
-};
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{
-    policy_of, tensor_verifier, CommitmentConfig, ConservativeCommitmentConfig,
+    policy_of, tensor_verifier, CommitmentConfig, PrecommittedCommitmentConfig,
     RecursiveCommitmentConfig,
 };
 
 /// Default batched opening sizes emitted for every Akita shipped family.
-pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
+pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 2, 4];
 
 /// Maximum number of precommitted groups emitted for multi-group-root generated tables.
-pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 2;
+pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 3;
 
 /// One generated schedule-table family.
 ///
@@ -166,13 +162,9 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         .min_num_vars
         .max(policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize + 1);
     let mut mains = family_keys(family)?;
-    // Scalar table emission uses `DEFAULT_NUM_POLYS = [1, 4]`, but the recursive
-    // multi-group profile opens a 2-polynomial final group. Enumerate that main
-    // shape here so regen keeps the catalog hit (PR #292 hand-inserted one row;
-    // a full table regen otherwise drops it and forces DP fallback).
-    if !family.num_polys.contains(&2) {
+    if !family.num_polys.contains(&3) {
         for nv in family.min_num_vars..=family.max_num_vars {
-            mains.push(PolynomialGroupLayout::new(nv, 2));
+            mains.push(PolynomialGroupLayout::new(nv, 3));
         }
     }
     let mut keys = Vec::new();
@@ -181,46 +173,50 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         if pre_num_vars < min_precommitted_num_vars {
             continue;
         }
-        let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
-        let mut precommitteds = Vec::with_capacity(num_precommitted);
-        let mut supported = true;
-        for _ in 0..num_precommitted {
-            let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-            let params = match planner_conservative_commit_params::<Cfg>(&pre_key) {
-                Ok(params) => params,
-                Err(_) => {
-                    supported = false;
-                    break;
-                }
-            };
-            precommitteds.push(PrecommittedGroupDescriptor::from_params(pre_key, &params));
-        }
-        if !supported {
+        let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
+        let Ok(params) = planner_precommitted_commit_params::<Cfg>(&pre_key) else {
             continue;
-        }
-        let candidate = AkitaScheduleLookupKey {
-            final_group: main,
-            precommitteds,
         };
-        if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-            keys.push(candidate);
+        let precommitted = PrecommittedGroupDescriptor::from_params(pre_key, &params);
+        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+            let candidate = AkitaScheduleLookupKey {
+                final_group: main,
+                precommitteds: vec![precommitted; num_precommitted],
+            };
+            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+                keys.push(candidate);
+            }
         }
     }
     keys.sort_by(runtime_schedule_key_cmp);
     Ok(keys)
 }
 
-fn recursive_profile_group_batch_keys(
+fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(
     _family: &GeneratedFamily,
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
-    recursive_d64_onehot_profile_keys()
+    recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()
 }
 
-fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 'static>(
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if std::any::TypeId::of::<Cfg>()
+        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
+    {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHot>();
+    }
+    if std::any::TypeId::of::<Cfg>()
+        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>()
+    {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+    }
+    Ok(Vec::new())
+}
+
+fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params = planner_conservative_commit_params::<
-        ConservativeCommitmentConfig<fp128::D64OneHot>,
-    >(&precommitted_group)?;
+    let precommitted_params = planner_precommitted_commit_params::<BaseCfg>(&precommitted_group)?;
     let precommitted =
         PrecommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {
@@ -229,125 +225,14 @@ fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, Ak
     }])
 }
 
-fn planner_conservative_commit_params<Cfg: CommitmentConfig>(
+fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<CommittedGroupParams, AkitaError> {
-    if Cfg::decomposition().log_commit_bound != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "conservative commitments require a one-hot config".to_string(),
-        ));
-    }
     key.validate()?;
-
-    let (min_basis, _) = Cfg::basis_range();
-    let mut policy = policy_of::<Cfg>();
-    policy.basis_range = (min_basis, min_basis);
-    policy.decomposition.log_basis = min_basis;
-    policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let mut planned = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
-        &policy,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?;
-    let widened = widen_conservative_commit_params::<Cfg>(
-        planned.schedule.root.params.final_group.commitment.clone(),
-    )?;
-    planned.schedule.root.params.final_group.commitment = widened;
-    Ok(planned.schedule.root.params.final_group.commitment)
-}
-
-fn widen_conservative_commit_params<Cfg: CommitmentConfig>(
-    mut params: CommittedGroupParams,
-) -> Result<CommittedGroupParams, AkitaError> {
-    let policy = policy_of::<Cfg>();
-    let (min_basis, _) = Cfg::basis_range();
-    if params.log_basis_open != min_basis {
-        return Err(AkitaError::InvalidSetup(
-            "conservative commit planner did not use the minimum configured log_basis_open"
-                .to_string(),
-        ));
-    }
-
-    let witness_decomposition = DecompositionParams {
-        log_basis: params.log_basis_inner,
-        ..policy.decomposition
-    };
-    let inner_width = params.inner_commit_matrix.input_width();
-    let mut conservative_a_rows = 0usize;
-    let mut conservative_a_bound = 0u128;
-    let mut conservative_b_bound = 0u128;
-
-    for log_basis_open in policy.basis_range.0..=policy.basis_range.1 {
-        let a_bound = rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_modulus_profile,
-            policy.ring_dimension,
-            witness_decomposition,
-            log_basis_open,
-            &params.fold_challenge_config,
-            params.fold_challenge_shape,
-            true,
-            policy.onehot_chunk_size,
-            policy.ring_subfield_norm_bound,
-            params.num_live_blocks,
-            1,
-            inner_width as u64,
-        )
-        .ok_or_else(|| AkitaError::InvalidSetup("no conservative A-role norm".to_string()))?;
-        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
-            SisTableKey {
-                policy: policy.sis_security_policy,
-                table_digest: policy.sis_table_digest,
-                modulus_profile: policy.sis_modulus_profile,
-                role: SisMatrixRole::Inner,
-                ring_dimension: policy.ring_dimension as u32,
-                coeff_linf_bound: a_bound,
-            },
-            inner_width,
-        )?;
-        conservative_a_rows = conservative_a_rows.max(inner_commit_matrix.output_rank());
-        conservative_a_bound = conservative_a_bound.max(a_bound);
-
-        let b_bound = rounded_up_collision_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_modulus_profile,
-            SisMatrixRole::Outer,
-            policy.ring_dimension,
-            log_basis_open,
-        )
-        .ok_or_else(|| AkitaError::InvalidSetup("no conservative B-role norm".to_string()))?;
-        conservative_b_bound = conservative_b_bound.max(b_bound);
-    }
-
-    params.inner_commit_matrix = InnerCommitMatrixParams::try_new(
-        policy.sis_security_policy,
-        policy.sis_table_digest,
-        policy.sis_modulus_profile,
-        conservative_a_rows,
-        inner_width,
-        conservative_a_bound,
-        policy.ring_dimension,
-    )?;
-    let outer_width = decomposed_t_ring_count(
-        conservative_a_rows,
-        params.num_digits_outer,
-        params.num_live_blocks,
-        1,
+    let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
+    <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+        &opening_batch,
     )
-    .ok_or_else(|| AkitaError::InvalidSetup("conservative B width overflow".to_string()))?;
-    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-        SisTableKey {
-            policy: policy.sis_security_policy,
-            table_digest: policy.sis_table_digest,
-            modulus_profile: policy.sis_modulus_profile,
-            role: SisMatrixRole::Outer,
-            ring_dimension: policy.ring_dimension as u32,
-            coeff_linf_bound: conservative_b_bound,
-        },
-        outer_width,
-    )?;
-    Ok(params)
 }
 
 fn key_within_setup_capacity(
@@ -412,15 +297,9 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     // recursive adapter and its multi-chunk (distributed-prover) companion share
     // the same profiling key shape; they differ only in the chunked witness
     // layout the policy prices.
-    if std::any::TypeId::of::<Cfg>()
-        == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
-        || std::any::TypeId::of::<Cfg>()
-            == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>>()
-    {
-        for candidate in recursive_d64_onehot_profile_keys()? {
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
-                push_unique_schedule_key(&mut keys, candidate);
-            }
+    for candidate in recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()? {
+        if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
+            push_unique_schedule_key(&mut keys, candidate);
         }
     }
 
@@ -472,7 +351,7 @@ macro_rules! family_row {
             regen: regen::<$cfg>,
             regen_group_batch: regen_group_batch::<$cfg>,
             emit_group_batch: true,
-            group_batch_keys: recursive_profile_group_batch_keys,
+            group_batch_keys: recursive_profile_group_batch_keys::<$cfg>,
             table_backed: table_backed::<$cfg>,
             policy: family_policy::<$cfg>,
             ring_challenge_config: <$cfg as CommitmentConfig>::ring_challenge_config,
@@ -620,6 +499,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     // `(num_vars, num_polynomials)` keys as their siblings; schedules differ
     // because the policy prices the chunked witness layout.
     family_row!(
+        group_batch,
         "fp128_d64_onehot_multi_chunk",
         "FP128_D64_ONEHOT_MULTI_CHUNK_SCHEDULES",
         "fp128-d64-onehot-multi-chunk",
@@ -628,6 +508,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHotMultiChunk
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot_multi_chunk_w2r2",
         "FP128_D64_ONEHOT_MULTI_CHUNK_W2R2_SCHEDULES",
         "fp128-d64-onehot-multi-chunk-w2r2",
@@ -636,6 +517,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHotMultiChunkW2R2
     ),
     family_row!(
+        group_batch,
         "fp128_d64_onehot_multi_chunk_w4r2",
         "FP128_D64_ONEHOT_MULTI_CHUNK_W4R2_SCHEDULES",
         "fp128-d64-onehot-multi-chunk-w4r2",

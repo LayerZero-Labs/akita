@@ -294,6 +294,18 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, keys: &[AkitaSc
         "fp128_d64_onehot_tensor" => assert_group_batch_table_hits::<
             tensor_verifier::fp128::D64OneHotTensor,
         >(family.module_name, keys),
+        "fp128_d64_onehot_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::D64OneHotMultiChunk>(family.module_name, keys)
+        }
+        "fp128_d64_onehot_multi_chunk_w2r2" => assert_group_batch_table_hits::<
+            fp128::D64OneHotMultiChunkW2R2,
+        >(family.module_name, keys),
+        "fp128_d64_onehot_multi_chunk_w4r2" => assert_group_batch_table_hits::<
+            fp128::D64OneHotMultiChunkW4R2,
+        >(family.module_name, keys),
+        "fp128_d64_dense_multi_chunk" => {
+            assert_group_batch_table_hits::<fp128::D64DenseMultiChunk>(family.module_name, keys)
+        }
         "fp64_d128_dense" => {
             assert_group_batch_table_hits::<fp64::D128Dense>(family.module_name, keys)
         }
@@ -365,6 +377,18 @@ fn resolve_family_group_batch_schedule(
         "fp128_d64_dense" => table_backed_group_batch_schedule::<fp128::D64Dense>(key),
         "fp128_d64_onehot_tensor" => {
             table_backed_group_batch_schedule::<tensor_verifier::fp128::D64OneHotTensor>(key)
+        }
+        "fp128_d64_onehot_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunk>(key)
+        }
+        "fp128_d64_onehot_multi_chunk_w2r2" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW2R2>(key)
+        }
+        "fp128_d64_onehot_multi_chunk_w4r2" => {
+            table_backed_group_batch_schedule::<fp128::D64OneHotMultiChunkW4R2>(key)
+        }
+        "fp128_d64_dense_multi_chunk" => {
+            table_backed_group_batch_schedule::<fp128::D64DenseMultiChunk>(key)
         }
         "fp64_d128_dense" => table_backed_group_batch_schedule::<fp64::D128Dense>(key),
         "fp64_d128_onehot" => table_backed_group_batch_schedule::<fp64::D128OneHot>(key),

@@ -177,7 +177,7 @@ mod tests {
     fn profiling_recursive_key() -> AkitaScheduleLookupKey {
         let pre = PolynomialGroupLayout::new(16, 1);
         let pre_params =
-            crate::conservative_commitment::conservative_commit_params::<SetupCfg>(&pre)
+            crate::precommitted_commitment::precommitted_commit_params::<SetupCfg>(&pre)
                 .expect("precommit params");
         let precommitted = PrecommittedGroupDescriptor::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {

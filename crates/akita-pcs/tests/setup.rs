@@ -250,8 +250,8 @@ where
     .expect("verify");
 
     assert!(
-        proof.recursive_folds.is_empty(),
-        "fixture must use exactly two folds"
+        proof.num_fold_levels() >= 2,
+        "folded-only protocol requires at least two folds"
     );
     let mut tampered = proof.clone();
     let witness = tampered.terminal.terminal_response_mut();
