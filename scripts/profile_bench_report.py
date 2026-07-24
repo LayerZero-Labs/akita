@@ -294,6 +294,24 @@ def parse_kvs(line: str) -> dict[str, str]:
     return out
 
 
+def parse_witness_groups(value: str | None) -> list[dict[str, object]]:
+    if not value:
+        return []
+    groups = []
+    for item in value.split(";"):
+        name, sep, raw_count = item.partition("=")
+        if not sep or not name or not raw_count:
+            continue
+        groups.append({"group": name, "field_elements": int(raw_count)})
+    return groups
+
+
+def planned_current_w_len(kvs: dict[str, str]) -> list[dict[str, object]]:
+    return parse_witness_groups(kvs.get("current_w_len")) or parse_witness_groups(
+        kvs.get("current_w_groups")
+    )
+
+
 TAIL_SUMMARY_INT_FIELDS = (
     "tail_bytes",
     "final_w_num_elems",
@@ -873,13 +891,28 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
-                "current_w_len": input_witness_len,
+                "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
+                "setup_prefix_natural_field_elements": int(
+                    kvs.get("setup_prefix_natural_field_elements", "0")
+                ),
+                "setup_prefix_padded_field_elements": int(
+                    kvs.get("setup_prefix_padded_field_elements", "0")
+                ),
             }
             # `level_bytes` is only emitted by the pre-cutover merge-base binary
             # and is display-only (no correctness comparison), so keep it optional.
             if "level_bytes" in kvs:
                 planned_levels[level]["level_bytes"] = int(kvs["level_bytes"])
+        elif "planned recursive setup edge" in line and kvs.get("label") == mode:
+            producer_level = int(kvs["successor_level"]) - 1
+            if producer_level in planned_levels:
+                planned_levels[producer_level]["setup_prefix_natural_field_elements"] = int(
+                    kvs["setup_prefix_natural_field_elements"]
+                )
+                planned_levels[producer_level]["setup_prefix_padded_field_elements"] = int(
+                    kvs["setup_prefix_padded_field_elements"]
+                )
         elif "proof fold level" in line and kvs.get("label") == mode:
             level = int(kvs["level"])
             present_byte_fields = [field for field in PROOF_LEVEL_BYTE_FIELDS if field in kvs]
@@ -1384,6 +1417,11 @@ def normalize_case_summary(summary: dict[str, object]) -> dict[str, object]:
             if legacy_open_digits is not None:
                 level.setdefault("num_digits_outer", legacy_open_digits)
                 level.setdefault("num_digits_open", legacy_open_digits)
+            current_w_len = level.get("current_w_len")
+            if not isinstance(current_w_len, list):
+                level["current_w_len"] = level.get("current_w_groups", [])
+            level.setdefault("setup_prefix_natural_field_elements", 0)
+            level.setdefault("setup_prefix_padded_field_elements", 0)
             normalized_levels.append(level)
         normalized["planned_levels"] = normalized_levels
     # All production CRT profiles currently use moduli below 2^30 stored in
@@ -1617,6 +1655,21 @@ def optional_value_with_main_delta(
     return value_with_main_delta(value, baseline_value, formatter, unit, compare_to_main)
 
 
+def format_witness_groups(groups: object) -> str:
+    if not isinstance(groups, list) or not groups:
+        return "n/a"
+    parts = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        name = group.get("group")
+        field_elements = group.get("field_elements")
+        if name is None or field_elements is None:
+            continue
+        parts.append(f"{name}: {fmt_count(float(field_elements))}")
+    return "<br>".join(parts) if parts else "n/a"
+
+
 def field_family_bits(field_family: object) -> int | None:
     match = re.fullmatch(r"fp(\d+)", str(field_family))
     return int(match.group(1)) if match else None
@@ -1848,9 +1901,14 @@ def render_planned_levels(
     print(
         "| Fold level | A rows | B rows | D rows | Inner/A basis bits | Outer/B basis bits | Open/D basis bits | "
         "Fold-challenge L1 bound | Inner/A digits | Outer/B digits | Open/D digits | Folded-witness digits | "
-        "Next-witness field elements | Planned fold-level proof bytes |"
+        "Current witness field elements | Next witness field elements | "
+        "Setup prefix field elements | Setup prefix padded field elements | "
+        "Planned fold-level proof bytes |"
     )
-    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print(
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
+        "--- | ---: | ---: | ---: | ---: |"
+    )
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
         print(
@@ -1864,7 +1922,10 @@ def render_planned_levels(
             f"{level_value(level, baseline, 'num_digits_outer')} | "
             f"{level_value(level, baseline, 'num_digits_open')} | "
             f"{level_value(level, baseline, 'delta_fold')} | "
+            f"{format_witness_groups(level.get('current_w_len'))} | "
             f"{level_value(level, baseline, 'next_w_len')} | "
+            f"{level_value(level, baseline, 'setup_prefix_natural_field_elements')} | "
+            f"{level_value(level, baseline, 'setup_prefix_padded_field_elements')} | "
             f"{optional_value_with_main_delta(level, baseline, 'level_bytes', fmt_bytes, ' bytes', baseline is not None)} |"
         )
     if baseline_levels is not None:

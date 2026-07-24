@@ -21,12 +21,9 @@ use akita_types::{
     PolynomialGroupLayout, PrecommittedGroupDescriptor,
 };
 
-use crate::conservative_commitment::conservative_commit_params;
+use crate::precommitted_commitment::precommitted_commit_params;
 use crate::proof_optimized::{fp128, fp32, fp64};
-use crate::{
-    policy_of, tensor_verifier, CommitmentConfig, ConservativeCommitmentConfig,
-    RecursiveCommitmentConfig,
-};
+use crate::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
 
 /// Default batched opening sizes emitted for every Akita shipped family.
 pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 4];
@@ -97,6 +94,21 @@ pub fn family_keys(family: &GeneratedFamily) -> Result<Vec<PolynomialGroupLayout
         }
     }
     Ok(keys)
+}
+
+/// Scalar keys physically emitted into `family`'s catalog.
+///
+/// Recursive companion catalogs contain only genuine multi-group keys. Their
+/// adapter delegates scalar resolution to the base config and therefore must
+/// not carry a second, unreachable copy of the ordinary scalar table.
+pub fn emitted_scalar_keys(
+    family: &GeneratedFamily,
+) -> Result<Vec<PolynomialGroupLayout>, AkitaError> {
+    if (family.policy)().recursive_setup_planning {
+        Ok(Vec::new())
+    } else {
+        family_keys(family)
+    }
 }
 
 /// Pure DP regeneration for `Cfg` — never consults the shipped table.
@@ -171,7 +183,7 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
         let mut supported = true;
         for _ in 0..num_precommitted {
             let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-            let params = match conservative_commit_params::<Cfg>(&pre_key) {
+            let params = match precommitted_commit_params::<Cfg>(&pre_key) {
                 Ok(params) => params,
                 Err(_) => {
                     supported = false;
@@ -203,9 +215,7 @@ fn recursive_profile_group_batch_keys(
 
 fn recursive_d64_onehot_profile_keys() -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params = conservative_commit_params::<
-        ConservativeCommitmentConfig<fp128::D64OneHot>,
-    >(&precommitted_group)?;
+    let precommitted_params = precommitted_commit_params::<fp128::D64OneHot>(&precommitted_group)?;
     let precommitted =
         PrecommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {
@@ -391,13 +401,14 @@ pub fn emit_spec_for_family(
     output_dir: std::path::PathBuf,
     generator_command: &'static str,
 ) -> Result<EmitSpec, AkitaError> {
+    let policy = (family.policy)();
     Ok(EmitSpec {
         module_name: family.module_name,
         const_name: family.const_name,
         family_name: family.module_name,
         schedule_feature: family.schedule_feature,
-        policy: (family.policy)(),
-        keys: family_keys(family)?,
+        policy,
+        keys: emitted_scalar_keys(family)?,
         group_batch_keys: (family.group_batch_keys)(family)?,
         emit_group_batch: family.emit_group_batch,
         output_dir,
@@ -416,12 +427,12 @@ pub fn emit_spec_for_family(
 /// automatically.
 pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
     family_row!(
-        "fp128_d128_full",
-        "FP128_D128_FULL_SCHEDULES",
-        "fp128-d128-full",
+        "fp128_d128_dense",
+        "FP128_D128_DENSE_SCHEDULES",
+        "fp128-d128-dense",
         1,
         50,
-        fp128::D128Full
+        fp128::D128Dense
     ),
     family_row!(
         group_batch,
@@ -463,12 +474,12 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         RecursiveCommitmentConfig<fp128::D64OneHotMultiChunk>
     ),
     family_row!(
-        "fp128_d64_full",
-        "FP128_D64_FULL_SCHEDULES",
-        "fp128-d64-full",
+        "fp128_d64_dense",
+        "FP128_D64_DENSE_SCHEDULES",
+        "fp128-d64-dense",
         1,
         50,
-        fp128::D64Full
+        fp128::D64Dense
     ),
     family_row!(
         group_batch,
@@ -507,20 +518,20 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         fp128::D64OneHotMultiChunkW4R2
     ),
     family_row!(
-        "fp128_d64_full_multi_chunk",
-        "FP128_D64_FULL_MULTI_CHUNK_SCHEDULES",
-        "fp128-d64-full-multi-chunk",
+        "fp128_d64_dense_multi_chunk",
+        "FP128_D64_DENSE_MULTI_CHUNK_SCHEDULES",
+        "fp128-d64-dense-multi-chunk",
         1,
         50,
-        fp128::D64FullMultiChunk
+        fp128::D64DenseMultiChunk
     ),
     family_row!(
-        "fp64_d128",
-        "FP64_D128_SCHEDULES",
-        "fp64-d128",
+        "fp64_d128_dense",
+        "FP64_D128_DENSE_SCHEDULES",
+        "fp64-d128-dense",
         1,
         32,
-        fp64::D128Full
+        fp64::D128Dense
     ),
     family_row!(
         "fp64_d128_onehot",

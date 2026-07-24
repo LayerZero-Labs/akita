@@ -1,29 +1,29 @@
 use super::*;
 
-type ConservativeCommitter = ConservativeOneHotScheme;
+type PrecommitCommitter = PrecommittedOneHotScheme;
 
 #[test]
-fn conservative_config_commit_returns_frozen_layout() {
+fn precommit_config_commit_returns_exact_frozen_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let opening_batch = OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
-    let layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&opening_batch)
-        .expect("conservative commit layout");
+    let layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("precommit layout");
     let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = ConservativeCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     let (commitment, _hint) =
-        ConservativeCommitter::commit(&setup, &polys, &stack).expect("conservative commit");
+        PrecommitCommitter::commit(&setup, &polys, &stack).expect("precommit");
     let frozen_layout = akita_types::PrecommittedGroupDescriptor::from_params(key, &layout);
 
     assert_eq!(frozen_layout.group, key);
@@ -32,10 +32,7 @@ fn conservative_config_commit_returns_frozen_layout() {
         layout.num_positions_per_block
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
-    assert_eq!(
-        frozen_layout.log_basis_outer,
-        ConservativeOneHotCfg::basis_range().0
-    );
+    assert_eq!(frozen_layout.log_basis_outer, OneHotCfg::basis_range().0);
     assert_eq!(frozen_layout.n_a, layout.inner_commit_matrix.output_rank());
     assert_eq!(frozen_layout.n_b, layout.outer_commit_matrix.output_rank());
     assert_eq!(commitment.rows().count(), frozen_layout.n_b);
@@ -45,7 +42,7 @@ fn multi_group_root_params(schedule: &akita_types::FoldSchedule) -> &CommittedGr
     &schedule.root.params.final_group.commitment
 }
 
-fn with_conservative_commit_stack<R>(
+fn with_precommit_stack<R>(
     max_num_vars: usize,
     max_num_polys: usize,
     run: impl FnOnce(
@@ -53,7 +50,7 @@ fn with_conservative_commit_stack<R>(
         &akita_prover::UniformProverStack<'_, OneHotF, CpuBackend>,
     ) -> R,
 ) -> R {
-    let setup = ConservativeCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
+    let setup = PrecommitCommitter::setup_prover(max_num_vars, max_num_polys).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -62,7 +59,7 @@ fn with_conservative_commit_stack<R>(
 }
 
 #[test]
-fn conservative_config_allows_independent_precommitted_groups() {
+fn precommit_config_allows_independent_precommitted_groups() {
     const NV: usize = 16;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
@@ -72,10 +69,10 @@ fn conservative_config_allows_independent_precommitted_groups() {
     let pre_a_opening_batch = OpeningClaimsLayout::new(NV, PRE_A_SIZE).expect("precommit A batch");
     let pre_b_opening_batch = OpeningClaimsLayout::new(NV, PRE_B_SIZE).expect("precommit B batch");
     let pre_a_layout =
-        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
+        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
             .expect("precommit A layout");
     let pre_b_layout =
-        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
+        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
             .expect("precommit B layout");
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_1001)];
     let pre_b_polys = [
@@ -83,11 +80,11 @@ fn conservative_config_allows_independent_precommitted_groups() {
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2002),
     ];
 
-    with_conservative_commit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
+    with_precommit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
         let (pre_a_commitment, _pre_a_hint) =
-            ConservativeCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
+            PrecommitCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
         let (pre_b_commitment, _pre_b_hint) =
-            ConservativeCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
+            PrecommitCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
         let pre_a_frozen =
             akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
@@ -120,13 +117,13 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_opening_batch =
         OpeningClaimsLayout::new(PRE_NV, PRE_C_SIZE).expect("precommit C batch");
     let pre_a_layout =
-        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
+        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_a_opening_batch)
             .expect("precommit A layout");
     let pre_b_layout =
-        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
+        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_b_opening_batch)
             .expect("precommit B layout");
     let pre_c_layout =
-        ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
+        PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
             .expect("precommit C layout");
     let pre_a_frozen =
         akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
@@ -176,18 +173,18 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_opening_batch = OpeningClaimsLayout::new(PRE_NV, GROUP_SIZE).expect("precommit batch");
-    let pre_a_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
+    let pre_a_layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
         .expect("precommit A layout");
-    let pre_b_layout = ConservativeOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
+    let pre_b_layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_opening_batch)
         .expect("precommit B layout");
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
     let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
 
-    with_conservative_commit_stack(FINAL_NV, GROUP_SIZE, |setup, stack| {
+    with_precommit_stack(FINAL_NV, GROUP_SIZE, |setup, stack| {
         let (pre_a_commitment, _pre_a_hint) =
-            ConservativeCommitter::commit::<_, _>(setup, &pre_a_polys, stack).expect("precommit A");
+            PrecommitCommitter::commit::<_, _>(setup, &pre_a_polys, stack).expect("precommit A");
         let (pre_b_commitment, _pre_b_hint) =
-            ConservativeCommitter::commit::<_, _>(setup, &pre_b_polys, stack).expect("precommit B");
+            PrecommitCommitter::commit::<_, _>(setup, &pre_b_polys, stack).expect("precommit B");
         let pre_a_frozen =
             akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
@@ -237,22 +234,25 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
 }
 
 #[test]
-fn commit_group_returns_frozen_conservative_layout() {
+fn commit_group_returns_frozen_exact_layout() {
     const NV: usize = 16;
     const GROUP_SIZE: usize = 1;
 
     let key = akita_types::PolynomialGroupLayout::new(NV, GROUP_SIZE);
     let opening_batch =
         akita_types::OpeningClaimsLayout::new(NV, GROUP_SIZE).expect("opening batch");
-    let layout =
-        OneHotCfg::get_params_for_batched_commitment(&opening_batch).expect("group commit layout");
+    // `commit_group` freezes the standalone precommit layout (root basis pinned),
+    // so size the setup and expected layout with the precommit config, not the
+    // main runtime config (which resolves a different, single-group root split).
+    let layout = PrecommittedOneHotCfg::get_params_for_batched_commitment(&opening_batch)
+        .expect("group commit layout");
     let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
         .checked_mul(ONEHOT_D)
         .expect("total field size overflow");
     assert_eq!(total_field % BENCH_ONEHOT_K, 0);
     let polys = [debug_make_onehot_poly(&layout, 0x0bee_fcaf_9a77_0001)];
 
-    let setup = OneHotScheme::setup_prover(NV, GROUP_SIZE).expect("setup");
+    let setup = PrecommitCommitter::setup_prover(NV, GROUP_SIZE).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -274,7 +274,7 @@ fn commit_group_returns_frozen_conservative_layout() {
 
 /// Produce and verify a folded multi-group-root one-hot same-point proof for the
 /// given precommitted group sizes plus a final group size, exercising unequal
-/// `K_g`. Precommitted groups are committed under the conservative config; the
+/// `K_g`. Precommitted groups use the exact fixed-root precommit config; the
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
 fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
@@ -295,7 +295,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
 
-    // Commit every precommitted group under the conservative config; keep the
+    // Commit every precommitted group under the exact precommit config; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_keys = Vec::new();
     let mut pre_frozen = Vec::new();
@@ -306,7 +306,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     for (group_idx, &k) in pre_sizes.iter().enumerate() {
         let key = akita_types::PolynomialGroupLayout::new(PRE_NV, k);
         let opening_batch = OpeningClaimsLayout::new(PRE_NV, k).expect("precommit batch");
-        let layout = ConservativeCommitmentConfig::<TestCfg>::get_params_for_batched_commitment(
+        let layout = PrecommittedCommitmentConfig::<TestCfg>::get_params_for_batched_commitment(
             &opening_batch,
         )
         .expect("precommit layout");
@@ -319,7 +319,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             })
             .collect();
         let (commitment, hint) =
-            AkitaCommitmentScheme::<ConservativeCommitmentConfig<TestCfg>>::batched_commit(
+            AkitaCommitmentScheme::<PrecommittedCommitmentConfig<TestCfg>>::batched_commit(
                 &setup,
                 &polys[..],
                 &stack,

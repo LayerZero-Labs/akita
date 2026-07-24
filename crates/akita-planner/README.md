@@ -172,7 +172,7 @@ another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
-One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and full-field roots use dense balanced-digit witness bounds.
+One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and dense roots use dense balanced-digit witness bounds.
 
 ## Generated Tables
 

@@ -12,7 +12,7 @@ use akita_types::{
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
-    type Cfg = fp64::D64Full;
+    type Cfg = fp64::D64Dense;
     let nv = 14;
     let expected = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
@@ -30,7 +30,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn role_dispatch_rejects_wrong_inner_dimension() {
-    let schedule = fp128::D128Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
@@ -41,11 +41,11 @@ fn role_dispatch_rejects_wrong_inner_dimension() {
 #[test]
 fn real_presets_validate_against_setup_ring_dimension() {
     for schedule in [
-        fp64::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp64::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(14),
         ))
         .expect("fp64 schedule"),
-        fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+        fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(13),
         ))
         .expect("fp128 schedule"),

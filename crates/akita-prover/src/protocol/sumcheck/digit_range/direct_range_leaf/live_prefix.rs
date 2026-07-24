@@ -3,9 +3,9 @@ use super::*;
 impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver<E> {
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::fuse_full_prefix_x_and_compute_round"
+        name = "LowBasisRangeCheckProver::fuse_materialized_prefix_x_and_compute_round"
     )]
-    pub(super) fn fuse_full_prefix_x_and_compute_round(
+    pub(super) fn fuse_materialized_prefix_x_and_compute_round(
         &self,
         range_image: &[E],
         r: E,
@@ -50,10 +50,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                     for (slot, pair_x) in (pair_base..pair_base + 4).enumerate() {
                         let left_next = 2 * pair_x;
                         let left_old = 4 * pair_x;
-                        let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                        let left_range_image = fold_prefix_pair_with_zero_padding(row, left_old, r);
                         row_out[left_next] = left_range_image;
                         let right_range_image = if left_next + 1 < next_live_x_cols {
-                            let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                            let right_range_image =
+                                fold_prefix_pair_with_zero_padding(row, left_old + 2, r);
                             row_out[left_next + 1] = right_range_image;
                             right_range_image
                         } else {
@@ -88,10 +89,11 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
                 for pair_x in block_start + complete_quartets * 4..block_end {
                     let left_next = 2 * pair_x;
                     let left_old = 4 * pair_x;
-                    let left_range_image = fold_full_prefix_pair(row, left_old, r);
+                    let left_range_image = fold_prefix_pair_with_zero_padding(row, left_old, r);
                     row_out[left_next] = left_range_image;
                     let right_range_image = if left_next + 1 < next_live_x_cols {
-                        let right_range_image = fold_full_prefix_pair(row, left_old + 2, r);
+                        let right_range_image =
+                            fold_prefix_pair_with_zero_padding(row, left_old + 2, r);
                         row_out[left_next + 1] = right_range_image;
                         right_range_image
                     } else {
@@ -241,9 +243,12 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> LowBasisRangeCheckProver
 
     #[tracing::instrument(
         skip_all,
-        name = "LowBasisRangeCheckProver::compute_round_full_prefix_x"
+        name = "LowBasisRangeCheckProver::compute_round_materialized_prefix_x"
     )]
-    pub(super) fn compute_round_full_prefix_x(&self, range_image: &[E]) -> EqFactoredUniPoly<E> {
+    pub(super) fn compute_round_materialized_prefix_x(
+        &self,
+        range_image: &[E],
+    ) -> EqFactoredUniPoly<E> {
         debug_assert!(self.rounds_completed < self.col_bits);
         let y_len = range_image.len() / self.live_x_cols;
         let (e_first, e_second) = self.split_eq.remaining_eq_tables();

@@ -142,7 +142,7 @@ Affected surfaces:
       succeeds (transparent merge gate; #218).
 - [ ] `cargo clippy --all --all-targets -- -D warnings` and the `--no-default-features` variant both pass without any `zk` feature in existence.
 - [x] The Slice-0 golden-byte digests were **byte-identical across slices 0–4d**
-      (`fp128::D64Full` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
+      (`fp128::D64Dense` nv=15 → `c99fcc18…b767072`; `fp128::D64OneHot` nv=20 →
       `4849bef9…cd0daf1b`). **PR 4e** kept `AKITA_INSTANCE_DESCRIPTOR_VERSION`
       at **`1`** (no bump), restored schedule witness-shape descriptor tags, and
       re-pinned once (`f96dd986…` / `480a6bc9…`). **Retired in PR 4f**: the
@@ -168,7 +168,7 @@ cargo clippy --all --all-targets --no-default-features -- -D warnings
 
 **Slice-0 tripwire** (added before any deletion, **retired in PR 4f**):
 `crates/akita-pcs/tests/transparent_proof_golden.rs` pinned SHA-256 of serialized
-transparent proofs for two **folded** instances (`fp128::D64Full` nv=15 and
+transparent proofs for two **folded** instances (`fp128::D64Dense` nv=15 and
 `fp128::D64OneHot` nv=20) plus a verify-side deserialize→`batched_verify` check.
 It gated invariant I1 during slices 0–4e only. After 4f, use serde roundtrips
 and e2e prove/verify tests instead of fixed proof-byte digests.

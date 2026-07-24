@@ -234,6 +234,7 @@ impl SetupContributionFixture {
                 opening_source_len,
                 opening_ring_dim: TEST_RING_DIM,
             }),
+            setup_plan_cache: Default::default(),
         };
 
         let full_vec_randomness: Vec<TestField> = (0..bits)

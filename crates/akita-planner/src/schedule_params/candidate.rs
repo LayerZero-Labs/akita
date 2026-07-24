@@ -282,7 +282,7 @@ fn grouped_setup_prefix_next_witness_len(
 
     let r_rows = params.relation_matrix_row_count(params.precommitted_group_count() + 1)?;
     let r_count = r_rows
-        .checked_mul(akita_types::sis::compute_num_digits_full_field(
+        .checked_mul(akita_types::sis::compute_num_digits_field_width(
             field_bits,
             params.log_basis_open,
         ))

@@ -198,8 +198,11 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
-                "current_w_len": 1024,
+                # Legacy scalar `current_w_len` is not a group breakdown.
+                "current_w_len": [],
                 "next_w_len": 2048,
+                "setup_prefix_natural_field_elements": 0,
+                "setup_prefix_padded_field_elements": 0,
                 "level_bytes": 4096,
             },
         )
@@ -207,23 +210,33 @@ class ProfileBenchReportTests(unittest.TestCase):
     def test_planned_fold_level_parses_typed_schedule_field_names(self) -> None:
         from scripts.profile_bench_report import extract_summary
 
-        # The typed-schedule cutover renamed `current_w_len`/`next_w_len` to
-        # `input_witness_len`/`output_witness_len` and dropped `level_bytes`
-        # from the runtime log.
+        # The typed-schedule cutover renamed scalar lengths to
+        # `input_witness_len`/`output_witness_len`, dropped `level_bytes`, and
+        # now emits `current_w_len` as a group breakdown plus setup-prefix sizes.
         log = (
             'INFO planned fold level label=onehot_fp128_d64 level=0 d=64 d_a=64 d_b=32 d_d=16 '
             'n_a=2 n_b=3 n_d=4 '
             'challenge_l1_mass=8 log_basis=5 position_index_bits=7 block_index_bits=3 '
             'num_live_ring_elements_per_claim=768 num_live_blocks=6 block_index_domain_size=8 '
             'num_positions_per_block=128 num_digits_inner=4 num_digits_outer=5 num_digits_open=5 '
-            'delta_fold=6 input_witness_len=1024 output_witness_len=2048\n'
+            'delta_fold=6 input_witness_len=1024 output_witness_len=2048 '
+            'current_w_len=pre0=512;final=512 next_w_len=2048 '
+            'setup_prefix_natural_field_elements=100 setup_prefix_padded_field_elements=128\n'
         )
 
         summary = extract_summary(log, mode="onehot_fp128_d64", num_vars=24, num_polys=1)
         level = summary["planned_levels"][0]
 
-        self.assertEqual(level["current_w_len"], 1024)
+        self.assertEqual(
+            level["current_w_len"],
+            [
+                {"group": "pre0", "field_elements": 512},
+                {"group": "final", "field_elements": 512},
+            ],
+        )
         self.assertEqual(level["next_w_len"], 2048)
+        self.assertEqual(level["setup_prefix_natural_field_elements"], 100)
+        self.assertEqual(level["setup_prefix_padded_field_elements"], 128)
         self.assertEqual(level["num_live_ring_elements_per_claim"], 768)
         self.assertNotIn("level_bytes", level)
 

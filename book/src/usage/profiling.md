@@ -25,7 +25,7 @@ normal release link look like a verifier regression.
 
 Under committed-fold A-role SIS pricing, **fp128** production is **D=64**
 (signed-sparse; ~20% smaller than D128).
-Shipped tables: `fp128_d64_onehot`, `fp128_d64_full`, `fp128_d128_*`.
+Shipped tables: `fp128_d64_onehot`, `fp128_d64_dense`, `fp128_d128_*`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
@@ -33,7 +33,7 @@ one-hot** (CI benches at `nv=28`).
 
 Compare ring degrees with
 `akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_full_schedule`.
+`best_dense_schedule`.
 
 ## Environment knobs
 

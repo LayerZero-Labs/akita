@@ -14,7 +14,7 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
 use akita_planner::{find_group_batch_schedule, PlannerPolicy};
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
@@ -84,13 +84,31 @@ fn check_table_miss_fallback<Cfg: CommitmentConfig>(num_vars: usize) {
 #[test]
 fn dp_fallback_fires_for_non_shipped_keys() {
     check_table_miss_fallback::<fp128::D64OneHot>(14);
-    check_table_miss_fallback::<fp128::D64Full>(16);
+    check_table_miss_fallback::<fp128::D64Dense>(16);
     check_table_miss_fallback::<fp32::D128OneHot>(16);
+}
+
+#[test]
+fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_planner() {
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
+    let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
+        .expect("ordinary scalar schedule must resolve");
+    let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
+        .expect("recursive adapter scalar schedule must resolve");
+    assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
+        cost_model: akita_planner::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        selection_policy: if Cfg::recursive_setup_planning() {
+            akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else {
+            akita_planner::SelectionPolicyId::MinEstimatedProofPayload
+        },
+        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
@@ -112,10 +130,25 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
 
 #[test]
 fn policy_bridge_matches_cfg_hooks() {
-    assert_policy_matches_cfg::<fp128::D64Full>();
-    assert_policy_matches_cfg::<fp128::D128Full>();
+    assert_policy_matches_cfg::<fp128::D64Dense>();
+    assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn root_basis_is_derived_from_existing_policy_inputs() {
+    let fp128 = policy_of::<fp128::D64OneHot>();
+    assert_eq!(fp128.basis_range, (3, 6));
+    assert_eq!(fp128.decomposition.log_basis, 3);
+    assert_eq!(fp128.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp128.log_basis_search_range_at_level(1), (3, 6));
+
+    let fp32 = policy_of::<fp32::D64OneHot>();
+    assert_eq!(fp32.basis_range, (3, 6));
+    assert_eq!(fp32.decomposition.log_basis, 3);
+    assert_eq!(fp32.log_basis_search_range_at_level(0), (3, 3));
+    assert_eq!(fp32.log_basis_search_range_at_level(1), (3, 6));
 }
 
 #[test]

@@ -250,7 +250,7 @@ mod tests {
             8,
             1,
             48,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect_err("unsupported gen_ring_dim must be rejected");
         assert!(
@@ -265,7 +265,7 @@ mod tests {
             8,
             1,
             64,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect("generate D=64 setup");
         // Uniform-D: level dim equals gen_ring_dim.
@@ -297,7 +297,7 @@ mod tests {
             8,
             1,
             64,
-            SetupMatrixEnvelope { max_setup_len: 1 },
+            SetupMatrixEnvelope::minimum(),
         )
         .expect("generate setup");
         let decomposed = DigitBlocks::empty(64);

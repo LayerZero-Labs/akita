@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn compact_trace_matches_dense_definition() {
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         type F = fp128::Field;
         type E = F;
         const D: usize = Cfg::D;

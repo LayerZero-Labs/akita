@@ -2,7 +2,7 @@ use super::*;
 
 /// Target scan-job size. At fp128/D64 this is 2 MiB of contiguous setup data,
 /// large enough to amortize scheduling while exposing hundreds of root jobs.
-const SETUP_SCAN_JOB_RINGS: usize = 2048;
+pub(super) const SETUP_SCAN_JOB_RINGS: usize = 2048;
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
     pub(crate) fn refresh_segments(

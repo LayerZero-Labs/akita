@@ -321,13 +321,35 @@ pub(crate) fn emit_runtime_schedule_summary(
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    tracing::info!(label, levels, "runtime schedule");
+    let setup_envelope_ring_elements = akita_types::setup_matrix_envelope_for_schedule(schedule)
+        .map(|envelope| envelope.max_setup_len)
+        .unwrap_or(0);
+    let setup_envelope_field_elements = setup_envelope_ring_elements
+        .saturating_mul(schedule.root.params.final_group.commitment.d_a());
+    let setup_envelope_bytes =
+        setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
+    let selected_offload_edges = schedule
+        .recursive_folds
+        .iter()
+        .filter(|fold| fold.params.incoming_setup_prefix.is_some())
+        .count();
+    tracing::info!(
+        label,
+        levels,
+        selected_offload_edges,
+        setup_envelope_ring_elements,
+        setup_envelope_field_elements,
+        setup_envelope_bytes,
+        "runtime schedule"
+    );
 
+    let root_current_w_groups = root_current_w_groups(schedule, root_num_claims);
     let nonterminal = std::iter::once((
         0usize,
         &schedule.root.params.final_group.commitment,
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
+        root_current_w_groups,
     ))
     .chain(
         schedule
@@ -340,12 +362,23 @@ pub(crate) fn emit_runtime_schedule_summary(
                     &level.params.witness,
                     level.input_witness_len,
                     level.output_witness_len,
+                    format!("folded={}", level.input_witness_len),
                 )
             }),
     );
-    for (level_idx, lp, input_witness_len, output_witness_len) in nonterminal {
+    for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
         let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
+        let current_w_len = current_w_groups;
+        let next_w_len = output_witness_len;
+        let setup_prefix = schedule
+            .recursive_folds
+            .get(level_idx)
+            .and_then(|fold| fold.params.incoming_setup_prefix.as_ref());
+        let setup_prefix_natural_field_elements =
+            setup_prefix.map_or(0, |prefix| prefix.natural_len);
+        let setup_prefix_padded_field_elements =
+            setup_prefix.map_or(0, |prefix| prefix.n_prefix().unwrap_or(0));
         tracing::info!(
             label,
             level = level_idx,
@@ -372,8 +405,24 @@ pub(crate) fn emit_runtime_schedule_summary(
             delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
             input_witness_len,
             output_witness_len,
+            current_w_len,
+            next_w_len,
+            setup_prefix_natural_field_elements,
+            setup_prefix_padded_field_elements,
             "planned fold level"
         );
+    }
+
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        if let Some(prefix) = &fold.params.incoming_setup_prefix {
+            tracing::info!(
+                label,
+                successor_level = index + 1,
+                setup_prefix_natural_field_elements = prefix.natural_len,
+                setup_prefix_padded_field_elements = prefix.n_prefix().unwrap_or(0),
+                "planned recursive setup edge"
+            );
+        }
     }
 
     tracing::info!(
@@ -383,6 +432,43 @@ pub(crate) fn emit_runtime_schedule_summary(
         final_inner_ring_dimension = schedule.terminal.params.witness.d_a(),
         "planned terminal state"
     );
+}
+
+fn group_field_elements(num_vars: usize, num_polynomials: usize) -> usize {
+    1usize
+        .checked_shl(num_vars as u32)
+        .and_then(|len| len.checked_mul(num_polynomials))
+        .unwrap_or(0)
+}
+
+fn root_current_w_groups(schedule: &FoldSchedule, root_num_claims: usize) -> String {
+    let mut groups = schedule
+        .root
+        .params
+        .precommitted_groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| {
+            let layout = group.descriptor.group;
+            format!(
+                "pre{index}={}",
+                group_field_elements(layout.num_vars(), layout.num_polynomials())
+            )
+        })
+        .collect::<Vec<_>>();
+    let precommitted_polys = schedule
+        .root
+        .params
+        .precommitted_groups
+        .iter()
+        .map(|group| group.descriptor.group.num_polynomials())
+        .sum::<usize>();
+    let final_polys = root_num_claims.saturating_sub(precommitted_polys);
+    groups.push(format!(
+        "final={}",
+        schedule.root.input_witness_len.saturating_mul(final_polys)
+    ));
+    groups.join(";")
 }
 
 fn ring_elem_count(coeff_len: usize, d: usize) -> usize {

@@ -28,7 +28,7 @@ use akita_types::{
 };
 use common::*;
 
-type Envelope = fp128::D128Full;
+type Envelope = fp128::D128Dense;
 type Scheme = AkitaCommitmentScheme<MixedRoleRoot>;
 
 const NUM_VARS: usize = 16;

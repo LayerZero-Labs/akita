@@ -223,7 +223,7 @@ impl FoldWitnessNorms {
     /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
     /// `nonzeros = ceil(D / K)`:
     ///
-    /// - dense / full-field        : `K = 1`     ⇒ `nonzeros = D`
+    /// - dense                     : `K = 1`     ⇒ `nonzeros = D`
     /// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
     /// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
     #[inline]

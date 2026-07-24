@@ -40,7 +40,7 @@
 //!
 //! degree 4, so round polynomials have degree 5.
 
-use super::super::fold_full_prefix_pair;
+use super::super::fold_prefix_pair_with_zero_padding;
 use super::super::two_round_prefix::{
     build_stage1_bivariate_skip_proof_from_compact_range_image, can_use_stage1_two_round_prefix,
     stage1_b4_digit_from_compact_range_image, stage1_b8_digit_from_compact_range_image,

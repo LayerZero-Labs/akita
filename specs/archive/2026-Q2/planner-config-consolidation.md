@@ -831,7 +831,7 @@ pub struct GeneratedScheduleTable { /* unchanged */ }
 // Static table data — produced by the gen_schedule_tables binary in akita-planner,
 // but the .rs files live here for verifier accessibility and to avoid forcing
 // every Cfg::schedule_table() call to cross the planner-feature gate.
-pub mod fp128_d32_full;
+pub mod fp128_d32_dense;
 pub mod fp128_d32_onehot;
 // ... and so on for every preset family/D, with `_zk` variants behind the zk feature.
 

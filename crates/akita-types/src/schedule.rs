@@ -49,13 +49,13 @@ pub struct PrecommittedGroupDescriptor {
     pub log_basis_inner: u32,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
-    /// Conservative A-role row count frozen at precommit time.
+    /// Exact A-role row count frozen at precommit time.
     pub n_a: usize,
-    /// Conservative A-role collision bucket frozen at precommit time.
+    /// Exact A-role collision bucket frozen at precommit time.
     pub a_coeff_linf_bound: u128,
-    /// Conservative B-role row count frozen at precommit time.
+    /// Exact B-role row count frozen at precommit time.
     pub n_b: usize,
-    /// Conservative B-role collision bucket frozen at precommit time.
+    /// Exact B-role collision bucket frozen at precommit time.
     pub b_coeff_linf_bound: u128,
 }
 
@@ -105,8 +105,7 @@ impl PrecommittedGroupDescriptor {
             || self.b_coeff_linf_bound == 0
         {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero conservative A/B rows and bounds"
-                    .to_string(),
+                "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
             ));
         }
         if self.log_basis_inner == 0 {
@@ -167,7 +166,7 @@ impl PrecommittedGroupDescriptor {
     }
 }
 
-/// Freezes conservative root-commit metadata for each precommitted group when
+/// Freezes exact root-commit metadata for each precommitted group when
 /// building a schedule lookup key from an opening layout.
 pub trait ScheduleKeyPrecommitSource {
     /// Resolve frozen standalone-commit params for one precommitted group.
@@ -201,7 +200,7 @@ impl AkitaScheduleLookupKey {
     /// Build the canonical schedule lookup key for `layout`.
     ///
     /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
-    /// earlier group through `S` (production uses the conservative commit
+    /// earlier group through `S` (production uses the exact precommit
     /// adapter wired by `akita-config`'s `opening_schedule_key`).
     pub fn from_layout<S: ScheduleKeyPrecommitSource>(
         layout: &OpeningClaimsLayout,
@@ -282,7 +281,7 @@ impl AkitaScheduleLookupKey {
 pub fn r_decomp_levels<F: CanonicalField>(log_basis: u32) -> usize {
     let modulus = detect_field_modulus::<F>();
     let field_bits = 128 - (modulus.saturating_sub(1)).leading_zeros();
-    crate::sis::compute_num_digits_full_field(field_bits, log_basis)
+    crate::sis::compute_num_digits_field_width(field_bits, log_basis)
 }
 
 /// Detect the field modulus from the canonical representation.
@@ -337,7 +336,7 @@ pub fn intermediate_w_ring_element_count_with_counts_bits(
         .ok_or_else(|| AkitaError::InvalidSetup("witness Z width overflow".to_string()))?;
     let r_rows = lp.relation_matrix_row_count(1)?;
     let r_count = r_rows
-        .checked_mul(crate::sis::compute_num_digits_full_field(
+        .checked_mul(crate::sis::compute_num_digits_field_width(
             field_bits,
             lp.log_basis_open,
         ))
@@ -870,9 +869,19 @@ fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &Wi
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FoldScheduleEstimate {
     pub estimated_root_direct_payload_bytes: usize,
+    pub estimated_root_stage3_payload_bytes: usize,
     pub estimated_recursive_direct_payload_bytes: Vec<usize>,
+    pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
+    /// Maximum setup-matrix envelope, in ring elements at the active level's
+    /// inner ring dimension.
+    pub estimated_setup_envelope_ring_elements: usize,
+    /// Natural (unpadded) setup length at the first direct edge, when the
+    /// recursive setup planner is active.
+    pub first_direct_setup_field_len: Option<usize>,
+    /// Number of recursive successors that consume an offloaded setup prefix.
+    pub selected_offload_edges: usize,
 }
 
 impl FoldScheduleEstimate {
@@ -885,6 +894,22 @@ impl FoldScheduleEstimate {
                 })
             })?
             .checked_add(self.estimated_terminal_direct_payload_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
+    }
+
+    pub fn estimated_stage3_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_recursive_stage3_payload_bytes
+            .iter()
+            .try_fold(self.estimated_root_stage3_payload_bytes, |sum, value| {
+                sum.checked_add(*value).ok_or_else(|| {
+                    AkitaError::InvalidSetup("fold schedule estimate overflow".to_string())
+                })
+            })
+    }
+
+    pub fn estimated_proof_payload_bytes(&self) -> Result<usize, AkitaError> {
+        self.estimated_direct_proof_payload_bytes()?
+            .checked_add(self.estimated_stage3_payload_bytes()?)
             .ok_or_else(|| AkitaError::InvalidSetup("fold schedule estimate overflow".to_string()))
     }
 }

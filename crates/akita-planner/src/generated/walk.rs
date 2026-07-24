@@ -19,8 +19,8 @@ use crate::generated::{
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::schedule_params::{
-    materialize_candidate_schedule, planned_next_witness_len, CandidateFoldStep,
-    CandidateTerminalResponse,
+    materialize_candidate_schedule, planned_next_witness_len, stage3_payload_bytes_for_successor,
+    CandidateFoldStep, CandidateTerminalResponse,
 };
 use crate::PlannerPolicy;
 
@@ -165,7 +165,7 @@ pub(crate) fn walk_generated_schedule_entry(
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {
         let next_lp = expanded.get(fold_level + 1).map(|(params, _, _)| params);
         let binds_terminal = next_lp.is_none();
-        let level_bytes = level_proof_bytes(
+        let direct_level_bytes = level_proof_bytes(
             field_bits,
             challenge_field_bits,
             lp,
@@ -187,14 +187,20 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("generated level byte count overflow".to_string())
         })?;
-        total_bytes = total_bytes.checked_add(level_bytes).ok_or_else(|| {
-            AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
-        })?;
+        let stage3_bytes =
+            stage3_payload_bytes_for_successor(policy, next_lp, *output_witness_len)?;
+        total_bytes = total_bytes
+            .checked_add(direct_level_bytes)
+            .and_then(|value| value.checked_add(stage3_bytes))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("generated proof byte total overflow".to_string())
+            })?;
         folds.push(CandidateFoldStep {
             params: lp.clone(),
             input_witness_len: *input_witness_len,
             output_witness_len: *output_witness_len,
-            estimated_direct_payload_bytes: level_bytes,
+            estimated_direct_payload_bytes: direct_level_bytes,
+            estimated_stage3_payload_bytes: stage3_bytes,
         });
     }
     let terminal_direct_bytes = akita_types::FOLD_GRIND_NONCE_BYTES
@@ -220,8 +226,34 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated schedule validates to zero proof bytes".to_string(),
         ));
     }
+    let mut setup_envelope = 1;
+    for fold in &folds {
+        akita_types::accumulate_matrix_envelope_for_level(&fold.params, &mut setup_envelope)?;
+    }
+    akita_types::accumulate_terminal_matrix_envelope(&terminal_params, &mut setup_envelope)?;
+    let first_direct_setup_field_len = if policy.recursive_setup_planning {
+        folds
+            .iter()
+            .zip(folds.iter().skip(1))
+            .find(|(_, successor)| successor.params.setup_prefix.is_none())
+            .map(|(producer, _)| {
+                let incoming_prefix = producer
+                    .params
+                    .setup_prefix
+                    .as_ref()
+                    .map(|prefix| prefix.natural_len);
+                let layout =
+                    crate::suffix_opening_layout(producer.input_witness_len, incoming_prefix)?;
+                akita_types::active_setup_field_len(&producer.params, &layout)
+            })
+            .transpose()?
+    } else {
+        None
+    };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
+        setup_envelope,
+        first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {
             params: terminal_params,

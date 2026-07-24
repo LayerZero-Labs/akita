@@ -1,4 +1,26 @@
 use super::*;
+
+#[test]
+fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
+    let estimate = FoldScheduleEstimate {
+        estimated_root_direct_payload_bytes: 100,
+        estimated_root_stage3_payload_bytes: 11,
+        estimated_recursive_direct_payload_bytes: vec![200, 300],
+        estimated_recursive_stage3_payload_bytes: vec![22, 0],
+        estimated_terminal_direct_payload_bytes: 400,
+        estimated_terminal_response_payload_bytes: 350,
+        estimated_setup_envelope_ring_elements: 512,
+        first_direct_setup_field_len: Some(1_024),
+        selected_offload_edges: 2,
+    };
+
+    assert_eq!(
+        estimate.estimated_direct_proof_payload_bytes().unwrap(),
+        1_000
+    );
+    assert_eq!(estimate.estimated_stage3_payload_bytes().unwrap(), 33);
+    assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
+}
 use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::tail_golomb_rice_z_params;
 use crate::{
@@ -346,7 +368,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 }
 
 #[test]
-fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -383,7 +405,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }
@@ -441,7 +463,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 }
 
 #[test]
-fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -495,7 +517,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }

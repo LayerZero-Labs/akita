@@ -75,11 +75,11 @@ The ring degree differs by field, for two distinct reasons:
   133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
   while still folding through 8-9 secure recursive levels. This is confirmed by
   `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
-  and by the `best_full_schedule` / `best_onehot_schedule` selectors, which
+  and by the `best_dense_schedule` / `best_onehot_schedule` selectors, which
   pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
   proof-size optimal; D32/D64 are the planner optima (D32 is marginally
   smaller for fp128). The benchmark matrix tracks D64; use
-  `best_onehot_schedule` / `best_full_schedule` to compare D32/D64/D128.
+  `best_onehot_schedule` / `best_dense_schedule` to compare D32/D64/D128.
 
 D32/D128 profile modes still exist for direct local comparisons, and `main`
 adds a D64-only tensor-verifier profile mode, but neither the adaptive

@@ -1,6 +1,7 @@
 mod group;
 
 use super::*;
+use akita_algebra::ring::eval_ring_at_pows_fast;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
@@ -83,15 +84,34 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore,
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
+        let fused_groups = self.groups.len() > 1;
+        let logical_group_rings = self
+            .groups
+            .iter()
+            .fold(0usize, |sum, group| sum.saturating_add(group.required));
+        let physical_ring_evaluations = if fused_groups {
+            self.projection_geometry.required()
+        } else {
+            logical_group_rings
+        };
+        let jobs = if fused_groups {
+            self.projection_geometry
+                .required()
+                .div_ceil(super::segments::SETUP_SCAN_JOB_RINGS)
+        } else {
+            self.groups
+                .iter()
+                .map(|group| group.segments.len())
+                .sum::<usize>()
+        };
         let _span = tracing::info_span!(
             "setup_contribution_scan",
             required = self.projection_geometry.required(),
             groups = self.groups.len(),
-            jobs = self
-                .groups
-                .iter()
-                .map(|group| group.segments.len())
-                .sum::<usize>(),
+            logical_group_rings,
+            physical_ring_evaluations,
+            jobs,
+            fused_groups,
             base_d = BASE_D,
             a_ratio = self.projection_geometry.a_ratio(),
             b_ratio = self.projection_geometry.b_ratio(),
@@ -112,6 +132,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             ));
         }
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
+        if fused_groups {
+            return self.evaluate_groups_fused::<F, BASE_D>(
+                &setup_view,
+                base_pows,
+                a_projection,
+                b_projection,
+                d_projection,
+            );
+        }
         let mut acc = E::zero();
         for group in &self.groups {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
@@ -126,5 +155,79 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             )?;
         }
         Ok(acc)
+    }
+
+    fn evaluate_groups_fused<F, const BASE_D: usize>(
+        &self,
+        setup_view: &RingMatrixView<'_, F, BASE_D>,
+        base_pows: &[E],
+        a_projection: &RoleProjection<E>,
+        b_projection: &RoleProjection<E>,
+        d_projection: &RoleProjection<E>,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore,
+        E: ExtField<F> + MulBaseUnreduced<F>,
+    {
+        let setup_flat = setup_view.as_slice();
+        let required = self.projection_geometry.required();
+        if self.d_weights.len() != self.d_rows {
+            return Err(AkitaError::InvalidSetup(
+                "cached setup scan geometry is malformed".into(),
+            ));
+        }
+        let job_rings = super::segments::SETUP_SCAN_JOB_RINGS;
+        let num_jobs = required.div_ceil(job_rings);
+        cfg_try_fold_reduce!(
+            0..num_jobs,
+            E::zero,
+            |acc, job| {
+                let lo = job.checked_mul(job_rings).ok_or(AkitaError::InvalidProof)?;
+                let hi = lo.saturating_add(job_rings).min(required);
+                let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
+                let mut weights = vec![E::zero(); setup.len()];
+                for group in &self.groups {
+                    let first = group.segments.partition_point(|segment| segment.hi <= lo);
+                    for segment in group.segments.iter().skip(first) {
+                        if segment.lo >= hi {
+                            break;
+                        }
+                        let overlap = segment.lo.max(lo)..segment.hi.min(hi);
+                        let weight_start = overlap
+                            .start
+                            .checked_sub(lo)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        dispatch_segment_roles!(segment, Ok(()), |HAS_D, HAS_B, HAS_A| {
+                            for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
+                                overlap,
+                                segment,
+                                &group.e_eq_slice,
+                                &group.t_eq_slice,
+                                &group.z_eq_slice,
+                                d_projection,
+                                b_projection,
+                                a_projection,
+                                |offset, weight| {
+                                    let slot = weight_start
+                                        .checked_add(offset)
+                                        .and_then(|index| weights.get_mut(index))
+                                        .ok_or(AkitaError::InvalidProof)?;
+                                    *slot += weight;
+                                    Ok(())
+                                },
+                            )
+                        })?;
+                    }
+                }
+                let mut term = E::zero();
+                for (ring, weight) in setup.iter().zip(weights) {
+                    if !weight.is_zero() {
+                        term += eval_ring_at_pows_fast(ring, base_pows) * weight;
+                    }
+                }
+                Ok(acc + term)
+            },
+            |lhs, rhs| Ok(lhs + rhs)
+        )
     }
 }

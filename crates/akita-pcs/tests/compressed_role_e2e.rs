@@ -2,7 +2,7 @@
 //!
 //! The root fold uses non-uniform commitment-role ring dimensions
 //! `d_a/d_b/d_d = 128/64/64` (A-role at the envelope dimension, B/D compressed);
-//! later folds retain the shipped `D128Full` schedule. The proof is produced
+//! later folds retain the shipped `D128Dense` schedule. The proof is produced
 //! and checked exclusively through the public PCS API
 //! (`AkitaCommitmentScheme::{commit, batched_prove, batched_verify}`).
 //!
@@ -25,7 +25,7 @@ use akita_types::{validate_schedule_ring_dims, CommitmentRingDims, OpeningClaims
 use common::*;
 
 /// Envelope preset: uniform `D = 128`, generation ring dimension 128.
-type Envelope = fp128::D128Full;
+type Envelope = fp128::D128Dense;
 /// Root commits at A=128 while B and D are compressed to 64.
 type Cfg = CompressedRoleRootConfig<Envelope, 64, 64>;
 type Scheme = AkitaCommitmentScheme<Cfg>;

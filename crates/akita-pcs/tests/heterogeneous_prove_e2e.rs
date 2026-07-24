@@ -14,7 +14,7 @@ use akita_types::{
 };
 use std::any::TypeId;
 
-type Cfg = fp128::D64Full;
+type Cfg = fp128::D64Dense;
 type F = fp128::Field;
 const D: usize = Cfg::D;
 type Scheme = AkitaCommitmentScheme<Cfg>;

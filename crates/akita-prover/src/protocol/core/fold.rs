@@ -889,31 +889,50 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + FromPrimitiveInt
+        + LiftBase<F>
+        + AkitaSerialize
+        + akita_field::unreduced::HasUnreducedOps
+        + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            let mut stage3_prover = AkitaStage3Prover::new::<F, T>(
-                expanded,
-                prefix_slots,
-                lp,
-                next_level_params,
-                instance,
-                tau1,
-                alpha,
-                sumcheck_challenges,
-                stage2_next_w_eval,
-                logical_w,
-                live_x_cols,
-                col_bits,
-                ring_bits,
+            let role_dims = instance.role_dims();
+            let _stage3_span = tracing::info_span!(
+                "stage3_sumcheck",
                 level,
-                eta,
-                transcript,
-            )?;
-            let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
+                witness_len = logical_w.len(),
+                stage2_rounds = sumcheck_challenges.len(),
+                d_a = lp.d_a(),
+                d_b = role_dims.d_b(),
+                d_d = role_dims.d_d(),
+            )
+            .entered();
+            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            let mut stage3_prover = {
+                let _prepare_span = tracing::info_span!("stage3_prover_prepare").entered();
+                AkitaStage3Prover::new::<T>(
+                    expanded,
+                    prefix_slots,
+                    lp,
+                    next_level_params,
+                    instance,
+                    tau1,
+                    alpha,
+                    sumcheck_challenges,
+                    stage2_next_w_eval,
+                    logical_w,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    level,
+                    eta,
+                    transcript,
+                )?
+            };
+            let output = stage3_prover.prove::<T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
             transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);

@@ -27,7 +27,7 @@ env:
   # - fp128: D64 is the actual proof-size optimum for both dense and one-hot
   #   (~20% smaller than D128 while still folding through 8-9 secure levels;
   #   confirmed by `current_d64_onehot_schedule_stays_within_audited_sis_widths`
-  #   and the `best_full_schedule`/`best_onehot_schedule` selectors, which pick
+  #   and the `best_dense_schedule`/`best_onehot_schedule` selectors, which pick
   #   D64 over D128). The fp128 cells therefore track D64, not D128.
   AKITA_BENCH_MODE: onehot_fp128_d64
   AKITA_BENCH_RUNS: "3"
@@ -85,7 +85,6 @@ jobs:
               onehot_fp32_d128:28:1
               onehot_fp64_d128:28:1
               onehot_fp128_d64:32:1
-              onehot_fp128_d64:32:1:recursive
               onehot_fp128_d64:30:4
           - name: 4-multi-group-recursive
             cases: |

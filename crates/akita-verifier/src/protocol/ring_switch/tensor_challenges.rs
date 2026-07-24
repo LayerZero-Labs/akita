@@ -11,18 +11,17 @@ pub(crate) enum PreparedChallengeEvals<F: FieldCore> {
     },
 }
 
-/// One claim's factorized outer weights for the affine interval kernel.
+/// One claim's logical fold weights.
 pub(crate) struct PreparedAffineFactors<F> {
-    pub(crate) high: Vec<F>,
     pub(crate) low: Vec<F>,
 }
 
 impl<F: FieldCore> PreparedChallengeEvals<F> {
     /// Evaluate one claim's outer fold weights as separate high/low factors.
     ///
-    /// Flat challenges use one high factor and an exact live prefix in a
-    /// power-of-two low vector. Tensor challenges evaluate only their sampled
-    /// high and low factors, never the Cartesian logical fold product.
+    /// Flat challenges use an exact live prefix in a power-of-two low vector.
+    /// Tensor challenges materialize their wrap-corrected logical evaluations,
+    /// never the raw Cartesian high/low product.
     pub(crate) fn affine_factors<Base>(
         &self,
         claim: usize,
@@ -54,10 +53,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                 })?;
                 let mut low = vec![F::zero(); low_len];
                 low[..num_live_blocks].copy_from_slice(values);
-                Ok(PreparedAffineFactors {
-                    high: vec![F::one()],
-                    low,
-                })
+                Ok(PreparedAffineFactors { low })
             }
             Self::Tensor {
                 challenges,
@@ -71,17 +67,11 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                         "tensor challenge factors do not match witness blocks".into(),
                     ));
                 }
-                // The affine kernel multiplies its two outer factors as a bare
-                // product `high[i / Q] · low[i % Q]`. That separable shape cannot
-                // represent the negacyclic wrap correction
-                // `− (alpha^D + 1) · quotient(H_h, L_q)` that the reduced
-                // tensor-product fold challenge carries, so feeding the raw
-                // fold-high/fold-low evaluations would drop the wrap term and
-                // disagree with the prover (which uses the wrap-corrected
-                // reduced product). Materialize the per-fold wrap-corrected
-                // logical evaluations here and return them in the same
-                // single-high-factor shape as the flat branch, so the kernel
-                // computes `1 · low[f]` and matches the prover exactly.
+                // A separable high/low product cannot represent the negacyclic
+                // wrap correction `− (alpha^D + 1) · quotient(H_h, L_q)` that
+                // the reduced tensor-product fold challenge carries. Materialize
+                // the per-fold wrap-corrected logical evaluations so every
+                // caller can consume the same flat low vector.
                 let low_len = num_live_blocks.checked_next_power_of_two().ok_or_else(|| {
                     AkitaError::InvalidSetup("tensor challenge factor length overflow".into())
                 })?;
@@ -95,10 +85,7 @@ impl<F: FieldCore> PreparedChallengeEvals<F> {
                     })?;
                     *slot = challenges.eval_logical_at_pows::<Base, F>(block_idx, alpha_pows)?;
                 }
-                Ok(PreparedAffineFactors {
-                    high: vec![F::one()],
-                    low,
-                })
+                Ok(PreparedAffineFactors { low })
             }
         }
     }

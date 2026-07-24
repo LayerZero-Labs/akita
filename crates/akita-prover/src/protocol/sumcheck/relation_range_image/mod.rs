@@ -76,7 +76,7 @@
 //! the virtual, relation, and EvaluationTrace terms around the same local `w0` /
 //! `dw` scan so the witness-side work is shared.
 
-use super::fold_full_prefix_pair as fold_folded_lane_pair;
+use super::fold_prefix_pair_with_zero_padding as fold_folded_lane_pair;
 use super::two_round_prefix::{
     build_stage2_bivariate_skip_proof_from_m_compact, can_use_stage2_two_round_prefix,
     Stage2BivariateSkipState,

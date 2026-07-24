@@ -154,20 +154,62 @@ where
     let setup = setup_flat
         .get(range.clone())
         .ok_or(AkitaError::InvalidProof)?;
+    let mut acc = E::zero();
+    for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
+        range,
+        segment,
+        e_eq,
+        t_eq,
+        z_eq,
+        d_projection,
+        b_projection,
+        a_projection,
+        |offset, weight| {
+            if !weight.is_zero() {
+                let ring = setup.get(offset).ok_or(AkitaError::InvalidProof)?;
+                acc += eval_ring_at_pows_fast(ring, base_pows) * weight;
+            }
+            Ok(())
+        },
+    )?;
+    Ok(acc)
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+pub(super) fn for_each_base_ring_segment_weight_typed<
+    E,
+    const HAS_D: bool,
+    const HAS_B: bool,
+    const HAS_A: bool,
+>(
+    range: std::ops::Range<usize>,
+    segment: &GroupSetupSegment<E>,
+    e_eq: &[E],
+    t_eq: &[E],
+    z_eq: &[E],
+    d_projection: &RoleProjection<E>,
+    b_projection: &RoleProjection<E>,
+    a_projection: &RoleProjection<E>,
+    mut visit: impl FnMut(usize, E) -> Result<(), AkitaError>,
+) -> Result<(), AkitaError>
+where
+    E: FieldCore,
+{
+    let len = range
+        .end
+        .checked_sub(range.start)
+        .ok_or(AkitaError::InvalidProof)?;
     let identity =
         d_projection.is_identity() && b_projection.is_identity() && a_projection.is_identity();
     if identity {
-        let d_eq =
-            checked_role_eq_slice::<E, HAS_D>(e_eq, range.start, setup.len(), segment.d_start_abs)?;
-        let b_eq =
-            checked_role_eq_slice::<E, HAS_B>(t_eq, range.start, setup.len(), segment.b_start_abs)?;
-        let a_eq =
-            checked_role_eq_slice::<E, HAS_A>(z_eq, range.start, setup.len(), segment.a_start_abs)?;
+        let d_eq = checked_role_eq_slice::<E, HAS_D>(e_eq, range.start, len, segment.d_start_abs)?;
+        let b_eq = checked_role_eq_slice::<E, HAS_B>(t_eq, range.start, len, segment.b_start_abs)?;
+        let a_eq = checked_role_eq_slice::<E, HAS_A>(z_eq, range.start, len, segment.a_start_abs)?;
         let mut d_eq = d_eq.iter();
         let mut b_eq = b_eq.iter();
         let mut a_eq = a_eq.iter();
-        let mut acc = E::zero();
-        for ring in setup {
+        for offset in 0..len {
             let mut weight = E::zero();
             if HAS_D {
                 weight += segment.d_weight * *d_eq.next().ok_or(AkitaError::InvalidProof)?;
@@ -178,15 +220,12 @@ where
             if HAS_A {
                 weight += segment.a_row_weight * *a_eq.next().ok_or(AkitaError::InvalidProof)?;
             }
-            if !weight.is_zero() {
-                acc += eval_ring_at_pows_fast(ring, base_pows) * weight;
-            }
+            visit(offset, weight)?;
         }
-        return Ok(acc);
+        return Ok(());
     }
 
-    let mut acc = E::zero();
-    for (offset, ring) in setup.iter().enumerate() {
+    for offset in 0..len {
         let base_idx = range
             .start
             .checked_add(offset)
@@ -201,11 +240,9 @@ where
             b_projection,
             a_projection,
         )?;
-        if !weight.is_zero() {
-            acc += eval_ring_at_pows_fast(ring, base_pows) * weight;
-        }
+        visit(offset, weight)?;
     }
-    Ok(acc)
+    Ok(())
 }
 
 fn checked_role_eq_slice<E, const ACTIVE: bool>(

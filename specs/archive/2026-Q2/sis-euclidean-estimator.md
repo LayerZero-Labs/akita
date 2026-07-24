@@ -164,7 +164,7 @@ the DP objective differs because `level_proof_bytes` and recursive witness width
 include ZK mask/blinding bytes under the `zk` feature.
 
 Structural divergence at the same `(preset, num_vars, incidence)` key is therefore
-**expected**, not table corruption. Example (`fp128_d128_full`, nv=30 singleton): non-zk
+**expected**, not table corruption. Example (`fp128_d128_dense`, nv=30 singleton): non-zk
 tail `…(m=9,r=3)→(m=8,r=3)→(m=8,r=3)`; zk tail `…(m=9,r=3)→(m=9,r=3)→(m=8,r=3)` (same
 fold count, different byte-optimal geometry).
 

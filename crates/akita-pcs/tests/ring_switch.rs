@@ -276,7 +276,7 @@ mod tests {
     #[test]
     fn ring_multiplier_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -420,7 +420,7 @@ mod tests {
     #[test]
     fn full_root_rows_match_direct_relation_claim() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -563,7 +563,7 @@ mod tests {
     #[test]
     fn uniform_col_relation_reconstructs_flattened_builder() {
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -721,7 +721,7 @@ mod tests {
 
     #[test]
     fn asymmetric_centering_decompose_roundtrip() {
-        use akita_types::sis::compute_num_digits_full_field;
+        use akita_types::sis::compute_num_digits_field_width;
         use rand::SeedableRng;
 
         type F = fp128::Field;
@@ -731,7 +731,7 @@ mod tests {
 
         for log_basis in [2u32, 3, 4, 5, 6] {
             let field_bits = 128u32;
-            let num_digits = compute_num_digits_full_field(field_bits, log_basis);
+            let num_digits = compute_num_digits_field_width(field_bits, log_basis);
 
             let ring: CyclotomicRing<F, D> = RandomSampling::random(&mut rng);
 
@@ -758,7 +758,7 @@ mod tests {
         use akita_sumcheck::multilinear_eval;
 
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 
@@ -1089,7 +1089,7 @@ mod tests {
         use akita_types::{ring_opening_point_from_field, BasisMode};
 
         type F = fp128::Field;
-        type Cfg = fp128::D128Full;
+        type Cfg = fp128::D128Dense;
         const D: usize = Cfg::D;
         const NV: usize = 16;
 

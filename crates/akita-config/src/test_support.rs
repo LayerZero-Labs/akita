@@ -602,17 +602,17 @@ where
         for num_polys in 1..=max_num_batched_polys.max(1) {
             let schedule =
                 role_switch_schedule::<Env, Suffix>(max_num_vars, num_polys, MID_D, ROOT_OPEN_D)?;
-            crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+            akita_types::accumulate_matrix_envelope_for_level(
                 &schedule.root.params.final_group.commitment,
                 &mut max_setup_len,
             )?;
             for step in &schedule.recursive_folds {
-                crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+                akita_types::accumulate_matrix_envelope_for_level(
                     &step.params.witness,
                     &mut max_setup_len,
                 )?;
             }
-            crate::matrix_envelope::accumulate_terminal_matrix_envelope(
+            akita_types::accumulate_terminal_matrix_envelope(
                 &schedule.terminal.params.witness,
                 &mut max_setup_len,
             )?;
@@ -873,17 +873,17 @@ where
                 ROOT_BD,
                 L1_BD,
             )?;
-            crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+            akita_types::accumulate_matrix_envelope_for_level(
                 &schedule.root.params.final_group.commitment,
                 &mut max_setup_len,
             )?;
             for step in &schedule.recursive_folds {
-                crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+                akita_types::accumulate_matrix_envelope_for_level(
                     &step.params.witness,
                     &mut max_setup_len,
                 )?;
             }
-            crate::matrix_envelope::accumulate_terminal_matrix_envelope(
+            akita_types::accumulate_terminal_matrix_envelope(
                 &schedule.terminal.params.witness,
                 &mut max_setup_len,
             )?;
@@ -993,17 +993,17 @@ where
         for num_polys in 1..=max_num_batched_polys.max(1) {
             let schedule =
                 compressed_role_root_schedule::<Env>(max_num_vars, num_polys, OUTER_D, OPEN_D)?;
-            crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+            akita_types::accumulate_matrix_envelope_for_level(
                 &schedule.root.params.final_group.commitment,
                 &mut max_setup_len,
             )?;
             for step in &schedule.recursive_folds {
-                crate::matrix_envelope::accumulate_matrix_envelope_for_level(
+                akita_types::accumulate_matrix_envelope_for_level(
                     &step.params.witness,
                     &mut max_setup_len,
                 )?;
             }
-            crate::matrix_envelope::accumulate_terminal_matrix_envelope(
+            akita_types::accumulate_terminal_matrix_envelope(
                 &schedule.terminal.params.witness,
                 &mut max_setup_len,
             )?;

@@ -20,8 +20,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{validate_schedule_ring_dims, CommitmentRingDims, OpeningClaimsLayout, RingVec};
 use common::*;
 
-type Envelope = fp128::D128Full;
-type Suffix = fp128::D64Full;
+type Envelope = fp128::D128Dense;
+type Suffix = fp128::D64Dense;
 /// Root D compressed to 64 (L0 = 128/128/64), L1 = 128/64/64, then 64.
 type Cfg = RoleSwitchConfig<Envelope, Suffix, 64, 64>;
 type Scheme = AkitaCommitmentScheme<Cfg>;

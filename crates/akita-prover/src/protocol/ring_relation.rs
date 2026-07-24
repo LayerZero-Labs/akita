@@ -454,6 +454,7 @@ impl RingRelationProver {
         OB: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
         RB: DigitRowsComputeBackend<F>,
     {
+        let prepare_span = tracing::info_span!("ring_relation_prepare_inputs").entered();
         validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
         validate_chunked_witness_cfg(&lp)?;
         let dims = lp.role_dims();
@@ -547,6 +548,7 @@ impl RingRelationProver {
         // the kernels inside the dispatch arms must not read schedule types.
         let d_log_basis = lp.shared_d_digit_log_basis();
         let d_row_len = lp.open_commit_matrix.output_rank();
+        drop(prepare_span);
 
         // D-role operations: decompose the folded opening rows into `e_hat`
         // digits and (non-terminal layouts) compute + absorb the D-block rows
@@ -559,6 +561,13 @@ impl RingRelationProver {
         // reconstructs it, and downstream prover paths (`ring_switch_build_w`,
         // `relation_claim_from_rows_extension`) consume an empty `v` slice.
         // Skip the D-NTT under Terminal.
+        let opening_rows_span = tracing::info_span!(
+            "ring_relation_opening_rows",
+            groups = num_groups,
+            claims = num_claims,
+            d_d = dims.d_d(),
+        )
+        .entered();
         let mut group_e_hat = Vec::with_capacity(num_groups);
         let mut group_e_folded = Vec::with_capacity(num_groups);
         let mut offset = 0usize;
@@ -647,9 +656,17 @@ impl RingRelationProver {
                 .flat_map(|block| block.coeffs().iter().copied())
                 .collect(),
         );
+        drop(opening_rows_span);
+
         // Distributed-prover chunked layout: the grind emits one folded response
         // per block window (`z_i`), and the global response is their sum
         // (`Σ_i z_i = z`, exact coefficient-wise i32 accumulation).
+        let fold_grind_span = tracing::info_span!(
+            "ring_relation_fold_grind",
+            groups = num_groups,
+            claims = num_claims,
+        )
+        .entered();
         let grind_groups = (0..num_groups)
             .map(|group_index| {
                 Ok(fold_grind::FoldGrindGroup {
@@ -676,10 +693,12 @@ impl RingRelationProver {
             group_challenges.push(output.challenges);
             group_z.push((output.witness, output.centered_per_chunk));
         }
+        drop(fold_grind_span);
 
         // Relation rhs spans roles (consistency | [A | B | B_inner]* | D).
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
+        let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
         let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
         let relation_rhs =
             assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
@@ -700,6 +719,9 @@ impl RingRelationProver {
         instance
             .check_v_shape_for_level(&lp)
             .map_err(|err| AkitaError::InvalidInput(format!("v shape failed: {err:?}")))?;
+        drop(instance_span);
+
+        let witness_span = tracing::info_span!("ring_relation_build_witness").entered();
         let witness = if lp.has_precommitted_groups() {
             let mut groups = Vec::with_capacity(num_groups);
             let mut hint_parts = flattened_hint.into_parts();
@@ -731,6 +753,7 @@ impl RingRelationProver {
                 dims,
             )
         };
+        drop(witness_span);
         Ok((instance, witness))
     }
 }
