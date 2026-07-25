@@ -157,6 +157,17 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         Ok(evals)
     }
 
+    /// Drop the cached per-block storage. The blocks are rebuilt from the
+    /// retained hot indices on the next [`Self::blocks_for`] call, so this is
+    /// purely a memory/lifetime knob: the cache is trace-scale (~8 bytes per
+    /// hot entry across every committed column) and otherwise lives from
+    /// commit time until the opening fold consumes it.
+    pub fn clear_block_cache(&self) {
+        if let Ok(mut cache) = self.block_cache.lock() {
+            cache.clear();
+        }
+    }
+
     /// Return cached per-block storage, building it on first call for the
     /// requested `(ring_d, num_positions_per_block)` view.
     pub(super) fn blocks_for(
