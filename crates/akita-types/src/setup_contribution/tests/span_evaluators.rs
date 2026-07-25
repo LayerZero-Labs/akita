@@ -79,10 +79,13 @@ fn structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
     block_challenges: &[F],
     opening_a_evals: &[F],
+    alpha: F,
 ) -> F {
     let (outer_subcolumns, opening_subcolumns) =
         SetupProjectionGeometry::witness_subcolumn_ratios(plan.projection_geometry.role_dims())
             .unwrap();
+    let role_dims = plan.projection_geometry.role_dims();
+    let alpha_powers = scalar_powers(alpha, role_dims.d_a());
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
     let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
     let witness_gadget = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
@@ -96,8 +99,11 @@ fn structured_slice_reference(
                         + subcolumn)
                         * group.depth_open)
                         + digit;
-                    evaluation +=
-                        challenge * plan.consistency_weight * group.e_eq_slice[column] * gadget;
+                    evaluation += challenge
+                        * plan.consistency_weight
+                        * group.e_eq_slice[column]
+                        * gadget
+                        * alpha_powers[subcolumn * role_dims.d_d()];
                 }
             }
             for row in 0..group.n_a {
@@ -112,7 +118,8 @@ fn structured_slice_reference(
                         evaluation += challenge
                             * group.a_row_weights[row]
                             * group.t_eq_slice[column]
-                            * gadget;
+                            * gadget
+                            * alpha_powers[subcolumn * role_dims.d_b()];
                     }
                 }
             }
@@ -201,7 +208,7 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
         let reference =
-            structured_slice_reference(&full, group, &block_challenges, &opening_a_evals);
+            structured_slice_reference(&full, group, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
             full.evaluate_structured_group::<F>(
                 group.group_id,

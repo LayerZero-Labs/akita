@@ -124,6 +124,32 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) b_row_start: usize,
 }
 
+impl<E: FieldCore> RelationMatrixGroupEvaluator<E> {
+    fn structured_block_challenges<F>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: MulBase<F>,
+    {
+        let capacity = self
+            .num_claims
+            .checked_mul(self.num_live_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
+        let mut block_challenges = Vec::with_capacity(capacity);
+        for claim in 0..self.num_claims {
+            let factors = self
+                .c_alphas
+                .affine_factors::<F>(claim, self.num_live_blocks)?;
+            block_challenges.extend_from_slice(
+                factors
+                    .low
+                    .get(..self.num_live_blocks)
+                    .ok_or(AkitaError::InvalidProof)?,
+            );
+        }
+        Ok(block_challenges)
+    }
+}
+
 /// Fixed public relation inputs for verifier ring-switch replay.
 pub struct RingSwitchReplay<'a, F: FieldCore, E> {
     pub setup: &'a AkitaExpandedSetup<F>,
@@ -986,23 +1012,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     let structured_contribution = {
                         let _span =
                             tracing::info_span!("structured_group_deferred", group_index).entered();
-                        let mut block_challenges = Vec::with_capacity(
-                            group
-                                .num_claims
-                                .checked_mul(group.num_live_blocks)
-                                .ok_or(AkitaError::InvalidProof)?,
-                        );
-                        for claim in 0..group.num_claims {
-                            let factors = group
-                                .c_alphas
-                                .affine_factors::<F>(claim, group.num_live_blocks)?;
-                            block_challenges.extend_from_slice(
-                                factors
-                                    .low
-                                    .get(..group.num_live_blocks)
-                                    .ok_or(AkitaError::InvalidProof)?,
-                            );
-                        }
+                        let block_challenges = group.structured_block_challenges::<F>()?;
                         setup_plan.evaluate_structured_group::<F>(
                             group.group_id,
                             &block_challenges,

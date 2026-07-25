@@ -37,8 +37,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
         let lane_powers = self.relation_lane_powers(alpha);
         let inner_lane_powers = &lane_powers[0];
-        let outer_lane_powers = &lane_powers[1];
-        let opening_lane_powers = &lane_powers[2];
         let (outer_subcolumns, opening_subcolumns) =
             SetupProjectionGeometry::witness_subcolumn_ratios(
                 self.projection_geometry.role_dims(),
@@ -71,9 +69,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut evaluation = E::zero();
         let high = [E::one()];
         for span in &group.d_spans {
-            ensure_lane_count(span, opening_lane_powers)?;
             let digit = span.setup_column_start % group.depth_open;
             let semantic = span.setup_column_start / group.depth_open;
+            let opening_subcolumn = semantic % opening_subcolumns;
+            if opening_subcolumn != 0 {
+                continue;
+            }
+            ensure_projection_partition(span, opening_subcolumns, inner_lane_powers)?;
             let block_claim = semantic / opening_subcolumns;
             let claim = block_claim / group.num_live_blocks;
             let block_start = block_claim % group.num_live_blocks;
@@ -83,7 +85,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 block_start,
                 span.occurrence_count,
                 span.relation_lane_stride,
-                opening_lane_powers,
+                inner_lane_powers,
                 &high,
                 claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
             )?;
@@ -92,7 +94,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
 
         for span in &group.b_spans {
-            ensure_lane_count(span, outer_lane_powers)?;
+            let outer_subcolumn = span.setup_column_start % outer_subcolumns;
+            if outer_subcolumn != 0 {
+                continue;
+            }
+            ensure_projection_partition(span, outer_subcolumns, inner_lane_powers)?;
             let semantic = span.setup_column_start / outer_subcolumns;
             let digit = semantic % group.depth_commit;
             let row_and_block = semantic / group.depth_commit;
@@ -106,7 +112,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 block_start,
                 span.occurrence_count,
                 span.relation_lane_stride,
-                outer_lane_powers,
+                inner_lane_powers,
                 &high,
                 claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
             )?;
@@ -169,6 +175,28 @@ fn relation_lane_powers<E: FieldCore>(
         .into_iter()
         .step_by(common_coeff_count)
         .collect()
+}
+
+fn ensure_projection_partition<E: FieldCore>(
+    span: &SetupContributionSpan,
+    subcolumns: usize,
+    inner_lane_powers: &[E],
+) -> Result<(), AkitaError> {
+    if inner_lane_powers.is_empty()
+        || span
+            .relation_lane_count
+            .checked_mul(subcolumns)
+            .filter(|&count| count == inner_lane_powers.len())
+            .is_none()
+        || !span
+            .relation_lane_start
+            .is_multiple_of(inner_lane_powers.len())
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup projection spans do not cover one inner relation lane block".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn ensure_lane_count<E: FieldCore>(

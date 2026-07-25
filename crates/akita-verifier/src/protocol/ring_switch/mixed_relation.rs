@@ -5,23 +5,20 @@
 //! contracts E/T intervals, and scans setup matrices in their native role
 //! rings. It never constructs prover relation events or a dense relation table.
 
-use super::{
-    prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator,
-    RelationMatrixGroupEvaluator,
-};
-use crate::protocol::validate_log_basis;
-use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
+use super::{prepared_relation_point::PreparedRelationPoint, RelationMatrixEvaluator};
+use akita_algebra::offset_eq::OffsetEqWindow;
 #[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
+#[cfg(test)]
 use akita_field::parallel::*;
 use akita_field::{
-    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
+    AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, MulBase, MulBaseUnreduced,
 };
 #[cfg(test)]
 use akita_types::SetupProjectionGeometry;
 use akita_types::{
     checked_opening_source_index, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FpExtEncoding, WitnessUnitLayout,
+    FpExtEncoding,
 };
 
 pub(super) fn evaluate_lane_factored_relation_at_point<F, E>(
@@ -35,9 +32,6 @@ where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
 {
-    if deferred_setup_claim.is_some() {
-        return Err(AkitaError::InvalidProof);
-    }
     let context = evaluator
         .flat_context
         .as_ref()
@@ -49,56 +43,58 @@ where
         context.opening_ring_dim,
         context.opening_source_len,
     )?;
-    let inner_ring_dimension = evaluator.role_dims.d_a();
-    let coeff_count = prepared_point.common_relation_witness_coeff_count();
-    let lanes_per_inner_column = prepared_point.inner().lane_powers.len();
+    if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
+        return Err(AkitaError::InvalidProof);
+    }
+    // The setup projection still uses the common base of the commitment roles,
+    // while the checked plan spans address the potentially finer coefficient
+    // block shared with the outgoing witness. The same plan therefore owns the
+    // mixed E/T/Z contraction, direct setup scan, and deferred Stage-3 geometry.
+    let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
+    let plan = {
+        let _span = tracing::info_span!("mixed_relation_setup_plan").entered();
+        let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
+        if deferred_setup_claim.is_some() {
+            evaluator.setup_contribution_plan_deferred::<F>(
+                prepared_point.address_point(),
+                (!fold_gadget.is_empty()).then_some(fold_gadget),
+                alpha,
+            )?
+        } else {
+            evaluator.setup_contribution_plan::<F>(
+                prepared_point.address_point(),
+                (!fold_gadget.is_empty()).then_some(fold_gadget),
+                alpha,
+            )?
+        }
+    };
 
-    let mut constraint_evaluation = E::zero();
-    for group in &evaluator.groups {
-        let units = context.witness_layout.units_for_group(group.group_id)?;
-        constraint_evaluation += evaluate_group_constraints::<F, E>(
-            group,
-            &units,
-            context.opening_source_len,
-            context.opening_ring_dim,
-            inner_ring_dimension,
-            coeff_count,
-            prepared_point.address_point(),
-            prepared_point.equality_window(),
-            lanes_per_inner_column,
-            &prepared_point.inner().lane_powers,
-            evaluator.eq_tau1.as_ref(),
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "mixed relation group {} contraction failed: {error:?}",
-                group.group_id
-            ))
-        })?;
+    let mut structured_evaluation = E::zero();
+    {
+        let _span = tracing::info_span!("mixed_relation_structured_groups").entered();
+        for group in &evaluator.groups {
+            let block_challenges = group.structured_block_challenges::<F>()?;
+            structured_evaluation += plan
+                .evaluate_structured_group::<F>(
+                    group.group_id,
+                    &block_challenges,
+                    &group.opening_a_evals,
+                    alpha,
+                )
+                .map_err(|error| {
+                    AkitaError::InvalidInput(format!(
+                        "mixed relation group {} contraction failed: {error:?}",
+                        group.group_id
+                    ))
+                })?;
+        }
     }
 
-    let setup_evaluation = {
-        let _span = tracing::info_span!("mixed_relation_setup_scan").entered();
-        if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
-            return Err(AkitaError::InvalidProof);
-        }
-        // The setup projection still uses the common base of the commitment
-        // roles, while the plan's spans address the potentially finer common
-        // coefficient block shared with the outgoing witness. Each physical
-        // setup column therefore contracts exactly the relation lanes selected
-        // by `address_point()`, regardless of the outgoing ring dimension.
-        let setup_groups = evaluator.setup_contribution_inputs();
-        let fold_gadget = akita_types::shared_setup_fold_gadget::<F>(
-            &context.level_params,
-            &context.opening_batch,
-            &setup_groups,
-        );
-        let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
-        let plan = evaluator.setup_contribution_plan::<F>(
-            prepared_point.address_point(),
-            (!fold_gadget.is_empty()).then_some(fold_gadget),
-            alpha,
-        )?;
+    let setup_evaluation = if let Some(claim) = deferred_setup_claim {
+        claim
+    } else {
+        let _span =
+            tracing::info_span!("mixed_relation_setup_scan", required = plan.required()).entered();
         plan.evaluate_direct::<F>(
             setup,
             prepared_point.inner().powers.as_ref(),
@@ -111,199 +107,9 @@ where
             AkitaError::InvalidInput(format!("mixed relation quotient failed: {error:?}"))
         })?;
 
-    Ok(prepared_point.common_alpha_evaluation()
-        * (constraint_evaluation + setup_evaluation + quotient_evaluation))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_group_constraints<F, E>(
-    group: &RelationMatrixGroupEvaluator<E>,
-    units: &[&WitnessUnitLayout],
-    opening_source_len: usize,
-    opening_ring_dimension: usize,
-    inner_ring_dimension: usize,
-    coeff_count: usize,
-    lane_and_column_point: &[E],
-    equality_window: &OffsetEqWindow<E>,
-    lanes_per_inner_column: usize,
-    inner_lane_alpha_powers: &[E],
-    relation_row_weights: &[E],
-) -> Result<E, AkitaError>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt,
-    E: FieldCore + LiftBase<F> + MulBase<F>,
-{
-    validate_log_basis(group.log_basis_inner)?;
-    validate_log_basis(group.log_basis_outer)?;
-    validate_log_basis(group.log_basis_open)?;
-    if inner_lane_alpha_powers.len() != lanes_per_inner_column {
-        return Err(AkitaError::InvalidProof);
-    }
-    let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open)
-        .into_iter()
-        .map(<E as LiftBase<F>>::lift_base)
-        .collect::<Vec<_>>();
-    let t_commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
-    let witness_gadget = gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
-    let consistency_weight = relation_row_weights
-        .first()
-        .copied()
-        .ok_or(AkitaError::InvalidProof)?;
-    let a_row_end = group
-        .a_row_start
-        .checked_add(group.n_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("A row range overflow".into()))?;
-    let a_row_weights = relation_row_weights
-        .get(group.a_row_start..a_row_end)
-        .ok_or(AkitaError::InvalidProof)?;
-    let claim_factors = (0..group.num_claims)
-        .map(|claim| {
-            group
-                .c_alphas
-                .affine_factors::<F>(claim, group.num_live_blocks)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let e_digit_lane_weights = opening_gadget
-        .iter()
-        .flat_map(|&digit_weight| {
-            inner_lane_alpha_powers
-                .iter()
-                .map(move |&lane_weight| consistency_weight * digit_weight * lane_weight)
-        })
-        .collect::<Vec<_>>();
-    let t_digit_lane_weights = a_row_weights
-        .iter()
-        .flat_map(|&row_weight| {
-            t_commitment_gadget.iter().flat_map(move |&digit_weight| {
-                inner_lane_alpha_powers.iter().map(move |&lane_weight| {
-                    row_weight * <E as LiftBase<F>>::lift_base(digit_weight) * lane_weight
-                })
-            })
-        })
-        .collect::<Vec<_>>();
-    let e_block_stride = group
-        .depth_open
-        .checked_mul(lanes_per_inner_column)
-        .ok_or_else(|| AkitaError::InvalidSetup("E lane stride overflow".into()))?;
-    let t_block_stride = group
-        .n_a
-        .checked_mul(group.depth_commit)
-        .and_then(|stride| stride.checked_mul(lanes_per_inner_column))
-        .ok_or_else(|| AkitaError::InvalidSetup("T lane stride overflow".into()))?;
-
-    let mut evaluation = E::zero();
-    let challenge_high = [E::one()];
-    for unit in units {
-        for (claim, factors) in claim_factors.iter().enumerate() {
-            let e_column = unit.e_index(
-                group.num_claims,
-                group.depth_open,
-                claim,
-                unit.global_block_start(),
-                0,
-            )?;
-            let e_lane_start = canonical_relation_lane_index(
-                opening_source_len,
-                opening_ring_dimension,
-                inner_ring_dimension,
-                coeff_count,
-                e_column,
-                0,
-            )?;
-            evaluation += eval_affine_digit_interval(
-                lane_and_column_point,
-                e_lane_start,
-                unit.global_block_start(),
-                unit.num_live_blocks(),
-                e_block_stride,
-                &e_digit_lane_weights,
-                &challenge_high,
-                &factors.low,
-            )?;
-
-            let t_column = unit.t_index(
-                group.num_claims,
-                group.n_a,
-                group.depth_commit,
-                claim,
-                unit.global_block_start(),
-                0,
-                0,
-            )?;
-            let t_lane_start = canonical_relation_lane_index(
-                opening_source_len,
-                opening_ring_dimension,
-                inner_ring_dimension,
-                coeff_count,
-                t_column,
-                0,
-            )?;
-            evaluation += eval_affine_digit_interval(
-                lane_and_column_point,
-                t_lane_start,
-                unit.global_block_start(),
-                unit.num_live_blocks(),
-                t_block_stride,
-                &t_digit_lane_weights,
-                &challenge_high,
-                &factors.low,
-            )?;
-        }
-    }
-
-    let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
-    // The Z-consistency term is a sum of independent (position, digit) products.
-    // Parallelize over the position axis (the large dimension at the root);
-    // field addition is associative/commutative, so the reduced value is
-    // identical to the serial `evaluation -= …` accumulation.
-    let num_positions = group.opening_a_evals.len();
-    let z_contribution = cfg_fold_reduce!(
-        0..num_positions,
-        || Ok(E::zero()),
-        |acc: Result<E, AkitaError>, position| {
-            let opening_evaluation = *group
-                .opening_a_evals
-                .get(position)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut local = E::zero();
-            for unit in units {
-                for (commit_digit, &commit_weight) in witness_gadget.iter().enumerate() {
-                    for (fold_digit, &fold_weight) in fold_gadget.iter().enumerate() {
-                        let z_column = unit.z_index(
-                            num_positions,
-                            group.depth_witness,
-                            group.depth_fold,
-                            position,
-                            commit_digit,
-                            fold_digit,
-                        )?;
-                        let z_lane_start = canonical_relation_lane_index(
-                            opening_source_len,
-                            opening_ring_dimension,
-                            inner_ring_dimension,
-                            coeff_count,
-                            z_column,
-                            0,
-                        )?;
-                        let lane_equality = evaluate_lane_segment(
-                            equality_window,
-                            z_lane_start,
-                            inner_lane_alpha_powers,
-                        )?;
-                        local += lane_equality
-                            * consistency_weight
-                            * opening_evaluation
-                            * <E as LiftBase<F>>::lift_base(commit_weight)
-                            * <E as LiftBase<F>>::lift_base(fold_weight);
-                    }
-                }
-            }
-            Ok(acc? + local)
-        },
-        |left: Result<E, AkitaError>, right: Result<E, AkitaError>| Ok(left? + right?)
-    )?;
-    evaluation -= z_contribution;
-    Ok(evaluation)
+    let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
+    evaluator.cache_setup_contribution_plan(prepared_point.address_point(), plan)?;
+    Ok(prepared_point.common_alpha_evaluation() * relation_evaluation)
 }
 
 #[allow(clippy::too_many_arguments)]
