@@ -47,7 +47,7 @@ where
         context.opening_source_len,
     )?;
     let inner_ring_dimension = evaluator.role_dims.d_a();
-    let coeff_count = prepared_point.coeff_count();
+    let coeff_count = prepared_point.common_relation_witness_coeff_count();
     let lanes_per_inner_column = prepared_point.inner().lane_powers.len();
 
     let mut constraint_evaluation = E::zero();
@@ -77,7 +77,7 @@ where
     let setup_evaluation = {
         let _span = tracing::info_span!("mixed_relation_setup_scan").entered();
         let base_ring_dim = evaluator.role_dims.common_relation_coeff_count();
-        if prepared_point.coeff_count() == base_ring_dim {
+        if prepared_point.common_relation_witness_coeff_count() == base_ring_dim {
             // Succinct per-role setup evaluation. When the coefficient block
             // equals the shared base ring dimension, `address_point()` is the
             // column-challenge vector the setup-contribution plan expects, and
@@ -116,7 +116,7 @@ where
             AkitaError::InvalidInput(format!("mixed relation quotient failed: {error:?}"))
         })?;
 
-    Ok(prepared_point.coeff_eval()
+    Ok(prepared_point.common_alpha_evaluation()
         * (constraint_evaluation + setup_evaluation + quotient_evaluation))
 }
 
@@ -329,7 +329,7 @@ where
     let inner_ring_dimension = role_dims.d_a();
     let outer_ring_dimension = role_dims.d_b();
     let opening_ring_dimension = role_dims.d_d();
-    let coeff_count = prepared_point.coeff_count();
+    let coeff_count = prepared_point.common_relation_witness_coeff_count();
     let equality_window = prepared_point.equality_window();
     let (outer_subcolumns, opening_subcolumns) =
         SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
@@ -615,7 +615,7 @@ where
                 context.opening_source_len,
                 context.opening_ring_dim,
                 evaluator.role_dims.d_a(),
-                prepared_point.coeff_count(),
+                prepared_point.common_relation_witness_coeff_count(),
                 witness_column,
                 0,
             )?;

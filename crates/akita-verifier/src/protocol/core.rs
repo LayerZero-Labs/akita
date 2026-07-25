@@ -38,12 +38,12 @@ use akita_types::{
     ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
     scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
-    EvaluationTraceInputs, ExtensionOpeningReductionProof, FlatBooleanDomain, FoldLevelProof,
-    FoldLinfProtocolBinding, FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
-    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
-    SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts,
+    EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding,
+    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
+    RingOpeningPoint, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
+    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

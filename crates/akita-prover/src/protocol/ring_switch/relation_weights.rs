@@ -242,8 +242,8 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             self.opening_ring_dim,
             self.opening_source_len,
         )?;
-        let coeff_count = geometry.coeff_count();
-        let mut relation_lane_weights = vec![E::zero(); geometry.lane_capacity()];
+        let coeff_count = geometry.common_relation_witness_coeff_count();
+        let mut relation_lane_weights = vec![E::zero(); geometry.relation_lane_capacity()];
         for event in &self.events {
             if !event
                 .physical_coefficients
@@ -313,7 +313,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             self.opening_ring_dim,
             self.opening_source_len,
         )?
-        .validate_point_len(point.len())?;
+        .validate_relation_point_len(point.len())?;
 
         let mut low_factor_cache = Vec::new();
         let mut evaluation = deferred_setup_claim.unwrap_or_else(E::zero);

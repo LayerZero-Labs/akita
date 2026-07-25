@@ -11,8 +11,8 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use akita_types::{
-    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
-    OpeningClaimsLayout, RelationRangeImagePlan,
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
+    RelationRangeImagePlan,
 };
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
@@ -574,17 +574,11 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
-    let digit_witness_num_vars = rs
-        .col_bits
-        .checked_add(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("digit witness domain width overflow".into()))?;
     let relation_range_image_plan = RelationRangeImagePlan::new(
-        FlatBooleanDomain::new(rs.w_evals_compact.len(), digit_witness_num_vars)?,
+        rs.relation_address_geometry,
         DigitRangePlan::new(rs.b)?,
         prepared_fold.instance.segment_layout(lp, None)?,
         prepared_fold.instance.opening_batch(),
-        prepared_fold.instance.role_dims(),
-        next_opening_ring_dim,
     )?;
 
     let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
@@ -618,7 +612,9 @@ where
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
         source_ring_dimension = ring_d,
-        coeff_count = 1usize << rs.ring_bits,
+        coeff_count = rs
+            .relation_address_geometry
+            .common_relation_witness_coeff_count(),
     )
     .entered();
     let evaluation_trace = dispatch_for_field!(
@@ -639,15 +635,18 @@ where
                 })?;
             PreparedProverEvaluationTrace::new(
                 &semantic_trace,
-                1usize << rs.ring_bits,
+                rs.relation_address_geometry
+                    .common_relation_witness_coeff_count(),
                 evaluation_trace_weight,
             )
         }
     )?;
     drop(trace_preparation_span);
-    let ring_bits = rs.ring_bits;
-    let col_bits = rs.col_bits;
-    let live_x_cols = rs.live_x_cols;
+    let ring_bits = rs
+        .relation_address_geometry
+        .common_relation_witness_variable_count();
+    let col_bits = rs.relation_address_geometry.relation_lane_variable_count();
+    let live_x_cols = rs.relation_address_geometry.live_relation_lane_count();
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -765,17 +764,13 @@ where
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let domain = plan.digit_witness_domain();
-    if domain.live_len() != rs.w_evals_compact.len() || plan.digit_range_plan().basis() != rs.b {
+    if plan.relation_address_geometry() != rs.relation_address_geometry
+        || domain.live_len() != rs.w_evals_compact.len()
+        || plan.digit_range_plan().basis() != rs.b
+    {
         return Err(AkitaError::InvalidSetup(
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
-    }
-    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
-    if derived_live_x_cols != rs.live_x_cols {
-        return Err(AkitaError::InvalidSize {
-            expected: derived_live_x_cols,
-            actual: rs.live_x_cols,
-        });
     }
     let digit_range_equality_col_bits = rs
         .tau0
@@ -818,15 +813,13 @@ where
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
-    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
-    let derived_col_bits = domain
-        .num_vars()
-        .checked_sub(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 ring width exceeds domain".into()))?;
-    if domain.live_len() != rs.w_evals_compact.len()
+    let geometry = rs.relation_address_geometry;
+    let live_relation_lane_count = geometry.live_relation_lane_count();
+    let relation_lane_variable_count = geometry.relation_lane_variable_count();
+    let common_relation_witness_variable_count = geometry.common_relation_witness_variable_count();
+    if plan.relation_address_geometry() != geometry
+        || domain.live_len() != rs.w_evals_compact.len()
         || plan.digit_range_plan().basis() != rs.b
-        || derived_live_x_cols != rs.live_x_cols
-        || derived_col_bits != rs.col_bits
     {
         return Err(AkitaError::InvalidSetup(
             "ring-switch output disagrees with the relation/range-image plan".into(),
@@ -835,7 +828,7 @@ where
     let (common_alpha_factor, relation_lane_weights) = rs
         .relation_weight_factorization
         .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = 1usize << rs.ring_bits;
+    let expected_factor_len = geometry.common_relation_witness_coeff_count();
     if common_alpha_factor.len() != expected_factor_len {
         return Err(AkitaError::InvalidSetup(format!(
             "common alpha factor has length {}, expected {expected_factor_len}",
@@ -850,9 +843,9 @@ where
         plan.digit_range_plan().basis(),
         common_alpha_factor,
         relation_lane_weights,
-        derived_live_x_cols,
-        derived_col_bits,
-        rs.ring_bits,
+        live_relation_lane_count,
+        relation_lane_variable_count,
+        common_relation_witness_variable_count,
         relation_claim,
         evaluation_trace,
         trace_opening_claim,

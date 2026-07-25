@@ -14,8 +14,8 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget, validate_role_dispatch,
     AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    OpeningClaimsLayout, RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance,
+    RingRole, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
@@ -35,10 +35,8 @@ mod tests;
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    /// Number of upper variable bits.
-    pub col_bits: usize,
-    /// Number of lower variable bits.
-    pub ring_bits: usize,
+    /// Canonical flat relation-witness domain and coefficient/lane split.
+    pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
@@ -53,8 +51,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    col_bits: usize,
-    ring_bits: usize,
+    relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
     tau1: Vec<E>,
@@ -67,8 +64,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
+            relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
             tau1: self.tau1,
@@ -186,56 +182,25 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let opening_capacity = replay
-        .opening_source_len
-        .checked_mul(replay.opening_ring_dim)
-        .ok_or(AkitaError::InvalidProof)?;
+    let relation_address_geometry = RelationAddressGeometry::new(
+        relation.role_dims(),
+        replay.opening_ring_dim,
+        replay.opening_source_len,
+    )?;
     if w_len == 0
         || !w_len.is_multiple_of(D)
-        || replay.opening_ring_dim == 0
-        || !replay.opening_ring_dim.is_power_of_two()
-        || !w_len.is_multiple_of(replay.opening_ring_dim)
-        || w_len > opening_capacity
+        || w_len != relation_address_geometry.digit_witness_domain().live_len()
     {
         return Err(AkitaError::InvalidProof);
     }
     let num_ring_elems = w_len / D;
-    let opening_ring_dim = replay.opening_ring_dim;
-    let x_capacity = akita_types::opening_domain_len(replay.opening_source_len)?;
-    // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`).
-    // Keep the PR #312 uniform split; mixed roles bind their shared low
-    // coefficient block before the remaining relation lanes.
-    let uniform = relation.role_dims() == CommitmentRingDims::uniform(opening_ring_dim);
-    let (col_bits, ring_bits) = if uniform {
-        (
-            x_capacity.trailing_zeros() as usize,
-            opening_ring_dim.trailing_zeros() as usize,
-        )
-    } else {
-        let coeff_count = relation
-            .role_dims()
-            .common_relation_witness_coeff_count(opening_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !opening_ring_dim.is_multiple_of(coeff_count)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or(AkitaError::InvalidProof)?;
-        (
-            lane_capacity.trailing_zeros() as usize,
-            coeff_count.trailing_zeros() as usize,
-        )
-    };
-    // Bind the shared low coefficient block (`ring_bits = log2(coeff_count)`)
-    // as the digit range check's ring phase on every path. On uniform schedules
-    // this equals `log2(opening_ring_dim)` (byte-identical replay); on
-    // non-uniform schedules it mirrors the prover's fast compact ring phase
-    // (see `ring_switch_finalize`) instead of the dense flat sweep.
-    let digit_range_equality_low_variable_count = ring_bits;
-    let num_sc_vars = col_bits + ring_bits;
+    // Bind the shared low coefficient block as the digit-range check's ring
+    // phase on every path. On uniform schedules this equals the outgoing
+    // witness ring width (byte-identical replay); on non-uniform schedules it
+    // mirrors the prover's compact relation-lane split.
+    let digit_range_equality_low_variable_count =
+        relation_address_geometry.common_relation_witness_variable_count();
+    let num_sc_vars = relation_address_geometry.relation_point_variable_count();
     let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
     let (tau0, tau1) = {
@@ -262,8 +227,7 @@ where
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
-        col_bits,
-        ring_bits,
+        relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,
         tau1,

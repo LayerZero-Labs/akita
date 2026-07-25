@@ -23,8 +23,8 @@ pub(super) struct PreparedRolePoint<E: FieldCore> {
 /// lanes followed by semantic witness columns. Role-native setup columns split
 /// one A-role witness column into `d_a / d_role` subcolumns.
 pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
-    coeff_count: usize,
-    coeff_eval: E,
+    common_relation_witness_coeff_count: usize,
+    common_alpha_evaluation: E,
     alpha: E,
     address_point: &'a [E],
     equality_window: OffsetEqWindow<E>,
@@ -49,10 +49,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     ) -> Result<Self, AkitaError> {
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)?;
-        geometry.validate_point_len(point.len())?;
-        let coeff_count = geometry.coeff_count();
+        geometry.validate_relation_point_len(point.len())?;
+        let coeff_count = geometry.common_relation_witness_coeff_count();
 
-        let coeff_bits = geometry.coeff_variable_count();
+        let coeff_bits = geometry.common_relation_witness_variable_count();
         let coeff_point = point.get(..coeff_bits).ok_or(AkitaError::InvalidProof)?;
         let lane_and_column_point = point.get(coeff_bits..).ok_or(AkitaError::InvalidProof)?;
         let coeff_powers = scalar_powers(alpha, coeff_count);
@@ -97,8 +97,8 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         };
 
         Ok(Self {
-            coeff_count,
-            coeff_eval,
+            common_relation_witness_coeff_count: coeff_count,
+            common_alpha_evaluation: coeff_eval,
             alpha,
             address_point: lane_and_column_point,
             equality_window,
@@ -114,12 +114,12 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         })
     }
 
-    pub(super) const fn coeff_count(&self) -> usize {
-        self.coeff_count
+    pub(super) const fn common_relation_witness_coeff_count(&self) -> usize {
+        self.common_relation_witness_coeff_count
     }
 
-    pub(super) fn coeff_eval(&self) -> E {
-        self.coeff_eval
+    pub(super) fn common_alpha_evaluation(&self) -> E {
+        self.common_alpha_evaluation
     }
 
     pub(super) fn alpha(&self) -> E {
@@ -195,10 +195,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             self.opening_source_len,
             last_physical / self.outgoing_ring_dim,
         )?;
-        if !physical_start.is_multiple_of(self.coeff_count) {
+        if !physical_start.is_multiple_of(self.common_relation_witness_coeff_count) {
             return Err(AkitaError::InvalidProof);
         }
-        let lane_start = physical_start / self.coeff_count;
+        let lane_start = physical_start / self.common_relation_witness_coeff_count;
 
         prepared.lane_powers.iter().copied().enumerate().try_fold(
             E::zero(),
@@ -252,7 +252,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            prepared.coeff_count(),
+            prepared.common_relation_witness_coeff_count(),
             role_dims.common_relation_witness_coeff_count(outgoing_ring_dim)
         );
         for role in [RingRole::Inner, RingRole::Outer, RingRole::Opening] {
@@ -268,7 +268,7 @@ mod tests {
                         dense[physical_start + offset] = alpha_power;
                     }
                     let expected = multilinear_eval(&dense, &point).unwrap();
-                    let got = prepared.coeff_eval()
+                    let got = prepared.common_alpha_evaluation()
                         * prepared
                             .role_column_weight(witness_column, role, role_subcolumn)
                             .unwrap();

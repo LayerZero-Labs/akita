@@ -80,16 +80,15 @@ where
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
         let geometry = RelationAddressGeometry::new(dims, opening_ring_dim, opening_source_len)?;
-        let coeff_count = geometry.coeff_count();
+        let coeff_count = geometry.common_relation_witness_coeff_count();
         if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
                 "relation witness is not aligned to the common coefficient block".into(),
             ));
         }
-        let common_opening_source_len = geometry.common_opening_source_len()?;
-        let live_x_cols = w.len() / coeff_count;
-        let col_bits = geometry.lane_variable_count();
-        let ring_bits = geometry.coeff_variable_count();
+        let live_relation_lane_count = geometry.live_relation_lane_count();
+        let col_bits = geometry.relation_lane_variable_count();
+        let ring_bits = geometry.common_relation_witness_variable_count();
         // Bind the shared low coefficient block (`coeff_count`) as the digit
         // range check's ring phase on every path. On uniform schedules
         // `coeff_count == opening_ring_dim`, so this equals the historical value
@@ -139,7 +138,7 @@ where
                     w.shared_i8_digits(),
                     coeff_count,
                     1,
-                    common_opening_source_len,
+                    live_relation_lane_count,
                 )
             });
         #[cfg(not(feature = "parallel"))]
@@ -149,7 +148,7 @@ where
                 w.shared_i8_digits(),
                 coeff_count,
                 1,
-                common_opening_source_len,
+                live_relation_lane_count,
             );
             (relation_weight_factorization, w_compact)
         };
@@ -169,10 +168,8 @@ where
 
         Ok(RingSwitchOutput {
             w_evals_compact,
-            live_x_cols,
+            relation_address_geometry: geometry,
             relation_weight_factorization,
-            col_bits,
-            ring_bits,
             digit_range_equality_low_variable_count,
             tau0,
             tau1,

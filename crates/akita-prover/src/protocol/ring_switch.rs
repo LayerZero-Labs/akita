@@ -46,14 +46,10 @@ pub use relation_weights::{
 pub struct RingSwitchOutput<E: FieldCore> {
     /// Compact evaluation table of w, stored as x-outer/y-inner slices.
     pub w_evals_compact: std::sync::Arc<[i8]>,
-    /// Exact live x-column count; the remaining Boolean x domain is an implicit zero suffix.
-    pub live_x_cols: usize,
+    /// Canonical flat relation-witness domain and coefficient/lane split.
+    pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Exact common-alpha factorization of the tau1-weighted relation table.
     pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
-    /// Number of upper variable bits.
-    pub col_bits: usize,
-    /// Number of lower variable bits.
-    pub ring_bits: usize,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.

@@ -10,6 +10,7 @@
 pub mod batch;
 pub mod commitment;
 pub mod relation;
+pub mod relation_address;
 pub mod relation_range_image;
 pub mod ring_relation;
 pub mod scheme;
@@ -57,6 +58,7 @@ pub use relation::{
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
+pub use relation_address::RelationAddressGeometry;
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

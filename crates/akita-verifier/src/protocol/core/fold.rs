@@ -309,10 +309,7 @@ where
     E: ExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
-    let num_rounds = rs
-        .col_bits
-        .checked_add(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("stage-1 variable count overflow".to_string()))?;
+    let num_rounds = rs.relation_address_geometry.relation_point_variable_count();
     if rs.tau0.len() != num_rounds {
         return Err(AkitaError::InvalidSize {
             expected: num_rounds,
@@ -411,8 +408,9 @@ where
         rs.alpha,
         setup_claim,
         relation_claim,
-        rs.col_bits,
-        rs.ring_bits,
+        rs.relation_address_geometry.relation_lane_variable_count(),
+        rs.relation_address_geometry
+            .common_relation_witness_variable_count(),
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
@@ -442,9 +440,7 @@ where
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
-        let witness_rounds = rs.col_bits.checked_add(rs.ring_bits).ok_or_else(|| {
-            AkitaError::InvalidSetup("stage-3 witness round count overflow".to_string())
-        })?;
+        let witness_rounds = rs.relation_address_geometry.relation_point_variable_count();
         if sumcheck_challenges.len() != witness_rounds {
             return Err(AkitaError::InvalidSize {
                 expected: witness_rounds,
@@ -647,11 +643,13 @@ where
     let evaluation_trace_row = prepared.lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     ensure_trace_stage2_supported(<E as ExtField<F>>::EXT_DEGREE)?;
-    let trace_num_vars = rs
-        .col_bits
-        .checked_add(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("trace domain width overflow".into()))?;
-    let trace_domain = FlatBooleanDomain::new(prepared.w_len, trace_num_vars)?;
+    let trace_domain = rs.relation_address_geometry.digit_witness_domain();
+    if trace_domain.live_len() != prepared.w_len {
+        return Err(AkitaError::InvalidSize {
+            expected: trace_domain.live_len(),
+            actual: prepared.w_len,
+        });
+    }
     let trace_witness_layout = rs.relation_matrix_evaluator.witness_layout()?;
     let evaluation_trace_points = &prepared.evaluation_trace_points;
     let trace_preparation_span = tracing::info_span!(
