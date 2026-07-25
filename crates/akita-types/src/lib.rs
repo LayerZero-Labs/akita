@@ -73,8 +73,8 @@ pub use layout::{
     ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds,
     terminal_response_bytes, validate_role_dims, validate_schedule_ring_dims, BasisMode,
     CommitmentRingDims, CommittedGroupParams, FlatMatrix, LevelParamsLike, PrecommittedLevelParams,
-    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
-    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
+    RelationAddressGeometry, RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS,
+    MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
     max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_ntt_cache,

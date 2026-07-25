@@ -6,8 +6,8 @@
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::multilinear_eval, ring::scalar_powers};
 use akita_field::{AkitaError, FieldCore};
 #[cfg(test)]
-use akita_types::{checked_opening_source_index, RingRole};
-use akita_types::{opening_domain_len, validate_role_dims, CommitmentRingDims};
+use akita_types::{checked_opening_source_index, opening_domain_len, RingRole};
+use akita_types::{CommitmentRingDims, RelationAddressGeometry};
 use std::sync::Arc;
 
 pub(super) struct PreparedRolePoint<E: FieldCore> {
@@ -47,43 +47,12 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         outgoing_ring_dim: usize,
         opening_source_len: usize,
     ) -> Result<Self, AkitaError> {
-        validate_role_dims(role_dims)?;
-        if outgoing_ring_dim == 0 || !outgoing_ring_dim.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "outgoing witness ring dimension must be a non-zero power of two".into(),
-            ));
-        }
+        let geometry =
+            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)?;
+        geometry.validate_point_len(point.len())?;
+        let coeff_count = geometry.coeff_count();
 
-        let coeff_count = role_dims.common_relation_witness_coeff_count(outgoing_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !role_dims.d_a().is_multiple_of(coeff_count)
-            || !role_dims.d_b().is_multiple_of(coeff_count)
-            || !role_dims.d_d().is_multiple_of(coeff_count)
-            || !outgoing_ring_dim.is_multiple_of(coeff_count)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation and outgoing witness do not admit a common coefficient block".into(),
-            ));
-        }
-
-        let field_len = opening_domain_len(opening_source_len)?
-            .checked_mul(outgoing_ring_dim)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation point domain overflow".into()))?;
-        if !field_len.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "relation point domain must be a power of two".into(),
-            ));
-        }
-        let expected = field_len.trailing_zeros() as usize;
-        if point.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: point.len(),
-            });
-        }
-
-        let coeff_bits = coeff_count.trailing_zeros() as usize;
+        let coeff_bits = geometry.coeff_variable_count();
         let coeff_point = point.get(..coeff_bits).ok_or(AkitaError::InvalidProof)?;
         let lane_and_column_point = point.get(coeff_bits..).ok_or(AkitaError::InvalidProof)?;
         let coeff_powers = scalar_powers(alpha, coeff_count);

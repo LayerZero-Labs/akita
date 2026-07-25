@@ -1,6 +1,6 @@
 use super::*;
 use akita_field::MulBaseUnreduced;
-use akita_types::dispatch_for_field;
+use akita_types::{dispatch_for_field, RelationAddressGeometry};
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -79,26 +79,17 @@ where
         // Bind the low coefficient block shared by every role first, then the
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
-        let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
-        let coeff_count = dims.common_relation_witness_coeff_count(opening_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !w.len().is_multiple_of(coeff_count)
-            || !opening_ring_dim.is_multiple_of(coeff_count)
-        {
+        let geometry = RelationAddressGeometry::new(dims, opening_ring_dim, opening_source_len)?;
+        let coeff_count = geometry.coeff_count();
+        if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
-                "relation and outgoing witness do not admit a common coefficient block".into(),
+                "relation witness is not aligned to the common coefficient block".into(),
             ));
         }
-        let common_opening_source_len = opening_source_len
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
-        let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 lane domain overflow".into()))?;
+        let common_opening_source_len = geometry.common_opening_source_len()?;
         let live_x_cols = w.len() / coeff_count;
-        let col_bits = lane_capacity.trailing_zeros() as usize;
-        let ring_bits = coeff_count.trailing_zeros() as usize;
+        let col_bits = geometry.lane_variable_count();
+        let ring_bits = geometry.coeff_variable_count();
         // Bind the shared low coefficient block (`coeff_count`) as the digit
         // range check's ring phase on every path. On uniform schedules
         // `coeff_count == opening_ring_dim`, so this equals the historical value

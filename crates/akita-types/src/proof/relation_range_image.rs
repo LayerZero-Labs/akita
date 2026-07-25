@@ -5,8 +5,8 @@ use std::ops::Range;
 use akita_field::AkitaError;
 
 use crate::{
-    validate_role_dims, CommitmentRingDims, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,
-    WitnessLayout,
+    CommitmentRingDims, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,
+    RelationAddressGeometry, WitnessLayout,
 };
 
 /// One commitment group's claims and witness units in physical processing order.
@@ -69,8 +69,32 @@ impl RelationRangeImagePlan {
         role_dims: CommitmentRingDims,
         outgoing_witness_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        validate_role_dims(role_dims)?;
         opening_batch.check()?;
+
+        let opening_source_len = digit_witness_domain
+            .live_len()
+            .checked_div(outgoing_witness_ring_dimension)
+            .filter(|_| {
+                digit_witness_domain
+                    .live_len()
+                    .is_multiple_of(outgoing_witness_ring_dimension)
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "digit witness is not aligned to the outgoing witness ring".into(),
+                )
+            })?;
+        let geometry = RelationAddressGeometry::new(
+            role_dims,
+            outgoing_witness_ring_dimension,
+            opening_source_len,
+        )?;
+        if digit_witness_domain.num_vars() != geometry.point_variable_count() {
+            return Err(AkitaError::InvalidSize {
+                expected: geometry.point_variable_count(),
+                actual: digit_witness_domain.num_vars(),
+            });
+        }
 
         let expected_live_len = witness_layout
             .total_len()
@@ -85,16 +109,7 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let coeff_count =
-            role_dims.common_relation_witness_coeff_count(outgoing_witness_ring_dimension);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !outgoing_witness_ring_dimension.is_power_of_two()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation/range-image joint relation-witness geometry is malformed".into(),
-            ));
-        }
+        let coeff_count = geometry.coeff_count();
         if !digit_witness_domain.live_len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
                 "digit witness is not aligned to the joint relation-witness block".into(),

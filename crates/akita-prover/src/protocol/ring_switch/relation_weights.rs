@@ -13,7 +13,7 @@ use akita_field::{
 use akita_types::{
     checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
     AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RingRelationInstance, SetupProjectionGeometry,
+    OpeningClaimsLayout, RelationAddressGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -237,25 +237,13 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 "relation factorization requires direct setup contributions".into(),
             ));
         }
-        let coeff_count = self
-            .role_dims
-            .common_relation_witness_coeff_count(self.opening_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !self.role_dims.d_a().is_multiple_of(coeff_count)
-            || !self.role_dims.d_b().is_multiple_of(coeff_count)
-            || !self.role_dims.d_d().is_multiple_of(coeff_count)
-            || !self.opening_ring_dim.is_multiple_of(coeff_count)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation and outgoing witness do not admit a common alpha factor".into(),
-            ));
-        }
-        let opening_field_len = opening_domain_len(self.opening_source_len)?
-            .checked_mul(self.opening_ring_dim)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation lane length overflow".into()))?;
-        let lane_count = opening_field_len / coeff_count;
-        let mut relation_lane_weights = vec![E::zero(); lane_count];
+        let geometry = RelationAddressGeometry::new(
+            self.role_dims,
+            self.opening_ring_dim,
+            self.opening_source_len,
+        )?;
+        let coeff_count = geometry.coeff_count();
+        let mut relation_lane_weights = vec![E::zero(); geometry.lane_capacity()];
         for event in &self.events {
             if !event
                 .physical_coefficients
@@ -320,16 +308,12 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             (true, None) | (false, Some(_)) => return Err(AkitaError::InvalidProof),
             _ => {}
         }
-        let opening_field_len = opening_domain_len(self.opening_source_len)?
-            .checked_mul(self.opening_ring_dim)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
-        let expected_point_len = opening_field_len.trailing_zeros() as usize;
-        if !opening_field_len.is_power_of_two() || point.len() != expected_point_len {
-            return Err(AkitaError::InvalidSize {
-                expected: expected_point_len,
-                actual: point.len(),
-            });
-        }
+        RelationAddressGeometry::new(
+            self.role_dims,
+            self.opening_ring_dim,
+            self.opening_source_len,
+        )?
+        .validate_point_len(point.len())?;
 
         let mut low_factor_cache = Vec::new();
         let mut evaluation = deferred_setup_claim.unwrap_or_else(E::zero);
