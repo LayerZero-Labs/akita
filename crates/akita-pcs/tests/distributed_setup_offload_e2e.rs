@@ -9,6 +9,11 @@
 //! offloading (Stage-3 setup-product sum-check and a carried setup-prefix
 //! opening), so a successful proof exercises the mix: chunked folds that also
 //! run the offloaded setup-contribution path.
+//!
+//! The fixture is production-sized and must be run explicitly in an optimized
+//! profile:
+//!
+//! `cargo test --release -p akita-pcs --test distributed_setup_offload_e2e --features profile-ci -- --ignored`
 
 #![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
@@ -95,6 +100,7 @@ fn assert_w8r2_profile_shape(schedule: &FoldSchedule) {
 }
 
 #[test]
+#[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn mix_multi_chunk_recursive_profile_proves_and_verifies() {
     recursive_multi_group_round_trip::<fp128::D64OneHotMultiChunk>(
         TRANSCRIPT_DOMAIN,
