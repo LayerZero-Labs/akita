@@ -52,3 +52,36 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
     lp.evaluation_trace_row_index(&batch)
         .expect("canonical product layout supports grouped chunks");
 }
+
+#[test]
+fn group_role_dims_use_group_a_b_and_level_shared_d() {
+    let (mut lp, batch) = sample_multi_group_root_params();
+    let precommitted = &mut lp.precommitted_groups[0];
+    let outer = &precommitted.outer_commit_matrix;
+    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width() * 2,
+        outer.coeff_linf_bound(),
+        32,
+    );
+    let dims = lp
+        .group_role_dims(&batch, 0)
+        .expect("precommitted group role dimensions");
+    assert_eq!(
+        dims,
+        CommitmentRingDims {
+            inner: 64,
+            outer: 32,
+            opening: 64,
+        }
+    );
+    let final_group = batch.root_final_group_index().expect("final group");
+    assert_eq!(
+        lp.group_role_dims(&batch, final_group)
+            .expect("final group role dimensions"),
+        lp.role_dims()
+    );
+}

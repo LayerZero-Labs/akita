@@ -583,7 +583,6 @@ where
 
     let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        prepared_fold.instance.role_dims(),
         &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,

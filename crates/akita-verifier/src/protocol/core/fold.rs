@@ -557,12 +557,8 @@ where
             }
         )?;
         let relation_rhs_layout = relation_rhs_layout_for(prepared.lp, &opening_shape)?;
-        let relation_rhs = assemble_relation_rhs::<F>(
-            role_dims,
-            &relation_rhs_layout,
-            &prepared.v,
-            commitment_rows,
-        )?;
+        let relation_rhs =
+            assemble_relation_rhs::<F>(&relation_rhs_layout, &prepared.v, commitment_rows)?;
         let relation_instance = RingRelationInstance::new(
             group_challenges,
             prepared.group_ring_opening_points,
@@ -626,7 +622,6 @@ where
         ring_switch_verifier::<F, E, T, D>(&ring_switch_replay, prepared.w_len, transcript)
     })?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        relation_instance.role_dims(),
         &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,

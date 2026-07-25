@@ -702,7 +702,7 @@ impl RingRelationProver {
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
         let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
         let relation_rhs =
-            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
+            assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
                 .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(

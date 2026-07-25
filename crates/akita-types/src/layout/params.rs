@@ -929,6 +929,27 @@ impl CommittedGroupParams {
         opening_batch.root_final_group_index()
     }
 
+    /// Resolve one opening group's A/B dimensions with this level's shared D.
+    ///
+    /// The final group owns the level-level A/B matrices. Precommitted groups
+    /// own their own A/B matrices; none owns a separate D matrix.
+    pub fn group_role_dims(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<CommitmentRingDims, AkitaError> {
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
+        let dims = if group_index == final_group_index {
+            self.role_dims()
+        } else {
+            self.precommitted_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .role_dims(self.open_commit_matrix.ring_dimension())
+        };
+        dims.validate_a_carrier()?;
+        Ok(dims)
+    }
+
     /// Sent commitment row count for one opening group.
     pub fn group_commitment_rows(
         &self,

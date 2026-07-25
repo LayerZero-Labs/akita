@@ -59,6 +59,32 @@ impl CommitmentRingDims {
         }
     }
 
+    /// Validate the representation-level A-carrier geometry independently of
+    /// production dispatch and challenge catalogs.
+    ///
+    /// This permits small dimensions in arithmetic/layout tests while keeping
+    /// the same ordering contract used by [`validate_role_dims`].
+    pub fn validate_a_carrier(self) -> Result<(), AkitaError> {
+        for (role, d) in [
+            (RingRole::Inner, self.inner),
+            (RingRole::Outer, self.outer),
+            (RingRole::Opening, self.opening),
+        ] {
+            if d == 0 || !d.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{role:?} ring dimension must be a non-zero power of two, got {d}"
+                )));
+            }
+        }
+        if self.outer > self.inner || self.opening > self.inner {
+            return Err(AkitaError::InvalidSetup(format!(
+                "A-role ring dimension d_a={} must be at least d_b={} and d_d={}",
+                self.inner, self.outer, self.opening
+            )));
+        }
+        Ok(())
+    }
+
     /// Ring dimension for A-role data: the folded witness `z`, A quotient
     /// rows, the consistency row, and fold/ring-switch arithmetic.
     #[must_use]
@@ -276,17 +302,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
 }
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
-    for (role, d) in [
-        (RingRole::Inner, dims.inner),
-        (RingRole::Outer, dims.outer),
-        (RingRole::Opening, dims.opening),
-    ] {
-        if d == 0 || !d.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role:?} ring dimension must be a non-zero power of two, got {d}"
-            )));
-        }
-    }
+    dims.validate_a_carrier()?;
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",
@@ -303,12 +319,6 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
                 role
             )));
         }
-    }
-    if dims.outer > dims.inner || dims.opening > dims.inner {
-        return Err(AkitaError::InvalidSetup(format!(
-            "A-role ring dimension d_a={} must be at least d_b={} and d_d={}",
-            dims.inner, dims.outer, dims.opening
-        )));
     }
     Ok(())
 }

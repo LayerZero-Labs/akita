@@ -686,6 +686,31 @@ paths must perform. Validated by `compressed_role_e2e` (honest verify + two
 tamper rejections), `mixed_role_e2e`, the recursive/offloaded e2e suites, and the
 full `akita-types`/`akita-verifier`/`akita-prover` unit suites.
 
+## Multi-group role ownership
+
+A multi-group level has two geometry scopes:
+
+- Each final or precommitted group owns its A and B matrices and therefore its
+  `d_a` and `d_b`.
+- The consuming level owns one D matrix and one `d_d`, shared by every group.
+
+`CommittedGroupParams::group_role_dims` is the canonical resolver for that
+contract. It combines a group's native A/B dimensions with the level-shared D
+dimension and checks the A-carrier geometry. `RelationRhsLayout` records the
+resolved dimensions with each group's row counts. Relation RHS sizing,
+assembly, and public-claim evaluation consequently use native group widths
+instead of applying the final group's A/B dimensions to every group.
+
+The level relation witness still has one physical carrier. Its dimension is the
+final group's `d_a`, and it must be at least every group-local `d_a`. Existing
+uniform multi-group schedules keep the batch-wide fast path. A heterogeneous
+batch uses group-local B dispatch only for its commitment segments.
+
+This establishes the statement and public-data boundary. Group-local quotient
+construction, witness emission, and setup-contribution spans remain follow-on
+work; no production schedule should claim heterogeneous group A/B support until
+those consumers use the same resolver.
+
 ## Future work
 - **Plan the D512 mixed-role root natively.** Column F currently promotes the
   D256 planner's root geometry and rederives every D512 A/security field. A

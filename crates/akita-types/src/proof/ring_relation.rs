@@ -410,7 +410,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
         let relation_rhs_layout =
             crate::proof::relation::relation_rhs_layout_for(lp, &self.opening_batch)?;
         let expected_rhs_coeff_len =
-            crate::proof::relation::relation_rhs_coeff_len(self.role_dims, &relation_rhs_layout)?;
+            crate::proof::relation::relation_rhs_coeff_len(&relation_rhs_layout)?;
         if self.rhs.coeff_len() != expected_rhs_coeff_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "ring relation rhs coefficient length {} does not match per-role layout (expected {expected_rhs_coeff_len})",
@@ -727,6 +727,7 @@ mod tests {
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
         let relation_rhs_layout = RelationRhsLayout::uniform(
+            lp.role_dims(),
             lp.open_commit_matrix.output_rank(),
             lp.inner_commit_matrix.output_rank(),
             lp.outer_commit_matrix.output_rank(),

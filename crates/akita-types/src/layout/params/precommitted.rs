@@ -4,6 +4,7 @@ use akita_field::AkitaError;
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::PrecommittedGroupDescriptor;
 use crate::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
+use crate::CommitmentRingDims;
 
 use super::CommittedGroupParams;
 
@@ -32,6 +33,17 @@ pub struct PrecommittedLevelParams {
 }
 
 impl PrecommittedLevelParams {
+    /// This group's A/B dimensions completed with the consuming level's shared
+    /// D dimension.
+    #[must_use]
+    pub fn role_dims(&self, shared_opening_ring_dimension: usize) -> CommitmentRingDims {
+        CommitmentRingDims {
+            inner: self.inner_commit_matrix.ring_dimension(),
+            outer: self.outer_commit_matrix.ring_dimension(),
+            opening: shared_opening_ring_dimension,
+        }
+    }
+
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.layout.validate()?;
@@ -108,14 +120,9 @@ impl PrecommittedLevelParams {
     /// Group metadata owns its A/B dimensions. The D role is batch-shared, so
     /// the caller supplies the consuming level's opening dimension.
     pub fn d_segment_width(&self, opening_ring_dimension: usize) -> Result<usize, AkitaError> {
-        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
-        if opening_ring_dimension == 0
-            || !inner_ring_dimension.is_multiple_of(opening_ring_dimension)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "current A-width relation witness cannot carry the shared D role".to_string(),
-            ));
-        }
+        let role_dims = self.role_dims(opening_ring_dimension);
+        role_dims.validate_a_carrier()?;
+        let inner_ring_dimension = role_dims.d_a();
         let projection_ratio = inner_ring_dimension / opening_ring_dimension;
         self.num_digits_open
             .checked_mul(self.layout.num_live_blocks)

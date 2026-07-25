@@ -326,7 +326,7 @@ where
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
     let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
-    let expected_y_len = akita_types::relation_rhs_coeff_len(role_dims, &rhs_layout)?;
+    let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
             expected: expected_y_len,
