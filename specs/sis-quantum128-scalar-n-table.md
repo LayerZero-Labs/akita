@@ -28,7 +28,7 @@ length_bound = B
 The generated artifact stores scalar cutoffs with key
 `(modulus_profile, B, n)`. Runtime callers still provide the matrix role and
 ring dimension. The role determines which ring dimensions, coefficient bounds,
-and ranks the generator must cover.
+and ranks the generator must cover directly.
 
 A, B, D, and F do not share one forced geometry. B and D often use the current
 ring dimension or a smaller dimension. This includes dimension 32 for a 128 bit
@@ -53,8 +53,10 @@ The implementation pinned by this specification uses ADPS16 quantum exponent
 module rank `20`, and a per-cell search cap of `6_400_000_000_000`. The exact
 modulus profiles are `Q32Offset99`, `Q64Offset59`, and `Q128OffsetA7F7`.
 
-The canonical role coverage currently has A dimensions `64, 128, 256`, B and D
-dimensions `32, 64, 128, 256`, and F dimensions `32, 64, 128, 256`. A uses the
+The canonical role coverage has A dimensions `64, 128, 256` for every modulus
+profile, plus q128 Inner/A dimension `512`. B and D have dimensions
+`32, 64, 128, 256`, and F has dimensions `32, 64, 128, 256`. Every cell has
+maximum module rank `20`. A uses the
 explicit planner bucket set
 `2, 3, 7, 15, 31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16383,
 32767, 65535, 131071, 262143, 524287, 1048575, 2097151, 4194303, 8388607,
@@ -68,6 +70,10 @@ resulting scalar union. The checked-in audit is scalar-key based, so role
 origins are reconstructed from the canonical coverage rather than repeated in
 each audit row. This keeps runtime identity role-aware while equal scalar
 cells are stored once.
+
+The q128 Inner/512 cell adds 520 direct estimator requests: 26 coefficient
+buckets times 20 module ranks. The distinct extension digest gates these
+slices; the original digest cannot authorize D512.
 
 ## Intent
 
@@ -89,10 +95,12 @@ For a candidate scalar instance `(modulus_profile, B, n, m)`, run the infinity
 norm LGSA optimizer under the dedicated ADPS16 quantum cost model with exponent
 `0.2650`.
 
-Generation may use the `local-minimum` search to find a candidate boundary. It
-must certify the accepted boundary and the first rejected successor with an
-exhaustive search over the configured beta and zeta domain. The certificate
-domain is part of the policy identity.
+Base-table generation may use `local-minimum` discovery, but certifies its
+accepted boundary and immediate rejected successor with the exhaustive
+configured beta/zeta search. The additive D512 table uses the pinned
+lattice-estimator-compatible local-minimum beta/zeta search directly because
+its wide zeta domain is outside the exhaustive implementation's supported
+range. That profile distinction is committed by the D512 extension digest.
 
 A candidate passes only when the certified estimate returns a finite score or
 an explicit above-target lower bound. A finite score or represented lower bound
@@ -127,8 +135,9 @@ The policy ID names the complete acceptance rule. It includes:
 - the boundary certificate domain;
 - the meaning of finite, classified, and failed estimates.
 
-Any change that can change whether the same scalar SIS cell passes requires a
-new policy ID and regenerated artifacts. This includes an optimizer change.
+Any change to the hard model that can change whether the same scalar SIS cell
+passes requires a new policy ID and regenerated artifacts. A change to the
+search profile for a table extension requires a new table digest.
 
 The table digest is separate. It commits to the exact modulus profiles, role
 coverage, coefficient bound cells, rank limits, search caps, certificates, and
@@ -246,6 +255,8 @@ The initial coverage follows these rules:
   matrices. For the 128 bit field this includes dimension 32.
 - A includes every ring dimension that the planner may assign to A. Its current
   minimum is 64. Its cells may use larger dimensions than B and D.
+- Q128 additionally exposes Inner/A dimension 512 for future mixed-ring use.
+  This cell has ranks `1..=20` and is gated by its extension digest.
 - F has its own list. It does not inherit A, B, or D coverage without an
   explicit equality in the planner contract.
 - A new mixed dimension planner choice must update the matching role coverage
@@ -358,18 +369,16 @@ Given an audited `(policy, table_digest, modulus_profile, role, d, B, width)`:
 ```text
 validate exact modulus profile
 validate role permits d and B
-m_need = checked_mul(width, d)
-for rank in 1 ..= role_max_rank:
-    n = checked_mul(rank, d)
-    require scalar cell (modulus_profile, B, n)
-    if m_need <= scalar_cutoff_value:
+validate digest permits d
+widths = require generated slice at (profile, d, B)
+for (rank, max_width) in widths:
+    if width <= max_width:
         return rank
 reject
 ```
 
-All arithmetic is checked. Overflow returns `AkitaError`. A missing required
-cell, unsupported role geometry, unsupported policy, or table digest mismatch
-also returns `AkitaError`.
+A missing required cell, unsupported role geometry, unsupported policy, or
+table digest mismatch returns `AkitaError`.
 
 `min_secure_rank` is the single canonical rank chooser. `AjtaiKeyParams`
 constructors call it directly.
@@ -400,6 +409,16 @@ The digest is SHA3-256 over the fixed UTF-8 domain tag
 Each file is encoded as an unsigned little endian 64-bit byte length, its
 UTF-8 filename, a NUL byte, and its exact bytes. This encoding is independent
 of host word size, map iteration order, and parallel generation order.
+
+The additive q128 Inner/512 coverage uses a separate digest without replacing
+the base artifact identity. SHA3-256 commits to the domain tag
+`akita-sis-table-q128-inner-d512-direct-v1\0`, the 32-byte base digest, the
+exact q128 modulus as a little-endian `u128`, then `(d, search_cap, max_rank)`
+as little-endian `(u32, u64, u32)`, followed by the coefficient-bucket count,
+the buckets as little-endian `u128`s, and all widths in bucket/rank order as
+little-endian `u64`s. The resulting digest is
+`c2027a80d84b01dbbffae571cb9bf0e9686db6e762c5a4202d5e53a306e6cace`.
+Existing schedules retain the base digest.
 
 ## Invariants
 
@@ -488,10 +507,10 @@ Test these cases:
 
 Runtime performs static table lookup only.
 
-Offline generation estimates one copy of each reachable scalar cell. Discovery
-may use the local search. Certification uses the exhaustive configured search
-at the accepted and rejected boundary. The checked-in artifact is generated
-offline; runtime never invokes the estimator.
+Offline generation estimates one copy of each reachable scalar cell. Base
+cells retain exhaustive boundary certification. D512 discovery and boundary
+evaluation use the pinned lattice-estimator-compatible local search. The
+checked-in artifact is generated offline; runtime never invokes the estimator.
 
 ## Design notes
 
@@ -539,16 +558,19 @@ runtime role lookup: n = rank*d, m_need = width*d
 | Generate every multiple of 32 to one global maximum | Rejected because most cells are unreachable |
 | Put role in the scalar estimator key | Rejected because role does not change an identical scalar instance |
 | Use field bit length as modulus identity | Rejected because security depends on the exact modulus |
-| Use only local search for final acceptance | Rejected because a missed attack can overstate security |
+| Use only local search for every existing cell | Rejected because it would unnecessarily change base-table certification |
+| Derive a dimension's rows from another dimension | Rejected because each supported dimension is generated directly |
 
 ### Change control
 
 Changing the hard target, ADPS16 mode, norm, shape model, estimator revision,
-certificate domain, or estimate result semantics requires a new policy ID.
+or estimate result semantics requires a new policy ID.
 
 Changing role dimensions, role bounds, rank limits, exact modulus profiles,
-search caps, or generated cells requires a new table digest and regenerated
-dependents. A modulus value change also requires a new modulus profile ID.
+search or certificate profiles, search caps, or generated cells requires a
+new table digest. Generated
+dependents change only when the base generated table or a schedule-selected
+digest changes. A modulus value change also requires a new modulus profile ID.
 
 ## Documentation
 
