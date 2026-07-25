@@ -102,6 +102,71 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         F: FieldCore + CanonicalField,
         E: MulBase<F>,
     {
+        Self::prepare_with_mode::<F>(
+            level_params,
+            opening_batch,
+            eq_tau1,
+            witness_layout,
+            opening_source_len,
+            groups,
+            full_vec_randomness,
+            fold_gadget,
+            role_dims,
+            alpha,
+            SetupPlanMaterialization::Full,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn prepare_deferred<F>(
+        level_params: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        eq_tau1: std::sync::Arc<[E]>,
+        witness_layout: &WitnessLayout,
+        opening_source_len: usize,
+        groups: &[SetupContributionGroupInputs],
+        full_vec_randomness: &[E],
+        fold_gadget: Option<&[F]>,
+        role_dims: CommitmentRingDims,
+        alpha: E,
+    ) -> Result<SetupContributionPlan<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: MulBase<F>,
+    {
+        Self::prepare_with_mode::<F>(
+            level_params,
+            opening_batch,
+            eq_tau1,
+            witness_layout,
+            opening_source_len,
+            groups,
+            full_vec_randomness,
+            fold_gadget,
+            role_dims,
+            alpha,
+            SetupPlanMaterialization::Deferred,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_with_mode<F>(
+        level_params: &CommittedGroupParams,
+        opening_batch: &OpeningClaimsLayout,
+        eq_tau1: std::sync::Arc<[E]>,
+        witness_layout: &WitnessLayout,
+        opening_source_len: usize,
+        groups: &[SetupContributionGroupInputs],
+        full_vec_randomness: &[E],
+        fold_gadget: Option<&[F]>,
+        role_dims: CommitmentRingDims,
+        alpha: E,
+        materialization: SetupPlanMaterialization,
+    ) -> Result<SetupContributionPlan<E>, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: MulBase<F>,
+    {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
         let lanes = RelationLaneGeometry::new(role_dims, alpha)?;
         let rows = {
@@ -185,66 +250,81 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .to_vec()
                         .into();
                 drop(geometry_span);
-                let e_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_e_weights").entered();
-                    setup_e_col_weights::<E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_live_blocks,
-                        group.num_claims,
-                        depth_open,
-                        &eq_window,
-                        &lanes.d_spec(),
-                    )?
-                };
-                let t_eq_slice = {
-                    let _span = tracing::info_span!("setup_prepare_t_weights").entered();
-                    setup_t_col_weights::<E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_live_blocks,
-                        depth_commit,
-                        n_a,
-                        group.num_claims,
-                        &eq_window,
-                        &lanes.b_spec(),
-                    )?
-                };
-                let fold_gadget_storage;
-                let fold_gadget = if let Some(fold_gadget) = fold_gadget {
-                    if fold_gadget.len() < group.depth_fold {
-                        return Err(AkitaError::InvalidSize {
-                            expected: group.depth_fold,
-                            actual: fold_gadget.len(),
-                        });
-                    }
-                    fold_gadget
-                } else {
-                    fold_gadget_storage =
-                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
-                    &fold_gadget_storage
-                };
-                let z_range = num_positions_per_block
-                    .checked_mul(depth_witness)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                let mut z_eq_slice = vec![E::zero(); z_range];
+                let (e_eq_slice, t_eq_slice, z_eq_slice) = if materialization
+                    .materializes_column_slices()
                 {
-                    let _span = tracing::info_span!("setup_prepare_z_weights").entered();
-                    setup_z_col_weights::<F, E>(
-                        witness_layout,
-                        opening_source_len,
-                        group.group_id,
-                        num_positions_per_block,
-                        depth_witness,
-                        group.depth_fold,
-                        &eq_window,
-                        fold_gadget,
-                        &lanes.a_spec(),
-                        &mut z_eq_slice,
-                    )?;
-                }
+                    let e_eq_slice = {
+                        let _span = tracing::info_span!("setup_prepare_e_weights").entered();
+                        setup_e_col_weights::<E>(
+                            witness_layout,
+                            opening_source_len,
+                            group.group_id,
+                            num_live_blocks,
+                            group.num_claims,
+                            depth_open,
+                            &eq_window,
+                            &lanes.d_spec(),
+                        )?
+                    };
+                    let t_eq_slice = {
+                        let _span = tracing::info_span!("setup_prepare_t_weights").entered();
+                        setup_t_col_weights::<E>(
+                            witness_layout,
+                            opening_source_len,
+                            group.group_id,
+                            num_live_blocks,
+                            depth_commit,
+                            n_a,
+                            group.num_claims,
+                            &eq_window,
+                            &lanes.b_spec(),
+                        )?
+                    };
+                    let fold_gadget_storage;
+                    let fold_gadget = if let Some(fold_gadget) = fold_gadget {
+                        if fold_gadget.len() < group.depth_fold {
+                            return Err(AkitaError::InvalidSize {
+                                expected: group.depth_fold,
+                                actual: fold_gadget.len(),
+                            });
+                        }
+                        fold_gadget
+                    } else {
+                        fold_gadget_storage =
+                            crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
+                        &fold_gadget_storage
+                    };
+                    let z_range = num_positions_per_block
+                        .checked_mul(depth_witness)
+                        .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
+                    let mut z_eq_slice = vec![E::zero(); z_range];
+                    {
+                        let _span = tracing::info_span!("setup_prepare_z_weights").entered();
+                        setup_z_col_weights::<F, E>(
+                            witness_layout,
+                            opening_source_len,
+                            group.group_id,
+                            num_positions_per_block,
+                            depth_witness,
+                            group.depth_fold,
+                            &eq_window,
+                            fold_gadget,
+                            &lanes.a_spec(),
+                            &mut z_eq_slice,
+                        )?;
+                    }
+                    (e_eq_slice, t_eq_slice, z_eq_slice)
+                } else {
+                    if let Some(fold_gadget) = fold_gadget {
+                        if fold_gadget.len() < group.depth_fold {
+                            return Err(AkitaError::InvalidSize {
+                                expected: group.depth_fold,
+                                actual: fold_gadget.len(),
+                            });
+                        }
+                    }
+                    (Vec::new(), Vec::new(), Vec::new())
+                };
 
                 Ok(SetupContributionGroupPlan {
                     d_col_range,
@@ -289,15 +369,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_physical_cols,
             &projection_groups,
         )?;
-        for group in &mut dynamic_groups {
-            group.refresh_segments(
-                &d_weights,
-                d_rows,
-                d_physical_cols,
-                projection_geometry.a_ratio(),
-                projection_geometry.b_ratio(),
-                projection_geometry.d_ratio(),
-            )?;
+        if materialization.builds_scan_segments() {
+            for group in &mut dynamic_groups {
+                group.refresh_segments(
+                    &d_weights,
+                    d_rows,
+                    d_physical_cols,
+                    projection_geometry.a_ratio(),
+                    projection_geometry.b_ratio(),
+                    projection_geometry.d_ratio(),
+                )?;
+            }
         }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
@@ -319,6 +401,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     #[must_use]
     pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
         self.projection_geometry
+    }
+}
+
+#[derive(Clone, Copy)]
+enum SetupPlanMaterialization {
+    Full,
+    Deferred,
+}
+
+impl SetupPlanMaterialization {
+    const fn materializes_column_slices(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    const fn builds_scan_segments(self) -> bool {
+        matches!(self, Self::Full)
     }
 }
 
