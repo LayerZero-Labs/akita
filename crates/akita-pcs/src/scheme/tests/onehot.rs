@@ -63,6 +63,9 @@ fn precommit_config_allows_independent_precommitted_groups() {
     const NV: usize = 16;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 2;
+    // Precommitted groups are committed independently, so setup only needs to
+    // cover the largest standalone group rather than the sum of all groups.
+    const SETUP_CAPACITY_SIZE: usize = PRE_B_SIZE;
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(NV, PRE_A_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(NV, PRE_B_SIZE);
@@ -80,7 +83,7 @@ fn precommit_config_allows_independent_precommitted_groups() {
         debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_2002),
     ];
 
-    with_precommit_stack(NV, PRE_A_SIZE + PRE_B_SIZE, |setup, stack| {
+    with_precommit_stack(NV, SETUP_CAPACITY_SIZE, |setup, stack| {
         let (pre_a_commitment, _pre_a_hint) =
             PrecommitCommitter::commit(setup, &pre_a_polys, stack).expect("precommit A");
         let (pre_b_commitment, _pre_b_hint) =
@@ -583,6 +586,7 @@ fn multi_group_root_folded_group_binding_round_trips() {
 }
 
 #[test]
+#[cfg(feature = "profile-ci")]
 fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,

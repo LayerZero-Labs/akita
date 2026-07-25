@@ -48,8 +48,8 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .collect(),
     };
     if let Some(catalog) = Cfg::schedule_catalog() {
-        if let Some(entry) = akita_planner::generated::table_entry(catalog, &key) {
-            return akita_planner::estimate_proof_bytes(
+        if let Some(entry) = akita_schedules::generated::table_entry(catalog, &key) {
+            return akita_schedules::estimate_proof_bytes(
                 entry,
                 &key,
                 &akita_config::policy_of::<Cfg>(),

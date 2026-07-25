@@ -4,7 +4,7 @@
 
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
-use akita_planner::resolve_schedule;
+use akita_schedules::resolve_schedule;
 use akita_types::PolynomialGroupLayout;
 
 #[test]

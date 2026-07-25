@@ -227,6 +227,7 @@ where
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
         + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>
         + RootPolyMeta<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, Q>,
     R: DigitRowsComputeBackend<F>,

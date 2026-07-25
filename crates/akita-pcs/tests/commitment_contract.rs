@@ -6,6 +6,7 @@
 //! [`RootCommitKernel`] for a local commit view (orphan-rule-safe: the backend
 //! type is local to this test crate).
 
+#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_algebra::CyclotomicRing;
@@ -24,11 +25,11 @@ use akita_prover::{
 };
 use akita_types::{NttCacheKey, OpeningClaimsLayout};
 
-type Cfg = fp64::D64Dense;
+type Cfg = fp64::D128Dense;
 type F = <Cfg as CommitmentConfig>::Field;
 const D: usize = Cfg::D;
 // The folded-only protocol requires at least two folds. `nv=8` was a
-// root-direct fixture; `nv=14` is the first supported fp64 D64 singleton.
+// root-direct fixture; `nv=14` is the first supported fp64 D128 singleton.
 const CONTRACT_NUM_VARS: usize = 14;
 
 /// Downstream-like root polynomial: not `DensePoly`, `OneHotPoly`, etc.

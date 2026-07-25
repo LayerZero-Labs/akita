@@ -12,8 +12,8 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::test_support::RoleSwitchConfig;
 use akita_field::AkitaError;
+use akita_pcs::test_support::RoleSwitchConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;

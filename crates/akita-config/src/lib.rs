@@ -2,17 +2,15 @@
 //! `akita-prover`, `akita-verifier`, `akita-pcs`, and `akita-setup`.
 //!
 //! Production `get_params_for_prove` implementations resolve a schedule for
-//! **any** lookup key via [`CommitmentConfig::runtime_schedule`]: a
-//! schedule-table hit expands the compact entry through the planner's canonical
-//! walker [`akita_planner::schedule_from_entry`]; a table miss regenerates the
-//! schedule with the offline DP search [`akita_planner::find_group_batch_schedule`],
-//! driven by the `Cfg`-derived [`policy_of`] bridge.
+//! cataloged lookup key via [`CommitmentConfig::runtime_schedule`]. Runtime
+//! resolution is strict: missing generated catalog rows reject instead of
+//! invoking planner search.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, MulBaseUnreduced,
 };
-use akita_planner::PlannerPolicy;
+use akita_schedules::PlannerPolicy;
 use akita_serialization::Valid;
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
@@ -25,7 +23,7 @@ use akita_types::{
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
 /// parameter to a base `Cfg` and overrides only the multi-chunk witness config
-/// and the shipped schedule catalog.
+/// and the generated schedule catalog.
 ///
 /// The companion shares the base's field, ring dimension, decomposition,
 /// challenge config, and SIS family, so its `_multi_chunk` table enumerates the
@@ -76,7 +74,7 @@ macro_rules! impl_multi_chunk_companion {
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
             }
-            fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+            fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
                 #[cfg(feature = $feat)]
                 {
                     Some(akita_schedules::$table())
@@ -98,7 +96,6 @@ macro_rules! impl_multi_chunk_companion {
     };
 }
 
-pub mod generated_families;
 pub mod precommitted_commitment;
 pub mod proof_optimized;
 pub mod recursive_commitment;
@@ -115,14 +112,11 @@ pub use schedule_selection::effective_batched_schedule;
 pub use setup_prefix_slots::setup_prefix_slot_ids_for_capacity;
 pub use transcript_binding::bind_transcript_instance_descriptor;
 
-/// Derive the `Cfg`-free [`PlannerPolicy`] the planner DP consumes from a
-/// preset.
+/// Derive the runtime schedule policy from a preset.
 ///
-/// This is the single bridge between a [`CommitmentConfig`] preset and
-/// [`akita_planner::find_group_batch_schedule`]: every brute-force input is *derived*
-/// from the `Cfg` impl, so the `Cfg` impl stays the one source of truth for
-/// each preset's `(D, decomposition, sis_modulus_profile, …)`. Never hand-write a
-/// `PlannerPolicy` literal per preset.
+/// Every validation input is *derived* from the `Cfg` impl, so the `Cfg` impl
+/// stays the one source of truth for each preset's `(D, decomposition,
+/// sis_modulus_profile, ...)`.
 /// Build the canonical schedule key for a root opening batch under `Cfg`.
 ///
 /// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
@@ -136,11 +130,11 @@ pub fn opening_schedule_key<Cfg: CommitmentConfig>(
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
-        cost_model: akita_planner::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
+        cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: if recursive_setup_planning {
-            akita_planner::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
         } else {
-            akita_planner::SelectionPolicyId::MinEstimatedProofPayload
+            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
         },
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
@@ -321,11 +315,12 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         false
     }
 
-    /// Optional shipped schedule catalog for this preset.
+    /// Optional generated schedule catalog for this preset.
     ///
     /// Presets with generated tables override this when the matching
-    /// `schedules-*` feature is enabled. The default is `None` (DP-only).
-    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+    /// `schedules-*` feature is enabled. The default is `None`, so runtime
+    /// schedule resolution rejects catalog-backed requests.
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         None
     }
 
@@ -343,19 +338,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// empty `precommitteds` vector. Grouped roots supply frozen precommit
     /// layouts in `precommitteds`.
     ///
-    /// Delegates to [`akita_planner::resolve_group_batch_schedule`] with this
+    /// Delegates to [`akita_schedules::resolve_group_batch_schedule`] with this
     /// preset's optional [`Self::schedule_catalog`]: validates catalog identity
-    /// on a hit, expands the compact entry, and regenerates from scratch with
-    /// the offline DP on a miss.
+    /// and expands the compact entry. A missing catalog row is unsupported.
     ///
     /// # Errors
     ///
-    /// Propagates expansion / SIS-bucket failures or DP-search failures
-    /// (invalid key dimensions, witness overflow). Never panics — this is
-    /// verifier-reachable.
+    /// Propagates expansion / SIS-bucket failures or unsupported catalog
+    /// requests. Never panics — this is verifier-reachable.
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         Self::validate_sis_modulus_profile()?;
-        akita_planner::resolve_group_batch_schedule(
+        akita_schedules::resolve_group_batch_schedule(
             &key,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
@@ -379,7 +372,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Reading the schedule's first step (rather than re-resolving the compact
     /// entry directly) keeps this coupled to whatever
     /// [`Self::get_params_for_prove`] / [`Self::runtime_schedule`] produce,
-    /// so config overrides (synthetic fixtures, DP fallback) stay honored.
+    /// so config overrides and synthetic fixtures stay honored.
     ///
     /// # Errors
     ///
@@ -690,9 +683,15 @@ mod precommit_tests {
     #[test]
     fn exact_precommit_params_freeze_standalone_metadata() {
         let group = PolynomialGroupLayout::new(16, 1);
-        let precommitted =
-            precommitted_commitment::precommitted_group_params::<fp128::D64OneHot>(group)
-                .expect("precommitted group params");
+        group.validate().expect("group layout");
+        let singleton =
+            OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials()).expect("singleton");
+        let params =
+            <PrecommittedCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::get_params_for_batched_commitment(
+                &singleton,
+            )
+            .expect("precommitted group params");
+        let precommitted = akita_types::PrecommittedGroupDescriptor::from_params(group, &params);
         let mut policy = policy_of::<fp128::D64OneHot>();
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();

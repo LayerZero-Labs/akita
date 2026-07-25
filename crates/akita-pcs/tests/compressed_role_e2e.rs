@@ -16,8 +16,8 @@
 mod common;
 
 use akita_config::proof_optimized::fp128;
-use akita_config::test_support::CompressedRoleRootConfig;
 use akita_field::AkitaError;
+use akita_pcs::test_support::CompressedRoleRootConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;

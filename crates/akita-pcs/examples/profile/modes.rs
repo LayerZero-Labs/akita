@@ -7,7 +7,7 @@ use crate::workload::{
 };
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
-use akita_config::test_support::{akita_batched_root_layout, MixedDConfig};
+use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
@@ -16,6 +16,8 @@ use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
     PseudoMersenneField, RandomSampling,
 };
+#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+use akita_pcs::test_support::MixedDConfig;
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
@@ -614,7 +616,7 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
 /// then uniform 64. Requires D=256 inner support. Skips the planner assertion.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 fn run_three_band(nv: usize) {
-    use akita_config::test_support::ThreeBandRoleSwitchConfig;
+    use akita_pcs::test_support::ThreeBandRoleSwitchConfig;
     type Cfg =
         ThreeBandRoleSwitchConfig<fp128::D256OneHot, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
     let layout = resolve_layout::<F, Cfg>(nv);
@@ -657,7 +659,7 @@ fn run_role_switch(nv: usize) {
 
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 fn run_role_switch_impl<const ROOT_OPEN_D: usize>(nv: usize) {
-    use akita_config::test_support::RoleSwitchConfig;
+    use akita_pcs::test_support::RoleSwitchConfig;
     type Cfg<const R: usize> = RoleSwitchConfig<fp128::D128OneHot, fp128::D64OneHot, 64, R>;
     let layout = resolve_layout::<F, Cfg<ROOT_OPEN_D>>(nv);
     let required_vars = layout.position_index_bits()
@@ -687,7 +689,7 @@ fn run_role_switch_impl<const ROOT_OPEN_D: usize>(nv: usize) {
 /// schedule is unchanged. Skips the synthetic-schedule planner assertion.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 fn run_compressed_role_root<const OUTER_D: usize, const OPEN_D: usize>(nv: usize) {
-    use akita_config::test_support::CompressedRoleRootConfig;
+    use akita_pcs::test_support::CompressedRoleRootConfig;
     type Cfg<const O: usize, const P: usize> = CompressedRoleRootConfig<fp128::D128OneHot, O, P>;
     let layout = resolve_layout::<F, Cfg<OUTER_D, OPEN_D>>(nv);
     let required_vars = layout.position_index_bits()

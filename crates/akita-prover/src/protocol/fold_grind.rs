@@ -233,7 +233,8 @@ where
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
@@ -553,7 +554,8 @@ where
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
