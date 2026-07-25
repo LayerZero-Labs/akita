@@ -448,9 +448,10 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
             64 => decompose_r_row::<F, 64>(row.coeffs(), levels, &decompose_params)?,
             128 => decompose_r_row::<F, 128>(row.coeffs(), levels, &decompose_params)?,
             256 => decompose_r_row::<F, 256>(row.coeffs(), levels, &decompose_params)?,
+            512 => decompose_r_row::<F, 512>(row.coeffs(), levels, &decompose_params)?,
             actual => {
                 return Err(AkitaError::InvalidSize {
-                    expected: 256,
+                    expected: 512,
                     actual,
                 })
             }

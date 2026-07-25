@@ -148,6 +148,7 @@ impl GeneratedSetupPrefixInput {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             d,
             inner_decomp,
@@ -377,6 +378,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -633,6 +635,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -827,6 +830,7 @@ impl GeneratedTerminalFold {
         )?;
         let collision_bucket = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
+            policy.sis_table_digest,
             policy.sis_modulus_profile,
             ring_dimension,
             witness_decomposition,

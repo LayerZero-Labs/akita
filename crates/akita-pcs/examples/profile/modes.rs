@@ -543,18 +543,16 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(1);
-    // Root ring dimension for the leading D-band (default 128). `256` exercises
-    // the fp128 inner-role ceiling and is expected to be rejected.
+    // Root ring dimension for the leading uniform D-band (default 128).
+    // Tableless D256 is planned offline by the mixed-schedule builder.
     let root_d: usize = std::env::var("AKITA_MIXED_ROOT_D")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(128);
     assert_singleton_mode("onehot_fp128_d64_root_d128", num_polys);
-    // Three-band role-switch: L0 = 256/128/128, L1 = 128/64/64, then uniform 64.
+    // Three-band role-switch: L0 = <root>/128/128, L1 = 128/64/64, then uniform
+    // 64. Root A-band dim from AKITA_MIXED_THREEBAND_ROOT_D (256 or 512).
     if std::env::var("AKITA_MIXED_THREEBAND").as_deref() == Ok("1") {
-        tracing::info!(
-            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, three-band L0=256/128/128 L1=128/64/64 then 64, 1-of-{onehot_k}) ==="
-        );
         run_three_band(nv);
         return;
     }
@@ -610,30 +608,52 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
     }
 }
 
-/// Run the multi-level role-switch experiment: L0 = A/B/D 128/128/64, L1 =
+/// Three-band descending role-switch: L0 = A/B/D `<root>`/128/128, L1 =
 /// 128/64/64, then uniform 64. Skips the synthetic-schedule planner assertion.
-/// Three-band descending role-switch: L0 = A/B/D 256/128/128, L1 = 128/64/64,
-/// then uniform 64. Requires D=256 inner support. Skips the planner assertion.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 fn run_three_band(nv: usize) {
+    // Root A-band ring dim: 256 (L0 = 256/128/128) or 512 (L0 = 512/128/128).
+    let root_d: usize = std::env::var("AKITA_MIXED_THREEBAND_ROOT_D")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(256);
+    match root_d {
+        256 => run_three_band_impl::<fp128::D256OneHot, 256>(nv),
+        512 => run_three_band_impl::<fp128::D512OneHot, 512>(nv),
+        d => panic!("AKITA_MIXED_THREEBAND_ROOT_D={d} unsupported (use 256 or 512)"),
+    }
+}
+
+/// Three-band descending role-switch: L0 = `ROOT_D`/128/128, L1 = 128/64/64,
+/// then uniform 64. `Root` is the A-band root envelope (`D256OneHot` or
+/// `D512OneHot`). Requires the corresponding fp128 inner-role D support. Skips
+/// the synthetic-schedule planner assertion.
+#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+fn run_three_band_impl<Root, const ROOT_D: usize>(nv: usize)
+where
+    Root: CommitmentConfig<Field = F, ExtField = F>,
+{
     use akita_pcs::test_support::ThreeBandRoleSwitchConfig;
-    type Cfg =
-        ThreeBandRoleSwitchConfig<fp128::D256OneHot, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
-    let layout = resolve_layout::<F, Cfg>(nv);
-    let required_vars = layout.position_index_bits()
-        + layout.block_index_bits()
-        + 256usize.trailing_zeros() as usize;
+    type Cfg<Root> = ThreeBandRoleSwitchConfig<Root, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
+    tracing::info!(
+        "=== onehot_fp128_d64_root_d128 (fp128, {}, three-band L0={ROOT_D}/128/128 L1=128/64/64 then 64, 1-of-{}) ===",
+        fp128_prime_label(),
+        onehot_k_for_num_vars(nv),
+    );
+    let layout = resolve_layout::<F, Cfg<Root>>(nv);
+    let required_vars =
+        layout.position_index_bits() + layout.block_index_bits() + ROOT_D.trailing_zeros() as usize;
     if required_vars > nv {
         panic!(
             "[onehot_fp128_d64_root_d128] three-band requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
         );
     }
-    let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let plan = Cfg::<Root>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
     .expect("three-band schedule plan");
-    print_layout(&layout, 1, Cfg::decomposition().field_bits());
-    run_onehot::<F, 256, Cfg>(
+    print_layout(&layout, 1, Cfg::<Root>::decomposition().field_bits());
+    run_onehot::<F, ROOT_D, Cfg<Root>>(
         "onehot_fp128_d64_root_d128",
         nv,
         &layout,

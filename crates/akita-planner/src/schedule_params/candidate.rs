@@ -60,6 +60,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
         policy.ring_dimension,
         decomp,
@@ -370,6 +371,7 @@ fn derive_setup_prefix_group(
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
+            policy.sis_table_digest,
             family,
             d,
             inner_decomp,
@@ -649,6 +651,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
         policy.ring_dimension,
         witness_decomp,

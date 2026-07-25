@@ -184,6 +184,7 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
         policy.ring_dimension,
         witness_decomposition,
@@ -427,6 +428,7 @@ fn multi_group_root_main_level_params_candidate(
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         family,
         d,
         witness_decomp,

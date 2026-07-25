@@ -13,13 +13,16 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
-use akita_types::sis::{OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey};
+use akita_types::sis::{
+    rounded_up_role_a_inf_norm, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, SisTableKey,
+};
 use akita_types::{
     intermediate_w_ring_element_count_with_counts_bits, AkitaScheduleInputs,
     AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams, FoldSchedule,
     OpeningClaimsLayout, PolynomialGroupLayout, RecursiveFoldParams, RecursiveFoldStep,
-    SetupMatrixEnvelope, SisModulusProfileId, TerminalFoldParams, TerminalFoldStep,
-    WitnessPartition,
+    SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId, SisTableDigest, TerminalFoldParams,
+    TerminalFoldStep, WitnessPartition,
 };
 use std::marker::PhantomData;
 
@@ -650,11 +653,95 @@ where
             "three-band role-switch requires a singleton batch".into(),
         ));
     }
+    Root::validate_sis_modulus_profile()?;
+    Mid::validate_sis_modulus_profile()?;
+    Suffix::validate_sis_modulus_profile()?;
     let field_bits = Root::decomposition().field_bits();
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
+    // L0: tableless experiment presets must use the offline planner directly;
+    // runtime schedule resolution is intentionally catalog-only. Q128 D=512
+    // has audited A-role rows but no B/D rows, so use the D=256 root planner
+    // geometry as the canonical starting point and promote only A below.
+    let mut root_policy = policy_of::<Root>();
+    let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
+    root_policy.ring_dimension = planned_root_d;
+    let mut root = akita_planner::find_schedule(
+        PolynomialGroupLayout::new(num_vars, num_polynomials),
+        &root_policy,
+        Root::ring_challenge_config,
+        Root::fold_challenge_shape_at_level,
+    )?
+    .schedule
+    .root;
 
-    // L0: root from the `Root` envelope, then compress its B/D to `root_bd`.
-    let mut root = Root::runtime_schedule(key)?.root;
+    if Root::D != planned_root_d {
+        if Root::D != 512 || Root::sis_modulus_profile() != SisModulusProfileId::Q128OffsetA7F7 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "three-band A-role promotion from D={planned_root_d} to D={} is unsupported",
+                Root::D
+            )));
+        }
+        let scale = Root::D / planned_root_d;
+        let mut commitment = root.params.final_group.commitment.clone();
+        if !commitment
+            .num_live_ring_elements_per_claim
+            .is_multiple_of(scale)
+            || !commitment.num_positions_per_block.is_multiple_of(scale)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "three-band D=512 root geometry cannot preserve the flat source length".into(),
+            ));
+        }
+        commitment.num_live_ring_elements_per_claim /= scale;
+        commitment.num_positions_per_block /= scale;
+
+        let ring_challenge = Root::ring_challenge_config(Root::D)?;
+        commitment.fold_challenge_config = ring_challenge;
+        let inner_width = commitment
+            .num_positions_per_block
+            .checked_mul(commitment.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("three-band D=512 A width overflow".into()))?;
+        let decomposition = DecompositionParams {
+            log_basis: commitment.log_basis_inner,
+            ..Root::decomposition()
+        };
+        let norm = rounded_up_role_a_inf_norm(
+            root_policy.sis_security_policy,
+            SisTableDigest::Q128_INNER_D512,
+            Root::sis_modulus_profile(),
+            Root::D,
+            decomposition,
+            commitment.log_basis_open,
+            &ring_challenge,
+            commitment.fold_challenge_shape,
+            true,
+            Root::onehot_chunk_size(),
+            Root::ring_subfield_embedding_norm_bound(),
+            commitment.num_live_blocks,
+            num_polynomials,
+            inner_width as u64,
+        )
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "three-band D=512 A-role norm is outside audited SIS coverage".into(),
+            )
+        })?;
+        commitment.inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: root_policy.sis_security_policy,
+                table_digest: SisTableDigest::Q128_INNER_D512,
+                modulus_profile: Root::sis_modulus_profile(),
+                role: SisMatrixRole::Inner,
+                ring_dimension: Root::D as u32,
+                coeff_linf_bound: norm,
+            },
+            inner_width,
+        )?;
+        commitment = commitment.with_fold_linf_cap_config(field_bits, num_polynomials)?;
+        root.params.final_group.commitment = commitment;
+        root.params.sparse_challenge_config = ring_challenge;
+    }
+
+    // Compress root B/D after the optional A-only promotion.
     retarget_outer_matrix(
         &mut root.params.final_group.commitment.outer_commit_matrix,
         root_bd,

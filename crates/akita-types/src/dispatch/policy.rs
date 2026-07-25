@@ -247,7 +247,7 @@ macro_rules! __dispatch_for_field_envelope {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128, 256 })
@@ -335,7 +335,7 @@ protocol_dispatch_policy! {
         inner: [64, 128, 256, 512]
         outer: [16, 32, 64, 128, 256]
         opening: [16, 32, 64, 128, 256]
-        envelope: [64, 128, 256]
+        envelope: [64, 128, 256, 512]
         ntt: [16, 32, 64, 128, 256, 512]
         min_bd: 16
         ntt_max: 512

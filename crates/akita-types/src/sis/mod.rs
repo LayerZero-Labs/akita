@@ -11,7 +11,8 @@
 //! let width_s = decomposition_digits::decomposed_s_block_ring_count(
 //!     num_positions_per_block, decomposition_digits::num_digits_inner(decomp, is_root))?;
 //! let norm_s = norm_bound::rounded_up_role_a_inf_norm(
-//!     bits, family, d, decomp, &stage1, shape, is_root, k, nu, num_live_blocks, num_claims, width_s as u64)?;
+//!     bits, table_digest, family, d, decomp, &stage1, shape, is_root, k, nu,
+//!     num_live_blocks, num_claims, width_s as u64)?;
 //! let n_a = ajtai_key::min_secure_rank(
 //!     SisTableKey { policy, family, ring_dimension: d as u32, coeff_linf_bound: norm_s },
 //!     width_s as u64)?;

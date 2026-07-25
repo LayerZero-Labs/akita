@@ -23,8 +23,9 @@ schedule switches down to `D = 64` for the recursive tail. It records:
    must land after the first fold pair (`switch = 2`), not on the root,
 4. end-to-end numbers at `nv = 36` for `D = 64` (baseline), `root D = 128`
    `switch = 1`, and `root D = 128` `switch = 2`,
-5. the outcome of trying `root D = 256`: **infeasible on fp128** because the
-   inner (A-role) commitment dispatch is capped at `D ∈ {64, 128}`, and
+5. a three-band variant whose root is `512/128/128`, followed by
+   `128/64/64`, then uniform `64`: it minimizes commit time, but raises prove
+   time, proof size, verify time, and setup memory versus column E, and
 6. a per-role variant (`d_a = 128`, `d_b = d_d = 64`, i.e. commitment
    compression on one level): it runs and verifies, but is **dominated** by the
    per-level `switch = 2` schedule.
@@ -104,10 +105,10 @@ divisibility rule).
 ## Construction (single source of truth)
 
 The mixed schedule is built by
-`akita_config::test_support::mixed_d_per_level_schedule::<Env, Suffix>(num_vars,
+`akita_pcs::test_support::mixed_d_per_level_schedule::<Env, Suffix>(num_vars,
 num_polynomials, switch_at_fold)` and driven through the **normal public PCS
 API** via a thin config adapter
-`akita_config::test_support::MixedDConfig<Env, Suffix, SWITCH_AT_FOLD>`, which
+`akita_pcs::test_support::MixedDConfig<Env, Suffix, SWITCH_AT_FOLD>`, which
 delegates every policy hook to `Env` (so `Env::D` sets the setup
 `gen_ring_dim`) and overrides only `runtime_schedule` / `get_params_for_prove`
 to return the mixed schedule. Both `batched_prove` and `batched_verify` resolve
@@ -340,36 +341,23 @@ penalty. The commit win comes from the cheaper `D = 128` Ajtai layout
 (`n_a = 3` vs `6`); the setup-memory halving comes from the `D = 128` envelope
 needing ~4× fewer setup ring elements (each 2× larger), netting ~½ the bytes.
 
-### root D = 256: infeasible on fp128
+### Post-#328: fp128 D=256 and A-only D=512
 
-Attempting `root D = 256` (via `AKITA_MIXED_ROOT_D=256`) fails at commit:
+The earlier fp128 `D = 256` ceiling no longer applies. The larger-D challenge
+cutover (#328) added fp128 inner dispatch through `D = 512`; the regular SIS
+table covers all roles at `D = 256`, while the additive
+`Q128_INNER_D512` table covers **only the A role at `D = 512`**. B and D remain
+capped at `256`, so a uniform `D = 512` root is neither planned nor certified.
 
-```
-InvalidSetup("A-role ring dimension 256 is outside the inner protocol
-dispatch table for this PCS field tier")
-```
-
-The reason is a deliberate certification boundary in
-`protocol_dispatch_policy!` (`crates/akita-types/src/dispatch/policy.rs`): for
-the fp128 tier the **inner (A-role)** ring dimensions are `[64, 128]`, while
-outer / opening / envelope / NTT slots go up to 256+. The root fold commits its
-witness under the inner (A-role) matrix, so any level committed at `D = 256`
-is rejected regardless of `switch`. `D = 256` is therefore not a usable root (or
-leading-band) ring dimension for fp128 today.
-
-Making `D = 256` roots feasible on fp128 would require, at minimum:
-
-1. adding `256` to the fp128 `inner` arm of `protocol_dispatch_policy!`,
-2. **audited SIS security tables** for the inner A-role at `d = 256` under the
-   `Q128OffsetA7F7` modulus profile (the norm-bound and `min_secure_rank`
-   lookups must cover it), and
-3. validating NTT precision / balanced-digit safe width at `d = 256` for the
-   128-bit modulus.
-
-Items (2)–(3) are cryptographic-parameter work, not a config toggle, so this
-experiment stops at `D = 128` for fp128. Small-field tiers (fp32/fp64) do carry
-inner `d = 256`, so the same experiment could be repeated there if a
-`256 → 64/128` band is of interest.
+Column F therefore uses a genuinely per-role root:
+`d_a/d_b/d_d = 512/128/128`. Its A matrix is repriced with the additive D512
+digest and the production D512 sparse challenge; B/D use their existing D128
+rows. Setup-envelope dispatch and the relation-quotient digit decomposition
+also include D512. The current experimental builder preserves the flat source
+length by promoting the tableless D256 planner's root geometry to D512
+(halving its source-ring and position counts), then rederives the A norm, rank,
+fold-linf state, and outgoing witness length. The two suffix bands are planned
+normally at D128 and D64.
 
 ## Variant: per-role compression (`d_a = 128`, `d_b = d_d = 64`)
 
@@ -398,7 +386,7 @@ prover has a per-role `ensure_role_dim` path alongside the uniform
 
 ### Construction and feasibility on the live API
 
-`akita_config::test_support::compressed_role_root_schedule::<Env>` takes the
+`akita_pcs::test_support::compressed_role_root_schedule::<Env>` takes the
 uniform `D = 128` one-hot schedule and rebuilds the root's **outer (B)** commit
 matrix at `outer_d` and **open (D)** commit matrix at `open_d` (a role whose
 target equals the envelope dimension is left untouched) — halving a role's
@@ -416,24 +404,24 @@ the B matrix width; the adapter therefore overrides `max_setup_matrix_size` to
 size the setup from the actual compressed schedule. Compressing only `d_d`
 (keeping `d_b = 128`) leaves the setup at the uniform-`D128` footprint.
 
-### Results (nv = 36; A-role stays `d_a = 128`; after Fix B; timings are 2-run means on an idle machine, post-main-merge)
+### Results (nv = 36; after Fix B; timings are 2-run means)
 
-| Metric | A: `D = 64` all | A′: `D = 128` root only (`switch = 1`) | B: `D = 128` folds 0–1 (`switch = 2`) | E: fold-1 A-band (`128/128/128 → 128/64/64 → 64`) | C: `d_b=d_d=64` | D: `d_b=128, d_d=64` |
-|---|---|---|---|---|---|---|
-| Commit                   | 23.99 s | 14.49 s | 14.34 s | 13.65 s | 14.93 s | 14.45 s |
-| Prove                    | 2.97 s  | 3.37 s  | 3.17 s  | 3.12 s | 3.25 s (was 7.54 s) | 3.26 s (was 7.15 s) |
-| Verify                   | 0.038 s | 0.027 s | 0.026 s | 0.024 s | 0.045 s (was 0.217 s) | 0.036 s (was 0.210 s) |
-| Proof size               | 93,400 B | 94,428 B | 97,824 B | 95,768 B | **108,160 B** | **108,179 B** |
-| Setup vector / NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | **2.16 GB / 5.41 GB** | 1.08 GB / 2.71 GB |
-| Root ranks (`n_a/n_b/n_d`) | — | `3/1/1` | `3/1/1` | `3/1/1` | `3/2/1` | `3/1/1` |
-| Fold levels (incl. terminal) | 9 | 9 | 7 | 7 | 6 | 6 |
+| Metric | A: `D = 64` all | A′: `D = 128` root only (`switch = 1`) | B: `D = 128` folds 0–1 (`switch = 2`) | E: fold-1 A-band (`128/128/128 → 128/64/64 → 64`) | F: three-band A=512 (`512/128/128 → 128/64/64 → 64`) | C: `d_b=d_d=64` | D: `d_b=128, d_d=64` |
+|---|---|---|---|---|---|---|---|
+| Commit                   | 23.99 s | 14.49 s | 14.34 s | 13.65 s | **10.83 s** | 14.93 s | 14.45 s |
+| Prove                    | 2.97 s  | 3.37 s  | 3.17 s  | 3.12 s | **5.31 s** | 3.25 s (was 7.54 s) | 3.26 s (was 7.15 s) |
+| Verify                   | 0.038 s | 0.027 s | 0.026 s | 0.024 s | **0.049 s** | 0.045 s (was 0.217 s) | 0.036 s (was 0.210 s) |
+| Proof size               | 93,400 B | 94,428 B | 97,824 B | 95,768 B | **98,230 B** | **108,160 B** | **108,179 B** |
+| Setup vector / NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | **1.44 GB / 3.61 GB** | **2.16 GB / 5.41 GB** | 1.08 GB / 2.71 GB |
+| Root ranks (`n_a/n_b/n_d`) | — | `3/1/1` | `3/1/1` | `3/1/1` | **`1/1/1`** | `3/2/1` | `3/1/1` |
+| Fold levels (incl. terminal) | 9 | 9 | 7 | 7 | 7 | 6 | 6 |
 
-Every timing above is the mean of two back-to-back runs on an otherwise idle
-machine; the two passes agreed to within run-to-run noise (e.g. baseline commit
-23.98 s / 23.99 s), and proof size, setup footprint, root ranks, and fold-level
-counts are deterministic and identical across passes. This supersedes an earlier
-measurement pass whose commit/verify numbers (baseline commit ≈ 26 s, verify
-≈ 0.05–0.06 s) were inflated by background load.
+Columns A–E, C, and D retain the prior two-run means measured on an otherwise
+idle machine. Column F is the mean of its two new back-to-back passes; proof
+size, setup footprint, root ranks, and fold-level counts were deterministic.
+The paired E rerun used for the direct E/F comparison below had stable commit
+and prove timings but a noisier second verify pass, so the table retains E's
+earlier idle-machine verify mean.
 
 ### `switch = 1` (root only) vs `switch = 2`
 
@@ -493,6 +481,43 @@ So among the `D = 128`-root variants, E is the best "balanced" point: it keeps
 `switch = 2`'s short 7-level ladder and fast verify while taking a smaller proof,
 and it costs nothing extra on setup or commit.
 
+### `F`: D512 A-only root vs E
+
+Column F changes only the leading band relative to E:
+
+| Level | E `d_a/d_b/d_d` | F `d_a/d_b/d_d` |
+|---|---|---|
+| 0 (root) | 128/128/128 | **512/128/128** |
+| 1 | 128/64/64 | 128/64/64 |
+| 2+ | 64/64/64 | 64/64/64 |
+
+Two back-to-back F passes measured commit **10.51 / 11.15 s**, prove
+**5.68 / 4.93 s**, and verify **0.0489 / 0.0487 s** (means shown in the
+table). Proof size was deterministic at **98,230 B** over 7 levels:
+35,372 B of fold proof plus a 62,858 B terminal response. A companion E rerun
+on the same binary measured commit 14.31 / 14.51 s and prove 3.16 / 3.10 s;
+verify was noisier at 0.024 / 0.045 s, while its proof stayed exactly
+95,768 B.
+
+Compared with E, F makes the intended commitment trade:
+
+- **Commit:** 10.83 s vs 13.65 s in the table (−21%); the paired rerun gives
+  −25%. The root A rank drops from `3` to `1`.
+- **Prove:** 5.31 s vs 3.12 s (+70%). The larger D512 root relation and fold
+  arithmetic give back most of the commitment saving.
+- **Commit + prove + verify:** about **16.19 s vs 16.79 s** using the table's E
+  numbers (≈4% faster), or 16.19 s vs 17.57 s in the paired rerun (≈8% faster).
+- **Wire and verify:** F adds **2,462 B** (+2.6%) and its stable ≈0.049 s verify
+  is about 2× E's idle ≈0.024 s result.
+- **Setup:** the vector / prepared NTT cache grows by one third,
+  1.08/2.71 GB → **1.44/3.61 GB**, because each D512 setup ring is four times
+  the coefficient storage of D128 even though the root needs only one third as
+  many setup ring elements (176,128 vs 528,384).
+
+So F is the **commit-optimized** point and slightly improves total online
+prover latency, but E remains the better balanced choice: smaller setup,
+smaller proof, much faster prove, and faster verify.
+
 ### Why it is (still) dominated
 
 After Fix B the prove penalty is gone (≈3.3 s), so per-role compression is no
@@ -549,8 +574,15 @@ AKITA_MIXED_ROLESWITCH=1 AKITA_MIXED_ROLESWITCH_ROOT_D=128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
 
-# Demonstrate the fp128 inner-role ceiling (fails at commit):
-AKITA_MIXED_ROOT_D=256 AKITA_MIXED_SWITCH=2 AKITA_NUM_VARS=36 \
+# Column F: A-only D512 root (512/128/128, then 128/64/64, then 64).
+AKITA_MIXED_THREEBAND=1 AKITA_MIXED_THREEBAND_ROOT_D=512 \
+  AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
+  AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
+  cargo run --release -p akita-pcs --example profile
+
+# D256 three-band regression companion:
+AKITA_MIXED_THREEBAND=1 AKITA_MIXED_THREEBAND_ROOT_D=256 \
+  AKITA_NUM_VARS=36 \
   AKITA_MODE=onehot_fp128_d64_root_d128 \
   cargo run --release -p akita-pcs --example profile
 ```
@@ -566,13 +598,16 @@ rg '\] (setup|commit|prove|verify OK|proof: total)' <log>
 | Change | Location |
 |--------|----------|
 | Public suffix planner `plan_optimal_suffix` + `PlannedSuffix{,Fold,Terminal}` | `crates/akita-planner/src/schedule_params.rs`, re-exported from `crates/akita-planner/src/lib.rs` |
-| Mixed-schedule builder (plans optimal suffix) + `MixedDConfig` adapter | `crates/akita-config/src/test_support.rs` |
+| Mixed-schedule builders/adapters (plans optimal suffixes) | `crates/akita-pcs/src/test_support.rs` |
 | `mixed_d_per_level_e2e` refactored onto the shared builder | `crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` (deleted the duplicated `tests/mixed_d_per_level/fixture.rs`) |
-| Per-role builder `compressed_role_root_schedule` + `CompressedRoleRootConfig<Env, OUTER_D, OPEN_D>` | `crates/akita-config/src/test_support.rs` |
+| Per-role builder `compressed_role_root_schedule` + `CompressedRoleRootConfig<Env, OUTER_D, OPEN_D>` | `crates/akita-pcs/src/test_support.rs` |
 | Per-role E2E oracle (prove/verify + wrong-opening + tampered-commitment rejection) for a `128/64/64` root | `crates/akita-pcs/tests/compressed_role_e2e.rs` |
 | Profile mode `onehot_fp128_d64_root_d128` with `AKITA_MIXED_SWITCH` / `AKITA_MIXED_ROOT_D` / `AKITA_MIXED_ROLE` / `AKITA_MIXED_OUTER_D` / `AKITA_MIXED_OPEN_D` | `crates/akita-pcs/examples/profile/modes.rs` |
 | `validate_against_planner` flag so the synthetic-schedule mode skips the shipped-catalog proof-size assertion | `crates/akita-pcs/examples/profile/workload.rs` |
-| `fp128::D256OneHot` preset (makes the inner-role ceiling explicit/testable) | `crates/akita-config/src/proof_optimized/fp128.rs` |
+| Tableless `fp128::{D256OneHot,D512OneHot}` experiment presets | `crates/akita-config/src/proof_optimized/fp128.rs` |
+| D512 A-only three-band root, tableless root planning, and schedule regression | `crates/akita-pcs/src/test_support.rs`, `crates/akita-pcs/tests/three_band_schedule.rs` |
+| Thread SIS table digest through canonical A-role norm pricing | `crates/akita-types/src/sis/norm_bound.rs` and planner/schedule callers |
+| fp128 D512 setup-envelope dispatch and D512 relation-quotient digit decomposition | `crates/akita-types/src/dispatch/policy.rs`, `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` |
 | **Fix B**: `digit_range_equality_low_variable_count = ring_bits` (bind the shared low block on every path) | prover `crates/akita-prover/src/protocol/ring_switch/finalize.rs` + verifier `crates/akita-verifier/src/protocol/ring_switch.rs` |
 | **Fix C**: fold `evaluate_weighted_setup_matrix` over the column axis (parallel; identical sum) | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
 | **Fix D**: parallelize the Z-consistency term in `evaluate_group_constraints` over positions (parallel; identical sum) | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
@@ -650,7 +685,9 @@ tamper rejections), `mixed_role_e2e`, the recursive/offloaded e2e suites, and th
 full `akita-types`/`akita-verifier`/`akita-prover` unit suites.
 
 ## Future work
-- **`D = 256` on fp128** requires inner A-role SIS certification; until then the
-  leading band is capped at `D = 128` for fp128.
+- **Plan the D512 mixed-role root natively.** Column F currently promotes the
+  D256 planner's root geometry and rederives every D512 A/security field. A
+  planner entry point that searches per-role root dimensions could determine
+  whether another D512 block split improves the tradeoff.
 - **Sweep the band.** Explore `switch ∈ {2, 3}` and larger `nv` to map where the
   cheaper large-`D` commit stops paying for the heavier large-`D` early folds.
