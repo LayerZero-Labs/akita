@@ -216,10 +216,9 @@ fn infinity_log_trial_probability_lgsa_summary(
 ) -> Result<f64> {
     let d_ = summary.effective_dimension as f64;
     if ((lattice_dimension as f64).sqrt() * length_bound) <= 2.0_f64.powf(log_q) {
-        let vector_length = rho * summary.first_squared_norm.sqrt();
-        let sigma = vector_length / d_.sqrt();
-        let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
-        Ok(d_ * log2_positive(erf(erf_arg)))
+        let log2_sigma = log2_positive(rho) + summary.first_log2_norm - 0.5 * log2_positive(d_);
+        let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
+        Ok(d_ * log2_erf_from_log2_arg(log2_erf_arg))
     } else {
         dilithium_log_trial_probability_lgsa_summary(log_q, length_bound, summary, sieve_dim)
     }
@@ -234,13 +233,19 @@ fn dilithium_log_trial_probability_lgsa_summary(
     let q_f = 2.0_f64.powf(log_q);
     let idx_start = summary.idx_start;
     let idx_end = summary.idx_end.max(idx_start);
-    let vector_length = summary.vector_length_at_idx_start;
     let gaussian_coords = (idx_end - idx_start + 1).max(u64::from(sieve_dim)) as f64;
-    let sigma = vector_length / gaussian_coords.sqrt();
-    let erf_arg = length_bound / (2.0_f64.sqrt() * sigma);
-    let mut log_trial_prob = log2_positive(erf(erf_arg)) * gaussian_coords;
+    let log2_sigma = summary.log2_vector_length_at_idx_start - 0.5 * log2_positive(gaussian_coords);
+    let log2_erf_arg = log2_positive(length_bound) - 0.5 - log2_sigma;
+    let mut log_trial_prob = log2_erf_from_log2_arg(log2_erf_arg) * gaussian_coords;
     log_trial_prob += log2_positive((2.0 * length_bound + 1.0) / q_f) * idx_start as f64;
     Ok(log_trial_prob)
+}
+
+fn log2_erf_from_log2_arg(log2_arg: f64) -> f64 {
+    if log2_arg < -20.0 {
+        return log2_arg + log2_positive(2.0 / std::f64::consts::PI.sqrt());
+    }
+    log2_positive(erf(log2_arg.exp2()))
 }
 
 fn dilithium_log_trial_probability(
@@ -408,5 +413,14 @@ mod tests {
         .unwrap();
         let cost = cost_infinity_fixed(63, &params, 0, &sample_config()).unwrap();
         assert!(matches!(cost.sieve, Some(CostValue::Infinity)));
+    }
+
+    #[test]
+    fn log2_erf_stays_finite_for_tiny_arguments() {
+        let log2_arg = -1_000.0;
+        let log2_erf = log2_erf_from_log2_arg(log2_arg);
+        assert!(log2_erf.is_finite());
+        assert!(log2_erf < -999.0);
+        assert!(log2_erf > -1_001.0);
     }
 }

@@ -1,8 +1,7 @@
 //! ADPS16 quantum infinity norm scalar table generation.
 //!
-//! The generator is offline only. It discovers a boundary with the local
-//! optimizer, then certifies the accepted point and its rejected successor
-//! with the exhaustive beta and zeta search.
+//! The generator is offline only. The selected profile controls both boundary
+//! discovery and certification without dimension-specific search behavior.
 
 use crate::{
     akita::{scalar_sis_from_ring_wide, AkitaModulusProfileId},
@@ -25,7 +24,7 @@ pub const COEFF_LINF_BUCKETS: &[u64] = &[
 ];
 
 /// Ring dimensions included in the current reachable generation domain.
-pub const RING_DIMS: &[u32] = &[32, 64, 128, 256];
+pub const RING_DIMS: &[u32] = &[32, 64, 128, 256, 512];
 
 /// Exact modulus profiles included in the generated artifact.
 pub const FAMILIES: &[AkitaModulusProfileId] = &[
@@ -49,6 +48,8 @@ pub const D128_SEARCH_CAP: u64 = DEFAULT_SEARCH_CAP;
 pub enum InfinityWidthProfile {
     /// Local minimum discovery followed by exhaustive boundary certification.
     LocalMinimum,
+    /// Pinned lattice-estimator-compatible local-minimum beta and zeta search.
+    LatticeEstimatorParity,
     /// Serial exhaustive beta and zeta search.
     ExhaustiveSerial,
     /// Parallel exhaustive beta and zeta search.
@@ -60,6 +61,7 @@ impl InfinityWidthProfile {
     pub const fn label(self) -> &'static str {
         match self {
             Self::LocalMinimum => "local-minimum+exhaustive-certification",
+            Self::LatticeEstimatorParity => "lattice-estimator-local-minimum",
             Self::ExhaustiveSerial => "exhaustive-serial",
             Self::ExhaustiveParallel => "exhaustive-parallel",
         }
@@ -68,7 +70,7 @@ impl InfinityWidthProfile {
     /// Estimator configuration for the selected profile.
     pub fn config(self) -> EstimateConfig {
         match self {
-            Self::LocalMinimum => EstimateConfig {
+            Self::LocalMinimum | Self::LatticeEstimatorParity => EstimateConfig {
                 red_cost_model: ReductionCostModel::Adps16 {
                     mode: crate::config::Adps16Mode::Quantum,
                 },
@@ -390,6 +392,7 @@ pub fn validate_infinity_width_rows(rows: &[InfinityWidthRow]) -> Result<()> {
 /// Scalar certification still groups by `(B, n)` and takes the min `m`. The
 /// emitted runtime table projects those cutoffs onto each reachable ring
 /// dimension as `width[r - 1] = cutoff_m(B, n = r * d) / d`.
+///
 pub fn rust_table_arms(
     rows: &[InfinityWidthRow],
     max_rank: u32,
@@ -411,6 +414,9 @@ pub fn rust_table_arms(
     }
     let mut arms = BTreeMap::<AkitaModulusProfileId, Vec<String>>::new();
     for (profile, d, bound) in pairs {
+        if max_rank == 0 {
+            continue;
+        }
         let mut widths = Vec::with_capacity(max_rank as usize);
         let mut complete = true;
         for rank in 1..=max_rank {
@@ -450,6 +456,9 @@ fn max_secure_width_row(
     let policy = table_config.policy;
     let target = policy.adps16_quantum_constraint().minimum_log2_rop;
     let discovery = |width| {
+        if width < u64::from(rank) {
+            return Ok(true);
+        }
         let cost = estimate_width(
             modulus_profile,
             d,
@@ -460,10 +469,9 @@ fn max_secure_width_row(
         )?;
         secure_or_error(cost.rop, target)
     };
-    let discovered = max_true_in_prefix(search_cap, discovery)?;
+    let discovered = max_true_in_prefix(1, search_cap, discovery)?;
     let (max_width, next_width, hit_cap) =
         if table_config.profile == InfinityWidthProfile::LocalMinimum {
-            let cert_config = InfinityWidthProfile::ExhaustiveSerial.config();
             certify_boundary(
                 modulus_profile,
                 d,
@@ -471,7 +479,7 @@ fn max_secure_width_row(
                 coeff_linf_bound,
                 search_cap,
                 discovered.max_value,
-                &cert_config,
+                &InfinityWidthProfile::ExhaustiveSerial.config(),
                 target,
             )?
         } else {
@@ -481,6 +489,12 @@ fn max_secure_width_row(
                 discovered.hit_cap,
             )
         };
+    let exhaustive_boundary_config = InfinityWidthProfile::ExhaustiveSerial.config();
+    let boundary_config = if table_config.profile == InfinityWidthProfile::LocalMinimum {
+        &exhaustive_boundary_config
+    } else {
+        estimator_config
+    };
     let max_costs = (max_width > 0)
         .then(|| {
             estimate_width(
@@ -489,7 +503,7 @@ fn max_secure_width_row(
                 rank,
                 max_width,
                 coeff_linf_bound,
-                &InfinityWidthProfile::ExhaustiveSerial.config(),
+                boundary_config,
             )
         })
         .transpose()?
@@ -502,7 +516,7 @@ fn max_secure_width_row(
                 rank,
                 width,
                 coeff_linf_bound,
-                &InfinityWidthProfile::ExhaustiveSerial.config(),
+                boundary_config,
             )
         })
         .transpose()?
@@ -622,14 +636,14 @@ fn security_met(rop: CostValue, target: f64) -> bool {
                 || (lower_bound.log2.is_infinite() && lower_bound.log2.is_sign_positive()))
 }
 
-fn max_true_in_prefix<F>(cap: u64, mut predicate: F) -> Result<PrefixSearchResult>
+fn max_true_in_prefix<F>(start: u64, cap: u64, mut predicate: F) -> Result<PrefixSearchResult>
 where
     F: FnMut(u64) -> Result<bool>,
 {
-    if cap == 0 {
-        return invalid_config("cap", "cap must be positive");
+    if start == 0 || cap < start {
+        return invalid_config("search range", "must satisfy 0 < start <= cap");
     }
-    let mut first = 1;
+    let mut first = start;
     while first <= cap && !predicate(first)? {
         first = first
             .checked_add(1)
@@ -641,7 +655,7 @@ where
     if first > cap {
         return Ok(PrefixSearchResult {
             max_value: 0,
-            next_value: Some(1),
+            next_value: Some(start),
             hit_cap: false,
         });
     }
@@ -774,7 +788,7 @@ mod tests {
     #[test]
     fn prefix_search_finds_last_true_value() {
         assert_eq!(
-            max_true_in_prefix(16, |value| Ok(value <= 9))
+            max_true_in_prefix(1, 16, |value| Ok(value <= 9))
                 .unwrap()
                 .max_value,
             9
@@ -790,6 +804,30 @@ mod tests {
     #[test]
     fn csv_has_no_classical_columns() {
         assert!(!InfinityWidthRow::csv_header().contains("classical"));
+    }
+
+    #[test]
+    fn rust_table_emits_direct_q128_d512_rows() {
+        let rows = [10, 20, 30, 40]
+            .into_iter()
+            .enumerate()
+            .map(|(index, max_width)| InfinityWidthRow {
+                modulus_profile: AkitaModulusProfileId::Q128OffsetA7F7,
+                d: 512,
+                rank: u32::try_from(index + 1).unwrap(),
+                coeff_linf_bound: 2,
+                max_width,
+                policy: SisSecurityPolicy::Quantum128BitADPS16,
+                search_cap: DEFAULT_SEARCH_CAP,
+                hit_cap: false,
+                profile: InfinityWidthProfile::LocalMinimum,
+                max_costs: None,
+                next_costs: None,
+            })
+            .collect::<Vec<_>>();
+        let arms = rust_table_arms(&rows, 4);
+        assert!(arms[&AkitaModulusProfileId::Q128OffsetA7F7]
+            .contains(&"(512, 2) => Some(&[10, 20, 30, 40]),".to_string()));
     }
 
     #[test]
@@ -809,10 +847,39 @@ mod tests {
             64,
             2
         ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            512,
+            2
+        ));
+        assert!(!reachable_role_cell(
+            AkitaModulusProfileId::Q64Offset59,
+            512,
+            2
+        ));
         assert!(!reachable_role_cell(
             AkitaModulusProfileId::Q128OffsetA7F7,
             16,
             15
         ));
+    }
+
+    #[test]
+    fn q128_d512_rows_are_estimated_directly() {
+        let config = InfinityWidthTableConfig {
+            profiles: vec![AkitaModulusProfileId::Q128OffsetA7F7],
+            ring_dims: vec![512],
+            coeff_linf_bounds: vec![67_108_863],
+            max_rank: 2,
+            search_cap: Some(100_000),
+            profile: InfinityWidthProfile::LatticeEstimatorParity,
+            ..InfinityWidthTableConfig::default()
+        };
+        let rows = generate_infinity_width_rows(&config).unwrap();
+        validate_infinity_width_rows(&rows).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().all(|row| row.d == 512));
+        assert_eq!(rows[0].max_width, 94_477);
+        assert_eq!(rows[1].max_width, 100_000);
     }
 }
