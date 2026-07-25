@@ -97,16 +97,21 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
+    let relation_address_geometry = akita_types::RelationAddressGeometry::new(
+        CommitmentRingDims::uniform(D),
+        D,
+        opening_source_len,
+    )
+    .unwrap();
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
         eq_tau1,
         &layout,
-        opening_source_len,
         &groups,
         &full_vec_randomness,
         Some(&fold_gadget),
-        CommitmentRingDims::uniform(D),
+        relation_address_geometry,
         alpha,
     )
     .unwrap();

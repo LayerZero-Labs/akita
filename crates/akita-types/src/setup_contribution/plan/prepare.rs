@@ -1,86 +1,49 @@
 use super::*;
 use akita_algebra::ring::scalar_powers;
 
-/// Per-role relation lane geometry derived from `role_dims` and the folding
-/// challenge `alpha`. For uniform roles every ratio is 1 and every spec reduces
-/// to the pre-existing single-`eq` fast path.
-struct RelationLaneGeometry<E> {
-    /// `d_a / base_ring_dim` (total relation lanes per inner ring element).
-    a_ratio: usize,
-    /// Distinct physical subcolumns per role: `a_ratio / (d_role / base)`.
+/// Challenge-dependent lane weights over checked relation-address geometry.
+///
+/// Address counts come from [`RelationAddressGeometry`]; this type owns only
+/// the `alpha` powers needed to contract consecutive lanes into one physical
+/// setup column.
+struct PreparedRelationLanes<E> {
+    inner_lane_count: usize,
+    outer_lane_count: usize,
+    opening_lane_count: usize,
     d_subcolumns: usize,
     b_subcolumns: usize,
-    /// `α^{base_ring_dim · l}` tables, one per role (length `d_role / base`).
-    a_lane_alpha: Vec<E>,
-    b_lane_alpha: Vec<E>,
-    d_lane_alpha: Vec<E>,
+    inner_alpha: Vec<E>,
+    outer_alpha: Vec<E>,
+    opening_alpha: Vec<E>,
 }
 
-impl<E: FieldCore> RelationLaneGeometry<E> {
-    fn new(role_dims: CommitmentRingDims, alpha: E) -> Result<Self, AkitaError> {
-        let base = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
-        if base == 0 {
-            return Err(AkitaError::InvalidSetup("zero base ring dimension".into()));
-        }
-        let ratio = |d: usize| -> Result<usize, AkitaError> {
-            if !d.is_multiple_of(base) {
-                return Err(AkitaError::InvalidSetup(
-                    "role dimension does not decompose over the Stage 3 base".into(),
-                ));
-            }
-            Ok(d / base)
-        };
-        let a_ratio = ratio(role_dims.d_a())?;
-        let b_lanes = ratio(role_dims.d_b())?;
-        let d_lanes = ratio(role_dims.d_d())?;
-        let subcolumns = |lanes: usize| -> Result<usize, AkitaError> {
-            a_ratio
-                .checked_div(lanes)
-                .filter(|s| *s != 0 && a_ratio == s * lanes)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("role lanes do not divide the inner witness".into())
-                })
-        };
-        // `α^base`, then per-role lane tables `[1, α^base, α^{2·base}, …]`.
-        let alpha_base = *scalar_powers(alpha, base + 1)
-            .get(base)
+impl<E: FieldCore> PreparedRelationLanes<E> {
+    fn new(
+        relation_address_geometry: RelationAddressGeometry,
+        alpha: E,
+    ) -> Result<Self, AkitaError> {
+        let role_dims = relation_address_geometry.role_dims();
+        let inner_lane_count = relation_address_geometry.role_relation_lane_count(RingRole::Inner);
+        let outer_lane_count = relation_address_geometry.role_relation_lane_count(RingRole::Outer);
+        let opening_lane_count =
+            relation_address_geometry.role_relation_lane_count(RingRole::Opening);
+        let (b_subcolumns, d_subcolumns) =
+            SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
+        let common_coeff_count = relation_address_geometry.common_relation_witness_coeff_count();
+        let alpha_base = *scalar_powers(alpha, common_coeff_count + 1)
+            .get(common_coeff_count)
             .ok_or(AkitaError::InvalidProof)?;
         let lane_alpha = |lanes: usize| scalar_powers(alpha_base, lanes);
         Ok(Self {
-            a_ratio,
-            d_subcolumns: subcolumns(d_lanes)?,
-            b_subcolumns: subcolumns(b_lanes)?,
-            a_lane_alpha: lane_alpha(a_ratio),
-            b_lane_alpha: lane_alpha(b_lanes),
-            d_lane_alpha: lane_alpha(d_lanes),
+            inner_lane_count,
+            outer_lane_count,
+            opening_lane_count,
+            d_subcolumns,
+            b_subcolumns,
+            inner_alpha: lane_alpha(inner_lane_count),
+            outer_alpha: lane_alpha(outer_lane_count),
+            opening_alpha: lane_alpha(opening_lane_count),
         })
-    }
-
-    fn a_spec(&self) -> RoleLaneSpec<'_, E> {
-        RoleLaneSpec {
-            a_ratio: self.a_ratio,
-            role_subcolumns: 1,
-            role_lanes: self.a_lane_alpha.len(),
-            role_lane_alpha: &self.a_lane_alpha,
-        }
-    }
-
-    fn b_spec(&self) -> RoleLaneSpec<'_, E> {
-        RoleLaneSpec {
-            a_ratio: self.a_ratio,
-            role_subcolumns: self.b_subcolumns,
-            role_lanes: self.b_lane_alpha.len(),
-            role_lane_alpha: &self.b_lane_alpha,
-        }
-    }
-
-    fn d_spec(&self) -> RoleLaneSpec<'_, E> {
-        RoleLaneSpec {
-            a_ratio: self.a_ratio,
-            role_subcolumns: self.d_subcolumns,
-            role_lanes: self.d_lane_alpha.len(),
-            role_lane_alpha: &self.d_lane_alpha,
-        }
     }
 }
 
@@ -91,11 +54,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         opening_batch: &OpeningClaimsLayout,
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
-        opening_source_len: usize,
         groups: &[SetupContributionGroupInputs],
         full_vec_randomness: &[E],
         fold_gadget: Option<&[F]>,
-        role_dims: CommitmentRingDims,
+        relation_address_geometry: RelationAddressGeometry,
         alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
@@ -107,11 +69,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             opening_batch,
             eq_tau1,
             witness_layout,
-            opening_source_len,
             groups,
             full_vec_randomness,
             fold_gadget,
-            role_dims,
+            relation_address_geometry,
             alpha,
             SetupPlanMaterialization::Full,
         )
@@ -123,11 +84,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         opening_batch: &OpeningClaimsLayout,
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
-        opening_source_len: usize,
         groups: &[SetupContributionGroupInputs],
         full_vec_randomness: &[E],
         fold_gadget: Option<&[F]>,
-        role_dims: CommitmentRingDims,
+        relation_address_geometry: RelationAddressGeometry,
         alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
@@ -139,11 +99,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             opening_batch,
             eq_tau1,
             witness_layout,
-            opening_source_len,
             groups,
             full_vec_randomness,
             fold_gadget,
-            role_dims,
+            relation_address_geometry,
             alpha,
             SetupPlanMaterialization::Deferred,
         )
@@ -155,11 +114,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         opening_batch: &OpeningClaimsLayout,
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
-        opening_source_len: usize,
         groups: &[SetupContributionGroupInputs],
         full_vec_randomness: &[E],
         fold_gadget: Option<&[F]>,
-        role_dims: CommitmentRingDims,
+        relation_address_geometry: RelationAddressGeometry,
         alpha: E,
         materialization: SetupPlanMaterialization,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
@@ -168,7 +126,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: MulBase<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
-        let lanes = RelationLaneGeometry::new(role_dims, alpha)?;
+        let role_dims = relation_address_geometry.role_dims();
+        let expected_address_variables = relation_address_geometry.relation_lane_variable_count();
+        if full_vec_randomness.len() != expected_address_variables {
+            return Err(AkitaError::InvalidSize {
+                expected: expected_address_variables,
+                actual: full_vec_randomness.len(),
+            });
+        }
+        let lanes = PreparedRelationLanes::new(relation_address_geometry, alpha)?;
         let rows = {
             let _span = tracing::info_span!("setup_prepare_validate").entered();
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
@@ -250,83 +216,74 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .to_vec()
                         .into();
                 drop(geometry_span);
-                let (e_eq_slice, t_eq_slice, z_eq_slice) = if materialization
-                    .materializes_column_slices()
-                {
-                    let e_eq_slice = {
-                        let _span = tracing::info_span!("setup_prepare_e_weights").entered();
-                        setup_e_col_weights::<E>(
-                            witness_layout,
-                            opening_source_len,
-                            group.group_id,
-                            num_live_blocks,
-                            group.num_claims,
-                            depth_open,
-                            &eq_window,
-                            &lanes.d_spec(),
-                        )?
-                    };
-                    let t_eq_slice = {
-                        let _span = tracing::info_span!("setup_prepare_t_weights").entered();
-                        setup_t_col_weights::<E>(
-                            witness_layout,
-                            opening_source_len,
-                            group.group_id,
-                            num_live_blocks,
-                            depth_commit,
-                            n_a,
-                            group.num_claims,
-                            &eq_window,
-                            &lanes.b_spec(),
-                        )?
-                    };
-                    let fold_gadget_storage;
-                    let fold_gadget = if let Some(fold_gadget) = fold_gadget {
-                        if fold_gadget.len() < group.depth_fold {
-                            return Err(AkitaError::InvalidSize {
-                                expected: group.depth_fold,
-                                actual: fold_gadget.len(),
-                            });
-                        }
-                        fold_gadget
-                    } else {
-                        fold_gadget_storage =
-                            crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
-                        &fold_gadget_storage
-                    };
-                    let z_range = num_positions_per_block
-                        .checked_mul(depth_witness)
-                        .ok_or_else(|| AkitaError::InvalidSetup("setup Z range overflow".into()))?;
-                    let mut z_eq_slice = vec![E::zero(); z_range];
-                    {
-                        let _span = tracing::info_span!("setup_prepare_z_weights").entered();
-                        setup_z_col_weights::<F, E>(
-                            witness_layout,
-                            opening_source_len,
-                            group.group_id,
-                            num_positions_per_block,
-                            depth_witness,
-                            group.depth_fold,
-                            &eq_window,
-                            fold_gadget,
-                            &lanes.a_spec(),
-                            &mut z_eq_slice,
-                        )?;
+                let (d_spans, b_spans, a_spans) = build_setup_contribution_spans(
+                    witness_layout,
+                    group,
+                    num_live_blocks,
+                    num_positions_per_block,
+                    depth_witness,
+                    depth_commit,
+                    depth_open,
+                    n_a,
+                    d_col_range.len(),
+                    t_cols,
+                    z_cols,
+                    relation_address_geometry.relation_lane_capacity(),
+                    &lanes,
+                )?;
+                let fold_gadget_storage;
+                let group_fold_gadget = if let Some(fold_gadget) = fold_gadget {
+                    if fold_gadget.len() < group.depth_fold {
+                        return Err(AkitaError::InvalidSize {
+                            expected: group.depth_fold,
+                            actual: fold_gadget.len(),
+                        });
                     }
-                    (e_eq_slice, t_eq_slice, z_eq_slice)
+                    fold_gadget
                 } else {
-                    if let Some(fold_gadget) = fold_gadget {
-                        if fold_gadget.len() < group.depth_fold {
-                            return Err(AkitaError::InvalidSize {
-                                expected: group.depth_fold,
-                                actual: fold_gadget.len(),
-                            });
-                        }
-                    }
-                    (Vec::new(), Vec::new(), Vec::new())
+                    fold_gadget_storage =
+                        crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
+                    &fold_gadget_storage
                 };
+                let (e_eq_slice, t_eq_slice, z_eq_slice) =
+                    if materialization.materializes_column_slices() {
+                        let e_eq_slice = {
+                            let _span = tracing::info_span!("setup_prepare_e_weights").entered();
+                            materialize_span_weights::<F, E>(
+                                d_col_range.len(),
+                                &d_spans,
+                                &eq_window,
+                                &lanes.opening_alpha,
+                                None,
+                            )?
+                        };
+                        let t_eq_slice = {
+                            let _span = tracing::info_span!("setup_prepare_t_weights").entered();
+                            materialize_span_weights::<F, E>(
+                                t_cols,
+                                &b_spans,
+                                &eq_window,
+                                &lanes.outer_alpha,
+                                None,
+                            )?
+                        };
+                        let z_eq_slice = {
+                            let _span = tracing::info_span!("setup_prepare_z_weights").entered();
+                            materialize_span_weights::<F, E>(
+                                z_cols,
+                                &a_spans,
+                                &eq_window,
+                                &lanes.inner_alpha,
+                                Some(group_fold_gadget),
+                            )?
+                        };
+                        (e_eq_slice, t_eq_slice, z_eq_slice)
+                    } else {
+                        (Vec::new(), Vec::new(), Vec::new())
+                    };
 
                 Ok(SetupContributionGroupPlan {
+                    group_id: group.group_id,
                     d_col_range,
                     t_cols,
                     z_cols,
@@ -339,6 +296,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
+                    d_spans,
+                    b_spans,
+                    a_spans,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
@@ -386,6 +346,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_rows,
             d_physical_cols,
             d_weights,
+            relation_address_geometry,
             projection_geometry,
             eq_window,
         })
@@ -402,6 +363,235 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     pub const fn projection_geometry(&self) -> SetupProjectionGeometry {
         self.projection_geometry
     }
+
+    /// Canonical relation-address geometry used by every setup contribution
+    /// span.
+    #[must_use]
+    pub const fn relation_address_geometry(&self) -> RelationAddressGeometry {
+        self.relation_address_geometry
+    }
+}
+
+type GroupContributionSpans = (
+    Vec<SetupContributionSpan>,
+    Vec<SetupContributionSpan>,
+    Vec<SetupContributionSpan>,
+);
+
+#[allow(clippy::too_many_arguments)]
+fn build_setup_contribution_spans<E: FieldCore>(
+    witness_layout: &WitnessLayout,
+    group: &SetupContributionGroupInputs,
+    num_live_blocks: usize,
+    num_positions_per_block: usize,
+    depth_witness: usize,
+    depth_commit: usize,
+    depth_open: usize,
+    n_a: usize,
+    d_column_count: usize,
+    b_column_count: usize,
+    a_column_count: usize,
+    relation_lane_capacity: usize,
+    lanes: &PreparedRelationLanes<E>,
+) -> Result<GroupContributionSpans, AkitaError> {
+    let mut d_spans = Vec::new();
+    let mut b_spans = Vec::new();
+    let mut a_spans = Vec::new();
+    let d_setup_stride = lanes
+        .d_subcolumns
+        .checked_mul(depth_open)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D column stride overflow".into()))?;
+    let d_relation_stride = depth_open
+        .checked_mul(lanes.inner_lane_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup D relation stride overflow".into()))?;
+    let b_setup_stride = n_a
+        .checked_mul(depth_commit)
+        .and_then(|stride| stride.checked_mul(lanes.b_subcolumns))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B column stride overflow".into()))?;
+    let b_relation_stride = n_a
+        .checked_mul(depth_commit)
+        .and_then(|stride| stride.checked_mul(lanes.inner_lane_count))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup B relation stride overflow".into()))?;
+    let a_relation_stride = group
+        .depth_fold
+        .checked_mul(lanes.inner_lane_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup A relation stride overflow".into()))?;
+
+    for unit in witness_layout.units_for_group(group.group_id)? {
+        for claim in 0..group.num_claims {
+            for subcolumn in 0..lanes.d_subcolumns {
+                for digit in 0..depth_open {
+                    let setup_column_start = claim
+                        .checked_mul(num_live_blocks)
+                        .and_then(|base| base.checked_add(unit.global_block_start()))
+                        .and_then(|base| base.checked_mul(lanes.d_subcolumns))
+                        .and_then(|base| base.checked_add(subcolumn))
+                        .and_then(|base| base.checked_mul(depth_open))
+                        .and_then(|base| base.checked_add(digit))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("setup D column address overflow".into())
+                        })?;
+                    let witness_column = unit.e_index(
+                        group.num_claims,
+                        depth_open,
+                        claim,
+                        unit.global_block_start(),
+                        digit,
+                    )?;
+                    let relation_lane_start = witness_column
+                        .checked_mul(lanes.inner_lane_count)
+                        .and_then(|base| {
+                            subcolumn
+                                .checked_mul(lanes.opening_lane_count)
+                                .and_then(|offset| base.checked_add(offset))
+                        })
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("setup D relation address overflow".into())
+                        })?;
+                    d_spans.push(SetupContributionSpan::new(
+                        setup_column_start,
+                        d_setup_stride,
+                        relation_lane_start,
+                        d_relation_stride,
+                        unit.num_live_blocks(),
+                        lanes.opening_lane_count,
+                        None,
+                        d_column_count,
+                        relation_lane_capacity,
+                    )?);
+                }
+            }
+
+            for a_row in 0..n_a {
+                for digit in 0..depth_commit {
+                    for subcolumn in 0..lanes.b_subcolumns {
+                        let setup_column_start = claim
+                            .checked_mul(num_live_blocks)
+                            .and_then(|base| base.checked_add(unit.global_block_start()))
+                            .and_then(|base| base.checked_mul(n_a))
+                            .and_then(|base| base.checked_add(a_row))
+                            .and_then(|base| base.checked_mul(depth_commit))
+                            .and_then(|base| base.checked_add(digit))
+                            .and_then(|base| base.checked_mul(lanes.b_subcolumns))
+                            .and_then(|base| base.checked_add(subcolumn))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("setup B column address overflow".into())
+                            })?;
+                        let witness_column = unit.t_index(
+                            group.num_claims,
+                            n_a,
+                            depth_commit,
+                            claim,
+                            unit.global_block_start(),
+                            a_row,
+                            digit,
+                        )?;
+                        let relation_lane_start = witness_column
+                            .checked_mul(lanes.inner_lane_count)
+                            .and_then(|base| {
+                                subcolumn
+                                    .checked_mul(lanes.outer_lane_count)
+                                    .and_then(|offset| base.checked_add(offset))
+                            })
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("setup B relation address overflow".into())
+                            })?;
+                        b_spans.push(SetupContributionSpan::new(
+                            setup_column_start,
+                            b_setup_stride,
+                            relation_lane_start,
+                            b_relation_stride,
+                            unit.num_live_blocks(),
+                            lanes.outer_lane_count,
+                            None,
+                            b_column_count,
+                            relation_lane_capacity,
+                        )?);
+                    }
+                }
+            }
+        }
+
+        for fold_digit in 0..group.depth_fold {
+            let witness_column = unit.z_index(
+                num_positions_per_block,
+                depth_witness,
+                group.depth_fold,
+                0,
+                0,
+                fold_digit,
+            )?;
+            let relation_lane_start = witness_column
+                .checked_mul(lanes.inner_lane_count)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup A relation address overflow".into())
+                })?;
+            a_spans.push(SetupContributionSpan::new(
+                0,
+                1,
+                relation_lane_start,
+                a_relation_stride,
+                a_column_count,
+                lanes.inner_lane_count,
+                Some(fold_digit),
+                a_column_count,
+                relation_lane_capacity,
+            )?);
+        }
+    }
+
+    Ok((d_spans, b_spans, a_spans))
+}
+
+fn materialize_span_weights<F, E>(
+    column_count: usize,
+    spans: &[SetupContributionSpan],
+    eq_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    lane_alpha: &[E],
+    fold_gadget: Option<&[F]>,
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore + MulBase<F>,
+{
+    let mut weights = vec![E::zero(); column_count];
+    for span in spans {
+        if span.relation_lane_count != lane_alpha.len() {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution span disagrees with role lane geometry".into(),
+            ));
+        }
+        for occurrence in span.occurrences() {
+            let (setup_column, relation_lane_start) = occurrence?;
+            let weight =
+                lane_alpha
+                    .iter()
+                    .enumerate()
+                    .try_fold(E::zero(), |weight, (lane, &alpha)| {
+                        let relation_lane =
+                            relation_lane_start.checked_add(lane).ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "setup contribution relation lane overflow".into(),
+                                )
+                            })?;
+                        Ok::<_, AkitaError>(weight + eq_window.eval(relation_lane) * alpha)
+                    })?;
+            let contribution = if let Some(fold_digit) = span.fold_digit {
+                let fold = fold_gadget
+                    .and_then(|gadget| gadget.get(fold_digit))
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)?;
+                -weight.mul_base(fold)
+            } else {
+                weight
+            };
+            let destination = weights
+                .get_mut(setup_column)
+                .ok_or(AkitaError::InvalidProof)?;
+            *destination += contribution;
+        }
+    }
+    Ok(weights)
 }
 
 #[derive(Clone, Copy)]

@@ -448,10 +448,8 @@ where
             });
         }
         let setup_coefficient_bits = rs
-            .relation_matrix_evaluator
-            .role_dims
-            .d_a()
-            .trailing_zeros() as usize;
+            .relation_address_geometry
+            .common_relation_witness_variable_count();
         let setup_x_challenges = sumcheck_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;

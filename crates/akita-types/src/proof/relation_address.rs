@@ -8,7 +8,7 @@
 use akita_field::AkitaError;
 
 use super::stage1::FlatBooleanDomain;
-use crate::layout::{opening_domain_len, validate_role_dims, CommitmentRingDims};
+use crate::layout::{opening_domain_len, validate_role_dims, CommitmentRingDims, RingRole};
 
 /// Checked address geometry for the flat relation witness.
 ///
@@ -113,6 +113,18 @@ impl RelationAddressGeometry {
         self.common_relation_witness_coeff_count.trailing_zeros() as usize
     }
 
+    /// Number of common-coefficient relation lanes carried by one ring element
+    /// of `role`.
+    #[must_use]
+    pub const fn role_relation_lane_count(self, role: RingRole) -> usize {
+        let role_dim = match role {
+            RingRole::Inner => self.role_dims.d_a(),
+            RingRole::Outer => self.role_dims.d_b(),
+            RingRole::Opening => self.role_dims.d_d(),
+        };
+        role_dim / self.common_relation_witness_coeff_count
+    }
+
     /// Exact number of live relation lanes before Boolean-domain padding.
     #[must_use]
     pub fn live_relation_lane_count(self) -> usize {
@@ -186,6 +198,9 @@ mod tests {
         let geometry = RelationAddressGeometry::new(dims, 64, 9).unwrap();
         assert_eq!(geometry.role_dims(), dims);
         assert_eq!(geometry.common_relation_witness_coeff_count(), 32);
+        assert_eq!(geometry.role_relation_lane_count(RingRole::Inner), 4);
+        assert_eq!(geometry.role_relation_lane_count(RingRole::Outer), 2);
+        assert_eq!(geometry.role_relation_lane_count(RingRole::Opening), 1);
         assert_eq!(geometry.live_relation_lane_count(), 18);
         assert_eq!(geometry.relation_lane_capacity(), 32);
         assert_eq!(geometry.common_relation_witness_variable_count(), 5);

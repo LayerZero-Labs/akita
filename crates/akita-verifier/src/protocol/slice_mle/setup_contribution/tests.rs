@@ -221,9 +221,16 @@ impl SetupContributionFixture {
             b_row_start: 1 + shape.n_a,
         }];
         let opening_source_len = layout.total_len();
+        let relation_address_geometry = akita_types::RelationAddressGeometry::new(
+            CommitmentRingDims::uniform(TEST_RING_DIM),
+            TEST_RING_DIM,
+            opening_source_len,
+        )
+        .unwrap();
         let layout = std::sync::Arc::new(layout);
         let relation_matrix_evaluator = RelationMatrixEvaluator {
             role_dims: CommitmentRingDims::uniform(TEST_RING_DIM),
+            relation_address_geometry,
             groups,
             log_basis: shape.log_basis,
             eq_tau1,

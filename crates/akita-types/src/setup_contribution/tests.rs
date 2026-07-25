@@ -1,9 +1,9 @@
 use super::plan::SetupContributionGroupPlan;
-use super::weights::{setup_z_col_weights, RoleLaneSpec};
+use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, SetupIndexWeightEvaluator,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, SetupIndexWeightEvaluator,
     WitnessLayout, WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
@@ -12,6 +12,7 @@ use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime128OffsetA7F7;
 
+mod address_spans;
 mod fused_scan;
 mod prepare;
 
@@ -243,16 +244,17 @@ fn prepare_test_plan(
     fold_gadget: Option<&[F]>,
     role_dims: CommitmentRingDims,
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
+    let relation_address_geometry =
+        crate::RelationAddressGeometry::new(role_dims, role_dims.d_a(), opening_source_len)?;
     SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
         witness_layout,
-        opening_source_len,
         groups,
         full_vec_randomness,
         fold_gadget,
-        role_dims,
+        relation_address_geometry,
         // All `prepare_test_plan` callers are uniform-role, so the folding
         // challenge only affects the (unexercised) per-role A lane sum.
         test_scalar(3),
@@ -290,6 +292,12 @@ fn finalize_test_plan(
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
+        relation_address_geometry: crate::RelationAddressGeometry::new(
+            role_dims,
+            role_dims.d_a(),
+            1,
+        )
+        .unwrap(),
         projection_geometry,
         eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
     };
@@ -322,6 +330,7 @@ fn test_group_plan(
     b_weights: Vec<F>,
 ) -> SetupContributionGroupPlan<F> {
     SetupContributionGroupPlan {
+        group_id: 0,
         d_col_range,
         t_cols,
         z_cols,
@@ -334,6 +343,9 @@ fn test_group_plan(
         e_eq_slice,
         t_eq_slice,
         z_eq_slice,
+        d_spans: Vec::new(),
+        b_spans: Vec::new(),
+        a_spans: Vec::new(),
     }
 }
 fn prepare_single_group_plan(
@@ -390,6 +402,20 @@ fn structured_weight_fixture(
     ownership_widths: &[usize],
     role_dims: CommitmentRingDims,
 ) -> StructuredWeightFixture {
+    structured_weight_fixture_with_outgoing(
+        num_live_blocks,
+        ownership_widths,
+        role_dims,
+        role_dims.d_a(),
+    )
+}
+
+fn structured_weight_fixture_with_outgoing(
+    num_live_blocks: usize,
+    ownership_widths: &[usize],
+    role_dims: CommitmentRingDims,
+    outgoing_ring_dim: usize,
+) -> StructuredWeightFixture {
     let num_claims = 2;
     let depth_open = 2;
     let depth_commit = 2;
@@ -444,11 +470,18 @@ fn structured_weight_fixture(
         log_basis,
         EqPolynomial::evals(&tau1).unwrap(),
     );
-    let full_vec_randomness = (0..18)
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let opening_source_len = layout
+        .total_len()
+        .checked_mul(role_dims.d_a() / outgoing_ring_dim)
+        .unwrap();
+    let relation_address_geometry =
+        crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
+            .unwrap();
+    let address_bits = relation_address_geometry.relation_lane_variable_count();
+    let full_vec_randomness = (0..address_bits)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let opening_source_len = layout.total_len();
     let groups = vec![SetupContributionGroupInputs {
         group_id: 0,
         num_claims,
@@ -456,14 +489,16 @@ fn structured_weight_fixture(
         a_row_start: 1,
         b_row_start: 1 + n_a,
     }];
-    let plan = prepare_test_plan(
-        &inputs,
+    let plan = SetupContributionPlan::prepare::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        inputs.eq_tau1.clone(),
         &layout,
-        opening_source_len,
         &groups,
         &full_vec_randomness,
         Some(&fold_gadget),
-        role_dims,
+        relation_address_geometry,
+        test_scalar(3),
     )
     .unwrap();
     (
@@ -821,53 +856,7 @@ fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
         assert_eq!(got, expected, "ownership widths {ownership_widths:?}");
     }
 }
-#[test]
-fn dense_z_eq_slice_uses_relative_high_carry() {
-    let num_positions_per_block = 16;
-    let depth_commit = 3;
-    let depth_fold = 2;
-    let full_vec_randomness = (0..9)
-        .map(|idx| test_scalar(101 + idx as u128))
-        .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
-    let inputs = test_inputs(
-        1,
-        0,
-        0,
-        1,
-        4,
-        num_positions_per_block,
-        16,
-        depth_commit,
-        depth_fold,
-        4,
-        vec![test_scalar(11), test_scalar(12)],
-    );
-    let layout = test_witness_layout(
-        inputs.num_claims(),
-        inputs.num_live_blocks(),
-        inputs.num_positions_per_block(),
-        inputs.depth_open(),
-        inputs.depth_commit(),
-        inputs.depth_fold().unwrap(),
-        inputs.n_a(),
-        1,
-        1,
-        inputs.depth_fold().unwrap(),
-    );
-    let plan =
-        prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
-    let expected = expected_z_setup_weights(
-        &layout,
-        layout.total_len(),
-        0,
-        num_positions_per_block,
-        depth_commit,
-        &fold_gadget,
-        &full_vec_randomness,
-    );
-    assert_eq!(plan.groups[0].z_eq_slice, expected);
-}
+
 #[test]
 fn setup_a_z_weights_do_not_include_commit_gadget() {
     let num_positions_per_block = 8;
@@ -1038,7 +1027,14 @@ fn single_group_plan_supports_multi_chunk_weights() {
             .collect(),
     );
     let groups = vec![group];
-    let full_vec_randomness = (0..10)
+    let address_bits = crate::RelationAddressGeometry::new(
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+        opening_source_len,
+    )
+    .unwrap()
+    .relation_lane_variable_count();
+    let full_vec_randomness = (0..address_bits)
         .map(|idx| test_scalar(101 + idx as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);

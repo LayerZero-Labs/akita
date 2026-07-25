@@ -23,6 +23,7 @@ pub(super) struct PreparedRolePoint<E: FieldCore> {
 /// lanes followed by semantic witness columns. Role-native setup columns split
 /// one A-role witness column into `d_a / d_role` subcolumns.
 pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
+    relation_address_geometry: RelationAddressGeometry,
     common_relation_witness_coeff_count: usize,
     common_alpha_evaluation: E,
     alpha: E,
@@ -97,6 +98,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         };
 
         Ok(Self {
+            relation_address_geometry: geometry,
             common_relation_witness_coeff_count: coeff_count,
             common_alpha_evaluation: coeff_eval,
             alpha,
@@ -112,6 +114,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             outer,
             opening,
         })
+    }
+
+    pub(super) const fn relation_address_geometry(&self) -> RelationAddressGeometry {
+        self.relation_address_geometry
     }
 
     pub(super) const fn common_relation_witness_coeff_count(&self) -> usize {

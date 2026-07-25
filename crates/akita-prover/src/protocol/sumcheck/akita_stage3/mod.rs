@@ -22,9 +22,10 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    BatchedStage3Geometry, CommittedGroupParams, FpExtEncoding, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
-    SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    BatchedStage3Geometry, CommittedGroupParams, FpExtEncoding, RelationAddressGeometry,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP,
+    SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -103,7 +104,17 @@ where
         E: FpExtEncoding<F> + LiftBase<F> + AkitaSerialize,
         T: Transcript<F>,
     {
-        let setup_coefficient_bits = lp.d_a().trailing_zeros() as usize;
+        let outgoing_ring_dim = next_fold_level_params.d_a();
+        if outgoing_ring_dim == 0 || !logical_w.len().is_multiple_of(outgoing_ring_dim) {
+            return Err(AkitaError::InvalidProof);
+        }
+        let relation_address_geometry = RelationAddressGeometry::new(
+            relation.role_dims(),
+            outgoing_ring_dim,
+            logical_w.len() / outgoing_ring_dim,
+        )?;
+        let setup_coefficient_bits =
+            relation_address_geometry.common_relation_witness_variable_count();
         let setup_x_challenges = stage2_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
@@ -118,6 +129,7 @@ where
                 tau1,
                 alpha,
                 setup_x_challenges,
+                relation_address_geometry,
                 transcript,
             )?
         };
@@ -311,6 +323,7 @@ fn build_setup_product_term<'a, F, E, T>(
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
+    relation_address_geometry: RelationAddressGeometry,
     transcript: &mut T,
 ) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
 where
@@ -320,7 +333,14 @@ where
 {
     let (geometry, mut setup_index_weight, alpha_pows) = {
         let _span = tracing::info_span!("stage3_setup_weights_prepare").entered();
-        prepare_setup_sumcheck_terms::<F, E>(lp, relation, tau1, alpha, x_challenges)?
+        prepare_setup_sumcheck_terms::<F, E>(
+            lp,
+            relation,
+            tau1,
+            alpha,
+            x_challenges,
+            relation_address_geometry,
+        )?
     };
 
     let required = geometry.required();
@@ -525,12 +545,20 @@ fn prepare_setup_sumcheck_terms<F, E>(
     tau1: &[E],
     alpha: E,
     x_challenges: &[E],
+    relation_address_geometry: RelationAddressGeometry,
 ) -> Result<(SetupProjectionGeometry, Vec<E>, Vec<E>), AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBase<F>,
 {
-    let plan = prepare_setup_contribution_plan::<F, E>(relation, lp, tau1, x_challenges, alpha)?;
+    let plan = prepare_setup_contribution_plan::<F, E>(
+        relation,
+        lp,
+        tau1,
+        x_challenges,
+        relation_address_geometry,
+        alpha,
+    )?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
     let setup_index_weight = plan.materialize_setup_index_weights(alpha)?;
@@ -543,6 +571,7 @@ fn prepare_setup_contribution_plan<F, E>(
     lp: &CommittedGroupParams,
     tau1: &[E],
     x_challenges: &[E],
+    relation_address_geometry: RelationAddressGeometry,
     alpha: E,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
@@ -591,18 +620,16 @@ where
         });
     }
 
-    let opening_source_len = chunk_layout.total_len();
     let fold_gadget = shared_setup_fold_gadget::<F>(lp, opening_batch, &groups);
     let plan = SetupContributionPlan::prepare::<F>(
         lp,
         opening_batch,
         eq_tau1,
         &chunk_layout,
-        opening_source_len,
         &groups,
         x_challenges,
         fold_gadget.as_deref(),
-        relation.role_dims(),
+        relation_address_geometry,
         alpha,
     )?;
     Ok(plan)

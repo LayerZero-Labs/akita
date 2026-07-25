@@ -1,3 +1,5 @@
+//! Legacy column-weight formulas retained only as independent test oracles.
+
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, FieldCore, MulBase};

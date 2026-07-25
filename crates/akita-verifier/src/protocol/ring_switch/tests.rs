@@ -52,16 +52,17 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         a_row_start: 1,
         b_row_start: 2,
     }];
+    let relation_address_geometry =
+        RelationAddressGeometry::new(CommitmentRingDims::uniform(D), D, 3).unwrap();
     let err = match SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         vec![F::one(); 4].into(),
         &witness_layout,
-        3,
         &setup_groups,
-        &[],
+        &[F::one(), F::one()],
         None,
-        CommitmentRingDims::uniform(D),
+        relation_address_geometry,
         F::one(),
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
@@ -155,16 +156,18 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     eq_tau1[0] = consistency_weight;
     eq_tau1[group.a_row_start..group.a_row_start + group.n_a].copy_from_slice(&a_row_weights);
     let fold_gadget = gadget_row_scalars::<F>(group.depth_fold, group.log_basis_open);
+    let relation_address_geometry =
+        RelationAddressGeometry::new(CommitmentRingDims::uniform(D), D, opening_source_len)
+            .unwrap();
     let setup_plan = SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         eq_tau1.into(),
         &witness_layout,
-        opening_source_len,
         &setup_groups,
         &x_challenges,
         Some(&fold_gadget),
-        CommitmentRingDims::uniform(D),
+        relation_address_geometry,
         F::from_u64(43),
     )
     .unwrap();

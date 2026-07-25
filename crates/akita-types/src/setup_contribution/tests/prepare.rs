@@ -1,6 +1,54 @@
 use super::*;
 
 #[test]
+fn dense_z_eq_slice_uses_relative_high_carry() {
+    let num_positions_per_block = 16;
+    let depth_commit = 3;
+    let depth_fold = 2;
+    let full_vec_randomness = (0..8)
+        .map(|idx| test_scalar(101 + idx as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, 4);
+    let inputs = test_inputs(
+        1,
+        0,
+        0,
+        1,
+        4,
+        num_positions_per_block,
+        16,
+        depth_commit,
+        depth_fold,
+        4,
+        vec![test_scalar(11), test_scalar(12)],
+    );
+    let layout = test_witness_layout(
+        inputs.num_claims(),
+        inputs.num_live_blocks(),
+        inputs.num_positions_per_block(),
+        inputs.depth_open(),
+        inputs.depth_commit(),
+        inputs.depth_fold().unwrap(),
+        inputs.n_a(),
+        1,
+        1,
+        inputs.depth_fold().unwrap(),
+    );
+    let plan =
+        prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
+    let expected = expected_z_setup_weights(
+        &layout,
+        layout.total_len(),
+        0,
+        num_positions_per_block,
+        depth_commit,
+        &fold_gadget,
+        &full_vec_randomness,
+    );
+    assert_eq!(plan.groups[0].z_eq_slice, expected);
+}
+
+#[test]
 fn prepare_accepts_exact_non_pow2_fold_count() {
     let mut lp = CommittedGroupParams::params_only(
         crate::SisModulusProfileId::Q128OffsetA7F7,
@@ -51,16 +99,23 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         .map(|idx| test_scalar(11 + idx as u128))
         .collect::<Vec<_>>()
         .into();
+    let relation_address_geometry = crate::RelationAddressGeometry::new(
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+        opening_source_len,
+    )
+    .unwrap();
+    let full_vec_randomness =
+        vec![F::one(); relation_address_geometry.relation_lane_variable_count()];
     assert!(SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         eq_tau1,
         &witness_layout,
-        opening_source_len,
         &[group],
-        &[],
+        &full_vec_randomness,
         None,
-        CommitmentRingDims::uniform(TEST_D),
+        relation_address_geometry,
         test_scalar(3),
     )
     .is_ok());

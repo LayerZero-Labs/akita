@@ -83,6 +83,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 #[derive(Clone)]
 pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
+    pub(crate) relation_address_geometry: RelationAddressGeometry,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
@@ -260,6 +261,11 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
+    let relation_address_geometry = RelationAddressGeometry::new(
+        relation.role_dims(),
+        replay.opening_ring_dim,
+        replay.opening_source_len,
+    )?;
     let layout = relation.segment_layout(lp, witness_ring_len)?;
     if layout.total_len() > replay.opening_source_len {
         return Err(AkitaError::InvalidProof);
@@ -268,7 +274,12 @@ where
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
-            replay, alpha, tau1, layout, rows,
+            replay,
+            alpha,
+            tau1,
+            layout,
+            rows,
+            relation_address_geometry,
         );
     }
     let challenges = relation
@@ -288,6 +299,7 @@ where
         replay.opening_source_len,
         replay.opening_ring_dim,
         rows,
+        relation_address_geometry,
     )
 }
 
@@ -298,6 +310,7 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     tau1: &[E],
     layout: WitnessLayout,
     rows: usize,
+    relation_address_geometry: RelationAddressGeometry,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -419,6 +432,7 @@ where
 
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
+        relation_address_geometry,
         groups,
         log_basis: lp.log_basis_open,
         eq_tau1,
@@ -493,6 +507,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     rows: usize,
+    relation_address_geometry: RelationAddressGeometry,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -562,6 +577,7 @@ where
 
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims(),
+        relation_address_geometry,
         groups,
         log_basis: log_basis_open,
         eq_tau1,
@@ -619,7 +635,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         // would, without the explicit O(setup-columns) multiply. (Validated by
         // `mixed_d_per_level_e2e`, whose level-1 fold is a uniform-role,
         // `opening_ring_dim = D/2` step, plus tamper rejection.)
-        if self.role_dims == CommitmentRingDims::uniform(D) {
+        if self.role_dims == CommitmentRingDims::uniform(D)
+            && self
+                .relation_address_geometry
+                .common_relation_witness_coeff_count()
+                == D
+        {
             let coefficient_bits = D.trailing_zeros() as usize;
             if point.len() < coefficient_bits {
                 return Err(AkitaError::InvalidProof);
@@ -679,11 +700,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
             &setup_groups,
             x_challenges,
             fold_gadget,
-            self.role_dims,
+            self.relation_address_geometry,
             alpha,
         )
     }
@@ -705,11 +725,10 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
             &setup_groups,
             x_challenges,
             fold_gadget,
-            self.role_dims,
+            self.relation_address_geometry,
             alpha,
         )
     }
@@ -1013,7 +1032,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     z_structured_contribution += z_contribution;
                 } else {
                     let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
-                        .group_column_eq_slices(group_index)
+                        .group_column_eq_slices(group.group_id)
                         .ok_or(AkitaError::InvalidProof)?;
                     let (e_contribution, t_contribution) = {
                         let _span =

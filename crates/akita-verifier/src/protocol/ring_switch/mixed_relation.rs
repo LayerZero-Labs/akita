@@ -11,14 +11,17 @@ use super::{
 };
 use crate::protocol::validate_log_basis;
 use akita_algebra::offset_eq::{eval_affine_digit_interval, OffsetEqWindow};
+#[cfg(test)]
 use akita_algebra::ring::eval_flat_ring_at_pows_fast;
 use akita_field::parallel::*;
 use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
+#[cfg(test)]
+use akita_types::SetupProjectionGeometry;
 use akita_types::{
     checked_opening_source_index, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FpExtEncoding, SetupProjectionGeometry, WitnessUnitLayout,
+    FpExtEncoding, WitnessUnitLayout,
 };
 
 pub(super) fn evaluate_lane_factored_relation_at_point<F, E>(
@@ -76,40 +79,32 @@ where
 
     let setup_evaluation = {
         let _span = tracing::info_span!("mixed_relation_setup_scan").entered();
-        let base_ring_dim = evaluator.role_dims.common_relation_coeff_count();
-        if prepared_point.common_relation_witness_coeff_count() == base_ring_dim {
-            // Succinct per-role setup evaluation. When the coefficient block
-            // equals the shared base ring dimension, `address_point()` is the
-            // column-challenge vector the setup-contribution plan expects, and
-            // `prepare` (given the same `alpha`) builds subcolumn-expanded,
-            // α-lane-summed eq-slices so `evaluate_direct` reproduces the dense
-            // per-role contribution in a single base-ring pass instead of three
-            // per-role dense multiplies. (Validated by `compressed_role_e2e`.)
-            let setup_groups = evaluator.setup_contribution_inputs();
-            let fold_gadget = akita_types::shared_setup_fold_gadget::<F>(
-                &context.level_params,
-                &context.opening_batch,
-                &setup_groups,
-            );
-            let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
-            let plan = evaluator.setup_contribution_plan::<F>(
-                prepared_point.address_point(),
-                (!fold_gadget.is_empty()).then_some(fold_gadget),
-                alpha,
-            )?;
-            plan.evaluate_direct::<F>(
-                setup,
-                prepared_point.inner().powers.as_ref(),
-                prepared_point.outer().powers.as_ref(),
-                prepared_point.opening().powers.as_ref(),
-            )?
-        } else {
-            evaluate_setup_contribution::<F, E>(evaluator, setup, &prepared_point).map_err(
-                |error| {
-                    AkitaError::InvalidInput(format!("mixed relation setup scan failed: {error:?}"))
-                },
-            )?
+        if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
+            return Err(AkitaError::InvalidProof);
         }
+        // The setup projection still uses the common base of the commitment
+        // roles, while the plan's spans address the potentially finer common
+        // coefficient block shared with the outgoing witness. Each physical
+        // setup column therefore contracts exactly the relation lanes selected
+        // by `address_point()`, regardless of the outgoing ring dimension.
+        let setup_groups = evaluator.setup_contribution_inputs();
+        let fold_gadget = akita_types::shared_setup_fold_gadget::<F>(
+            &context.level_params,
+            &context.opening_batch,
+            &setup_groups,
+        );
+        let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
+        let plan = evaluator.setup_contribution_plan::<F>(
+            prepared_point.address_point(),
+            (!fold_gadget.is_empty()).then_some(fold_gadget),
+            alpha,
+        )?;
+        plan.evaluate_direct::<F>(
+            setup,
+            prepared_point.inner().powers.as_ref(),
+            prepared_point.outer().powers.as_ref(),
+            prepared_point.opening().powers.as_ref(),
+        )?
     };
     let quotient_evaluation =
         evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
@@ -312,6 +307,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
+#[allow(dead_code)]
 fn evaluate_setup_contribution<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
     setup: &AkitaExpandedSetup<F>,
@@ -680,6 +677,7 @@ fn canonical_relation_lane_index(
     Ok(physical_coefficient / coeff_count)
 }
 
+#[cfg(test)]
 fn evaluate_weighted_setup_matrix<F, E>(
     setup: &AkitaExpandedSetup<F>,
     row_count: usize,
