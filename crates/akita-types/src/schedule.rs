@@ -745,14 +745,33 @@ impl FoldSchedule {
                     "recursive fold {index} setup-prefix mirror disagrees with its successor edge"
                 )));
             }
-            if step.params.incoming_setup_prefix.is_some()
-                && predecessor.role_dims()
-                    != crate::CommitmentRingDims::uniform(step.params.witness.d_a())
-            {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "recursive fold {index} setup offload requires predecessor ring dimensions \
-                     to equal the successor inner ring dimension"
-                )));
+            if let Some(prefix) = &step.params.incoming_setup_prefix {
+                let producer_dims = predecessor.role_dims();
+                let consumer_dims = step.params.witness.role_dims();
+                crate::validate_role_dims(producer_dims)?;
+                crate::validate_role_dims(consumer_dims)?;
+                let prefix_inner_d = prefix
+                    .commitment_params
+                    .inner_commit_matrix
+                    .ring_dimension();
+                let prefix_outer_d = prefix
+                    .commitment_params
+                    .outer_commit_matrix
+                    .ring_dimension();
+                if prefix.d_setup != crate::SETUP_OFFLOAD_D_SETUP
+                    || prefix.d_setup != producer_dims.common_relation_coeff_count()
+                    || prefix_inner_d != consumer_dims.d_a()
+                    || prefix_outer_d != consumer_dims.d_b()
+                {
+                    return Err(AkitaError::InvalidSetup(format!(
+                        "recursive fold {index} setup offload geometry disagrees: \
+                         producer roles {producer_dims:?} project at D{}, prefix source is D{}, \
+                         prefix commitment roles are A{prefix_inner_d}/B{prefix_outer_d}, and \
+                         consumer roles are {consumer_dims:?}",
+                        producer_dims.common_relation_coeff_count(),
+                        prefix.d_setup,
+                    )));
+                }
             }
             let successor_len = self
                 .recursive_folds

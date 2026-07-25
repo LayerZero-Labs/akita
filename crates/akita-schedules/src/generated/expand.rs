@@ -455,7 +455,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width())
+            .map(|prefix| prefix.commitment_params.d_segment_width(ring_d))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width

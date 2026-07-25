@@ -554,7 +554,9 @@ pub(crate) fn derive_candidate_level_params(
         let mut candidate_params = candidate_params;
         candidate_params.setup_prefix = setup_prefix.clone();
         if let Some(prefix) = &candidate_params.setup_prefix {
-            let prefix_d_width = prefix.commitment_params.d_segment_width()?;
+            let prefix_d_width = prefix
+                .commitment_params
+                .d_segment_width(candidate_params.role_dims().d_d())?;
             let total_d_width = candidate_params
                 .open_commit_matrix
                 .input_width()

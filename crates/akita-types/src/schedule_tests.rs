@@ -40,6 +40,14 @@ use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 type F = Prime128OffsetA7F7;
 
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
+    committed_params_with_geometry(ring_dimension, 4, 4)
+}
+
+fn committed_params_with_geometry(
+    ring_dimension: usize,
+    num_positions_per_block: usize,
+    num_live_ring_elements_per_claim: usize,
+) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         ring_dimension,
@@ -49,8 +57,66 @@ fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(4, 4, 2, 2, 2)
+    .with_decomp(
+        num_positions_per_block,
+        num_live_ring_elements_per_claim,
+        2,
+        2,
+        2,
+    )
     .expect("schedule validation params")
+}
+
+fn retarget_outer_dimension(
+    params: &mut CommittedGroupParams,
+    ring_dimension: usize,
+) -> Result<(), AkitaError> {
+    let outer = &params.outer_commit_matrix;
+    let column_scale = outer.ring_dimension() / ring_dimension;
+    params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width() * column_scale,
+        outer.coeff_linf_bound(),
+        ring_dimension,
+    );
+    Ok(())
+}
+
+fn retarget_open_dimension(
+    params: &mut CommittedGroupParams,
+    ring_dimension: usize,
+) -> Result<(), AkitaError> {
+    let open = &params.open_commit_matrix;
+    let column_scale = open.ring_dimension() / ring_dimension;
+    params.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width() * column_scale,
+        open.coeff_linf_bound(),
+        ring_dimension,
+    );
+    Ok(())
+}
+
+fn precommitted_group_params(
+    params: &CommittedGroupParams,
+    group: PolynomialGroupLayout,
+) -> crate::PrecommittedLevelParams {
+    crate::PrecommittedLevelParams {
+        layout: PrecommittedGroupDescriptor::from_params(group, params),
+        inner_commit_matrix: params.inner_commit_matrix.clone(),
+        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        log_basis_open: params.log_basis_open,
+        num_digits_inner: params.num_digits_inner,
+        num_digits_outer: params.num_digits_outer,
+        num_digits_open: params.num_digits_open,
+        num_digits_fold_one: params.num_digits_fold_one,
+    }
 }
 
 fn recursive_schedule(
@@ -136,12 +202,12 @@ fn schedule_rejects_setup_prefix_split_authority() {
 }
 
 #[test]
-fn schedule_rejects_offloaded_ring_dimension_transition() {
+fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
     let schedule = recursive_schedule(128, 64, true);
 
     let err = schedule
         .validate_structure()
-        .expect_err("offload requires uniform predecessor/successor geometry");
+        .expect_err("offload prefix must use the producer setup projection dimension");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
@@ -157,6 +223,110 @@ fn schedule_accepts_offload_at_uniform_successor_dimension() {
     recursive_schedule(64, 64, true)
         .validate_structure()
         .expect("offload supports uniform predecessor/successor geometry");
+}
+
+#[test]
+fn schedule_accepts_mixed_producer_projecting_to_prefix_dimension() {
+    let mut schedule = recursive_schedule(128, 64, true);
+    let producer = &mut schedule.root.params.final_group.commitment;
+    retarget_outer_dimension(producer, 64).expect("retarget producer B role");
+    retarget_open_dimension(producer, 64).expect("retarget producer D role");
+
+    schedule
+        .validate_structure()
+        .expect("mixed A128/B64/D64 producer projects its setup prefix at D64");
+}
+
+#[test]
+fn schedule_rejects_prefix_commitment_roles_that_miss_consumer_roles() {
+    let mut schedule = recursive_schedule(64, 64, true);
+    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 32)
+        .expect("retarget consumer B role");
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("prefix B commitment must match the consumer B role");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
+    let mut schedule = recursive_schedule(128, 64, false);
+    let producer = &mut schedule.root.params.final_group.commitment;
+    retarget_outer_dimension(producer, 64).expect("retarget producer B role");
+    retarget_open_dimension(producer, 64).expect("retarget producer D role");
+
+    let final_group = PolynomialGroupLayout::new(9, 1);
+    let singleton_layout =
+        OpeningClaimsLayout::from_groups(vec![final_group]).expect("singleton layout");
+    let singleton_natural_len = crate::active_setup_field_len(producer, &singleton_layout)
+        .expect("singleton setup geometry");
+
+    let precommitted_group = PolynomialGroupLayout::new(9, 1);
+    let mut group_params = producer.clone();
+    let inner = &group_params.inner_commit_matrix;
+    group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        1,
+        inner.ring_dimension(),
+    );
+    let outer = &group_params.outer_commit_matrix;
+    group_params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        1,
+        outer.ring_dimension(),
+    );
+    let precommitted = precommitted_group_params(&group_params, precommitted_group);
+    let one_precommitted_d_width = precommitted
+        .d_segment_width(producer.role_dims().d_d())
+        .expect("precommitted D width");
+    let precommitted_group_count = 8;
+    producer.precommitted_groups = vec![precommitted; precommitted_group_count];
+    let precommitted_d_width = one_precommitted_d_width * precommitted_group_count;
+
+    let open = &producer.open_commit_matrix;
+    producer.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width() + precommitted_d_width,
+        open.coeff_linf_bound(),
+        open.ring_dimension(),
+    );
+
+    let mut groups = vec![precommitted_group; precommitted_group_count];
+    groups.push(final_group);
+    let opening_layout = OpeningClaimsLayout::from_groups(groups).expect("multi-group layout");
+    let natural_len = crate::active_setup_field_len(producer, &opening_layout)
+        .expect("multi-group mixed setup geometry");
+    assert!(
+        natural_len > singleton_natural_len,
+        "the exact prefix must include the larger multi-group setup footprint"
+    );
+
+    let consumer = committed_params_with_geometry(64, 16, 64);
+    let n_prefix = crate::padded_setup_prefix_len(natural_len);
+    let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
+        .expect("consumer-compatible prefix commitment");
+    let prefix =
+        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params);
+    schedule.recursive_folds[0].params.witness = consumer.clone();
+    schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix.clone();
+    schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
+    schedule.recursive_folds[0].params.witness.setup_prefix = Some(prefix);
+
+    schedule
+        .validate_structure()
+        .expect("mixed multi-group producer offloads its exact D64 setup projection");
 }
 
 #[test]

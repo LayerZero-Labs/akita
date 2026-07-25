@@ -57,12 +57,21 @@ impl PrecommittedLevelParams {
             .num_positions_per_block
             .checked_mul(self.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted B role must divide the group A role".to_string(),
+            ));
+        }
+        let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
         let expected_b_width = self
             .inner_commit_matrix
             .output_rank()
             .checked_mul(self.num_digits_outer)
             .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(outer_projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
         if self.layout.n_a != self.inner_commit_matrix.output_rank()
             || self.layout.a_coeff_linf_bound != self.inner_commit_matrix.coeff_linf_bound()
@@ -93,11 +102,25 @@ impl PrecommittedLevelParams {
         self.outer_commit_matrix.input_width()
     }
 
-    /// Width contribution to the shared D matrix (`w_hat_g` segment).
-    pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
+    /// Width contribution to the consuming batch's shared D matrix
+    /// (`w_hat_g` segment).
+    ///
+    /// Group metadata owns its A/B dimensions. The D role is batch-shared, so
+    /// the caller supplies the consuming level's opening dimension.
+    pub fn d_segment_width(&self, opening_ring_dimension: usize) -> Result<usize, AkitaError> {
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        if opening_ring_dimension == 0
+            || !inner_ring_dimension.is_multiple_of(opening_ring_dimension)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted D role must divide the group A role".to_string(),
+            ));
+        }
+        let projection_ratio = inner_ring_dimension / opening_ring_dimension;
         self.num_digits_open
             .checked_mul(self.layout.num_live_blocks)
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
     }
 
