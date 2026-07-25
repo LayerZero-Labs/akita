@@ -229,13 +229,15 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 
 fn emit_precommitted_group_key(layout: &PrecommittedGroupDescriptor) -> String {
     format!(
-        "PrecommittedGroupDescriptor {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
+        "PrecommittedGroupDescriptor {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
         emit_key(layout.group),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
         layout.log_basis_inner,
         layout.log_basis_outer,
+        layout.inner_ring_dimension,
+        layout.outer_ring_dimension,
         layout.n_a,
         layout.a_coeff_linf_bound,
         layout.n_b,

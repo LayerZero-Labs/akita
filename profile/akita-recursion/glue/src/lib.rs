@@ -516,6 +516,8 @@ mod tests {
                 num_live_blocks: 1,
                 log_basis_inner: 1,
                 log_basis_outer: 1,
+                inner_ring_dimension: TEST_D,
+                outer_ring_dimension: TEST_D,
                 n_a: 1,
                 a_coeff_linf_bound: 1,
                 n_b: 1,

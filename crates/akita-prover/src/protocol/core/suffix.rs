@@ -472,7 +472,6 @@ where
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    let alpha = role_dims.d_a().trailing_zeros() as usize;
     let needs_extension_reduction =
         <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
@@ -521,7 +520,6 @@ where
         protocol_point,
         || Ok(()),
         level_params,
-        alpha,
         BasisMode::Lagrange,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
@@ -533,26 +531,12 @@ mod tests {
     use crate::protocol::core::fold_kernels::prepare_evaluation_trace_claim;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::RingOpeningPoint;
 
     type TestF = Fp32<251>;
-    const D: usize = 4;
 
     #[test]
     fn non_zk_eor_mismatch_is_rejected() {
-        let prepared_point = PreparedOpeningPoint::from_parts::<D>(
-            Vec::new(),
-            RingOpeningPoint {
-                position_weights: vec![TestF::one()],
-                live_block_weights: vec![TestF::one()],
-            },
-            RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-                position_weights: vec![TestF::one()],
-                live_block_weights: vec![TestF::one()],
-            }),
-            CyclotomicRing::<TestF, D>::zero(),
-        );
-        let folded_rings = [CyclotomicRing::<TestF, D>::zero()];
+        let openings = [TestF::zero()];
         let reduction = Some(ExtensionOpeningReduction {
             proof: ExtensionOpeningReductionProof {
                 partials: Vec::new(),
@@ -566,13 +550,9 @@ mod tests {
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _, D>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
-            &folded_rings,
-            std::slice::from_ref(&prepared_point),
-            &[],
-            0,
-            BasisMode::Lagrange,
+            &openings,
             &opening_batch,
             Some(vec![TestF::one()]),
             &mut transcript,

@@ -49,6 +49,10 @@ pub struct PrecommittedGroupDescriptor {
     pub log_basis_inner: u32,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
+    /// Ring dimension of the standalone A/source matrix.
+    pub inner_ring_dimension: usize,
+    /// Ring dimension of the standalone B/commitment matrix.
+    pub outer_ring_dimension: usize,
     /// Exact A-role row count frozen at precommit time.
     pub n_a: usize,
     /// Exact A-role collision bucket frozen at precommit time.
@@ -69,6 +73,8 @@ impl PrecommittedGroupDescriptor {
             num_live_blocks: params.num_live_blocks,
             log_basis_inner: params.log_basis_inner,
             log_basis_outer: params.log_basis_outer,
+            inner_ring_dimension: params.inner_commit_matrix.ring_dimension(),
+            outer_ring_dimension: params.outer_commit_matrix.ring_dimension(),
             n_a: params.inner_commit_matrix.output_rank(),
             a_coeff_linf_bound: params.inner_commit_matrix.coeff_linf_bound(),
             n_b: params.outer_commit_matrix.output_rank(),
@@ -84,6 +90,8 @@ impl PrecommittedGroupDescriptor {
         push_usize(bytes, self.num_live_blocks);
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
+        push_usize(bytes, self.inner_ring_dimension);
+        push_usize(bytes, self.outer_ring_dimension);
         push_usize(bytes, self.n_a);
         crate::descriptor_bytes::push_u128(bytes, self.a_coeff_linf_bound);
         push_usize(bytes, self.n_b);
@@ -101,11 +109,24 @@ impl PrecommittedGroupDescriptor {
         }
         if self.n_a == 0
             || self.n_b == 0
+            || self.inner_ring_dimension == 0
+            || self.outer_ring_dimension == 0
             || self.a_coeff_linf_bound == 0
             || self.b_coeff_linf_bound == 0
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
+            ));
+        }
+        if !self.inner_ring_dimension.is_power_of_two()
+            || !self.outer_ring_dimension.is_power_of_two()
+            || !self
+                .inner_ring_dimension
+                .is_multiple_of(self.outer_ring_dimension)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted group requires power-of-two A/B dimensions with A divisible by B"
+                    .to_string(),
             ));
         }
         if self.log_basis_inner == 0 {
@@ -122,21 +143,22 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate that frozen exact block geometry matches `group.num_vars`.
-    pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError> {
-        let alpha = ring_dimension.trailing_zeros() as usize;
+    pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
+        let alpha = self.inner_ring_dimension.trailing_zeros() as usize;
         let Some(source_field_len) = self
             .num_live_ring_elements_per_claim
-            .checked_mul(ring_dimension)
+            .checked_mul(self.inner_ring_dimension)
         else {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout geometry overflow".to_string(),
             ));
         };
-        let expected_field_len = 1usize
-            .checked_shl(self.group.num_vars() as u32)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("commitment group field length overflow".to_string())
-            })?;
+        let num_vars = u32::try_from(self.group.num_vars()).map_err(|_| {
+            AkitaError::InvalidSetup("commitment group variable count exceeds u32".to_string())
+        })?;
+        let expected_field_len = 1usize.checked_shl(num_vars).ok_or_else(|| {
+            AkitaError::InvalidSetup("commitment group field length overflow".to_string())
+        })?;
         if source_field_len != expected_field_len
             || self.num_positions_per_block == 0
             || !self.num_positions_per_block.is_power_of_two()
@@ -159,9 +181,17 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate metadata frozen by a precommitted group at precommit time.
-    pub fn validate_frozen_precommit(&self, ring_dimension: usize) -> Result<(), AkitaError> {
+    pub fn validate_frozen_precommit(
+        &self,
+        carrier_ring_dimension: usize,
+    ) -> Result<(), AkitaError> {
         self.validate()?;
-        self.validate_root_geometry(ring_dimension)?;
+        self.validate_root_geometry()?;
+        if self.inner_ring_dimension > carrier_ring_dimension {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted A dimension exceeds the final-group witness carrier".to_string(),
+            ));
+        }
         Ok(())
     }
 }
@@ -734,6 +764,15 @@ impl FoldSchedule {
             ));
         }
         let mut predecessor = &self.root.params.final_group.commitment;
+        let root_shared_d = predecessor.role_dims().d_d();
+        let mut predecessor_setup_d = self.root.params.precommitted_groups.iter().try_fold(
+            predecessor.role_dims().common_relation_coeff_count(),
+            |common, group| {
+                let dims = group.commitment.role_dims(root_shared_d);
+                crate::validate_role_dims(dims)?;
+                Ok::<_, AkitaError>(common.min(dims.common_relation_coeff_count()))
+            },
+        )?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             if step.input_witness_len == 0 || step.output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(
@@ -759,7 +798,7 @@ impl FoldSchedule {
                     .outer_commit_matrix
                     .ring_dimension();
                 if prefix.d_setup != crate::SETUP_OFFLOAD_D_SETUP
-                    || prefix.d_setup != producer_dims.common_relation_coeff_count()
+                    || prefix.d_setup != predecessor_setup_d
                     || prefix_inner_d != consumer_dims.d_a()
                     || prefix_outer_d != consumer_dims.d_b()
                 {
@@ -768,8 +807,7 @@ impl FoldSchedule {
                          producer roles {producer_dims:?} project at D{}, prefix source is D{}, \
                          prefix commitment roles are A{prefix_inner_d}/B{prefix_outer_d}, and \
                          consumer roles are {consumer_dims:?}",
-                        producer_dims.common_relation_coeff_count(),
-                        prefix.d_setup,
+                        predecessor_setup_d, prefix.d_setup,
                     )));
                 }
             }
@@ -785,6 +823,7 @@ impl FoldSchedule {
                 )));
             }
             predecessor = &step.params.witness;
+            predecessor_setup_d = predecessor.role_dims().common_relation_coeff_count();
         }
         if self.terminal.input_witness_len == 0
             || self.terminal.params.response_shape.logical_num_elems() == 0

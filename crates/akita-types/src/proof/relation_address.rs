@@ -21,6 +21,8 @@ pub struct RelationAddressGeometry {
     role_dims: CommitmentRingDims,
     digit_witness_domain: FlatBooleanDomain,
     common_relation_witness_coeff_count: usize,
+    outgoing_witness_ring_dimension: usize,
+    outgoing_witness_source_len: usize,
 }
 
 impl RelationAddressGeometry {
@@ -39,7 +41,27 @@ impl RelationAddressGeometry {
         outgoing_witness_ring_dimension: usize,
         outgoing_witness_source_len: usize,
     ) -> Result<Self, AkitaError> {
+        Self::new_for_groups(
+            role_dims,
+            &[],
+            outgoing_witness_ring_dimension,
+            outgoing_witness_source_len,
+        )
+    }
+
+    /// Construct geometry whose common coefficient block covers the final
+    /// group, every precommitted group's role dimensions, and the outgoing
+    /// witness representation.
+    pub fn new_for_groups(
+        role_dims: CommitmentRingDims,
+        group_role_dims: &[CommitmentRingDims],
+        outgoing_witness_ring_dimension: usize,
+        outgoing_witness_source_len: usize,
+    ) -> Result<Self, AkitaError> {
         validate_role_dims(role_dims)?;
+        for &dims in group_role_dims {
+            validate_role_dims(dims)?;
+        }
         if outgoing_witness_ring_dimension == 0
             || !outgoing_witness_ring_dimension.is_power_of_two()
         {
@@ -48,8 +70,21 @@ impl RelationAddressGeometry {
             ));
         }
 
-        let common_relation_witness_coeff_count =
-            role_dims.common_relation_witness_coeff_count(outgoing_witness_ring_dimension);
+        let common_relation_witness_coeff_count = group_role_dims
+            .iter()
+            .flat_map(|dims| [dims.d_a(), dims.d_b(), dims.d_d()])
+            .chain([
+                role_dims.d_a(),
+                role_dims.d_b(),
+                role_dims.d_d(),
+                outgoing_witness_ring_dimension,
+            ])
+            .min()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation geometry requires at least one ring dimension".into(),
+                )
+            })?;
         if common_relation_witness_coeff_count == 0
             || !common_relation_witness_coeff_count.is_power_of_two()
             || !role_dims
@@ -62,6 +97,17 @@ impl RelationAddressGeometry {
                 .d_d()
                 .is_multiple_of(common_relation_witness_coeff_count)
             || !outgoing_witness_ring_dimension.is_multiple_of(common_relation_witness_coeff_count)
+            || group_role_dims.iter().any(|dims| {
+                !dims
+                    .d_a()
+                    .is_multiple_of(common_relation_witness_coeff_count)
+                    || !dims
+                        .d_b()
+                        .is_multiple_of(common_relation_witness_coeff_count)
+                    || !dims
+                        .d_d()
+                        .is_multiple_of(common_relation_witness_coeff_count)
+            })
         {
             return Err(AkitaError::InvalidSetup(
                 "relation and outgoing witness do not admit a common coefficient block".into(),
@@ -86,6 +132,8 @@ impl RelationAddressGeometry {
             role_dims,
             digit_witness_domain,
             common_relation_witness_coeff_count,
+            outgoing_witness_ring_dimension,
+            outgoing_witness_source_len,
         })
     }
 
@@ -105,6 +153,18 @@ impl RelationAddressGeometry {
     #[must_use]
     pub const fn common_relation_witness_coeff_count(self) -> usize {
         self.common_relation_witness_coeff_count
+    }
+
+    /// Ring dimension used by the outgoing witness representation.
+    #[must_use]
+    pub const fn outgoing_witness_ring_dimension(self) -> usize {
+        self.outgoing_witness_ring_dimension
+    }
+
+    /// Exact outgoing ring-element count before Boolean-domain padding.
+    #[must_use]
+    pub const fn outgoing_witness_source_len(self) -> usize {
+        self.outgoing_witness_source_len
     }
 
     /// Boolean-coordinate count for the common coefficient block.

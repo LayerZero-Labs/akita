@@ -299,6 +299,8 @@ fn consider_child_suffixes(
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
     pub(crate) ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) ring_challenge_config:
+        &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) fold_challenge_shape_at_level:
         &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
@@ -454,6 +456,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     let SuffixCtx {
         policy,
         ring_challenge_cfg,
+        ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars,
         key: _,
@@ -530,6 +533,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     root_key,
                     policy,
                     ring_challenge_cfg,
+                    ring_challenge_config,
                     requested_fold_shape,
                     current_witness_len,
                     lb,

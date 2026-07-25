@@ -281,6 +281,8 @@ fn commit_group_returns_frozen_exact_layout() {
 /// final group is committed with `commit_final_group`; the multi-group root folds
 /// into a singleton recursive suffix.
 fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
+    pre_num_vars: usize,
+    final_num_vars: usize,
     pre_sizes: &[usize],
     final_size: usize,
     check_group_binding: bool,
@@ -288,15 +290,30 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     TestCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
     ProtocolCfg: CommitmentConfig<Field = OneHotF, ExtField = OneHotF>,
 {
-    const PRE_NV: usize = 15;
-    const FINAL_NV: usize = PRE_NV * 2;
     let total: usize = pre_sizes.iter().sum::<usize>() + final_size;
 
-    let setup = AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(FINAL_NV, total).expect("setup");
+    let setup =
+        AkitaCommitmentScheme::<ProtocolCfg>::setup_prover(final_num_vars, total).expect("setup");
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
+    let precommit_capacity = pre_sizes.iter().copied().max().unwrap_or(1);
+    let precommit_setup =
+        AkitaCommitmentScheme::<PrecommittedCommitmentConfig<TestCfg>>::setup_prover(
+            pre_num_vars,
+            precommit_capacity,
+        )
+        .expect("precommit setup");
+    let prepared_precommit = CpuBackend
+        .prepare_setup(&precommit_setup)
+        .expect("prepared precommit setup");
+    let precommit_stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend,
+        &prepared_precommit,
+        precommit_setup.expanded.as_ref(),
+    )
+    .expect("precommit stack");
 
     // Commit every precommitted group under the exact precommit config; keep the
     // polynomials alive so the prover/verifier can borrow references.
@@ -307,8 +324,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     for (group_idx, &k) in pre_sizes.iter().enumerate() {
-        let key = akita_types::PolynomialGroupLayout::new(PRE_NV, k);
-        let opening_batch = OpeningClaimsLayout::new(PRE_NV, k).expect("precommit batch");
+        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, k);
+        let opening_batch = OpeningClaimsLayout::new(pre_num_vars, k).expect("precommit batch");
         let layout = PrecommittedCommitmentConfig::<TestCfg>::get_params_for_batched_commitment(
             &opening_batch,
         )
@@ -323,9 +340,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .collect();
         let (commitment, hint) =
             AkitaCommitmentScheme::<PrecommittedCommitmentConfig<TestCfg>>::batched_commit(
-                &setup,
+                &precommit_setup,
                 &polys[..],
-                &stack,
+                &precommit_stack,
             )
             .expect("precommit");
         pre_frozen.push(akita_types::PrecommittedGroupDescriptor::from_params(
@@ -339,7 +356,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
 
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
-        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, final_size),
+        final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
         precommitteds: pre_frozen,
     };
     let opening_layout = multi_group_key
@@ -348,6 +365,20 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let multi_group_schedule =
         ProtocolCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
     let main_params = multi_group_root_params(&multi_group_schedule);
+    assert!(
+        multi_group_schedule
+            .root
+            .params
+            .precommitted_groups
+            .iter()
+            .all(|group| group.descriptor.inner_ring_dimension == TestCfg::D),
+        "precommitted groups must retain their native A dimension"
+    );
+    assert_eq!(
+        main_params.d_a(),
+        ProtocolCfg::D,
+        "the final group must retain the consuming carrier dimension"
+    );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
         let root_commitment = &root.params.final_group.commitment;
@@ -386,14 +417,14 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     )
     .expect("final multi-group commitment");
 
-    let point = debug_random_point(FINAL_NV);
+    let point = debug_random_point(final_num_vars);
     let pre_openings: Vec<Vec<OneHotF>> = pre_polys_by_group
         .iter()
         .zip(pre_layouts.iter())
         .map(|(polys, layout)| {
             polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, &point[..PRE_NV], layout))
+                .map(|poly| opening_from_poly(poly, &point[..pre_num_vars], layout))
                 .collect()
         })
         .collect();
@@ -412,7 +443,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                PointVariableSelection::prefix(pre_num_vars, final_num_vars)
+                    .expect("pre point vars"),
                 openings.clone(),
                 pre_commitments[group_idx].clone(),
             )
@@ -421,7 +453,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
     prover_groups.push(
         PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+            PointVariableSelection::prefix(final_num_vars, final_num_vars)
+                .expect("final point vars"),
             final_openings.clone(),
             final_commitment.clone(),
         )
@@ -485,7 +518,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                PointVariableSelection::prefix(pre_num_vars, final_num_vars)
+                    .expect("pre point vars"),
                 openings.clone(),
                 &pre_commitments[group_idx],
             )
@@ -494,7 +528,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
     verifier_groups.push(
         PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+            PointVariableSelection::prefix(final_num_vars, final_num_vars)
+                .expect("final point vars"),
             final_openings.clone(),
             &final_commitment,
         )
@@ -518,13 +553,15 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             point.clone(),
             vec![
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    PointVariableSelection::prefix(pre_num_vars, final_num_vars)
+                        .expect("pre point vars"),
                     pre_openings[0].clone(),
                     &final_commitment,
                 )
                 .expect("swapped pre verifier group"),
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                    PointVariableSelection::prefix(final_num_vars, final_num_vars)
+                        .expect("final point vars"),
                     final_openings.clone(),
                     &pre_commitments[0],
                 )
@@ -551,13 +588,15 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             point.clone(),
             vec![
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    PointVariableSelection::prefix(pre_num_vars, final_num_vars)
+                        .expect("pre point vars"),
                     pre_openings[0].clone(),
                     &pre_commitments[0],
                 )
                 .expect("pre verifier group"),
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                    PointVariableSelection::prefix(final_num_vars, final_num_vars)
+                        .expect("final point vars"),
                     tampered_final_openings,
                     &final_commitment,
                 )
@@ -582,7 +621,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(&[1], 3, true);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 28, &[1], 2, true);
 }
 
 #[test]
@@ -591,7 +630,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,
         fp128::D64OneHotMultiChunkW2R2,
-    >(&[1], 3, false);
+    >(15, 30, &[1], 3, false);
 }
 
 #[test]

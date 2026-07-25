@@ -62,6 +62,40 @@ impl TestSetupInputs {
 fn test_scalar(value: u128) -> F {
     F::from_canonical_u128(value)
 }
+
+fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: CommitmentRingDims) {
+    let inner = &params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound(),
+        role_dims.d_a(),
+    );
+    let outer = &params.outer_commit_matrix;
+    params.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        outer.coeff_linf_bound(),
+        role_dims.d_b(),
+    );
+    let open = &params.open_commit_matrix;
+    params.open_commit_matrix = crate::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width(),
+        open.coeff_linf_bound(),
+        role_dims.d_d(),
+    );
+}
+
 #[allow(clippy::too_many_arguments)]
 fn test_inputs(
     n_a: usize,
@@ -112,7 +146,8 @@ fn test_inputs_for_group_sizes(
         n_a,
         n_b,
         n_d,
-        SparseChallengeConfig::pm1_only(1),
+        SparseChallengeConfig::production_for_ring_dim(TEST_D)
+            .expect("test ring has a production challenge"),
     )
     .with_decomp(
         num_positions_per_block,
@@ -181,6 +216,7 @@ fn test_inputs_for_group_sizes(
                     inner_commit_matrix: lp.inner_commit_matrix.clone(),
                     outer_commit_matrix,
                     log_basis_open: lp.log_basis_open,
+                    fold_challenge_config: lp.fold_challenge_config,
                     num_digits_inner: lp.num_digits_inner,
                     num_digits_outer: lp.num_digits_outer,
                     num_digits_open: lp.num_digits_open,
@@ -304,14 +340,18 @@ fn finalize_test_plan(
         eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
     };
     for group in &mut plan.groups {
+        group.role_dims = role_dims;
+        group
+            .set_projection_ratios(plan.projection_geometry.base_ring_dim())
+            .expect("valid test group projection");
         group
             .refresh_segments(
                 &plan.d_weights,
                 plan.d_rows,
                 plan.d_physical_cols,
-                plan.projection_geometry.a_ratio(),
-                plan.projection_geometry.b_ratio(),
-                plan.projection_geometry.d_ratio(),
+                group.a_ratio,
+                group.b_ratio,
+                group.d_ratio,
             )
             .expect("valid cached setup scan segments");
     }
@@ -333,6 +373,10 @@ fn test_group_plan(
 ) -> SetupContributionGroupPlan<F> {
     SetupContributionGroupPlan {
         group_id: 0,
+        role_dims: CommitmentRingDims::uniform(64),
+        a_ratio: 1,
+        b_ratio: 1,
+        d_ratio: 1,
         consistency_weight: F::one(),
         num_claims: 0,
         num_live_blocks: 0,
@@ -470,7 +514,7 @@ fn structured_weight_fixture_with_outgoing(
     let tau1 = (0..3)
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
-    let inputs = test_inputs(
+    let mut inputs = test_inputs(
         n_a,
         n_b,
         n_d,
@@ -483,6 +527,7 @@ fn structured_weight_fixture_with_outgoing(
         log_basis,
         EqPolynomial::evals(&tau1).unwrap(),
     );
+    retarget_test_role_dims(&mut inputs.level_params, role_dims);
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let opening_source_len = layout
         .total_len()

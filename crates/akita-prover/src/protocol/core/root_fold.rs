@@ -107,7 +107,6 @@ where
         non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
-        alpha_bits,
         basis,
     )
 }
@@ -193,7 +192,7 @@ where
     // Absorb root claims through the D-free flat commitment encoder keyed on the
     // root level's B-role dimension (byte-identical to the verifier's
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
-    claims.append_to_transcript::<T>(root_params.role_dims().d_b(), transcript)?;
+    claims.append_to_transcript::<T>(root_params, transcript)?;
 
     let prepared_fold =
         prepare_root::<F, E, T, P, C, O, TS, R>(stack, transcript, claims, root_params, basis)

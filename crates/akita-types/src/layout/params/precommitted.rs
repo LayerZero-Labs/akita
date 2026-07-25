@@ -1,4 +1,4 @@
-use akita_challenges::TensorChallengeShape;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
@@ -22,6 +22,8 @@ pub struct PrecommittedLevelParams {
     pub outer_commit_matrix: OuterCommitMatrixParams,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
     pub log_basis_open: u32,
+    /// Sparse fold-challenge family certified for this group's native A ring.
+    pub fold_challenge_config: SparseChallengeConfig,
     /// Gadget decomposition depth for A/source coefficients.
     pub num_digits_inner: usize,
     /// Gadget decomposition depth for B/`t_hat` values.
@@ -47,6 +49,11 @@ impl PrecommittedLevelParams {
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.layout.validate()?;
+        if self.fold_challenge_config.weight() != 0 {
+            self.fold_challenge_config
+                .validate_for_ring_dim(self.layout.inner_ring_dimension)
+                .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
+        }
         if self.log_basis_open == 0
             || self.num_digits_inner == 0
             || self.num_digits_outer == 0
@@ -71,6 +78,13 @@ impl PrecommittedLevelParams {
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        if self.layout.inner_ring_dimension != inner_ring_dimension
+            || self.layout.outer_ring_dimension != outer_ring_dimension
+        {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted A/B key dimensions do not match the frozen group layout".to_string(),
+            ));
+        }
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
                 "current A-width relation witness cannot carry the precommitted B role".to_string(),
@@ -143,6 +157,10 @@ impl PrecommittedLevelParams {
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
         self.outer_commit_matrix.append_descriptor_bytes(bytes);
         crate::descriptor_bytes::push_u32(bytes, self.log_basis_open);
+        super::append_schedule_sparse_challenge_descriptor_bytes(
+            bytes,
+            &self.fold_challenge_config,
+        );
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
@@ -164,6 +182,7 @@ pub trait LevelParamsLike {
     fn num_positions_per_block(&self) -> usize;
     fn num_live_blocks(&self) -> usize;
     fn fold_challenge_shape(&self) -> TensorChallengeShape;
+    fn fold_challenge_config(&self) -> SparseChallengeConfig;
     fn position_index_bits(&self) -> usize;
     fn block_index_bits(&self) -> usize;
     fn num_digits_inner(&self) -> usize;
@@ -210,6 +229,10 @@ impl LevelParamsLike for CommittedGroupParams {
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
         self.fold_challenge_shape
+    }
+
+    fn fold_challenge_config(&self) -> SparseChallengeConfig {
+        self.fold_challenge_config
     }
 
     fn position_index_bits(&self) -> usize {
@@ -284,6 +307,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
         TensorChallengeShape::Flat
+    }
+
+    fn fold_challenge_config(&self) -> SparseChallengeConfig {
+        self.fold_challenge_config
     }
 
     fn position_index_bits(&self) -> usize {

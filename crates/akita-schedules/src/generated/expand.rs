@@ -109,6 +109,8 @@ impl GeneratedSetupPrefixInput {
             num_live_blocks,
             log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
             log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            inner_ring_dimension: d,
+            outer_ring_dimension: d,
             n_a: 1,
             a_coeff_linf_bound: 1,
             n_b: 1,
@@ -138,7 +140,7 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        layout.validate_root_geometry(d)?;
+        layout.validate_root_geometry()?;
         if fold_shape != TensorChallengeShape::Flat {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix challenge shape mismatch".into(),
@@ -239,6 +241,7 @@ impl GeneratedSetupPrefixInput {
             inner_commit_matrix,
             outer_commit_matrix,
             log_basis_open,
+            fold_challenge_config: *ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,

@@ -13,6 +13,7 @@ fn mixed_dimension_events() -> RelationWeightEvents<TestField> {
         events: Vec::new(),
         inner_alpha_powers: scalar_powers(TestField::from_u64(7), role_dims.d_a()),
         role_dims,
+        group_role_dims: vec![role_dims],
         opening_source_len: 3,
         opening_ring_dim: 128,
         physical_field_len: 256,

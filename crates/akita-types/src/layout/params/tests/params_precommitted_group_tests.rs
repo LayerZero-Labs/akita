@@ -90,3 +90,14 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         lp.role_dims()
     );
 }
+
+#[test]
+fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
+    let (mut lp, _) = sample_multi_group_root_params();
+    let precommitted = &mut lp.precommitted_groups[0];
+    precommitted.layout.outer_ring_dimension /= 2;
+    let err = precommitted
+        .validate()
+        .expect_err("frozen B dimension must match the serialized B matrix");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}

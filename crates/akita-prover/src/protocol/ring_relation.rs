@@ -731,6 +731,7 @@ impl RingRelationProver {
                 group_z.into_iter().enumerate()
             {
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
+                let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
                 let group_hint_parts = hint_parts.drain(..k_g).collect::<Vec<_>>();
                 groups.push(RingRelationGroupWitness::from_parts(
                     z_folded_rings,
@@ -738,7 +739,7 @@ impl RingRelationProver {
                     group_e_hat[group_index].clone(),
                     group_e_folded[group_index].clone(),
                     AkitaCommitmentHint::new(group_hint_parts),
-                    dims,
+                    group_dims,
                 ));
             }
             RingRelationWitness::from_groups(fold_grind_nonce, groups)

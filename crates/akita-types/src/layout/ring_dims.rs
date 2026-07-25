@@ -241,6 +241,49 @@ pub fn validate_schedule_ring_dims(
         Some(schedule.root.output_witness_len),
         Some(root_next_d),
     )?;
+    let root = &schedule.root.params;
+    let final_params = &root.final_group.commitment;
+    if root.open_commit_matrix != final_params.open_commit_matrix {
+        return Err(AkitaError::InvalidSetup(
+            "root shared D matrix disagrees with final-group commitment params".to_string(),
+        ));
+    }
+    let shared_d = root.open_commit_matrix.ring_dimension();
+    for (group_index, group) in root.precommitted_groups.iter().enumerate() {
+        if group.descriptor != group.commitment.layout {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} descriptor disagrees with its commitment params"
+            )));
+        }
+        group
+            .descriptor
+            .validate_frozen_precommit(final_params.d_a())?;
+        group.commitment.validate()?;
+        if group.commitment.log_basis_open != final_params.log_basis_open {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
+            )));
+        }
+        if group.commitment.fold_challenge_config.weight() == 0 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} has an empty fold challenge"
+            )));
+        }
+        let dims = group.commitment.role_dims(shared_d);
+        validate_role_dims(dims)?;
+        for (role, d) in [
+            (RingRole::Inner, dims.d_a()),
+            (RingRole::Outer, dims.d_b()),
+            (RingRole::Opening, dims.d_d()),
+        ] {
+            if !seed.gen_ring_dim.is_multiple_of(d) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "setup gen_ring_dim={} is not divisible by root precommitted group {group_index} {role:?} ring d={d}",
+                    seed.gen_ring_dim
+                )));
+            }
+        }
+    }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
             || schedule.terminal.params.witness.d_a(),

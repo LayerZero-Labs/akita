@@ -169,7 +169,7 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     /// Absorb the normalized batch shape, commitments, and shared point.
     pub fn append_to_transcript<T>(
         &self,
-        ring_dim: usize,
+        root_params: &CommittedGroupParams,
         transcript: &mut T,
     ) -> Result<(), AkitaError>
     where
@@ -185,7 +185,8 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         // absorb for well-formed inputs.
         let layout = self.opening_layout::<CommitF>()?;
         layout.append_batch_shape_to_transcript::<CommitF, T>(transcript)?;
-        for commitment in self.commitments() {
+        for (group_index, commitment) in self.commitments().into_iter().enumerate() {
+            let ring_dim = root_params.group_role_dims(&layout, group_index)?.d_b();
             commitment.append_to_transcript(
                 akita_transcript::labels::ABSORB_COMMITMENT,
                 ring_dim,
@@ -439,9 +440,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
+    use akita_types::{PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId};
 
     type F = Fp32<251>;
 
@@ -465,7 +468,67 @@ mod tests {
     }
 
     fn commitment() -> Commitment<F> {
-        Commitment::new(RingVec::from_coeffs(vec![F::zero()]))
+        Commitment::new(RingVec::from_coeffs(vec![F::zero(); 64]))
+    }
+
+    fn multi_group_params() -> CommittedGroupParams {
+        let pre_layout = PolynomialGroupLayout::new(2, 1);
+        let mut pre = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            1,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(64)
+                .expect("test ring has a production challenge"),
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .expect("precommitted params");
+        let inner = &pre.inner_commit_matrix;
+        pre.inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+            inner.security_policy(),
+            inner.sis_table_key().table_digest,
+            inner.sis_modulus_profile(),
+            inner.output_rank(),
+            inner.input_width(),
+            1,
+            inner.ring_dimension(),
+        );
+        let outer = &pre.outer_commit_matrix;
+        pre.outer_commit_matrix = akita_types::OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width(),
+            1,
+            outer.ring_dimension(),
+        );
+        let mut root = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            1,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::production_for_ring_dim(64)
+                .expect("test ring has a production challenge"),
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .expect("root params");
+        root.precommitted_groups.push(PrecommittedLevelParams {
+            layout: PrecommittedGroupDescriptor::from_params(pre_layout, &pre),
+            inner_commit_matrix: pre.inner_commit_matrix,
+            outer_commit_matrix: pre.outer_commit_matrix,
+            log_basis_open: pre.log_basis_open,
+            fold_challenge_config: pre.fold_challenge_config,
+            num_digits_inner: pre.num_digits_inner,
+            num_digits_outer: pre.num_digits_outer,
+            num_digits_open: pre.num_digits_open,
+            num_digits_fold_one: pre.num_digits_fold_one,
+        });
+        root
     }
 
     fn multi_group_data<'a>(
@@ -548,9 +611,10 @@ mod tests {
         let pre_refs = [&pre_poly];
         let final_refs = [&final_a, &final_b];
         let data = multi_group_data(&pre_refs, &final_refs);
+        let root_params = multi_group_params();
 
         let mut precise = AkitaTranscript::<F>::new(b"test/precise-group-shape");
-        data.append_to_transcript(1, &mut precise)
+        data.append_to_transcript(&root_params, &mut precise)
             .expect("precise transcript absorb");
         let precise_challenge = precise.challenge_scalar(b"after-shape");
 
@@ -562,7 +626,7 @@ mod tests {
             .expect("padded shape absorb");
         for commitment in data.commitments() {
             commitment
-                .append_to_transcript(ABSORB_COMMITMENT, 1, &mut padded)
+                .append_to_transcript(ABSORB_COMMITMENT, 64, &mut padded)
                 .expect("commitment absorb");
         }
         for coord in data.point() {

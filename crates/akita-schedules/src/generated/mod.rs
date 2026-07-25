@@ -284,7 +284,19 @@ pub fn runtime_schedule_key_cmp(
 
 fn precommitted_group_sort_key(
     key: &akita_types::PrecommittedGroupDescriptor,
-) -> (usize, usize, usize, usize, usize, u32, u32, usize, usize) {
+) -> (
+    usize,
+    usize,
+    usize,
+    usize,
+    usize,
+    u32,
+    u32,
+    usize,
+    usize,
+    usize,
+    usize,
+) {
     (
         key.group.num_vars(),
         key.group.num_polynomials(),
@@ -293,6 +305,8 @@ fn precommitted_group_sort_key(
         key.num_live_blocks,
         key.log_basis_inner,
         key.log_basis_outer,
+        key.inner_ring_dimension,
+        key.outer_ring_dimension,
         key.n_a,
         key.n_b,
     )
@@ -322,10 +336,56 @@ fn precommitted_group_key_eq(
         && generated.num_live_blocks == layout.num_live_blocks
         && generated.log_basis_inner == layout.log_basis_inner
         && generated.log_basis_outer == layout.log_basis_outer
+        && generated.inner_ring_dimension == layout.inner_ring_dimension
+        && generated.outer_ring_dimension == layout.outer_ring_dimension
         && generated.n_a == layout.n_a
         && generated.a_coeff_linf_bound == layout.a_coeff_linf_bound
         && generated.n_b == layout.n_b
         && generated.b_coeff_linf_bound == layout.b_coeff_linf_bound
+}
+
+#[cfg(test)]
+mod mixed_dimension_key_tests {
+    use super::{precommitted_group_key_eq, precommitted_group_sort_key};
+    use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
+
+    fn descriptor() -> PrecommittedGroupDescriptor {
+        PrecommittedGroupDescriptor {
+            group: PolynomialGroupLayout::new(12, 1),
+            num_live_ring_elements_per_claim: 64,
+            num_positions_per_block: 8,
+            num_live_blocks: 8,
+            log_basis_inner: 4,
+            log_basis_outer: 5,
+            inner_ring_dimension: 128,
+            outer_ring_dimension: 64,
+            n_a: 3,
+            a_coeff_linf_bound: 7,
+            n_b: 2,
+            b_coeff_linf_bound: 11,
+        }
+    }
+
+    #[test]
+    fn precommitted_key_identity_includes_both_native_ring_dimensions() {
+        let base = descriptor();
+        for changed in [
+            PrecommittedGroupDescriptor {
+                inner_ring_dimension: 64,
+                ..base
+            },
+            PrecommittedGroupDescriptor {
+                outer_ring_dimension: 32,
+                ..base
+            },
+        ] {
+            assert!(!precommitted_group_key_eq(&base, &changed));
+            assert_ne!(
+                precommitted_group_sort_key(&base),
+                precommitted_group_sort_key(&changed)
+            );
+        }
+    }
 }
 
 /// Returns an error when the generated key does not match the runtime key.

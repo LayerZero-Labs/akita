@@ -4,10 +4,8 @@ use akita_algebra::{offset_eq::eval_compact_pair_eq, ring::scalar_powers};
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Materialize the dense packed setup-position weight vector.
     pub fn materialize_setup_index_weights(&self, alpha: E) -> Result<Vec<E>, AkitaError> {
-        let scales = self.projection_scales(alpha);
-        let lane_powers = self.relation_lane_powers(alpha);
         (0..self.required())
-            .map(|setup_idx| self.setup_index_weight_at(setup_idx, &scales, &lane_powers))
+            .map(|setup_idx| self.setup_index_weight_at(setup_idx, alpha))
             .collect()
     }
 
@@ -26,9 +24,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        let scales = self.projection_scales(alpha);
-        let lane_powers = self.relation_lane_powers(alpha);
         self.groups.iter().try_fold(E::zero(), |acc, group| {
+            let scales = self.group_projection_scales(group, alpha);
+            let lane_powers = self.group_relation_lane_powers(group, alpha);
             Ok(acc
                 + self.evaluate_d_spans_at_point(
                     group,
@@ -51,27 +49,25 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         })
     }
 
-    fn projection_scales(&self, alpha: E) -> [Vec<E>; 3] {
-        let geometry = self.projection_geometry;
+    fn group_projection_scales(
+        &self,
+        group: &SetupContributionGroupPlan<E>,
+        alpha: E,
+    ) -> [Vec<E>; 3] {
         let role_scales = |role_dim: usize| {
             scalar_powers(alpha, role_dim)
-                .chunks(geometry.base_ring_dim())
+                .chunks(self.projection_geometry.base_ring_dim())
                 .map(|chunk| chunk[0])
                 .collect()
         };
         [
-            role_scales(geometry.role_dims().d_a()),
-            role_scales(geometry.role_dims().d_b()),
-            role_scales(geometry.role_dims().d_d()),
+            role_scales(group.role_dims.d_a()),
+            role_scales(group.role_dims.d_b()),
+            role_scales(group.role_dims.d_d()),
         ]
     }
 
-    fn setup_index_weight_at(
-        &self,
-        setup_idx: usize,
-        scales: &[Vec<E>; 3],
-        lane_powers: &[Vec<E>; 3],
-    ) -> Result<E, AkitaError> {
+    fn setup_index_weight_at(&self, setup_idx: usize, alpha: E) -> Result<E, AkitaError> {
         let geometry = self.projection_geometry;
         if setup_idx >= geometry.required() {
             return Err(AkitaError::InvalidSize {
@@ -81,7 +77,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let mut weight = E::zero();
         for group in &self.groups {
-            let d_idx = setup_idx / geometry.d_ratio();
+            let scales = self.group_projection_scales(group, alpha);
+            let lane_powers = self.group_relation_lane_powers(group, alpha);
+            let d_idx = setup_idx / group.d_ratio;
             let d_footprint = self
                 .d_rows
                 .checked_mul(self.d_physical_cols)
@@ -90,7 +88,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
-                    weight += scales[2][setup_idx % geometry.d_ratio()]
+                    weight += scales[2][setup_idx % group.d_ratio]
                         * self.d_weights[d_row]
                         * role_column_weight_or_materialized(
                             &group.d_spans,
@@ -103,7 +101,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 }
             }
 
-            let b_idx = setup_idx / geometry.b_ratio();
+            let b_idx = setup_idx / group.b_ratio;
             let b_footprint = group
                 .n_b
                 .checked_mul(group.t_cols)
@@ -111,7 +109,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             if b_idx < b_footprint {
                 let b_col = b_idx % group.t_cols;
                 let b_row = b_idx / group.t_cols;
-                weight += scales[1][setup_idx % geometry.b_ratio()]
+                weight += scales[1][setup_idx % group.b_ratio]
                     * group.b_weights[b_row]
                     * role_column_weight_or_materialized(
                         &group.b_spans,
@@ -123,7 +121,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     )?;
             }
 
-            let a_idx = setup_idx / geometry.a_ratio();
+            let a_idx = setup_idx / group.a_ratio;
             let a_footprint = group
                 .n_a
                 .checked_mul(group.z_cols)
@@ -131,7 +129,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             if a_idx < a_footprint {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
-                weight += scales[0][setup_idx % geometry.a_ratio()]
+                weight += scales[0][setup_idx % group.a_ratio]
                     * group.a_row_weights[a_row]
                     * role_column_weight_or_materialized(
                         &group.a_spans,
@@ -164,15 +162,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .start
                 .checked_add(span.setup_column_start)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-            let setup_stride = self
-                .projection_geometry
-                .d_ratio()
+            let setup_stride = group
+                .d_ratio
                 .checked_mul(span.setup_column_stride)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D stride overflow".into()))?;
             for (row, &row_weight) in self.d_weights.iter().enumerate() {
                 for (lane, &scale) in scales.iter().enumerate() {
                     let setup_index = projected_setup_offset(
-                        self.projection_geometry.d_ratio(),
+                        group.d_ratio,
                         self.d_physical_cols,
                         row,
                         setup_col,
@@ -208,15 +205,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let mut acc = E::zero();
         for span in &group.b_spans {
             super::structured::ensure_lane_count(span, lane_powers)?;
-            let setup_stride = self
-                .projection_geometry
-                .b_ratio()
+            let setup_stride = group
+                .b_ratio
                 .checked_mul(span.setup_column_stride)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B stride overflow".into()))?;
             for (row, &row_weight) in group.b_weights.iter().enumerate() {
                 for (lane, &scale) in scales.iter().enumerate() {
                     let setup_index = projected_setup_offset(
-                        self.projection_geometry.b_ratio(),
+                        group.b_ratio,
                         group.t_cols,
                         row,
                         span.setup_column_start,
@@ -256,15 +252,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .fold_gadget
                 .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
                 .ok_or(AkitaError::InvalidProof)?;
-            let setup_stride = self
-                .projection_geometry
-                .a_ratio()
+            let setup_stride = group
+                .a_ratio
                 .checked_mul(span.setup_column_stride)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup A stride overflow".into()))?;
             for (row, &row_weight) in group.a_row_weights.iter().enumerate() {
                 for (lane, &scale) in scales.iter().enumerate() {
                     let setup_index = projected_setup_offset(
-                        self.projection_geometry.a_ratio(),
+                        group.a_ratio,
                         group.z_cols,
                         row,
                         span.setup_column_start,
@@ -294,26 +289,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
 fn role_column_weight_or_materialized<E: FieldCore>(
     spans: &[SetupContributionSpan],
-    _materialized: &[E],
+    materialized: &[E],
     column: usize,
     equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
     lane_powers: &[E],
     fold_gadget: Option<&[E]>,
 ) -> Result<E, AkitaError> {
+    if !materialized.is_empty() {
+        return materialized
+            .get(column)
+            .copied()
+            .ok_or(AkitaError::InvalidProof);
+    }
     if spans.is_empty() {
-        #[cfg(test)]
-        {
-            return _materialized
-                .get(column)
-                .copied()
-                .ok_or(AkitaError::InvalidProof);
-        }
-        #[cfg(not(test))]
-        {
-            return Err(AkitaError::InvalidSetup(
-                "setup contribution plan is missing canonical spans".into(),
-            ));
-        }
+        return Err(AkitaError::InvalidSetup(
+            "setup contribution plan is missing canonical spans".into(),
+        ));
     }
     role_column_weight(spans, column, equality_window, lane_powers, fold_gadget)
 }

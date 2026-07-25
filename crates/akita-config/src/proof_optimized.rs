@@ -298,48 +298,40 @@ fn root_runtime_matrix_len_for_opening_batch(
     lp: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let final_group_index = lp.validate_opening_batch(layout)?;
-    let final_group = layout.group_layout(final_group_index)?;
-    let (a_len, b_len, mut d_width) = group_setup_footprint(
+    lp.validate_opening_batch(layout)?;
+    let mut max_a_coeff_len = matrix_coefficient_len(
         lp.inner_commit_matrix.output_rank(),
         lp.inner_commit_matrix.input_width(),
-        lp.outer_commit_matrix.output_rank(),
-        final_group.num_polynomials(),
-        lp.num_live_blocks,
-        lp.num_digits_open,
+        lp.inner_commit_matrix.ring_dimension(),
+        "root A",
     )?;
-    let mut max_a_coeff_len = a_len
-        .checked_mul(lp.inner_commit_matrix.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("root A setup envelope overflow".into()))?;
-    let mut max_b_coeff_len = b_len
-        .checked_mul(lp.outer_commit_matrix.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("root B setup envelope overflow".into()))?;
+    let mut max_b_coeff_len = matrix_coefficient_len(
+        lp.outer_commit_matrix.output_rank(),
+        lp.outer_commit_matrix.input_width(),
+        lp.outer_commit_matrix.ring_dimension(),
+        "root B",
+    )?;
 
     for group in &lp.precommitted_groups {
-        let (a_len, b_len, group_d_width) = group_setup_footprint(
+        let a_coeff_len = matrix_coefficient_len(
             group.inner_commit_matrix.output_rank(),
             group.inner_commit_matrix.input_width(),
-            group.outer_commit_matrix.output_rank(),
-            group.layout.group.num_polynomials(),
-            group.layout.num_live_blocks,
-            group.num_digits_open,
+            group.inner_commit_matrix.ring_dimension(),
+            "multi-group A",
         )?;
-        let a_coeff_len = a_len
-            .checked_mul(group.inner_commit_matrix.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group A setup overflow".into()))?;
-        let b_coeff_len = b_len
-            .checked_mul(group.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group B setup overflow".into()))?;
+        let b_coeff_len = matrix_coefficient_len(
+            group.outer_commit_matrix.output_rank(),
+            group.outer_commit_matrix.input_width(),
+            group.outer_commit_matrix.ring_dimension(),
+            "multi-group B",
+        )?;
         max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
         max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
-        d_width = d_width.checked_add(group_d_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
-        })?;
     }
 
     root_setup_len(
         lp.open_commit_matrix.output_rank(),
-        d_width,
+        lp.open_commit_matrix.input_width(),
         lp.open_commit_matrix.ring_dimension(),
         max_a_coeff_len,
         max_b_coeff_len,
@@ -347,36 +339,15 @@ fn root_runtime_matrix_len_for_opening_batch(
     )
 }
 
-fn group_setup_footprint(
-    a_rows: usize,
-    a_width: usize,
-    b_rows: usize,
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_digits_open: usize,
-) -> Result<(usize, usize, usize), AkitaError> {
-    let a_len = a_rows.checked_mul(a_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group A setup envelope overflow".to_string())
-    })?;
-    let d_width = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
-        })?;
-    let t_vector_width = a_rows
-        .checked_mul(num_digits_open)
-        .and_then(|n| n.checked_mul(num_live_blocks))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group B setup width overflow".to_string())
-        })?;
-    let b_width = num_polys.checked_mul(t_vector_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group B setup width overflow".to_string())
-    })?;
-    let b_len = b_rows.checked_mul(b_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group B setup envelope overflow".to_string())
-    })?;
-    Ok((a_len, b_len, d_width))
+fn matrix_coefficient_len(
+    rows: usize,
+    columns: usize,
+    ring_dimension: usize,
+    label: &str,
+) -> Result<usize, AkitaError> {
+    rows.checked_mul(columns)
+        .and_then(|len| len.checked_mul(ring_dimension))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup envelope overflow")))
 }
 
 fn root_setup_len(

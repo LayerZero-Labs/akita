@@ -11,10 +11,11 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance,
-    RingRole, SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    dispatch_for_field, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams,
+    FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRole, SetupContributionGroupInputs, SetupContributionPlan,
+    WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
@@ -208,8 +209,8 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let relation_address_geometry = RelationAddressGeometry::new(
-        relation.role_dims(),
+    let relation_address_geometry = lp.relation_address_geometry(
+        opening_batch,
         replay.opening_ring_dim,
         replay.opening_source_len,
     )?;
@@ -286,8 +287,9 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
-    let relation_address_geometry = RelationAddressGeometry::new(
-        relation.role_dims(),
+    let opening_batch = relation.opening_batch();
+    let relation_address_geometry = lp.relation_address_geometry(
+        opening_batch,
         replay.opening_ring_dim,
         replay.opening_source_len,
     )?;
@@ -295,7 +297,6 @@ where
     if layout.total_len() > replay.opening_source_len {
         return Err(AkitaError::InvalidProof);
     }
-    let opening_batch = relation.opening_batch();
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
@@ -362,10 +363,10 @@ where
         ));
     }
 
-    let alpha_pows_a = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_role_dims = lp.group_role_dims(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let num_live_blocks = group_lp.num_live_blocks();
@@ -420,11 +421,24 @@ where
                 actual: challenges.logical_len(),
             });
         }
-        let c_alphas =
-            prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, num_live_blocks)?;
-        let opening_a_evals = (0..num_positions_per_block)
-            .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
-            .collect::<Result<Vec<_>, _>>()?;
+        let (c_alphas, opening_a_evals) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_role_dims.d_a(),
+            |D_GROUP| {
+                let alpha_pows = scalar_powers(alpha, D_GROUP);
+                let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
+                    challenges,
+                    &alpha_pows,
+                    k_g,
+                    num_live_blocks,
+                )?;
+                let opening_a_evals = (0..num_positions_per_block)
+                    .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, AkitaError>((c_alphas, opening_a_evals))
+            }
+        )?;
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;

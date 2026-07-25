@@ -299,14 +299,9 @@ pub(in crate::protocol::core) struct PreparedEvaluationTraceClaim<E: FieldCore> 
     pub(in crate::protocol::core) claim_coefficients: Vec<E>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T, const D: usize>(
+pub(in crate::protocol::core) fn prepare_evaluation_trace_claim<F, E, T>(
     reduction: &Option<ExtensionOpeningReduction<E>>,
-    folded_rings: &[CyclotomicRing<F, D>],
-    prepared_points: &[PreparedOpeningPoint<F, E>],
-    protocol_point: &[E],
-    alpha_bits: usize,
-    basis: BasisMode,
+    openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     row_coefficients: Option<Vec<E>>,
     transcript: &mut T,
@@ -316,55 +311,16 @@ where
     E: FpExtEncoding<F> + ExtField<F>,
     T: Transcript<F>,
 {
-    if prepared_points.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_groups(),
-            actual: prepared_points.len(),
-        });
-    }
-    if folded_rings.len() != opening_batch.num_total_polynomials() {
+    if openings.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
             expected: opening_batch.num_total_polynomials(),
-            actual: folded_rings.len(),
+            actual: openings.len(),
         });
-    }
-    let inner_claim_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
-    let mut openings = Vec::with_capacity(opening_batch.num_total_polynomials());
-    let mut claim_offset = 0usize;
-    for (group_index, prepared_point) in prepared_points.iter().enumerate() {
-        let group_layout = opening_batch.group_layout(group_index).map_err(|err| {
-            AkitaError::InvalidInput(format!("trace group layout {group_index} failed: {err:?}"))
-        })?;
-        let end = claim_offset
-            .checked_add(group_layout.num_polynomials())
-            .ok_or(AkitaError::InvalidProof)?;
-        let group_folded_rings = folded_rings.get(claim_offset..end).ok_or_else(|| {
-            AkitaError::InvalidInput(format!(
-                "folded ring range {claim_offset}..{end} is outside {} folded rings",
-                folded_rings.len()
-            ))
-        })?;
-        for folded_ring in group_folded_rings {
-            openings.push(
-                scalar_opening_from_folded_ring::<F, E, D>(
-                    folded_ring,
-                    prepared_point,
-                    inner_claim_point,
-                    basis,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "scalar opening group {group_index} failed: {err:?}"
-                    ))
-                })?,
-            );
-        }
-        claim_offset = end;
     }
     let row_coefficients = if let Some(row_coefficients) = row_coefficients {
         row_coefficients
     } else {
-        append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
+        append_claim_values_to_transcript::<F, E, T>(openings, transcript);
         if opening_batch.num_total_polynomials() == 1 {
             vec![E::one()]
         } else {
@@ -372,7 +328,7 @@ where
         }
     };
     let ordinary_trace_eval_target = opening_batch
-        .batched_eval_target(&row_coefficients, &openings)
+        .batched_eval_target(&row_coefficients, openings)
         .map_err(|err| {
             AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
         })?;

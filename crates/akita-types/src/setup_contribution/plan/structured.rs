@@ -35,12 +35,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             crate::gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
         let witness_gadget =
             crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
-        let lane_powers = self.relation_lane_powers(alpha);
+        let lane_powers = self.group_relation_lane_powers(group, alpha);
         let inner_lane_powers = &lane_powers[0];
         let (outer_subcolumns, opening_subcolumns) =
-            SetupProjectionGeometry::a_carrier_subcolumn_counts(
-                self.projection_geometry.role_dims(),
-            )?;
+            SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
 
         if group.num_live_blocks == 0 {
             return Err(AkitaError::InvalidSetup(
@@ -155,13 +153,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         Ok(evaluation)
     }
 
-    pub(super) fn relation_lane_powers(&self, alpha: E) -> [Vec<E>; 3] {
-        let geometry = self.relation_address_geometry;
-        let common = geometry.common_relation_witness_coeff_count();
+    pub(super) fn group_relation_lane_powers(
+        &self,
+        group: &SetupContributionGroupPlan<E>,
+        alpha: E,
+    ) -> [Vec<E>; 3] {
+        let common = self
+            .relation_address_geometry
+            .common_relation_witness_coeff_count();
         [
-            relation_lane_powers(alpha, geometry.role_dims().d_a(), common),
-            relation_lane_powers(alpha, geometry.role_dims().d_b(), common),
-            relation_lane_powers(alpha, geometry.role_dims().d_d(), common),
+            relation_lane_powers(alpha, group.role_dims.d_a(), common),
+            relation_lane_powers(alpha, group.role_dims.d_b(), common),
+            relation_lane_powers(alpha, group.role_dims.d_d(), common),
         ]
     }
 }

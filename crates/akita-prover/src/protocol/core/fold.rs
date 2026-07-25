@@ -40,7 +40,6 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
-    alpha_bits: usize,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -118,7 +117,6 @@ where
                 row_coefficients,
                 trace_opening_batch: &opening_batch,
                 level_params,
-                alpha_bits,
                 basis,
                 pad_base_evals,
                 transcript,
@@ -159,7 +157,6 @@ where
                     row_coefficients,
                     trace_opening_batch: &opening_batch,
                     level_params,
-                    alpha_bits,
                     basis,
                     pad_base_evals,
                     transcript,
@@ -175,7 +172,6 @@ where
             row_coefficients,
             trace_opening_batch: &opening_batch,
             level_params,
-            alpha_bits,
             basis,
             pad_base_evals,
             transcript,
@@ -200,7 +196,6 @@ where
     row_coefficients: Option<Vec<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a CommittedGroupParams,
-    alpha_bits: usize,
     basis: BasisMode,
     pad_base_evals: bool,
     transcript: &'p mut T,
@@ -242,134 +237,136 @@ where
         row_coefficients,
         trace_opening_batch,
         level_params,
-        alpha_bits,
         basis,
         pad_base_evals,
         transcript,
     } = args;
     let opening = stack.opening();
-    // Extracted level numbers for the A-role claims-evaluation operation; the
-    // kernels below must not read schedule types.
-    let ring_d = level_params.role_dims().d_a();
-    // A-role operation: prepare the typed opening point, fold-evaluate every
-    // claim polynomial at it, and derive the trace target. Typed outputs are
-    // converted to D-free carriers (`PreparedOpeningPoint`, `RingVec`) inside
-    // the arm.
+    // A-role operation: prepare each group at its native A dimension,
+    // fold-evaluate its claim polynomials, and derive scalar openings before
+    // leaving the typed dispatch arm. Typed fold outputs cross the boundary
+    // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
     let opening_batch = block_claims
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let (prepared_points, e_folded_by_claim, trace_claim, row_coefficients, row_coefficient_rings) =
-        dispatch_for_field!(
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
+    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = level_params
+            .group_params(&opening_batch, group_index)
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("root group params {group_index} failed: {err:?}"))
+            })?;
+        let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let target_len = group_alpha_bits
+            .checked_add(group_lp.position_index_bits())
+            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".to_string())
+            })?;
+        let point_vars = block_claims
+            .opening_claims()
+            .group_point_vars(group_index)?;
+        if point_vars.num_vars() != target_len {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: target_len,
+                actual: point_vars.num_vars(),
+            });
+        }
+        let group_protocol_point = point_vars
+            .indices()
+            .iter()
+            .map(|&idx| {
+                protocol_point
+                    .get(idx)
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let group_polys = block_claims.group_polys(group_index).map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "root group polynomials {group_index} failed: {err:?}"
+            ))
+        })?;
+        let (prepared_point, group_e_folded_by_claim, group_openings) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
-            ring_d,
+            group_dims.d_a(),
             |D| {
-                let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-                let mut folded_rings = Vec::with_capacity(opening_batch.num_total_polynomials());
-                let mut e_folded_by_claim =
-                    Vec::with_capacity(opening_batch.num_total_polynomials());
-                for group_index in 0..opening_batch.num_groups() {
-                    let group_lp = level_params
-                        .group_params(&opening_batch, group_index)
-                        .map_err(|err| {
-                            AkitaError::InvalidInput(format!(
-                                "root group params {group_index} failed: {err:?}"
-                            ))
-                        })?;
-                    let target_len = alpha_bits
-                        .checked_add(group_lp.position_index_bits())
-                        .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "group opening point length overflow".to_string(),
-                            )
-                        })?;
-                    let point_vars = block_claims
-                        .opening_claims()
-                        .group_point_vars(group_index)?;
-                    if point_vars.num_vars() != target_len {
-                        return Err(AkitaError::InvalidPointDimension {
-                            expected: target_len,
-                            actual: point_vars.num_vars(),
-                        });
-                    }
-                    let group_protocol_point = point_vars
-                        .indices()
-                        .iter()
-                        .map(|&idx| {
-                            protocol_point
-                                .get(idx)
-                                .copied()
-                                .ok_or(AkitaError::InvalidProof)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let group_polys = block_claims.group_polys(group_index).map_err(|err| {
+                let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
+                    prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
+                        opening.backend(),
+                        Some(opening.prepared()),
+                        group_polys,
+                        &group_protocol_point,
+                        basis,
+                        group_lp.num_positions_per_block(),
+                        group_lp.num_live_blocks(),
+                        group_alpha_bits,
+                        transcript,
+                    )
+                    .map_err(|err| {
                         AkitaError::InvalidInput(format!(
-                            "root group polynomials {group_index} failed: {err:?}"
+                            "evaluate claims group {group_index} failed: {err:?}"
                         ))
                     })?;
-                    let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
-                        prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
-                            opening.backend(),
-                            Some(opening.prepared()),
-                            group_polys,
-                            &group_protocol_point,
+                let inner_point =
+                    &group_protocol_point[..group_protocol_point.len().min(group_alpha_bits)];
+                let group_openings = group_folded_rings
+                    .iter()
+                    .map(|folded_ring| {
+                        scalar_opening_from_folded_ring::<F, E, D>(
+                            folded_ring,
+                            &prepared_point,
+                            inner_point,
                             basis,
-                            group_lp.num_positions_per_block(),
-                            group_lp.num_live_blocks(),
-                            alpha_bits,
-                            transcript,
                         )
-                        .map_err(|err| {
-                            AkitaError::InvalidInput(format!(
-                                "evaluate claims group {group_index} failed: {err:?}"
-                            ))
-                        })?;
-                    e_folded_by_claim.extend(
-                        group_e_folded_by_claim
-                            .iter()
-                            // The opening kernel emits A-role rings. The ring
-                            // relation reinterprets the unchanged coefficients
-                            // at its D-role dimension.
-                            .map(|rows| RingVec::from_ring_elems(rows).into_compact()),
-                    );
-                    folded_rings.extend(group_folded_rings);
-                    prepared_points.push(prepared_point);
-                }
-
-                let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T, D>(
-                    &reduction,
-                    &folded_rings,
-                    &prepared_points,
-                    protocol_point,
-                    alpha_bits,
-                    basis,
-                    trace_opening_batch,
-                    row_coefficients,
-                    transcript,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "prepare evaluation-trace claim failed: {err:?}"
-                    ))
-                })?;
-                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
-                    })?;
-                Ok::<_, AkitaError>((
-                    prepared_points,
-                    e_folded_by_claim,
-                    trace_claim,
-                    row_coefficients,
-                    RingVec::from_ring_elems(&row_coefficient_rings),
-                ))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let group_e_folded_by_claim = group_e_folded_by_claim
+                    .iter()
+                    .map(|rows| RingVec::from_ring_elems(rows).into_compact())
+                    .collect::<Vec<_>>();
+                Ok::<_, AkitaError>((prepared_point, group_e_folded_by_claim, group_openings))
             }
         )
         .map_err(|err| {
-            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
+            AkitaError::InvalidInput(format!(
+                "root opening preparation group {group_index} failed: {err:?}"
+            ))
         })?;
+        prepared_points.push(prepared_point);
+        e_folded_by_claim.extend(group_e_folded_by_claim);
+        scalar_openings.extend(group_openings);
+    }
+    let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T>(
+        &reduction,
+        &scalar_openings,
+        trace_opening_batch,
+        row_coefficients,
+        transcript,
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
+    })?;
+    let row_coefficient_rings = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        level_params.role_dims().d_a(),
+        |D| {
+            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
+                })?;
+            Ok::<_, AkitaError>(RingVec::from_ring_elems(&row_coefficient_rings))
+        }
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
+    })?;
     let commitment = block_claims.fold_commitment(level_params).map_err(|err| {
         AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
     })?;

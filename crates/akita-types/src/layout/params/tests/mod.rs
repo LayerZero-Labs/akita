@@ -111,6 +111,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         inner_commit_matrix,
         outer_commit_matrix,
         log_basis_open: precommit_lp.log_basis_open,
+        fold_challenge_config: precommit_lp.fold_challenge_config,
         num_digits_inner: precommit_lp.num_digits_inner,
         num_digits_outer: precommit_lp.num_digits_outer,
         num_digits_open: precommit_lp.num_digits_open,

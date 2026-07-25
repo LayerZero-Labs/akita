@@ -65,6 +65,27 @@ fn recompose_and_split_digits_round_trip() {
 }
 
 #[test]
+fn witness_plane_padding_preserves_native_prefix_and_zeros_carrier_tail() {
+    let mut out = vec![9i8; 12];
+    write_witness_plane_padded::<4>(&mut out, 1, &[1, 2]).expect("padded plane");
+    assert_eq!(&out[..4], &[9, 9, 9, 9]);
+    assert_eq!(&out[4..8], &[1, 2, 0, 0]);
+    assert_eq!(&out[8..], &[9, 9, 9, 9]);
+}
+
+#[test]
+fn witness_plane_padding_rejects_source_larger_than_carrier() {
+    let mut out = vec![0i8; 4];
+    assert!(matches!(
+        write_witness_plane_padded::<4>(&mut out, 0, &[1, 2, 3, 4, 5]),
+        Err(AkitaError::InvalidSize {
+            expected: 4,
+            actual: 5
+        })
+    ));
+}
+
+#[test]
 fn terminal_decoder_uses_one_coding_and_admission_cap() {
     let cap = 7;
     let values = [6, -6];
@@ -119,10 +140,7 @@ fn direct_terminal_builder_constructs_z_e_t_segments() {
     .layout;
     let group_layout = layout.groups[0];
     let e_folded = RingVec::from_coeffs(vec![F::zero(); group_layout.e_field_elems]);
-    let recomposed_inner_rows = vec![RingVec::from_coeffs(vec![
-        F::zero();
-        group_layout.t_field_elems
-    ])];
+    let recomposed_inner_rows = RingVec::from_coeffs(vec![F::zero(); group_layout.t_field_elems]);
     let z_folded_centered_flat = vec![0i32; group_layout.z_coords];
     let group = TerminalResponseGroupParts {
         params: &lp,

@@ -1,7 +1,7 @@
 use super::kernels::GroupSetupSegment;
 use crate::{
-    CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout, SetupProjectionGeometry,
-    WitnessLayout,
+    CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
+    SetupProjectionGeometry, WitnessLayout,
 };
 use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_field::{AkitaError, FieldCore};
@@ -58,6 +58,7 @@ pub(crate) fn validate_setup_inputs(
     validate_setup_group_ids(groups, witness_layout.num_groups())
 }
 
+#[cfg(test)]
 pub(crate) fn get_d_col_range(
     level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -76,19 +77,6 @@ pub(crate) fn get_d_col_range(
         cursor = end;
     }
     Err(AkitaError::InvalidSetup("setup D group is missing".into()))
-}
-
-pub(crate) fn get_total_d(
-    level_params: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-    groups: &[SetupContributionGroupInputs],
-) -> Result<usize, AkitaError> {
-    groups.iter().try_fold(0usize, |cursor, group| {
-        let width = group.d_active_cols(level_params, opening_batch)?;
-        cursor
-            .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))
-    })
 }
 
 fn validate_setup_group_ids(
@@ -476,6 +464,10 @@ fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, 
 
 pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) group_id: usize,
+    pub(crate) role_dims: CommitmentRingDims,
+    pub(crate) a_ratio: usize,
+    pub(crate) b_ratio: usize,
+    pub(crate) d_ratio: usize,
     pub(crate) consistency_weight: E,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
@@ -502,4 +494,27 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) d_spans: Vec<SetupContributionSpan>,
     pub(crate) b_spans: Vec<SetupContributionSpan>,
     pub(crate) a_spans: Vec<SetupContributionSpan>,
+}
+
+impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    pub(crate) fn set_projection_ratios(&mut self, base_ring_dim: usize) -> Result<(), AkitaError> {
+        let ratio = |name: &'static str, dimension: usize| {
+            dimension
+                .checked_div(base_ring_dim)
+                .filter(|ratio| {
+                    base_ring_dim != 0
+                        && dimension.is_multiple_of(base_ring_dim)
+                        && ratio.is_power_of_two()
+                })
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!(
+                        "setup {name} dimension does not project to the shared base"
+                    ))
+                })
+        };
+        self.a_ratio = ratio("A", self.role_dims.d_a())?;
+        self.b_ratio = ratio("B", self.role_dims.d_b())?;
+        self.d_ratio = ratio("D", self.role_dims.d_d())?;
+        Ok(())
+    }
 }

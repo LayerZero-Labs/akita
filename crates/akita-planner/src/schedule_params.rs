@@ -453,6 +453,7 @@ pub fn plan_optimal_suffix(
     let ctx = SuffixCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
+        ring_challenge_config: &ring_challenge_config,
         fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
         num_vars,
         key: PolynomialGroupLayout::singleton(num_vars),
@@ -515,6 +516,7 @@ fn find_schedule_inner(
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
+        ring_challenge_config,
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,

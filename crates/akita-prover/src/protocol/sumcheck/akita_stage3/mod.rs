@@ -108,8 +108,8 @@ where
         if outgoing_ring_dim == 0 || !logical_w.len().is_multiple_of(outgoing_ring_dim) {
             return Err(AkitaError::InvalidProof);
         }
-        let relation_address_geometry = RelationAddressGeometry::new(
-            relation.role_dims(),
+        let relation_address_geometry = lp.relation_address_geometry(
+            relation.opening_batch(),
             outgoing_ring_dim,
             logical_w.len() / outgoing_ring_dim,
         )?;

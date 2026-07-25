@@ -1,6 +1,6 @@
 use super::*;
 use akita_field::MulBaseUnreduced;
-use akita_types::{dispatch_for_field, RelationAddressGeometry};
+use akita_types::dispatch_for_field;
 
 /// Complete the ring switch after the caller has bound the next witness.
 ///
@@ -79,7 +79,8 @@ where
         // Bind the low coefficient block shared by every role first, then the
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
-        let geometry = RelationAddressGeometry::new(dims, opening_ring_dim, opening_source_len)?;
+        let geometry =
+            lp.relation_address_geometry(opening_batch, opening_ring_dim, opening_source_len)?;
         let coeff_count = geometry.common_relation_witness_coeff_count();
         if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(

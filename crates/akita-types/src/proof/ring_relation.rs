@@ -802,6 +802,7 @@ mod tests {
             inner_commit_matrix: precommit_lp.inner_commit_matrix.clone(),
             outer_commit_matrix: precommit_lp.outer_commit_matrix.clone(),
             log_basis_open: precommit_lp.log_basis_open,
+            fold_challenge_config: precommit_lp.fold_challenge_config,
             num_digits_inner: precommit_lp.num_digits_inner,
             num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
@@ -963,7 +964,7 @@ mod tests {
                 num_live_blocks,
             )
             .expect("emit E");
-            emit_witness_t_planes(
+            emit_witness_t_planes::<2, 2>(
                 &mut emitted,
                 &layout,
                 group_index,
@@ -982,7 +983,7 @@ mod tests {
                 let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
                     .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))
                     .collect::<Vec<_>>();
-                emit_witness_z_planes(
+                emit_witness_z_planes::<2, 2>(
                     &mut emitted,
                     unit,
                     params.num_positions_per_block(),

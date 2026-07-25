@@ -41,9 +41,7 @@ where
     let prepared_point = PreparedRelationPoint::new(
         point,
         alpha,
-        evaluator.role_dims,
-        context.opening_ring_dim,
-        context.opening_source_len,
+        evaluator.relation_address_geometry,
         &quotient_row_dims,
     )?;
     if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {

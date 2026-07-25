@@ -538,7 +538,6 @@ where
             transcript,
             prepared.v.coeffs(),
             role_dims.d_d(),
-            role_dims.d_a(),
             &opening_shape,
             prepared.lp,
             prepared.fold_grind_nonce,

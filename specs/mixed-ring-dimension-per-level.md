@@ -723,15 +723,48 @@ equation in its native A ring. The flat outgoing witness may carry the resulting
 planes through final-A padding only after those native equations have been
 constructed.
 
-The current fold producer still prepares every group at the level A dimension.
-Quotient construction therefore rejects a smaller group-local A dimension
-before running an A kernel at the wrong denominator. Per-group opening
-preparation, native fold grinding, native `PreparedRingSwitchGroup` storage,
-and padded witness emission remain follow-on work. No production schedule
-should claim heterogeneous group A support until those consumers use the same
-resolver.
+The fold producer and verifier now preserve this ownership contract throughout
+the mixed relation:
+
+- Each group prepares its opening point, fold challenge, folded response,
+  consistency quotient, A rows, B rows, and setup contribution at its native
+  dimensions.
+- The relation-address geometry takes every group's A/B dimensions, the shared
+  D dimension, and the outgoing witness dimension. The setup plan uses the
+  resulting common coefficient base, but retains the padded carrier stride
+  between witness slots.
+- The shared D matrix allocates each group's physical segment using that
+  group's `d_a / d_d` subcolumn count. A and B setup footprints and projection
+  ratios are also group-local.
+- T and Z planes are serialized through one canonical padded-plane emitter.
+  Padding occurs only at the final-A carrier boundary.
+
+These paths validate group-native matrix dimensions, sparse challenge
+configuration, opening basis, catalog identity, and setup-envelope footprints.
+The direct and deferred setup evaluators share the same checked contribution
+spans.
+
+The production planner remains the admission boundary. `PlannerPolicy`
+currently has one `ring_dimension`, so it cannot search or emit a root whose
+groups have different A/B dimensions. Consequently, the protocol and setup
+layers can consume heterogeneous runtime parameters, but the shipped catalog
+does not yet contain a heterogeneous-group row and there is no production
+end-to-end preset for it.
+
+Setup-prefix offload also retains the current `D_SETUP = 64` registry contract.
+A mixed batch whose common relation dimension is 64 can use that path. A batch
+whose group-local B dimension lowers the common base below 64 is rejected until
+the prefix registry, setup generation, and planner select `d_setup`
+dynamically.
 
 ## Future work
+- **Expose group dimensions to root planning.** Replace the scalar root
+  `PlannerPolicy::ring_dimension` decision with explicit final and
+  precommitted `CommitmentRingDims`, then emit and test a heterogeneous
+  multi-group catalog row end to end.
+- **Generalize setup-prefix dispatch.** Select `d_setup` from the producer
+  batch's common relation dimension instead of the fixed D64 registry once
+  setup generation and verifier dispatch support the same set.
 - **Plan the D512 mixed-role root natively.** Column F currently promotes the
   D256 planner's root geometry and rederives every D512 A/security field. A
   planner entry point that searches per-role root dimensions could determine

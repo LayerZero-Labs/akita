@@ -62,8 +62,6 @@ where
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
     }
-    let ring_dim = root_lp.role_dims().d_b();
-
     // Transcript binding, D-free and byte-identical to the prover's absorb
     // (`ProverOpeningData::append_to_transcript`): batch shape header, then each
     // group commitment's flat coefficients under `ring_dim` in `OpeningClaims`
@@ -73,6 +71,7 @@ where
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
+        let ring_dim = root_lp.group_role_dims(&opening_batch, group_index)?.d_b();
         let expected_rows = root_lp.group_commitment_rows(&opening_batch, group_index)?;
         let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
         if commitment_view.num_rings() != expected_rows {
@@ -316,17 +315,15 @@ where
     if extension_opening_reduction.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let role_dims = root_lp.role_dims();
-    let d_a = role_dims.d_a();
-    let alpha_bits = d_a.trailing_zeros() as usize;
-
     // One prepared opening point per group from the shared point, absorbing each
     // group's padded point in `OpeningClaims` order — byte-identical to the
     // prover's per-group absorb in `finish_prepared_fold`.
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = root_lp.group_params(opening_batch, group_index)?;
-        let target_len = alpha_bits
+        let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let target_len = group_alpha_bits
             .checked_add(group_lp.position_index_bits())
             .and_then(|n| n.checked_add(group_lp.block_index_bits()))
             .ok_or_else(|| {
@@ -346,16 +343,20 @@ where
                     .ok_or(AkitaError::InvalidProof)
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let prepared =
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+        let prepared = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D| {
                 prepare_opening_point::<F, E, D>(
                     &group_point,
                     basis,
                     group_lp.num_positions_per_block(),
                     group_lp.num_live_blocks(),
-                    alpha_bits,
+                    group_alpha_bits,
                 )
-            })?;
+            }
+        )?;
         for pt in &prepared.padded_point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
         }

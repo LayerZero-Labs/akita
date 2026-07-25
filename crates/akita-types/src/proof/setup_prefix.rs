@@ -392,6 +392,14 @@ fn serialize_precommitted_level_params<W: Write>(
         .log_basis_open
         .serialize_with_mode(&mut writer, compress)?;
     params
+        .fold_challenge_config
+        .count_pm1
+        .serialize_with_mode(&mut writer, compress)?;
+    params
+        .fold_challenge_config
+        .count_pm2
+        .serialize_with_mode(&mut writer, compress)?;
+    params
         .layout
         .n_a
         .serialize_with_mode(&mut writer, compress)?;
@@ -431,6 +439,8 @@ fn deserialize_precommitted_level_params<R: Read>(
     let log_basis_inner = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let log_basis_open = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let challenge_count_pm1 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let n_a = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let n_b = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let inner_commit_matrix: InnerCommitMatrixParams =
@@ -449,6 +459,8 @@ fn deserialize_precommitted_level_params<R: Read>(
             num_live_blocks,
             log_basis_inner,
             log_basis_outer,
+            inner_ring_dimension: inner_commit_matrix.ring_dimension(),
+            outer_ring_dimension: outer_commit_matrix.ring_dimension(),
             n_a,
             a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
             n_b,
@@ -457,6 +469,10 @@ fn deserialize_precommitted_level_params<R: Read>(
         inner_commit_matrix,
         outer_commit_matrix,
         log_basis_open,
+        fold_challenge_config: akita_challenges::SparseChallengeConfig {
+            count_pm1: challenge_count_pm1,
+            count_pm2: challenge_count_pm2,
+        },
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
@@ -486,6 +502,14 @@ fn precommitted_level_params_serialized_size(
         + params.layout.log_basis_inner.serialized_size(compress)
         + params.layout.log_basis_outer.serialized_size(compress)
         + params.log_basis_open.serialized_size(compress)
+        + params
+            .fold_challenge_config
+            .count_pm1
+            .serialized_size(compress)
+        + params
+            .fold_challenge_config
+            .count_pm2
+            .serialized_size(compress)
         + params.layout.n_a.serialized_size(compress)
         + params.layout.n_b.serialized_size(compress)
         + commit_matrix_serialized_size(&params.inner_commit_matrix, compress)
@@ -1250,6 +1274,8 @@ pub fn setup_prefix_precommitted_params(
                     num_live_blocks,
                     log_basis_inner: prefix_params.log_basis_inner,
                     log_basis_outer: prefix_params.log_basis_outer,
+                    inner_ring_dimension: prefix_params.inner_commit_matrix.ring_dimension(),
+                    outer_ring_dimension: prefix_params.outer_commit_matrix.ring_dimension(),
                     n_a: prefix_params.inner_commit_matrix.output_rank(),
                     a_coeff_linf_bound: prefix_params.inner_commit_matrix.coeff_linf_bound(),
                     n_b: prefix_params.outer_commit_matrix.output_rank(),
@@ -1258,6 +1284,7 @@ pub fn setup_prefix_precommitted_params(
                 inner_commit_matrix: prefix_params.inner_commit_matrix.clone(),
                 outer_commit_matrix: prefix_params.outer_commit_matrix.clone(),
                 log_basis_open: prefix_params.log_basis_open,
+                fold_challenge_config: prefix_params.fold_challenge_config,
                 num_digits_inner: prefix_params.num_digits_inner,
                 num_digits_outer: prefix_params.num_digits_outer,
                 num_digits_open: prefix_params.num_digits_open,

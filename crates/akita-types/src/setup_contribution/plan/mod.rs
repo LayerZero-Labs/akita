@@ -28,7 +28,9 @@ mod structured;
 mod test_oracle;
 mod types;
 
-pub(crate) use types::{get_d_col_range, get_total_d, validate_setup_inputs};
+#[cfg(test)]
+pub(crate) use types::get_d_col_range;
+pub(crate) use types::validate_setup_inputs;
 pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
 pub(crate) use types::{SetupContributionGroupPlan, SetupContributionSpan};
 

@@ -5,9 +5,9 @@
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::multilinear_eval, ring::scalar_powers};
 use akita_field::{AkitaError, FieldCore};
+use akita_types::RelationAddressGeometry;
 #[cfg(test)]
-use akita_types::{checked_opening_source_index, opening_domain_len, RingRole};
-use akita_types::{CommitmentRingDims, RelationAddressGeometry};
+use akita_types::{checked_opening_source_index, opening_domain_len, CommitmentRingDims, RingRole};
 use std::sync::Arc;
 
 pub(super) struct PreparedRolePoint<E: FieldCore> {
@@ -45,13 +45,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     pub(super) fn new(
         point: &'a [E],
         alpha: E,
-        role_dims: CommitmentRingDims,
-        outgoing_ring_dim: usize,
-        opening_source_len: usize,
+        geometry: RelationAddressGeometry,
         additional_ring_dims: &[usize],
     ) -> Result<Self, AkitaError> {
-        let geometry =
-            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)?;
+        let role_dims = geometry.role_dims();
         geometry.validate_relation_point_len(point.len())?;
         let coeff_count = geometry.common_relation_witness_coeff_count();
 
@@ -130,9 +127,9 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             #[cfg(test)]
             role_dims,
             #[cfg(test)]
-            outgoing_ring_dim,
+            outgoing_ring_dim: geometry.outgoing_witness_ring_dimension(),
             #[cfg(test)]
-            opening_source_len,
+            opening_source_len: geometry.outgoing_witness_source_len(),
             inner,
             outer,
             opening,
@@ -273,15 +270,9 @@ mod tests {
         let opening_source_len = 9;
         let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
         let point = point_for(field_len);
-        let prepared = PreparedRelationPoint::new(
-            &point,
-            alpha,
-            role_dims,
-            outgoing_ring_dim,
-            opening_source_len,
-            &[],
-        )
-        .unwrap();
+        let geometry =
+            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
+        let prepared = PreparedRelationPoint::new(&point, alpha, geometry, &[]).unwrap();
 
         assert_eq!(
             prepared.common_relation_witness_coeff_count(),
@@ -347,11 +338,12 @@ mod tests {
         let role_dims = CommitmentRingDims::uniform(128);
         let point = point_for(2048);
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), role_dims, 0, 9, &[]),
+            RelationAddressGeometry::new(role_dims, 0, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
+        let geometry = RelationAddressGeometry::new(role_dims, 128, 9).unwrap();
         assert!(matches!(
-            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), role_dims, 128, 9, &[],),
+            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), geometry, &[]),
             Err(AkitaError::InvalidSize { .. })
         ));
         let invalid_carrier = CommitmentRingDims {
@@ -360,7 +352,7 @@ mod tests {
             opening: 64,
         };
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), invalid_carrier, 128, 9, &[]),
+            RelationAddressGeometry::new(invalid_carrier, 128, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -376,15 +368,9 @@ mod tests {
         let outgoing_ring_dim = 32;
         let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
         let point = point_for(field_len);
-        let prepared = PreparedRelationPoint::new(
-            &point,
-            F::from_u64(7),
-            role_dims,
-            outgoing_ring_dim,
-            opening_source_len,
-            &[],
-        )
-        .unwrap();
+        let geometry =
+            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
+        let prepared = PreparedRelationPoint::new(&point, F::from_u64(7), geometry, &[]).unwrap();
         assert!(matches!(
             prepared.role_column_weight(3, RingRole::Inner, 0),
             Err(AkitaError::InvalidInput(_))
@@ -403,9 +389,15 @@ mod tests {
             opening: 32,
         };
         let point = point_for(512);
-        let prepared =
-            PreparedRelationPoint::new(&point, F::from_u64(7), role_dims, 32, 9, &[64, 64])
-                .expect("additional group-local dimension");
+        let geometry = RelationAddressGeometry::new_for_groups(
+            role_dims,
+            &[CommitmentRingDims::uniform(64)],
+            32,
+            9,
+        )
+        .unwrap();
+        let prepared = PreparedRelationPoint::new(&point, F::from_u64(7), geometry, &[64, 64])
+            .expect("additional group-local dimension");
         assert_eq!(
             prepared
                 .for_dimension(64)
