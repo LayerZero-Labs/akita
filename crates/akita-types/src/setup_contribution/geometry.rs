@@ -157,8 +157,12 @@ impl SetupProjectionGeometry {
         })
     }
 
-    /// Number of native B- and D-role subcolumns in one A-role witness column.
-    pub fn witness_subcolumn_ratios(
+    /// Number of native B- and D-role subcolumns in the current A-width
+    /// relation-witness carrier.
+    ///
+    /// B and D are not ordered relative to each other. Both fit the A carrier
+    /// under the canonical role-dimension invariant.
+    pub fn a_carrier_subcolumn_counts(
         role_dims: CommitmentRingDims,
     ) -> Result<(usize, usize), AkitaError> {
         let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
@@ -166,13 +170,17 @@ impl SetupProjectionGeometry {
             .checked_div(b_ratio)
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("B role does not divide the A-role witness width".into())
+                AkitaError::InvalidSetup(
+                    "current A-width relation witness cannot carry the B role".into(),
+                )
             })?;
         let d_subcolumns = a_ratio
             .checked_div(d_ratio)
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("D role does not divide the A-role witness width".into())
+                AkitaError::InvalidSetup(
+                    "current A-width relation witness cannot carry the D role".into(),
+                )
             })?;
         if !b_subcolumns.is_power_of_two() || !d_subcolumns.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
@@ -364,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_geometry_uses_nested_common_base() {
+    fn projection_geometry_uses_common_base() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
                 inner: 64,
@@ -375,7 +383,7 @@ mod tests {
             11,
             13,
         )
-        .expect("nested geometry");
+        .expect("common-base geometry");
         assert_eq!(geometry.base_ring_dim(), 32);
         assert_eq!(geometry.a_ratio(), 2);
         assert_eq!(geometry.b_ratio(), 1);
@@ -386,19 +394,22 @@ mod tests {
     }
 
     #[test]
-    fn projection_geometry_rejects_non_nested_roles() {
-        let err = SetupProjectionGeometry::from_role_footprints(
+    fn projection_geometry_accepts_reversed_b_d_order() {
+        let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 64,
-                outer: 16,
-                opening: 32,
+                inner: 128,
+                outer: 32,
+                opening: 64,
             },
             1,
             1,
             1,
         )
-        .expect_err("non-nested roles");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("role ordering is irrelevant to common-base projection");
+        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.a_ratio(), 4);
+        assert_eq!(geometry.b_ratio(), 1);
+        assert_eq!(geometry.d_ratio(), 2);
     }
 
     #[test]

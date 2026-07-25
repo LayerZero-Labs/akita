@@ -135,7 +135,7 @@ where
     let coeff_count = prepared_point.common_relation_witness_coeff_count();
     let equality_window = prepared_point.equality_window();
     let (outer_subcolumns, opening_subcolumns) =
-        SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
+        SetupProjectionGeometry::a_carrier_subcolumn_counts(role_dims)?;
     let outer_lanes = prepared_point.outer().lane_powers.len();
     let opening_lanes = prepared_point.opening().lane_powers.len();
     let inner_alpha_powers = prepared_point.inner().powers.as_ref();

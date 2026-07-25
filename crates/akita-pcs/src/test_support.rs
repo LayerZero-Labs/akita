@@ -236,8 +236,9 @@ where
 // -------------------------------------------------------------------------
 // Per-role (commitment-compression) mixed dims: A at the envelope ring
 // dimension, B/D compressed to `compressed_d`. This is the within-level
-// non-uniform axis (`d_d | d_b | d_a`), distinct from the per-level switch
-// above. See specs/mixed-ring-dimension-per-level.md.
+// non-uniform axis, distinct from the per-level switch above. The current
+// fixture compresses B/D into A-width witness columns; role ordering is not a
+// protocol invariant. See specs/mixed-ring-dimension-per-level.md.
 // -------------------------------------------------------------------------
 
 /// Rebuild the root's outer (B) commit matrix at `outer_d` and open (D) commit

@@ -38,7 +38,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let lane_powers = self.relation_lane_powers(alpha);
         let inner_lane_powers = &lane_powers[0];
         let (outer_subcolumns, opening_subcolumns) =
-            SetupProjectionGeometry::witness_subcolumn_ratios(
+            SetupProjectionGeometry::a_carrier_subcolumn_counts(
                 self.projection_geometry.role_dims(),
             )?;
 

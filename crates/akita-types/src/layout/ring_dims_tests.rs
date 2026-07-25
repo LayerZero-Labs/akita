@@ -104,6 +104,42 @@ fn rejects_non_power_of_two_role_dimension() {
 }
 
 #[test]
+fn accepts_either_b_d_order_below_a() {
+    for dims in [
+        CommitmentRingDims {
+            inner: 128,
+            outer: 32,
+            opening: 64,
+        },
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        },
+    ] {
+        validate_role_dims(dims).expect("B and D must not be ordered relative to each other");
+    }
+}
+
+#[test]
+fn rejects_b_or_d_larger_than_a() {
+    for dims in [
+        CommitmentRingDims {
+            inner: 64,
+            outer: 128,
+            opening: 32,
+        },
+        CommitmentRingDims {
+            inner: 64,
+            outer: 32,
+            opening: 128,
+        },
+    ] {
+        validate_role_dims(dims).expect_err("A must remain the largest role");
+    }
+}
+
+#[test]
 fn relation_and_witness_common_counts_are_distinct_contracts() {
     let uniform_roles = CommitmentRingDims::uniform(128);
     assert_eq!(uniform_roles.common_relation_coeff_count(), 128);

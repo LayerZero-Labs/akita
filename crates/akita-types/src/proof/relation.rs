@@ -640,16 +640,15 @@ mod tests {
     }
 
     #[test]
-    fn nested_role_dims_relation_rhs_coeff_len_matches_per_segment_widths() {
+    fn mixed_role_dims_relation_rhs_coeff_len_matches_per_segment_widths() {
         let dims = CommitmentRingDims {
             inner: 128,
-            outer: 64,
-            opening: 32,
+            outer: 32,
+            opening: 64,
         };
-        assert!(dims.nests());
         let layout = RelationRhsLayout::uniform(2, 4, 3, 1, 1);
         let coeff_len = relation_rhs_coeff_len(dims, &layout).expect("coeff len");
-        let expected = 128 + 2 * 32 + 3 * 64 + 64 + 4 * 128;
+        let expected = 128 + 2 * 64 + 3 * 32 + 32 + 4 * 128;
         assert_eq!(coeff_len, expected);
         assert_eq!(relation_rhs_row_count(&layout), 1 + 2 + 3 + 1 + 4);
     }

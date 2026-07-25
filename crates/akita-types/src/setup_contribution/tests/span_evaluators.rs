@@ -82,7 +82,7 @@ fn structured_slice_reference(
     alpha: F,
 ) -> F {
     let (outer_subcolumns, opening_subcolumns) =
-        SetupProjectionGeometry::witness_subcolumn_ratios(plan.projection_geometry.role_dims())
+        SetupProjectionGeometry::a_carrier_subcolumn_counts(plan.projection_geometry.role_dims())
             .unwrap();
     let role_dims = plan.projection_geometry.role_dims();
     let alpha_powers = scalar_powers(alpha, role_dims.d_a());

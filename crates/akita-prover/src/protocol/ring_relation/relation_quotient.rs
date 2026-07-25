@@ -374,7 +374,7 @@ where
             .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "opening role dimension must divide the A-role witness width".into(),
+                    "current A-width relation witness cannot carry the opening role".into(),
                 )
             })?;
         let expected_e_planes = expected_blocks

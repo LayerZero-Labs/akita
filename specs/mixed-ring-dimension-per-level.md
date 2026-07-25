@@ -368,13 +368,15 @@ rather than *per level*.
 ### Is it possible? Yes.
 
 Per-role ring dimensions are a first-class, validated concept
-(`CommitmentRingDims { inner, outer, opening }`) with the nesting invariant
-`d_d | d_b | d_a` enforced by `validate_role_dims`
-(`crates/akita-types/src/layout/ring_dims.rs`). `{d_a, d_b, d_d} = {128, 64,
-64}` nests (`128 % 64 = 0`, `64 % 64 = 0`), `d_a = 128` clears the sparse-fold
-challenge floor, and the fp128 dispatch table allows `inner = 128`, `outer =
-64`, `opening = 64`. This is the **commitment-compression** axis: commit the
-witness at a larger A ring, send the B/D commitments at a smaller ring.
+(`CommitmentRingDims { inner, outer, opening }`). `validate_role_dims`
+(`crates/akita-types/src/layout/ring_dims.rs`) requires A to be at least as
+large as B and D because A is the recursive relation-witness carrier. It does
+not order B relative to D. For example, `{d_a, d_b, d_d} = {128, 32, 64}` is
+valid and deliberately has `d_d > d_b`; `{128, 64, 32}` is valid as well.
+Since supported dimensions are powers of two, both smaller roles divide A and
+pack into its physical columns without padding or widening the witness. The
+`d_a = 128` role clears the sparse-fold challenge floor, and the fp128 dispatch
+table permits the B/D dimensions above.
 
 A pre-existing E2E fixture (`crates/akita-pcs/tests/mixed_role_e2e.rs`) that
 exercised `d_a/d_b/d_d = 128/64/32` is currently **disabled**

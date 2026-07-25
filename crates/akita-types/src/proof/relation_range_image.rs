@@ -40,7 +40,7 @@ impl RelationRangeImageGroupPlan {
 /// Checked semantic plan for the direct relation/evaluation-trace/range-image sum-check.
 ///
 /// This plan joins the existing flat coefficient domain, Stage 1 range basis,
-/// semantic witness layout, opening-claim order, and nested role dimensions. Mutable
+/// semantic witness layout, opening-claim order, and per-role dimensions. Mutable
 /// compact/folded tables remain prover state and are intentionally not represented here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationRangeImagePlan {

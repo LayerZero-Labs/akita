@@ -15,7 +15,9 @@ pub const MAX_FOLD_LEVELS: usize = 16;
 pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
     akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 
-/// Ring dimensions valid for any commitment matrix role (B/D may use D=16 on fp128).
+/// Ring dimensions implemented by the shared ring and NTT layers.
+///
+/// Protocol field tiers may impose a higher role-specific floor.
 pub const SUPPORTED_RING_DIMS: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
@@ -34,7 +36,9 @@ pub enum RingRole {
 
 /// Per-fold ring dimensions by protocol role.
 ///
-/// Invariant when nested: `opening | outer | inner` (`d_d | d_b | d_a`).
+/// A is the relation-witness carrier, so `inner >= outer` and
+/// `inner >= opening`. B and D are independent: neither is ordered relative to
+/// the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRingDims {
     /// Fold / ring-switch / inner-commitment ring (`d_a`).
@@ -53,11 +57,6 @@ impl CommitmentRingDims {
             outer: d,
             opening: d,
         }
-    }
-
-    #[must_use]
-    pub fn nests(self) -> bool {
-        self.inner.is_multiple_of(self.outer) && self.outer.is_multiple_of(self.opening)
     }
 
     /// Ring dimension for A-role data: the folded witness `z`, A quotient
@@ -305,10 +304,11 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
             )));
         }
     }
-    if !dims.nests() {
-        return Err(AkitaError::InvalidSetup(
-            "per-role ring dims must satisfy d_d | d_b | d_a".into(),
-        ));
+    if dims.outer > dims.inner || dims.opening > dims.inner {
+        return Err(AkitaError::InvalidSetup(format!(
+            "A-role ring dimension d_a={} must be at least d_b={} and d_d={}",
+            dims.inner, dims.outer, dims.opening
+        )));
     }
     Ok(())
 }

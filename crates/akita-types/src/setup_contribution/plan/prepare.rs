@@ -28,7 +28,7 @@ impl<E: FieldCore> PreparedRelationLanes<E> {
         let opening_lane_count =
             relation_address_geometry.role_relation_lane_count(RingRole::Opening);
         let (b_subcolumns, d_subcolumns) =
-            SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
+            SetupProjectionGeometry::a_carrier_subcolumn_counts(role_dims)?;
         let common_coeff_count = relation_address_geometry.common_relation_witness_coeff_count();
         let alpha_base = *scalar_powers(alpha, common_coeff_count + 1)
             .get(common_coeff_count)

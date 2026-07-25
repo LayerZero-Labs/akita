@@ -441,7 +441,7 @@ where
             "relation matrix dimensions disagree with witness layout".to_string(),
         ));
     }
-    let (b_ratio, d_ratio) = SetupProjectionGeometry::witness_subcolumn_ratios(role_dims)?;
+    let (b_ratio, d_ratio) = SetupProjectionGeometry::a_carrier_subcolumn_counts(role_dims)?;
     let physical_field_len = witness_layout
         .total_len()
         .checked_mul(d_a)

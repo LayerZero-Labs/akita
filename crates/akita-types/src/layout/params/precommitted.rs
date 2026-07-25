@@ -61,7 +61,7 @@ impl PrecommittedLevelParams {
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
-                "precommitted B role must divide the group A role".to_string(),
+                "current A-width relation witness cannot carry the precommitted B role".to_string(),
             ));
         }
         let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
@@ -113,7 +113,7 @@ impl PrecommittedLevelParams {
             || !inner_ring_dimension.is_multiple_of(opening_ring_dimension)
         {
             return Err(AkitaError::InvalidSetup(
-                "precommitted D role must divide the group A role".to_string(),
+                "current A-width relation witness cannot carry the shared D role".to_string(),
             ));
         }
         let projection_ratio = inner_ring_dimension / opening_ring_dimension;
