@@ -305,7 +305,6 @@ impl SetupContributionGroupInputs {
 
 pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
-    pub(crate) consistency_weight: E,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
@@ -477,6 +476,7 @@ fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, 
 
 pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) group_id: usize,
+    pub(crate) consistency_weight: E,
     pub(crate) num_claims: usize,
     pub(crate) num_live_blocks: usize,
     pub(crate) num_positions_per_block: usize,

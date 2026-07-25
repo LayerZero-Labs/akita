@@ -11,7 +11,7 @@ fn multi_group_m_row_count_matches_canonical_layout() {
 
     assert_eq!(
         lp.relation_matrix_row_count(2).unwrap(),
-        1 + n_a_final + n_b_final + n_a_pre + n_b_pre + n_d
+        1 + n_a_final + n_b_final + 1 + n_a_pre + n_b_pre + n_d
     );
 }
 
@@ -34,11 +34,16 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     );
     assert_eq!(
         lp.a_row_range(&batch, 0).unwrap(),
-        1 + n_a_final + n_b_final..1 + n_a_final + n_b_final + n_a_pre
+        2 + n_a_final + n_b_final..2 + n_a_final + n_b_final + n_a_pre
     );
     assert_eq!(
         lp.commitment_row_range(&batch, 0).unwrap(),
-        1 + n_a_final + n_b_final + n_a_pre..1 + n_a_final + n_b_final + n_a_pre + n_b_pre
+        2 + n_a_final + n_b_final + n_a_pre..2 + n_a_final + n_b_final + n_a_pre + n_b_pre
+    );
+    assert_eq!(lp.consistency_row_index(&batch, final_group).unwrap(), 0);
+    assert_eq!(
+        lp.consistency_row_index(&batch, 0).unwrap(),
+        1 + n_a_final + n_b_final
     );
 }
 

@@ -218,6 +218,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     checked_slice(&eq_tau1, group.b_row_start, n_b, "setup B rows")?
                         .to_vec()
                         .into();
+                let consistency_weight = *eq_tau1
+                    .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
+                    .ok_or(AkitaError::InvalidProof)?;
                 drop(geometry_span);
                 let (d_spans, b_spans, a_spans) = build_setup_contribution_spans(
                     witness_layout,
@@ -294,6 +297,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
                 Ok(SetupContributionGroupPlan {
                     group_id: group.group_id,
+                    consistency_weight,
                     num_claims: group.num_claims,
                     num_live_blocks,
                     num_positions_per_block,
@@ -363,7 +367,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
-            consistency_weight: *eq_tau1.first().ok_or(AkitaError::InvalidProof)?,
             d_rows,
             d_physical_cols,
             d_weights,

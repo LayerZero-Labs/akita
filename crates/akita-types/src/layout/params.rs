@@ -854,7 +854,8 @@ impl CommittedGroupParams {
 
     // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
+    // Scalar row layout: consistency (1) | A (n_a) | B (n_b · nc) | D.
+    // Multi-group row layout: [consistency_g | A_g | B_g]_g | D.
     // Public-output rows bind through the fused trace term, not the M-matrix.
     // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
@@ -990,14 +991,16 @@ impl CommittedGroupParams {
             ));
         }
 
-        let mut rows = self
-            .a_start()
+        let mut rows = 1usize
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         rows = rows
             .checked_add(self.outer_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in self.precommitted_group_iter() {
+            rows = rows
+                .checked_add(1)
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
                 .checked_add(group.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -1010,7 +1013,8 @@ impl CommittedGroupParams {
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
-    /// (`consistency | A_final | B_final | A_pre* | B_pre* | D`).
+    /// (`consistency_final | A_final | B_final |
+    ///   [consistency_pre | A_pre | B_pre]* | D`).
     fn group_a_start(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -1036,13 +1040,29 @@ impl CommittedGroupParams {
                 .precommitted_group_params(prior_index)
                 .ok_or(AkitaError::InvalidProof)?;
             start = start
+                .checked_add(1)
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
+            start = start
                 .checked_add(prior.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
                 .checked_add(prior.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
-        Ok(start)
+        start
+            .checked_add(1)
+            .ok_or_else(Self::relation_matrix_row_overflow)
+    }
+
+    /// M-row index of one opening group's native consistency equation.
+    pub fn consistency_row_index(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        self.group_a_start(opening_batch, group_index)?
+            .checked_sub(1)
+            .ok_or(AkitaError::InvalidProof)
     }
 
     fn group_a_rows(
@@ -1138,9 +1158,9 @@ impl CommittedGroupParams {
     /// Scalar layout: `consistency (1) | A (n_a) | B (n_b · num_commitments)
     /// | optional D (n_d)`.
     ///
-    /// Grouped-root layout: `consistency (1) | A_final | B_final | A_pre* |
-    /// B_pre* | optional D`. Public openings bind through the fused trace term,
-    /// not M rows.
+    /// Grouped-root layout: `[consistency_g | A_g | B_g]_g | optional D`,
+    /// in canonical root group order. Public openings bind through the fused
+    /// trace term, not M rows.
     ///
     /// Terminal folds use a separate direct-response protocol and therefore
     /// never construct this relation matrix.

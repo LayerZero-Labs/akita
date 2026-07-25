@@ -521,8 +521,6 @@ where
     let d_start = rows
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
-    let consistency_weight = eq_tau1.eval_at(0)?;
-
     for group_index in 0..opening_batch.num_groups() {
         let e_setup_offset = if setup_matrix.is_some() {
             d_column_ranges
@@ -609,6 +607,8 @@ where
         };
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
+        let consistency_weight =
+            eq_tau1.eval_at(lp.consistency_row_index(opening_batch, group_index)?)?;
         if a_range.end > eq_tau1.len() || b_range.end > eq_tau1.len() {
             return Err(AkitaError::InvalidProof);
         }

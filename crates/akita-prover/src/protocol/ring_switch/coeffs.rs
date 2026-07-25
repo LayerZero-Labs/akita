@@ -292,9 +292,9 @@ where
             }
             let witness_layout = instance.segment_layout(lp, None)?;
 
-            // Shared relation quotient `r`: its consistency row (summed over all
-            // groups) and D rows span every group, so a single trailing block owns
-            // it. `groups.len() == 1` reproduces the scalar layout byte-for-byte.
+            // Relation quotient `r`: each group owns a native consistency/A/B
+            // block, while the level owns the shared D tail. One trailing witness
+            // segment carries all quotient rows in canonical relation order.
             let e_hat_concat_storage;
             let e_hat_concat = if let [group_index] = order.as_slice() {
                 &owned[*group_index].e_hat

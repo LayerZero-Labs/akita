@@ -325,10 +325,15 @@ where
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
     let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
-    if D != rhs_layout.consistency_ring_dim {
+    let final_group_dims = rhs_layout
+        .groups
+        .first()
+        .ok_or(AkitaError::InvalidProof)?
+        .role_dims;
+    if D != final_group_dims.d_a() {
         return Err(AkitaError::InvalidSetup(format!(
-            "relation quotient consistency carrier D={D} does not match layout d_a={}",
-            rhs_layout.consistency_ring_dim
+            "relation quotient carrier D={D} does not match final-group d_a={}",
+            final_group_dims.d_a()
         )));
     }
     let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
@@ -344,9 +349,9 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    // The consistency row uses the level A carrier. Group A/B rows and the
-    // shared D tail advance in their native coefficient widths.
-    let mut y_offset = rhs_layout.consistency_ring_dim;
+    // Every group owns a native consistency/A/B block. The shared D tail is
+    // level-owned and follows all group blocks.
+    let mut y_offset = 0usize;
 
     for (&group_index, group_rows) in order.iter().zip(&rhs_layout.groups) {
         let group_dims = group_rows.role_dims;
@@ -361,6 +366,10 @@ where
             )));
         }
         let group = groups.get(group_index).ok_or(AkitaError::InvalidProof)?;
+        let consistency_row = lp.consistency_row_index(opening_batch, group_index)?;
+        y_offset = y_offset
+            .checked_add(group_dims.d_a())
+            .ok_or(AkitaError::InvalidProof)?;
         let ring_multiplier_point = group_ring_multiplier_points
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
@@ -494,17 +503,14 @@ where
         let quotient = parallel_high_half_accumulate::<F, _, D>(challenges, |i| Some(e_folded[i]))?;
         let mut quotient = CyclotomicRing::from_slice(&quotient);
         quotient -= consistency_z_quotient;
-        match &mut result[0] {
-            Some(row) => {
-                if row.ring_dim != D || row.coeffs.len() != D {
-                    return Err(AkitaError::InvalidProof);
-                }
-                for (dst, src) in row.coeffs.iter_mut().zip(quotient.coefficients()) {
-                    *dst += *src;
-                }
-            }
-            slot @ None => *slot = Some(RelationQuotientOutput::row_from_ring(quotient)),
+        if result
+            .get(consistency_row)
+            .ok_or(AkitaError::InvalidProof)?
+            .is_some()
+        {
+            return Err(AkitaError::InvalidProof);
         }
+        result[consistency_row] = Some(RelationQuotientOutput::row_from_ring(quotient));
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         if a_range.len() != n_a {

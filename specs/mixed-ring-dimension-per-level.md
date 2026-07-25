@@ -701,22 +701,35 @@ resolved dimensions with each group's row counts. Relation RHS sizing,
 assembly, and public-claim evaluation consequently use native group widths
 instead of applying the final group's A/B dimensions to every group.
 
-The level relation witness still has one physical carrier. Its dimension is the
-final group's `d_a`, and it must be at least every group-local `d_a`. Existing
-uniform multi-group schedules keep the batch-wide fast path. A heterogeneous
-batch uses group-local B dispatch only for its commitment segments.
+The outgoing relation witness still has one physical carrier. Its dimension is
+the final group's `d_a`, and it must be at least every group-local `d_a`.
+Physical serialization may pad a native group plane into that carrier, but the
+padding is not a ring embedding and must not be used as a substitute for
+native group arithmetic.
 
 `RelationRhsLayout::row_ring_dims` is also the canonical quotient-row dimension
-map: level-carrier consistency, then each group's native A and B rows, then
-level-shared D rows. Prover and verifier quotient-denominator evaluation use
-that map. Quotient RHS offsets and B kernels use each group's native widths.
+map: for each group in canonical root order, one native-A consistency row,
+native A rows, and native B rows, followed by the level-shared D rows. Prover
+and verifier quotient-denominator evaluation use that map. Quotient RHS
+offsets, setup contribution weights, and relation-row addressing use the same
+per-group consistency boundary.
 
-The folded witness is still prepared in the level A carrier. Quotient
-construction therefore rejects a smaller group-local A dimension before
-running an A kernel at the wrong denominator. Native group-A witness views,
-group-A quotient kernels, witness emission, and setup-contribution spans remain
-follow-on work. No production schedule should claim heterogeneous group A
-support until those consumers use the same resolver.
+A shared consistency row at the final group's A dimension is not valid for a
+group folded in a smaller ring. For example, coefficient partitioning does not
+define a ring homomorphism between
+`F[X]/(X^128 + 1)` and `F[X]/(X^64 + 1)`: neither modulus divides the other in
+odd characteristic. Each group must therefore fold and prove its consistency
+equation in its native A ring. The flat outgoing witness may carry the resulting
+planes through final-A padding only after those native equations have been
+constructed.
+
+The current fold producer still prepares every group at the level A dimension.
+Quotient construction therefore rejects a smaller group-local A dimension
+before running an A kernel at the wrong denominator. Per-group opening
+preparation, native fold grinding, native `PreparedRingSwitchGroup` storage,
+and padded witness emission remain follow-on work. No production schedule
+should claim heterogeneous group A support until those consumers use the same
+resolver.
 
 ## Future work
 - **Plan the D512 mixed-role root natively.** Column F currently promotes the

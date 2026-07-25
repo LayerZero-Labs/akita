@@ -287,7 +287,6 @@ fn finalize_test_plan(
     .unwrap();
     let mut plan = SetupContributionPlan {
         groups,
-        consistency_weight: F::one(),
         d_rows,
         d_physical_cols,
         d_weights: (0..d_rows)
@@ -334,6 +333,7 @@ fn test_group_plan(
 ) -> SetupContributionGroupPlan<F> {
     SetupContributionGroupPlan {
         group_id: 0,
+        consistency_weight: F::one(),
         num_claims: 0,
         num_live_blocks: 0,
         num_positions_per_block: z_cols,

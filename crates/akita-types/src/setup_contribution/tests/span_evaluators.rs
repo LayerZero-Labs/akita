@@ -100,7 +100,7 @@ fn structured_slice_reference(
                         * group.depth_open)
                         + digit;
                     evaluation += challenge
-                        * plan.consistency_weight
+                        * group.consistency_weight
                         * group.e_eq_slice[column]
                         * gadget
                         * alpha_powers[subcolumn * role_dims.d_d()];
@@ -127,7 +127,7 @@ fn structured_slice_reference(
     }
     for (position, &opening) in opening_a_evals.iter().enumerate() {
         for (digit, &gadget) in witness_gadget.iter().enumerate() {
-            evaluation += plan.consistency_weight
+            evaluation += group.consistency_weight
                 * opening
                 * group.z_eq_slice[position * group.depth_witness + digit]
                 * gadget;

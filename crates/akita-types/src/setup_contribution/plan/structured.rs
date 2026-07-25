@@ -89,7 +89,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 &high,
                 claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
             )?;
-            evaluation += self.consistency_weight
+            evaluation += group.consistency_weight
                 * interval.mul_base(*opening_gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
         }
 
@@ -140,7 +140,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let lane_equality =
                     evaluate_lane_segment(&self.eq_window, relation_lane_start, inner_lane_powers)?;
                 evaluation -= lane_equality
-                    * self.consistency_weight
+                    * group.consistency_weight
                     * *opening_a_evals
                         .get(position)
                         .ok_or(AkitaError::InvalidProof)?

@@ -999,7 +999,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     &g_witness_storage
                 };
 
-                let consistency_weight = self.eq_tau1[0];
+                let consistency_row = context
+                    .level_params
+                    .consistency_row_index(&context.opening_batch, group.group_id)?;
+                let consistency_weight = *self
+                    .eq_tau1
+                    .get(consistency_row)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let a_row_end = group
                     .a_row_start
                     .checked_add(group.n_a)
