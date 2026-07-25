@@ -3,8 +3,8 @@ use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
-    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, SetupIndexWeightEvaluator,
-    WitnessLayout, WitnessUnitLayout,
+    CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, WitnessLayout,
+    WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -15,6 +15,7 @@ use akita_field::Prime128OffsetA7F7;
 mod address_spans;
 mod fused_scan;
 mod prepare;
+mod span_evaluators;
 
 type F = Prime128OffsetA7F7;
 const TEST_D: usize = 64;
@@ -286,12 +287,14 @@ fn finalize_test_plan(
     .unwrap();
     let mut plan = SetupContributionPlan {
         groups,
+        consistency_weight: F::one(),
         d_rows,
         d_physical_cols,
         d_weights: (0..d_rows)
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
+        address_point: Vec::new().into(),
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
             role_dims.d_a(),
@@ -331,6 +334,15 @@ fn test_group_plan(
 ) -> SetupContributionGroupPlan<F> {
     SetupContributionGroupPlan {
         group_id: 0,
+        num_claims: 0,
+        num_live_blocks: 0,
+        num_positions_per_block: z_cols,
+        depth_witness: 1,
+        depth_commit: 1,
+        depth_open: 1,
+        log_basis_inner: 1,
+        log_basis_outer: 1,
+        log_basis_open: 1,
         d_col_range,
         t_cols,
         z_cols,
@@ -340,6 +352,7 @@ fn test_group_plan(
         segments: Vec::new().into(),
         a_row_weights: a_row_weights.into(),
         b_weights: b_weights.into(),
+        fold_gadget: vec![F::one()].into(),
         e_eq_slice,
         t_eq_slice,
         z_eq_slice,
@@ -541,20 +554,8 @@ fn expected_z_setup_weights(
         })
         .collect()
 }
-fn rho_for_required(required: usize) -> Vec<F> {
-    let bits = required.next_power_of_two().trailing_zeros() as usize;
-    (0..bits)
-        .map(|idx| test_scalar(901 + idx as u128))
-        .collect()
-}
-fn projection_scales(alpha: F, base_d: usize, role_d: usize) -> Vec<F> {
-    scalar_powers(alpha, role_d)
-        .chunks(base_d)
-        .map(|chunk| chunk[0])
-        .collect()
-}
 #[test]
-fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
+fn relation_ordered_setup_layout_matches_direct_oracle() {
     let rows = 6;
     let quotient_depth = 2;
     let group_shapes = [
@@ -678,183 +679,6 @@ fn relation_ordered_setup_layout_matches_structured_direct_and_dense_oracles() {
         plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
             .unwrap(),
     );
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &inputs.level_params,
-        &inputs.opening_batch,
-        &witness_layout,
-        opening_source_len,
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    let rho = rho_for_required(plan.required());
-    assert_eq!(
-        evaluator.evaluate(&rho).unwrap(),
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
-    );
-}
-#[allow(clippy::too_many_arguments)]
-fn projected_setup_weight_reference(
-    plan: &SetupContributionPlan<F>,
-    rho: &[F],
-    required: usize,
-    a_ratio: usize,
-    b_ratio: usize,
-    d_ratio: usize,
-    a_scales: &[F],
-    b_scales: &[F],
-    d_scales: &[F],
-) -> F {
-    let mut acc = F::zero();
-    for base_idx in 0..required {
-        let mut weight = F::zero();
-        for group in &plan.groups {
-            let d_idx = base_idx / d_ratio;
-            if d_idx < plan.d_rows * plan.d_physical_cols {
-                let d_col = d_idx % plan.d_physical_cols;
-                let d_row = d_idx / plan.d_physical_cols;
-                if group.d_col_range.contains(&d_col) {
-                    weight += d_scales[base_idx % d_ratio]
-                        * plan.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.d_col_range.start];
-                }
-            }
-            let b_idx = base_idx / b_ratio;
-            if b_idx < group.n_b * group.t_cols {
-                let b_col = b_idx % group.t_cols;
-                let b_row = b_idx / group.t_cols;
-                weight +=
-                    b_scales[base_idx % b_ratio] * group.b_weights[b_row] * group.t_eq_slice[b_col];
-            }
-            let a_idx = base_idx / a_ratio;
-            if a_idx < group.n_a * group.z_cols {
-                let a_col = a_idx % group.z_cols;
-                let a_row = a_idx / group.z_cols;
-                weight += a_scales[base_idx % a_ratio]
-                    * group.a_row_weights[a_row]
-                    * group.z_eq_slice[a_col];
-            }
-        }
-        acc += eq_eval_at_index(rho, base_idx) * weight;
-    }
-    acc
-}
-#[test]
-fn setup_index_weight_evaluator_matches_packed_mle_single_chunk() {
-    let (inputs, groups, witness_layout, plan, tau1, full_vec_randomness, fold_gadget) =
-        structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
-    let alpha = test_scalar(3);
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &inputs.level_params,
-        &inputs.opening_batch,
-        &witness_layout,
-        witness_layout.total_len(),
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    assert_eq!(evaluator.required(), plan.required());
-    let rho = rho_for_required(evaluator.required());
-    let got = evaluator.evaluate(&rho).unwrap();
-    let expected = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
-    assert_eq!(got, expected);
-}
-#[test]
-fn setup_index_weight_evaluator_matches_packed_mle_multi_chunk() {
-    let (inputs, groups, witness_layout, plan, tau1, full_vec_randomness, fold_gadget) =
-        structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
-    let alpha = test_scalar(3);
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &inputs.level_params,
-        &inputs.opening_batch,
-        &witness_layout,
-        witness_layout.total_len(),
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    let rho = rho_for_required(evaluator.required());
-    assert_eq!(
-        evaluator.evaluate(&rho).unwrap(),
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
-    );
-}
-#[test]
-fn setup_index_weight_evaluator_supports_non_power_of_two_ownership_widths() {
-    let (inputs, groups, witness_layout, plan, tau1, full_vec_randomness, fold_gadget) =
-        structured_weight_fixture(8, &[3, 5], CommitmentRingDims::uniform(TEST_D));
-    let alpha = test_scalar(3);
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &inputs.level_params,
-        &inputs.opening_batch,
-        &witness_layout,
-        witness_layout.total_len(),
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    let rho = rho_for_required(evaluator.required());
-    assert_eq!(
-        evaluator.evaluate(&rho).unwrap(),
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
-    );
-}
-#[test]
-fn setup_index_weight_evaluator_applies_mixed_role_projection_lanes() {
-    let alpha = test_scalar(3);
-    let role_dims = crate::CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
-    };
-    let setup_ring_dim = 32;
-    for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
-        let (inputs, groups, witness_layout, plan, tau1, full_vec_randomness, fold_gadget) =
-            structured_weight_fixture(8, ownership_widths, role_dims);
-        let evaluator = SetupIndexWeightEvaluator::new::<F>(
-            &plan,
-            &inputs.level_params,
-            &inputs.opening_batch,
-            &witness_layout,
-            witness_layout.total_len(),
-            &groups,
-            &tau1,
-            &full_vec_randomness,
-            &fold_gadget,
-            alpha,
-        )
-        .unwrap();
-        let rho = rho_for_required(evaluator.required());
-        let got = evaluator.evaluate(&rho).unwrap();
-        let expected = projected_setup_weight_reference(
-            &plan,
-            &rho,
-            evaluator.required(),
-            role_dims.d_a() / setup_ring_dim,
-            role_dims.d_b() / setup_ring_dim,
-            role_dims.d_d() / setup_ring_dim,
-            &projection_scales(alpha, setup_ring_dim, role_dims.d_a()),
-            &projection_scales(alpha, setup_ring_dim, role_dims.d_b()),
-            &projection_scales(alpha, setup_ring_dim, role_dims.d_d()),
-        );
-        assert_eq!(got, expected, "ownership widths {ownership_widths:?}");
-    }
 }
 
 #[test]

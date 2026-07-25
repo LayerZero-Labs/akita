@@ -1,7 +1,6 @@
 //! Verifier-side ring-switch replay.
 
 use akita_algebra::eq_poly::EqPolynomial;
-use akita_algebra::offset_eq::OffsetEqWindow;
 use akita_algebra::ring::scalar_powers;
 use akita_challenges::Challenges;
 use akita_field::parallel::*;
@@ -764,34 +763,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         Ok(())
     }
 
-    pub(crate) fn setup_index_weight_evaluator<F>(
-        &self,
-        plan: &SetupContributionPlan<E>,
-        tau1: &[E],
-        x_challenges: &[E],
-        fold_gadget: &[F],
-        alpha: E,
-    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError>
-    where
-        F: FieldCore,
-        E: MulBase<F>,
-    {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
-        akita_types::SetupIndexWeightEvaluator::new::<F>(
-            plan,
-            &context.level_params,
-            &context.opening_batch,
-            &context.witness_layout,
-            context.opening_source_len,
-            &setup_groups,
-            tau1,
-            x_challenges,
-            fold_gadget,
-            alpha,
-        )
-    }
-
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
         context
@@ -881,6 +852,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
+        let mut span_structured_contribution = E::zero();
         let setup_groups = self.setup_contribution_inputs();
         let setup_fold_gadget = shared_setup_fold_gadget::<F>(
             &context.level_params,
@@ -1011,25 +983,34 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
                 if deferred_setup {
-                    let (e_contribution, t_contribution, z_contribution) = {
+                    let structured_contribution = {
                         let _span =
                             tracing::info_span!("structured_group_deferred", group_index).entered();
-                        evaluate_group_structured_from_eq_window::<F, E>(
-                            group,
-                            consistency_weight,
-                            a_row_weights,
-                            g_open_ext,
-                            g_t_commit_ext,
-                            g_witness,
-                            setup_plan.eq_window(),
-                            context.witness_layout.as_ref(),
-                            context.opening_source_len,
-                            fold_gadget,
+                        let mut block_challenges = Vec::with_capacity(
+                            group
+                                .num_claims
+                                .checked_mul(group.num_live_blocks)
+                                .ok_or(AkitaError::InvalidProof)?,
+                        );
+                        for claim in 0..group.num_claims {
+                            let factors = group
+                                .c_alphas
+                                .affine_factors::<F>(claim, group.num_live_blocks)?;
+                            block_challenges.extend_from_slice(
+                                factors
+                                    .low
+                                    .get(..group.num_live_blocks)
+                                    .ok_or(AkitaError::InvalidProof)?,
+                            );
+                        }
+                        setup_plan.evaluate_structured_group::<F>(
+                            group.group_id,
+                            &block_challenges,
+                            &group.opening_a_evals,
+                            alpha,
                         )?
                     };
-                    e_structured_contribution += e_contribution;
-                    t_structured_contribution += t_contribution;
-                    z_structured_contribution += z_contribution;
+                    span_structured_contribution += structured_contribution;
                 } else {
                     let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
                         .group_column_eq_slices(group.group_id)
@@ -1099,248 +1080,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let relation_weight = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
+            + span_structured_contribution
             + setup_contribution
             + r_contribution;
         self.cache_setup_contribution_plan(x_challenges, setup_plan)?;
         Ok(relation_weight)
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_group_structured_from_eq_window<F, E>(
-    group: &RelationMatrixGroupEvaluator<E>,
-    consistency_weight: E,
-    a_row_weights: &[E],
-    g_open_ext: &[E],
-    g_t_commit_ext: &[E],
-    g_witness: &[F],
-    eq_window: &OffsetEqWindow<E>,
-    witness_layout: &WitnessLayout,
-    opening_source_len: usize,
-    fold_gadget: &[F],
-) -> Result<(E, E, E), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FpExtEncoding<F> + MulBase<F>,
-{
-    if g_open_ext.len() != group.depth_open
-        || g_t_commit_ext.len() != group.depth_commit
-        || g_witness.len() != group.depth_witness
-        || a_row_weights.len() != group.n_a
-        || fold_gadget.len() < group.depth_fold
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-
-    let challenge_factors = (0..group.num_claims)
-        .map(|claim| {
-            group
-                .c_alphas
-                .affine_factors::<F>(claim, group.num_live_blocks)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let units = witness_layout.units_for_group(group.group_id)?;
-    let e_unit_stride = group.depth_open;
-    let t_unit_stride = group
-        .n_a
-        .checked_mul(group.depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("deferred T fold stride overflow".into()))?;
-
-    let z_cols = group
-        .opening_a_evals
-        .len()
-        .checked_mul(group.depth_witness)
-        .ok_or_else(|| AkitaError::InvalidSetup("deferred Z width overflow".into()))?;
-    let unit_ranges = units
-        .iter()
-        .map(|unit| {
-            let unit_blocks = unit.num_live_blocks();
-            let e_unit_width = unit_blocks
-                .checked_mul(e_unit_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred E unit width overflow".into()))?;
-            let expected_e = group
-                .num_claims
-                .checked_mul(e_unit_width)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred E shape overflow".into()))?;
-            let e_range = unit.e_range();
-            if e_range.len() != expected_e {
-                return Err(AkitaError::InvalidSetup(
-                    "witness E shape disagrees with resolved range".into(),
-                ));
-            }
-            if e_range.end > opening_source_len {
-                return Err(AkitaError::InvalidInput(
-                    "physical E opening interval out of range".into(),
-                ));
-            }
-
-            let t_unit_width = unit_blocks
-                .checked_mul(t_unit_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred T unit width overflow".into()))?;
-            let expected_t = group
-                .num_claims
-                .checked_mul(t_unit_width)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred T shape overflow".into()))?;
-            let t_range = unit.t_range();
-            if t_range.len() != expected_t {
-                return Err(AkitaError::InvalidSetup(
-                    "witness T shape disagrees with resolved range".into(),
-                ));
-            }
-            if t_range.end > opening_source_len {
-                return Err(AkitaError::InvalidInput(
-                    "physical T opening interval out of range".into(),
-                ));
-            }
-
-            let expected_z = z_cols
-                .checked_mul(group.depth_fold)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred Z shape overflow".into()))?;
-            let z_range = unit.z_range();
-            if z_range.len() != expected_z {
-                return Err(AkitaError::InvalidSetup(
-                    "witness Z shape disagrees with resolved range".into(),
-                ));
-            }
-            if z_range.end > opening_source_len {
-                return Err(AkitaError::InvalidInput(
-                    "physical Z opening interval out of range".into(),
-                ));
-            }
-
-            Ok((
-                unit.global_block_start(),
-                unit_blocks,
-                e_range,
-                t_range,
-                z_range,
-            ))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-
-    let block_claims = group
-        .num_claims
-        .checked_mul(group.num_live_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("deferred block count overflow".into()))?;
-    let (e_acc, t_acc) = cfg_fold_reduce!(
-        0..block_claims,
-        || Ok((E::zero(), E::zero())),
-        |acc: Result<(E, E), AkitaError>, block_claim| {
-            let (mut e_acc, mut t_acc) = acc?;
-            let claim = block_claim / group.num_live_blocks;
-            let block = block_claim % group.num_live_blocks;
-            let factors = challenge_factors
-                .get(claim)
-                .ok_or(AkitaError::InvalidProof)?;
-            let challenge = factors
-                .low
-                .get(block)
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?;
-            let (unit_start, unit_blocks, e_range, t_range, _) = unit_ranges
-                .iter()
-                .find(|(start, len, _, _, _)| block >= *start && block < start + len)
-                .ok_or(AkitaError::InvalidProof)?;
-            let local_block = block
-                .checked_sub(*unit_start)
-                .ok_or(AkitaError::InvalidProof)?;
-
-            let e_unit_width = unit_blocks
-                .checked_mul(e_unit_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred E unit width overflow".into()))?;
-            let e_block_start = e_range
-                .start
-                .checked_add(claim.checked_mul(e_unit_width).ok_or_else(|| {
-                    AkitaError::InvalidSetup("deferred E claim offset overflow".into())
-                })?)
-                .and_then(|base| {
-                    local_block
-                        .checked_mul(e_unit_stride)
-                        .and_then(|offset| base.checked_add(offset))
-                })
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred E block overflow".into()))?;
-            let mut e_weight = E::zero();
-            for (digit, &gadget) in g_open_ext.iter().enumerate() {
-                let opening_index = e_block_start
-                    .checked_add(digit)
-                    .ok_or(AkitaError::InvalidProof)?;
-                e_weight += eq_window.eval(opening_index) * gadget;
-            }
-            e_acc += challenge * consistency_weight * e_weight;
-
-            let t_unit_width = unit_blocks
-                .checked_mul(t_unit_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred T unit width overflow".into()))?;
-            let t_block_start = t_range
-                .start
-                .checked_add(claim.checked_mul(t_unit_width).ok_or_else(|| {
-                    AkitaError::InvalidSetup("deferred T claim offset overflow".into())
-                })?)
-                .and_then(|base| {
-                    local_block
-                        .checked_mul(t_unit_stride)
-                        .and_then(|offset| base.checked_add(offset))
-                })
-                .ok_or_else(|| AkitaError::InvalidSetup("deferred T block overflow".into()))?;
-            let mut t_weight = E::zero();
-            for (row, &row_weight) in a_row_weights.iter().enumerate() {
-                let row_start = t_block_start
-                    .checked_add(row.checked_mul(group.depth_commit).ok_or_else(|| {
-                        AkitaError::InvalidSetup("deferred T row overflow".into())
-                    })?)
-                    .ok_or_else(|| AkitaError::InvalidSetup("deferred T row overflow".into()))?;
-                for (digit, &gadget) in g_t_commit_ext.iter().enumerate() {
-                    let opening_index = row_start
-                        .checked_add(digit)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    t_weight += eq_window.eval(opening_index) * row_weight * gadget;
-                }
-            }
-            t_acc += challenge * t_weight;
-            Ok((e_acc, t_acc))
-        },
-        |lhs: Result<(E, E), AkitaError>, rhs: Result<(E, E), AkitaError>| {
-            let (lhs_e, lhs_t) = lhs?;
-            let (rhs_e, rhs_t) = rhs?;
-            Ok((lhs_e + rhs_e, lhs_t + rhs_t))
-        }
-    )?;
-
-    let z_acc = cfg_fold_reduce!(
-        0..z_cols,
-        || Ok(E::zero()),
-        |acc: Result<E, AkitaError>, col| {
-            let mut acc = acc?;
-            let position = col / group.depth_witness;
-            let commit_digit = col % group.depth_witness;
-            let opening_a = *group
-                .opening_a_evals
-                .get(position)
-                .ok_or(AkitaError::InvalidProof)?;
-            let commit = *g_witness
-                .get(commit_digit)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut z_eq = E::zero();
-            for (_, _, _, _, z_range) in &unit_ranges {
-                let col_start = col
-                    .checked_mul(group.depth_fold)
-                    .and_then(|local| z_range.start.checked_add(local))
-                    .ok_or_else(|| AkitaError::InvalidSetup("deferred Z source overflow".into()))?;
-                for (fold_digit, &fold) in fold_gadget.iter().take(group.depth_fold).enumerate() {
-                    let opening_index = col_start
-                        .checked_add(fold_digit)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    z_eq -= eq_window.eval(opening_index).mul_base(fold);
-                }
-            }
-            acc += z_eq * consistency_weight * opening_a * E::lift_base(commit);
-            Ok(acc)
-        },
-        |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-    )?;
-
-    Ok((e_acc, t_acc, z_acc))
 }
 
 #[allow(clippy::too_many_arguments)]

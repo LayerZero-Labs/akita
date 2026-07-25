@@ -183,6 +183,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let depth_commit = group.depth_commit(level_params, opening_batch)?;
                 let depth_open = group.depth_open(level_params, opening_batch)?;
                 let log_basis_open = group.log_basis_open(level_params, opening_batch)?;
+                let group_params = level_params.group_params(opening_batch, group.group_id)?;
+                let log_basis_inner = group_params.log_basis_inner();
+                let log_basis_outer = group_params.log_basis_outer();
                 let n_a = group.n_a(level_params, opening_batch)?;
                 let n_b = group.n_b(level_params, opening_batch)?;
                 let t_vector_width = group.t_vector_width(level_params, opening_batch)?;
@@ -245,6 +248,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
                     &fold_gadget_storage
                 };
+                let fold_gadget: std::sync::Arc<[E]> = group_fold_gadget
+                    .iter()
+                    .take(group.depth_fold)
+                    .copied()
+                    .map(|fold| E::one().mul_base(fold))
+                    .collect::<Vec<_>>()
+                    .into();
                 let (e_eq_slice, t_eq_slice, z_eq_slice) =
                     if materialization.materializes_column_slices() {
                         let e_eq_slice = {
@@ -284,6 +294,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
                 Ok(SetupContributionGroupPlan {
                     group_id: group.group_id,
+                    num_claims: group.num_claims,
+                    num_live_blocks,
+                    num_positions_per_block,
+                    depth_witness,
+                    depth_commit,
+                    depth_open,
+                    log_basis_inner,
+                    log_basis_outer,
+                    log_basis_open,
                     d_col_range,
                     t_cols,
                     z_cols,
@@ -293,6 +312,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     segments: Vec::new().into(),
                     a_row_weights,
                     b_weights,
+                    fold_gadget,
                     e_eq_slice,
                     t_eq_slice,
                     z_eq_slice,
@@ -343,9 +363,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         Ok(SetupContributionPlan {
             groups: dynamic_groups,
+            consistency_weight: *eq_tau1.first().ok_or(AkitaError::InvalidProof)?,
             d_rows,
             d_physical_cols,
             d_weights,
+            address_point: full_vec_randomness.to_vec().into(),
             relation_address_geometry,
             projection_geometry,
             eq_window,

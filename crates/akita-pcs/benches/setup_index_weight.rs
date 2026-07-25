@@ -1,11 +1,12 @@
 #![allow(missing_docs)]
 
 use akita_algebra::eq_poly::EqPolynomial;
+use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SisModulusProfileId, WitnessLayout,
+    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
+    WitnessLayout,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -19,7 +20,7 @@ const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
     plan: SetupContributionPlan<F>,
-    evaluator: SetupIndexWeightEvaluator<F>,
+    dense_weights: Vec<F>,
     rho: Vec<F>,
     alpha: F,
 }
@@ -115,31 +116,27 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         alpha,
     )
     .unwrap();
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &level_params,
-        &opening_batch,
-        &layout,
-        opening_source_len,
-        &groups,
-        &tau1,
-        &full_vec_randomness,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
-    let rho_bits = evaluator.required().next_power_of_two().trailing_zeros() as usize;
+    let rho_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
     let rho = (0..rho_bits)
         .map(|idx| test_scalar(901 + idx as u128))
         .collect::<Vec<_>>();
 
-    let packed = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
-    let succinct = evaluator.evaluate(&rho).unwrap();
-    assert_eq!(succinct, packed);
+    let dense_weights = plan.materialize_setup_index_weights(alpha).unwrap();
+    let dense = dense_weights
+        .iter()
+        .copied()
+        .enumerate()
+        .fold(F::zero(), |acc, (index, weight)| {
+            acc + eq_eval_at_index(&rho, index) * weight
+        });
+    assert_eq!(
+        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
+        dense
+    );
 
     SetupIndexWeightBenchCase {
         plan,
-        evaluator,
+        dense_weights,
         rho,
         alpha,
     }
@@ -156,7 +153,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
         ] {
             let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/packed_path"), num_live_blocks),
+                BenchmarkId::new(format!("{layout}/span_path"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -172,10 +169,17 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 },
             );
             group.bench_with_input(
-                BenchmarkId::new(format!("{layout}/succinct_path"), num_live_blocks),
+                BenchmarkId::new(format!("{layout}/dense_path"), num_live_blocks),
                 &case,
                 |b, case| {
-                    b.iter(|| black_box(case.evaluator.evaluate(black_box(&case.rho)).unwrap()))
+                    b.iter(|| {
+                        black_box(case.dense_weights.iter().copied().enumerate().fold(
+                            F::zero(),
+                            |acc, (index, weight)| {
+                                acc + eq_eval_at_index(black_box(&case.rho), index) * weight
+                            },
+                        ))
+                    })
                 },
             );
         }

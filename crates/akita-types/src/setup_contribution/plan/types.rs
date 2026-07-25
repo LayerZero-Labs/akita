@@ -305,9 +305,11 @@ impl SetupContributionGroupInputs {
 
 pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
+    pub(crate) consistency_weight: E,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
+    pub(crate) address_point: Arc<[E]>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
     pub(crate) eq_window: OffsetEqWindow<E>,
@@ -435,6 +437,32 @@ impl SetupContributionSpan {
             Ok((setup_column, relation_lane))
         })
     }
+
+    pub(crate) fn relation_lane_start_for_setup_column(
+        &self,
+        setup_column: usize,
+    ) -> Result<Option<usize>, AkitaError> {
+        let Some(delta) = setup_column.checked_sub(self.setup_column_start) else {
+            return Ok(None);
+        };
+        let occurrence = if self.setup_column_stride == 1 {
+            delta
+        } else if delta.is_multiple_of(self.setup_column_stride) {
+            delta / self.setup_column_stride
+        } else {
+            return Ok(None);
+        };
+        if occurrence >= self.occurrence_count {
+            return Ok(None);
+        }
+        self.relation_lane_stride
+            .checked_mul(occurrence)
+            .and_then(|offset| self.relation_lane_start.checked_add(offset))
+            .map(Some)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup contribution relation span overflow".into())
+            })
+    }
 }
 
 fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, AkitaError> {
@@ -449,6 +477,15 @@ fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, 
 
 pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) group_id: usize,
+    pub(crate) num_claims: usize,
+    pub(crate) num_live_blocks: usize,
+    pub(crate) num_positions_per_block: usize,
+    pub(crate) depth_witness: usize,
+    pub(crate) depth_commit: usize,
+    pub(crate) depth_open: usize,
+    pub(crate) log_basis_inner: u32,
+    pub(crate) log_basis_outer: u32,
+    pub(crate) log_basis_open: u32,
     pub(crate) d_col_range: Range<usize>,
     pub(crate) t_cols: usize,
     pub(crate) z_cols: usize,
@@ -458,6 +495,7 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) segments: Arc<[GroupSetupSegment<E>]>,
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) b_weights: Arc<[E]>,
+    pub(crate) fold_gadget: Arc<[E]>,
     pub(crate) e_eq_slice: Vec<E>,
     pub(crate) t_eq_slice: Vec<E>,
     pub(crate) z_eq_slice: Vec<E>,
