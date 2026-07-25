@@ -38,6 +38,7 @@ pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
     inner: Arc<PreparedRolePoint<E>>,
     outer: Arc<PreparedRolePoint<E>>,
     opening: Arc<PreparedRolePoint<E>>,
+    additional: Vec<Arc<PreparedRolePoint<E>>>,
 }
 
 impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
@@ -47,6 +48,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         role_dims: CommitmentRingDims,
         outgoing_ring_dim: usize,
         opening_source_len: usize,
+        additional_ring_dims: &[usize],
     ) -> Result<Self, AkitaError> {
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)?;
@@ -96,6 +98,27 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         } else {
             prepare_role(role_dims.d_d())?
         };
+        let mut additional = Vec::new();
+        for &ring_dim in additional_ring_dims {
+            if ring_dim == 0
+                || !ring_dim.is_power_of_two()
+                || ring_dim > role_dims.d_a()
+                || !role_dims.d_a().is_multiple_of(ring_dim)
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "relation quotient ring dimension {ring_dim} does not fit the A carrier {}",
+                    role_dims.d_a()
+                )));
+            }
+            if [role_dims.d_a(), role_dims.d_b(), role_dims.d_d()].contains(&ring_dim)
+                || additional
+                    .iter()
+                    .any(|prepared: &Arc<PreparedRolePoint<E>>| prepared.ring_dim == ring_dim)
+            {
+                continue;
+            }
+            additional.push(prepare_role(ring_dim)?);
+        }
 
         Ok(Self {
             relation_address_geometry: geometry,
@@ -113,6 +136,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             inner,
             outer,
             opening,
+            additional,
         })
     }
 
@@ -158,6 +182,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     ) -> Result<&PreparedRolePoint<E>, AkitaError> {
         [self.inner(), self.outer(), self.opening()]
             .into_iter()
+            .chain(self.additional.iter().map(Arc::as_ref))
             .find(|role| role.ring_dim == ring_dim)
             .ok_or(AkitaError::InvalidProof)
     }
@@ -254,6 +279,7 @@ mod tests {
             role_dims,
             outgoing_ring_dim,
             opening_source_len,
+            &[],
         )
         .unwrap();
 
@@ -321,20 +347,20 @@ mod tests {
         let role_dims = CommitmentRingDims::uniform(128);
         let point = point_for(2048);
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), role_dims, 0, 9),
+            PreparedRelationPoint::new(&point, F::one(), role_dims, 0, 9, &[]),
             Err(AkitaError::InvalidSetup(_))
         ));
         assert!(matches!(
-            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), role_dims, 128, 9),
+            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), role_dims, 128, 9, &[],),
             Err(AkitaError::InvalidSize { .. })
         ));
-        let non_nested = CommitmentRingDims {
-            inner: 128,
-            outer: 32,
+        let invalid_carrier = CommitmentRingDims {
+            inner: 64,
+            outer: 128,
             opening: 64,
         };
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), non_nested, 128, 9),
+            PreparedRelationPoint::new(&point, F::one(), invalid_carrier, 128, 9, &[]),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -356,6 +382,7 @@ mod tests {
             role_dims,
             outgoing_ring_dim,
             opening_source_len,
+            &[],
         )
         .unwrap();
         assert!(matches!(
@@ -366,5 +393,26 @@ mod tests {
             prepared.role_column_weight(0, RingRole::Outer, 2),
             Err(AkitaError::InvalidProof)
         ));
+    }
+
+    #[test]
+    fn prepares_additional_group_local_quotient_dimension() {
+        let role_dims = CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 32,
+        };
+        let point = point_for(512);
+        let prepared =
+            PreparedRelationPoint::new(&point, F::from_u64(7), role_dims, 32, 9, &[64, 64])
+                .expect("additional group-local dimension");
+        assert_eq!(
+            prepared
+                .for_dimension(64)
+                .expect("prepared D64 quotient factors")
+                .ring_dim,
+            64
+        );
+        assert_eq!(prepared.additional.len(), 1);
     }
 }

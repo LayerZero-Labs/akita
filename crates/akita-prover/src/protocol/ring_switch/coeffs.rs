@@ -318,7 +318,6 @@ where
                 instance.group_challenges(),
                 e_hat_concat,
                 instance.rhs(),
-                dims,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))

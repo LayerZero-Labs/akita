@@ -485,8 +485,9 @@ impl RingRelationProver {
             let group_commitment = block_claims
                 .opening_claims()
                 .group_commitment(group_index)?;
+            let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
             let group_rows =
-                RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
+                RingView::new(group_commitment.rows().coeffs(), group_dims.d_b())?.num_rings();
             let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
             if group_rows != expected_rows {
                 return Err(AkitaError::InvalidInput(

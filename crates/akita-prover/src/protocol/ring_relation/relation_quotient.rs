@@ -6,7 +6,7 @@ use crate::compute::{
 };
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
-use akita_types::{CommitmentRingDims, CommittedGroupParams, RingVec};
+use akita_types::{CommittedGroupParams, RingVec};
 
 #[inline]
 fn accumulate_small_signed<F: FieldCore + FromPrimitiveInt>(dst: &mut F, value: F, coeff: i64) {
@@ -303,7 +303,6 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B, const D: usize>(
     group_challenges: &[Challenges],
     e_hat_concat: &DigitBlocks,
     y: &RingVec<F>,
-    role_dims: CommitmentRingDims,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -326,6 +325,12 @@ where
         .checked_sub(n_d_active)
         .ok_or(AkitaError::InvalidProof)?;
     let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
+    if D != rhs_layout.consistency_ring_dim {
+        return Err(AkitaError::InvalidSetup(format!(
+            "relation quotient consistency carrier D={D} does not match layout d_a={}",
+            rhs_layout.consistency_ring_dim
+        )));
+    }
     let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
@@ -335,12 +340,26 @@ where
     }
     let mut result: Vec<Option<RelationQuotientRow<F>>> = vec![None; num_rows];
     let order = opening_batch.root_group_order()?;
+    if order.len() != rhs_layout.groups.len() {
+        return Err(AkitaError::InvalidProof);
+    }
 
-    // The consistency and every A row are native A-role quotients.
-    // B and D rows are dispatched independently below.
-    let mut y_offset = role_dims.d_a();
+    // The consistency row uses the level A carrier. Group A/B rows and the
+    // shared D tail advance in their native coefficient widths.
+    let mut y_offset = rhs_layout.consistency_ring_dim;
 
-    for &group_index in &order {
+    for (&group_index, group_rows) in order.iter().zip(&rhs_layout.groups) {
+        let group_dims = group_rows.role_dims;
+        // Fold witnesses are still prepared in the level A carrier. A smaller
+        // group-A matrix needs the next slice's partitioned native-A witness
+        // view; rejecting here prevents computing its quotient at the wrong
+        // denominator in the meantime.
+        if group_dims.d_a() != D {
+            return Err(AkitaError::InvalidSetup(format!(
+                "group {group_index} A quotient requires native d_a={}, but the prepared fold carrier is D={D}",
+                group_dims.d_a()
+            )));
+        }
         let group = groups.get(group_index).ok_or(AkitaError::InvalidProof)?;
         let ring_multiplier_point = group_ring_multiplier_points
             .get(group_index)
@@ -368,9 +387,9 @@ where
             .num_polynomials()
             .checked_mul(num_live_blocks_per_claim)
             .ok_or(AkitaError::InvalidProof)?;
-        let opening_ratio = role_dims
+        let opening_ratio = group_dims
             .d_a()
-            .checked_div(role_dims.d_d())
+            .checked_div(group_dims.d_d())
             .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
@@ -385,7 +404,7 @@ where
             || e_folded.len() != expected_blocks
             || recomposed_inner_rows.len() != expected_blocks
             || group.e_hat.total_planes() != expected_e_planes
-            || group.e_hat.digit_stride() != role_dims.d_d()
+            || group.e_hat.digit_stride() != group_dims.d_d()
         {
             return Err(AkitaError::InvalidInput(format!(
                 "relation quotient group shape mismatch: challenges={} e_folded={} recomposed={} e_planes={} e_stride={} expected_blocks={} expected_e_planes={} expected_d_d={}",
@@ -396,7 +415,7 @@ where
                 group.e_hat.digit_stride(),
                 expected_blocks,
                 expected_e_planes,
-                role_dims.d_d(),
+                group_dims.d_d(),
             )));
         }
         if group.z_centered.len() != inner_width {
@@ -509,7 +528,7 @@ where
 
         y_offset = y_offset
             .checked_add(
-                n_a.checked_mul(role_dims.d_a())
+                n_a.checked_mul(group_dims.d_a())
                     .ok_or(AkitaError::InvalidProof)?,
             )
             .ok_or(AkitaError::InvalidProof)?;
@@ -521,7 +540,7 @@ where
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             F,
-            role_dims.d_b(),
+            group_dims.d_b(),
             |D_B| {
                 let (t_hat_rows, remainder) = group.t_hat.digits().as_chunks::<D_B>();
                 if !remainder.is_empty() {
@@ -570,7 +589,7 @@ where
         )?;
         y_offset = y_offset
             .checked_add(
-                n_b.checked_mul(role_dims.d_b())
+                n_b.checked_mul(group_dims.d_b())
                     .ok_or(AkitaError::InvalidProof)?,
             )
             .ok_or(AkitaError::InvalidProof)?;
@@ -580,7 +599,7 @@ where
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
-            role_dims.d_d(),
+            rhs_layout.opening_ring_dim,
             |D_D| {
                 let d_rows = RingSwitchRelationKernel::relation_rows(
                     backend,
@@ -621,7 +640,7 @@ where
         y_offset = y_offset
             .checked_add(
                 n_d_active
-                    .checked_mul(role_dims.d_d())
+                    .checked_mul(rhs_layout.opening_ring_dim)
                     .ok_or(AkitaError::InvalidProof)?,
             )
             .ok_or(AkitaError::InvalidProof)?;

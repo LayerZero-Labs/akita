@@ -17,8 +17,8 @@ use akita_field::{
 #[cfg(test)]
 use akita_types::SetupProjectionGeometry;
 use akita_types::{
-    checked_opening_source_index, gadget_row_scalars, r_decomp_levels, AkitaExpandedSetup,
-    FpExtEncoding,
+    checked_opening_source_index, gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for,
+    AkitaExpandedSetup, FpExtEncoding,
 };
 
 pub(super) fn evaluate_lane_factored_relation_at_point<F, E>(
@@ -36,12 +36,15 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
+    let quotient_row_dims =
+        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_ring_dims()?;
     let prepared_point = PreparedRelationPoint::new(
         point,
         alpha,
         evaluator.role_dims,
         context.opening_ring_dim,
         context.opening_source_len,
+        &quotient_row_dims,
     )?;
     if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
         return Err(AkitaError::InvalidProof);
@@ -375,30 +378,22 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let rows = context
-        .level_params
-        .relation_matrix_row_count(context.opening_batch.num_groups())?;
+    let quotient_row_dims =
+        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_ring_dims()?;
+    let rows = quotient_row_dims.len();
+    if rows
+        != context
+            .level_params
+            .relation_matrix_row_count(context.opening_batch.num_groups())?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "relation quotient row dimensions disagree with the matrix layout".into(),
+        ));
+    }
     let levels = r_decomp_levels::<F>(evaluator.log_basis);
     let quotient_gadget = gadget_row_scalars::<F>(levels, evaluator.log_basis);
-    let d_row_start = rows
-        .checked_sub(context.level_params.open_commit_matrix.output_rank())
-        .ok_or(AkitaError::InvalidProof)?;
-    let b_row_ranges = (0..context.opening_batch.num_groups())
-        .map(|group| {
-            context
-                .level_params
-                .commitment_row_range(&context.opening_batch, group)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
     let mut evaluation = E::zero();
-    for row in 0..rows {
-        let row_dimension = if row >= d_row_start {
-            evaluator.role_dims.d_d()
-        } else if b_row_ranges.iter().any(|range| range.contains(&row)) {
-            evaluator.role_dims.d_b()
-        } else {
-            evaluator.role_dims.d_a()
-        };
+    for (row, &row_dimension) in quotient_row_dims.iter().enumerate() {
         let role_factors = prepared_point.for_dimension(row_dimension)?;
         let denominator = role_factors
             .powers

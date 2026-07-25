@@ -706,10 +706,17 @@ final group's `d_a`, and it must be at least every group-local `d_a`. Existing
 uniform multi-group schedules keep the batch-wide fast path. A heterogeneous
 batch uses group-local B dispatch only for its commitment segments.
 
-This establishes the statement and public-data boundary. Group-local quotient
-construction, witness emission, and setup-contribution spans remain follow-on
-work; no production schedule should claim heterogeneous group A/B support until
-those consumers use the same resolver.
+`RelationRhsLayout::row_ring_dims` is also the canonical quotient-row dimension
+map: level-carrier consistency, then each group's native A and B rows, then
+level-shared D rows. Prover and verifier quotient-denominator evaluation use
+that map. Quotient RHS offsets and B kernels use each group's native widths.
+
+The folded witness is still prepared in the level A carrier. Quotient
+construction therefore rejects a smaller group-local A dimension before
+running an A kernel at the wrong denominator. Native group-A witness views,
+group-A quotient kernels, witness emission, and setup-contribution spans remain
+follow-on work. No production schedule should claim heterogeneous group A
+support until those consumers use the same resolver.
 
 ## Future work
 - **Plan the D512 mixed-role root natively.** Column F currently promotes the

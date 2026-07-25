@@ -12,8 +12,9 @@ use akita_field::{
 };
 use akita_types::{
     checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
-    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RelationAddressGeometry, RingRelationInstance, SetupProjectionGeometry,
+    relation_rhs_layout_for, AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams,
+    FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry, RingRelationInstance,
+    SetupProjectionGeometry,
 };
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -422,7 +423,26 @@ where
     let alpha_pows_a = scalar_powers(alpha, d_a);
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
-    let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
+    let relation_rhs_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let quotient_row_dims = relation_rhs_layout.row_ring_dims()?;
+    let rows = quotient_row_dims.len();
+    if rows != lp.relation_matrix_row_count(opening_batch.num_groups())? {
+        return Err(AkitaError::InvalidSetup(
+            "relation quotient row dimensions disagree with the matrix layout".into(),
+        ));
+    }
+    let mut additional_quotient_alpha_powers = Vec::new();
+    for &row_dim in &quotient_row_dims {
+        if row_dim != d_a
+            && row_dim != d_b
+            && row_dim != d_d
+            && additional_quotient_alpha_powers
+                .iter()
+                .all(|(dimension, _): &(usize, Vec<E>)| *dimension != row_dim)
+        {
+            additional_quotient_alpha_powers.push((row_dim, scalar_powers(alpha, row_dim)));
+        }
+    }
     let eq_tau1 = SplitEqEvals::new(tau1)?;
     if eq_tau1.len() < rows {
         return Err(AkitaError::InvalidSize {
@@ -805,22 +825,21 @@ where
         .into_iter()
         .map(E::lift_base)
         .collect();
-    for row in 0..rows {
+    for (row, &row_dim) in quotient_row_dims.iter().enumerate() {
         let eq_weight = eq_tau1.eval_at(row)?;
-        let is_b_row = (0..opening_batch.num_groups()).try_fold(false, |found, group| {
-            Ok::<_, AkitaError>(
-                found
-                    || lp
-                        .commitment_row_range(opening_batch, group)?
-                        .contains(&row),
-            )
-        })?;
-        let (row_dim, row_alpha_pows): (usize, &[E]) = if row >= d_start {
-            (d_d, alpha_pows_d.as_slice())
-        } else if is_b_row {
-            (d_b, alpha_pows_b.as_slice())
+        let row_alpha_pows = if row_dim == d_a {
+            relation_events.inner_alpha_powers.as_slice()
+        } else if row_dim == d_b {
+            alpha_pows_b.as_slice()
+        } else if row_dim == d_d {
+            alpha_pows_d.as_slice()
         } else {
-            (d_a, relation_events.inner_alpha_powers.as_slice())
+            additional_quotient_alpha_powers
+                .iter()
+                .find_map(|(dimension, powers)| {
+                    (*dimension == row_dim).then_some(powers.as_slice())
+                })
+                .ok_or(AkitaError::InvalidProof)?
         };
         let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {

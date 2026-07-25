@@ -83,6 +83,41 @@ impl RelationRhsLayout {
         }
         Ok(())
     }
+
+    /// Ring dimension of every physical relation-quotient row, in canonical
+    /// relation-matrix order.
+    ///
+    /// The shared consistency row uses the level carrier. Each group then
+    /// contributes native A rows followed by native B rows. The trailing D
+    /// rows use the level-shared opening dimension.
+    pub fn row_ring_dims(&self) -> Result<Vec<usize>, AkitaError> {
+        self.validate()?;
+        let row_count = self.groups.iter().try_fold(1usize, |rows, group| {
+            rows.checked_add(group.n_a)
+                .and_then(|rows| rows.checked_add(group.commit_rows))
+                .and_then(|rows| rows.checked_add(group.b_inner_rows))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("relation quotient row count overflow".into())
+                })
+        })?;
+        let row_count = row_count.checked_add(self.n_d).ok_or_else(|| {
+            AkitaError::InvalidSetup("relation quotient row count overflow".into())
+        })?;
+        let mut dims = Vec::with_capacity(row_count);
+        dims.push(self.consistency_ring_dim);
+        for group in &self.groups {
+            dims.extend(repeat_n(group.role_dims.d_a(), group.n_a));
+            let b_rows = group
+                .commit_rows
+                .checked_add(group.b_inner_rows)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("relation quotient B row count overflow".into())
+                })?;
+            dims.extend(repeat_n(group.role_dims.d_b(), b_rows));
+        }
+        dims.extend(repeat_n(self.opening_ring_dim, self.n_d));
+        Ok(dims)
+    }
 }
 
 /// Single source of truth for the relation rhs row layout at one level.
@@ -816,6 +851,10 @@ mod tests {
         assert_eq!(
             relation_rhs_coeff_len(&layout).expect("mixed group rhs length"),
             128 + 128 + 64 + 2 * 64 + 2 * 32 + 32
+        );
+        assert_eq!(
+            layout.row_ring_dims().expect("mixed quotient row dims"),
+            vec![128, 128, 64, 64, 64, 32, 32, 32]
         );
 
         let mut commitment_coeffs = vec![G::zero(); 64 + 2 * 32];
