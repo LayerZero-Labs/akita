@@ -169,6 +169,28 @@ where
     /// # Errors
     ///
     /// Returns an error when any cluster fails envelope key derivation or cache build.
+    /// Drop built NTT slots across all four clusters (idempotent when they
+    /// share one prepared setup). Called between fold levels whose slot
+    /// extents differ by orders of magnitude; dropped slots rebuild on use.
+    pub fn release_built_ntt_slots(&self) {
+        let _ = self
+            .commit
+            .backend()
+            .release_built_ntt_slots(self.commit.prepared());
+        let _ = self
+            .opening
+            .backend()
+            .release_built_ntt_slots(self.opening.prepared());
+        let _ = self
+            .tensor
+            .backend()
+            .release_built_ntt_slots(self.tensor.prepared());
+        let _ = self
+            .ring_switch
+            .backend()
+            .release_built_ntt_slots(self.ring_switch.prepared());
+    }
+
     pub fn ensure_fold_level_envelope_ntt(
         &self,
         expanded: &AkitaExpandedSetup<F>,

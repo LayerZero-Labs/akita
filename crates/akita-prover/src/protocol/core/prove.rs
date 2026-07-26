@@ -292,6 +292,12 @@ where
     let next_state = root.next_state;
     let root = root.level_proof;
 
+    // The root level's slots (built at root product extents) dwarf every
+    // deeper level's; drop them here so the fold tail — where sumcheck
+    // transients spike — doesn't sit on root-scale caches. Deeper levels
+    // rebuild their own small slots on first use.
+    stacks.prove_stack_at_level(0).release_built_ntt_slots();
+
     let suffix = crate::prove_suffix::<Cfg, T, C, O, TS, R>(
         expanded,
         prefix_slots,

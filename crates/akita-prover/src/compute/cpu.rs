@@ -479,6 +479,10 @@ where
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> usize {
+        prepared.drop_built_ntt_slots()
+    }
+
     fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,

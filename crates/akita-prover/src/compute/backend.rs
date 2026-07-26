@@ -95,6 +95,16 @@ where
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
 
+    /// Drop any built NTT slots back to their reserved state (freed bytes
+    /// returned). Slots rebuild on next use, so callers may drop between
+    /// pipeline windows whose extents differ by orders of magnitude — e.g.
+    /// after the root fold level, whose slots dwarf every deeper level's.
+    /// Backends without droppable caches return 0.
+    fn release_built_ntt_slots(&self, prepared: &Self::PreparedSetup) -> usize {
+        let _unused = prepared;
+        0
+    }
+
     /// Expanded setup used to prepare this backend context.
     fn prepared_expanded_setup<'a>(
         &self,
