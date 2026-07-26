@@ -210,6 +210,12 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             )));
         }
         let built = {
+            if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
+                eprintln!(
+                    "BLOCKS_FOR BUILD ring_d={ring_d} ppb={num_positions_per_block} backtrace:\n{}",
+                    std::backtrace::Backtrace::force_capture()
+                );
+            }
             let _span =
                 tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
                     .entered();
@@ -269,26 +275,30 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         if onehot_k >= ring_d && onehot_k.is_multiple_of(ring_d) {
             Ok(OneHotCommitBlocks::SingleChunkLazy(LazyOneHotBlocks::new(
                 num_live_blocks,
-                move |range| {
-                    FlatBlocks::<SingleChunkEntry>::from_indices_block_range(
+                num_positions_per_block,
+                move |ring_range, first_block| {
+                    FlatBlocks::<SingleChunkEntry>::from_indices_ring_range(
                         onehot_k,
                         indices,
                         num_positions_per_block,
                         ring_d,
-                        range,
+                        ring_range,
+                        first_block,
                     )
                 },
             )))
         } else {
             Ok(OneHotCommitBlocks::MultiChunkLazy(LazyOneHotBlocks::new(
                 num_live_blocks,
-                move |range| {
-                    FlatBlocks::<MultiChunkEntry>::from_indices_block_range(
+                num_positions_per_block,
+                move |ring_range, first_block| {
+                    FlatBlocks::<MultiChunkEntry>::from_indices_ring_range(
                         onehot_k,
                         indices,
                         num_positions_per_block,
                         ring_d,
-                        range,
+                        ring_range,
+                        first_block,
                     )
                 },
             )))

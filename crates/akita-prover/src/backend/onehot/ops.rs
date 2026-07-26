@@ -1,6 +1,7 @@
 use super::fold::{fold_onehot_block, fold_onehot_block_ring};
 use super::*;
 use crate::backend::RootTensorProjectionPoly;
+use crate::compute::OneHotCommitBlocks;
 use crate::compute::{
     BatchDecomposeFoldOutcome, CommitInnerPlan, CpuBackend, DecomposeFoldBatchPlan,
     DecomposeFoldPlan, OpeningBatchKernel, OpeningFoldKernel, OpeningFoldOutput, OpeningFoldPlan,
@@ -336,17 +337,34 @@ where
         scalars: &[F],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self
-            .blocks_for(D, num_positions_per_block)
+        // Each block is visited exactly once, so build its entries from the
+        // retained index columns on the fly instead of materializing (and
+        // caching) every block for the whole fold window.
+        let lazy = self
+            .commit_plan_blocks_lazy(D, num_positions_per_block)
             .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
+        match &lazy {
+            OneHotCommitBlocks::SingleChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        fold_onehot_block(built.block(0), scalars, num_positions_per_block)
+                    })
+                    .collect()
+            }
+            OneHotCommitBlocks::MultiChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        fold_onehot_block(built.block(0), scalars, num_positions_per_block)
+                    })
+                    .collect()
+            }
+            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
         }
     }
 
@@ -355,17 +373,33 @@ where
         scalars: &[CyclotomicRing<F, D>],
         num_positions_per_block: usize,
     ) -> Vec<CyclotomicRing<F, D>> {
-        let blocks = self.blocks_for(D, num_positions_per_block).expect(
-            "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
-        );
-        let num_live_blocks = blocks.num_live_blocks();
-        match blocks.as_ref() {
-            OneHotBlocks::SingleChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
-            OneHotBlocks::MultiChunk(flat) => cfg_into_iter!(0..num_live_blocks)
-                .map(|i| fold_onehot_block_ring(flat.block(i), scalars, num_positions_per_block))
-                .collect(),
+        let lazy = self
+            .commit_plan_blocks_lazy(D, num_positions_per_block)
+            .expect(
+                "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
+            );
+        match &lazy {
+            OneHotCommitBlocks::SingleChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        fold_onehot_block_ring(built.block(0), scalars, num_positions_per_block)
+                    })
+                    .collect()
+            }
+            OneHotCommitBlocks::MultiChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        fold_onehot_block_ring(built.block(0), scalars, num_positions_per_block)
+                    })
+                    .collect()
+            }
+            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
         }
     }
 

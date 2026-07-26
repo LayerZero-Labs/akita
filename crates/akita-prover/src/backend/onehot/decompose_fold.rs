@@ -1,5 +1,6 @@
-use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor};
+use super::accumulate::{onehot_accumulate, onehot_accumulate_tensor_lazy};
 use super::*;
+use crate::compute::OneHotCommitBlocks;
 
 fn expand_onehot_accum<const D: usize>(
     compressed: Vec<[i32; D]>,
@@ -172,31 +173,37 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
 
-        let cached_blocks = polys
+        // Entries build lazily per (block, position-window) inside the
+        // accumulate kernel — the batch's full entry cache never
+        // materializes for the fold. Layout selection mirrors blocks_for
+        // (the `first_blocks` probe above); sources are per-poly builders
+        // over the retained index columns.
+        let lazy_plans = polys
             .iter()
-            .map(|poly| poly.blocks_for(D, num_positions_per_block))
+            .map(|poly| poly.commit_plan_blocks_lazy(D, num_positions_per_block))
             .collect::<Result<Vec<_>, _>>()?;
         let witness = match first_blocks.as_ref() {
             OneHotBlocks::SingleChunk(_) => {
-                let mut flat_blocks: Vec<&[SingleChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::SingleChunk(blocks) = cached.as_ref() else {
+                let mut sources: Vec<(&LazyOneHotBlocks<'_, SingleChunkEntry>, usize)> =
+                    Vec::with_capacity(expected_blocks);
+                for plan in &lazy_plans {
+                    let OneHotCommitBlocks::SingleChunkLazy(source) = plan else {
                         return Ok(None);
                     };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
+                    for i in 0..source.num_live_blocks() {
+                        sources.push((source, i));
                     }
                 }
-                if flat_blocks.len() != expected_blocks {
+                if sources.len() != expected_blocks {
                     return Err(AkitaError::InvalidSize {
                         expected: expected_blocks,
-                        actual: flat_blocks.len(),
+                        actual: sources.len(),
                     });
                 }
                 let coeff_accum_i64 = {
                     let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<SingleChunkEntry, D>(
-                        &flat_blocks,
+                    onehot_accumulate_tensor_lazy::<SingleChunkEntry, D>(
+                        &sources,
                         tensor,
                         expected_blocks,
                         num_positions_per_block,
@@ -207,25 +214,26 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
             OneHotBlocks::MultiChunk(_) => {
-                let mut flat_blocks: Vec<&[MultiChunkEntry]> = Vec::with_capacity(expected_blocks);
-                for cached in &cached_blocks {
-                    let OneHotBlocks::MultiChunk(blocks) = cached.as_ref() else {
+                let mut sources: Vec<(&LazyOneHotBlocks<'_, MultiChunkEntry>, usize)> =
+                    Vec::with_capacity(expected_blocks);
+                for plan in &lazy_plans {
+                    let OneHotCommitBlocks::MultiChunkLazy(source) = plan else {
                         return Ok(None);
                     };
-                    for i in 0..blocks.num_live_blocks() {
-                        flat_blocks.push(blocks.block(i));
+                    for i in 0..source.num_live_blocks() {
+                        sources.push((source, i));
                     }
                 }
-                if flat_blocks.len() != expected_blocks {
+                if sources.len() != expected_blocks {
                     return Err(AkitaError::InvalidSize {
                         expected: expected_blocks,
-                        actual: flat_blocks.len(),
+                        actual: sources.len(),
                     });
                 }
                 let coeff_accum_i64 = {
                     let _span = tracing::info_span!("onehot_accumulate_tensor").entered();
-                    onehot_accumulate_tensor::<MultiChunkEntry, D>(
-                        &flat_blocks,
+                    onehot_accumulate_tensor_lazy::<MultiChunkEntry, D>(
+                        &sources,
                         tensor,
                         expected_blocks,
                         num_positions_per_block,
