@@ -410,7 +410,7 @@ where
             let lane_start = canonical_relation_lane_index(
                 context.opening_source_len,
                 context.opening_ring_dim,
-                evaluator.role_dims.d_a(),
+                evaluator.relation_address_geometry.carrier_ring_dimension(),
                 prepared_point.common_relation_witness_coeff_count(),
                 witness_column,
                 0,

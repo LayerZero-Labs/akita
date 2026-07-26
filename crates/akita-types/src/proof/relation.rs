@@ -65,17 +65,11 @@ impl RelationRhsLayout {
                 "relation rhs layout requires non-empty group and ring geometry".into(),
             ));
         }
-        let carrier_ring_dim = self.groups[0].role_dims.d_a();
         for group in &self.groups {
             group.role_dims.validate_a_carrier()?;
             if group.role_dims.d_d() != self.opening_ring_dim {
                 return Err(AkitaError::InvalidSetup(
                     "relation rhs groups disagree with the level-shared D dimension".into(),
-                ));
-            }
-            if group.role_dims.d_a() > carrier_ring_dim {
-                return Err(AkitaError::InvalidSetup(
-                    "relation rhs group A dimension exceeds the final-group witness carrier".into(),
                 ));
             }
         }
@@ -903,7 +897,7 @@ mod tests {
     }
 
     #[test]
-    fn group_a_dimension_must_fit_final_group_witness_carrier() {
+    fn rows_allow_group_a_larger_than_final_group_a() {
         let layout = RelationRhsLayout {
             opening_ring_dim: 32,
             n_d: 1,
@@ -930,12 +924,10 @@ mod tests {
                 },
             ],
         };
-        let error = layout
-            .row_ring_dims()
-            .expect_err("group A must fit the final-group witness carrier");
-        assert!(error
-            .to_string()
-            .contains("exceeds the final-group witness carrier"));
+        assert_eq!(
+            layout.row_ring_dims().expect("native quotient row dims"),
+            vec![64, 64, 32, 128, 128, 32, 32]
+        );
     }
 
     #[test]

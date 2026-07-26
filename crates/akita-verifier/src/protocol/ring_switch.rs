@@ -346,7 +346,12 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     lp.validate_opening_batch(opening_batch)?;
-    validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
+    validate_ring_dispatch::<D>()?;
+    if relation_address_geometry.carrier_ring_dimension() != D {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group relation carrier does not match verifier dispatch".into(),
+        ));
+    }
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }

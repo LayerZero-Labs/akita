@@ -856,7 +856,7 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         b_coeff_linf_bound: 1,
     };
     let err = layout
-        .validate_frozen_precommit(64)
+        .validate_frozen_precommit()
         .expect_err("geometry must match num_vars");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

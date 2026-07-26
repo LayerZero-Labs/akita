@@ -701,11 +701,13 @@ resolved dimensions with each group's row counts. Relation RHS sizing,
 assembly, and public-claim evaluation consequently use native group widths
 instead of applying the final group's A/B dimensions to every group.
 
-The outgoing relation witness still has one physical carrier. Its dimension is
-the final group's `d_a`, and it must be at least every group-local `d_a`.
-Physical serialization may pad a native group plane into that carrier, but the
-padding is not a ring embedding and must not be used as a substitute for
-native group arithmetic.
+The outgoing relation witness still has one physical carrier, but no commitment
+group owns it. Its dimension is the batch-derived
+`max_g d_{a,g}`. In particular, the final group may use a smaller native A ring
+than an earlier precommitted group, and changing group order does not change the
+carrier. Physical serialization may pad a native group plane into this
+batch-owned carrier, but the padding is not a ring embedding and must not be
+used as a substitute for native group arithmetic.
 
 `RelationRhsLayout::row_ring_dims` is also the canonical quotient-row dimension
 map: for each group in canonical root order, one native-A consistency row,
@@ -731,13 +733,13 @@ the mixed relation:
   dimensions.
 - The relation-address geometry takes every group's A/B dimensions, the shared
   D dimension, and the outgoing witness dimension. The setup plan uses the
-  resulting common coefficient base, but retains the padded carrier stride
-  between witness slots.
+  resulting common coefficient base, but retains the batch-owned padded carrier
+  stride between witness slots.
 - The shared D matrix allocates each group's physical segment using that
   group's `d_a / d_d` subcolumn count. A and B setup footprints and projection
   ratios are also group-local.
 - T and Z planes are serialized through one canonical padded-plane emitter.
-  Padding occurs only at the final-A carrier boundary.
+  Padding occurs only at the batch-owned carrier boundary.
 
 These paths validate group-native matrix dimensions, sparse challenge
 configuration, opening basis, catalog identity, and setup-envelope footprints.

@@ -1,4 +1,5 @@
 use super::*;
+use crate::WitnessLayout;
 
 #[test]
 fn multi_group_m_row_count_matches_canonical_layout() {
@@ -100,4 +101,61 @@ fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
         .validate()
         .expect_err("frozen B dimension must match the serialized B matrix");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn relation_witness_carrier_is_independent_of_final_group_order() {
+    use akita_field::Prime128OffsetA7F7;
+
+    let (mut lp, batch) = sample_multi_group_root_params();
+    let precommitted = &mut lp.precommitted_groups[0];
+    let inner = &precommitted.inner_commit_matrix;
+    precommitted.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound(),
+        128,
+    );
+    precommitted.layout.inner_ring_dimension = 128;
+    let outer = &precommitted.outer_commit_matrix;
+    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width() * 2,
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    );
+    precommitted.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(128).expect("D128 challenge");
+
+    assert_eq!(lp.d_a(), 64, "the final group remains native at A=64");
+    assert_eq!(
+        lp.group_role_dims(&batch, 0)
+            .expect("precommitted group dimensions")
+            .d_a(),
+        128
+    );
+    assert_eq!(lp.relation_witness_carrier_ring_dimension(), 128);
+
+    let relation_rows = lp
+        .relation_matrix_row_count(batch.num_groups())
+        .expect("relation rows");
+    let witness_layout = WitnessLayout::new(
+        &lp,
+        &batch,
+        lp.witness_chunk.num_chunks,
+        relation_rows,
+        crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open),
+    )
+    .expect("witness layout");
+    assert_eq!(
+        lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
+            .expect("output witness length"),
+        witness_layout.total_len() * 128
+    );
 }

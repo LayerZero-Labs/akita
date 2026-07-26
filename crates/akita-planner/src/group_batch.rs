@@ -54,7 +54,7 @@ fn freeze_precommitted_group_layout(
     layout: &PrecommittedGroupDescriptor,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
-    layout.validate_frozen_precommit(policy.ring_dimension)?;
+    layout.validate_frozen_precommit()?;
 
     let d_a = layout.inner_ring_dimension;
     let d_b = layout.outer_ring_dimension;
@@ -298,7 +298,7 @@ pub(crate) fn multi_group_root_next_w_len(
     )?;
     witness_layout
         .total_len()
-        .checked_mul(params.d_a())
+        .checked_mul(params.relation_witness_carrier_ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group next witness length overflow".into()))
 }
 

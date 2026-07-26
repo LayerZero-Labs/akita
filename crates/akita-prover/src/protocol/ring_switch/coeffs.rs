@@ -265,18 +265,18 @@ where
         + AkitaSerialize,
     B: RuntimeRingSwitchProveBackend<F>,
 {
-    let dims = instance.role_dims();
+    let opening_batch = instance.opening_batch();
+    let carrier_ring_dimension = lp.relation_witness_carrier_ring_dimension();
     dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
-        dims.d_a(),
+        carrier_ring_dimension,
         |D| {
             validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
             let RingRelationWitness {
                 groups,
                 fold_grind_nonce: _,
             } = witness;
-            let opening_batch = instance.opening_batch();
             if groups.len() != opening_batch.num_groups() {
                 return Err(AkitaError::InvalidInput(
                     "ring-switch witness count does not match opening batch".to_string(),

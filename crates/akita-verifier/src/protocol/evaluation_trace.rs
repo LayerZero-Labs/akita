@@ -250,7 +250,7 @@ mod tests {
         let inputs = || EvaluationTraceInputs {
             digit_witness_domain: plan.digit_witness_domain(),
             witness_layout: plan.witness_layout(),
-            role_dims: plan.role_dims(),
+            carrier_ring_dimension: plan.relation_address_geometry().carrier_ring_dimension(),
             level_params: &level_params,
             opening_batch: &opening_batch,
             prepared_points: &prepared_points,

@@ -11,7 +11,7 @@
 //! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_config::{policy_of, CommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
     rounded_up_role_a_inf_norm, InnerCommitMatrixParams, OpenCommitMatrixParams,
@@ -25,6 +25,149 @@ use akita_types::{
     TerminalFoldStep, WitnessPartition,
 };
 use std::marker::PhantomData;
+
+// -------------------------------------------------------------------------
+// Multi-group carrier fixture: precommitted groups use the envelope config,
+// while the final group and recursive suffix use a smaller native config.
+// -------------------------------------------------------------------------
+
+/// Test config for a multi-group root whose precommitted groups use
+/// `Envelope::D` while the final group and recursive suffix use `Final::D`.
+///
+/// `Self::D` remains the setup-generation envelope. Runtime schedules are
+/// selected by `Final`, but [`Self::get_params_for_prove`] freezes preceding
+/// groups through `PrecommittedCommitmentConfig<Self>`, so their native
+/// dimensions are retained in the grouped schedule.
+#[derive(Debug)]
+pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
+
+impl<Envelope, Final> Clone for EnvelopeFinalGroupConfig<Envelope, Final> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<Envelope, Final> Copy for EnvelopeFinalGroupConfig<Envelope, Final> {}
+
+impl<Envelope, Final> Default for EnvelopeFinalGroupConfig<Envelope, Final> {
+    fn default() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<Envelope, Final> CommitmentConfig for EnvelopeFinalGroupConfig<Envelope, Final>
+where
+    Envelope: CommitmentConfig,
+    Final: CommitmentConfig<Field = Envelope::Field, ExtField = Envelope::ExtField>,
+{
+    type Field = Envelope::Field;
+    type ExtField = Envelope::ExtField;
+
+    const D: usize = Envelope::D;
+
+    fn decomposition() -> DecompositionParams {
+        Envelope::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        Envelope::ring_challenge_config(d).or_else(|_| Final::ring_challenge_config(d))
+    }
+
+    fn fold_challenge_shape_at_level(inputs: AkitaScheduleInputs) -> TensorChallengeShape {
+        Envelope::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_profile() -> SisModulusProfileId {
+        Envelope::sis_modulus_profile()
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        Envelope::ring_subfield_embedding_norm_bound()
+            .max(Final::ring_subfield_embedding_norm_bound())
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+        let envelope =
+            Envelope::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
+        let final_field_elements =
+            Final::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?
+                .max_setup_len
+                .checked_mul(Final::D)
+                .ok_or_else(|| AkitaError::InvalidSetup("final setup envelope overflow".into()))?;
+        let final_at_envelope = final_field_elements.div_ceil(Envelope::D);
+        Ok(SetupMatrixEnvelope {
+            max_setup_len: envelope.max(final_at_envelope),
+        })
+    }
+
+    fn basis_range() -> (u32, u32) {
+        Envelope::basis_range()
+    }
+
+    fn onehot_chunk_size() -> usize {
+        Envelope::onehot_chunk_size().min(Final::onehot_chunk_size())
+    }
+
+    fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
+        Envelope::schedule_catalog()
+    }
+
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+        let (policy, ring_challenge_config, fold_challenge_shape_at_level) =
+            if key.precommitteds.is_empty() {
+                (
+                    policy_of::<Envelope>(),
+                    Envelope::ring_challenge_config
+                        as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+                    Envelope::fold_challenge_shape_at_level
+                        as fn(AkitaScheduleInputs) -> TensorChallengeShape,
+                )
+            } else {
+                (
+                    policy_of::<Final>(),
+                    Final::ring_challenge_config
+                        as fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
+                    Final::fold_challenge_shape_at_level
+                        as fn(AkitaScheduleInputs) -> TensorChallengeShape,
+                )
+            };
+        akita_planner::find_group_batch_schedule(
+            &key,
+            &policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        )
+        .map(|planned| planned.schedule)
+    }
+
+    fn get_params_for_prove(
+        opening_batch: &OpeningClaimsLayout,
+    ) -> Result<FoldSchedule, AkitaError> {
+        opening_batch.check()?;
+        let final_group = opening_batch.root_final_group_layout()?;
+        let precommitteds = opening_batch
+            .root_precommitted_group_layouts()?
+            .iter()
+            .copied()
+            .map(|group| {
+                let singleton =
+                    OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
+                let params = <PrecommittedCommitmentConfig<Self> as CommitmentConfig>::
+                    get_params_for_batched_commitment(&singleton)?;
+                Ok(akita_types::PrecommittedGroupDescriptor::from_params(
+                    group, &params,
+                ))
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        Self::runtime_schedule(AkitaScheduleLookupKey {
+            final_group,
+            precommitteds,
+        })
+    }
+}
 
 // -------------------------------------------------------------------------
 // Mixed ring-dimension-per-level schedule (runtime ring cutover experiment).

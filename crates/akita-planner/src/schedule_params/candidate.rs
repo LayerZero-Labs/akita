@@ -293,7 +293,7 @@ fn grouped_setup_prefix_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
 
     rings
-        .checked_mul(params.d_a())
+        .checked_mul(params.relation_witness_carrier_ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 

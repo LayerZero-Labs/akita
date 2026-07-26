@@ -8,8 +8,8 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{
-    dispatch_for_field, gadget_row_scalars, BasisMode, CommitmentRingDims, CommittedGroupParams,
-    FlatBooleanDomain, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
+    dispatch_for_field, gadget_row_scalars, BasisMode, CommittedGroupParams, FlatBooleanDomain,
+    FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
 
 /// Reject extension degrees with no evaluation-trace implementation.
@@ -149,7 +149,7 @@ pub fn scale_evaluation_trace_claim_coefficients<E: FieldCore>(
 pub struct EvaluationTraceInputs<'a, F: FieldCore, E: FieldCore> {
     pub digit_witness_domain: FlatBooleanDomain,
     pub witness_layout: &'a WitnessLayout,
-    pub role_dims: CommitmentRingDims,
+    pub carrier_ring_dimension: usize,
     pub level_params: &'a CommittedGroupParams,
     pub opening_batch: &'a OpeningClaimsLayout,
     pub prepared_points: &'a [PreparedOpeningPoint<F, E>],
@@ -166,7 +166,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    if inputs.role_dims.d_a() != D
+    if inputs.carrier_ring_dimension != D
         || inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
     {

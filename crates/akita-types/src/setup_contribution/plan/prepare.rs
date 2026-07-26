@@ -175,7 +175,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let lanes = PreparedRelationLanes::new(
                     role_dims,
                     common_coeff_count,
-                    relation_address_geometry.role_dims().d_a(),
+                    relation_address_geometry.carrier_ring_dimension(),
                     alpha,
                 )?;
                 let raw_d_cols = group.d_active_cols(level_params, opening_batch)?;

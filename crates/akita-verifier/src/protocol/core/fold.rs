@@ -349,7 +349,6 @@ fn verify_stage2<F, E, T>(
     stage1: Stage1Replay<E>,
     rs: &RingSwitchVerifyOutput<E>,
     relation_claim: E,
-    lp: &CommittedGroupParams,
     setup_claim: Option<E>,
     evaluation_trace: PreparedEvaluationTrace<E>,
     evaluation_trace_row_weight: E,
@@ -361,22 +360,27 @@ where
     T: Transcript<F>,
 {
     let witness_eval = stage2.next_w_eval();
-    let d_a = lp.role_dims().d_a();
-    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        verify_stage2_kernel::<F, E, T, D>(
-            transcript,
-            setup,
-            stage2,
-            stage1,
-            rs,
-            relation_claim,
-            witness_eval,
-            setup_claim,
-            evaluation_trace,
-            evaluation_trace_row_weight,
-            evaluation_trace_opening_claim,
-        )
-    })
+    let carrier_ring_dimension = rs.relation_address_geometry.carrier_ring_dimension();
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        carrier_ring_dimension,
+        |D| {
+            verify_stage2_kernel::<F, E, T, D>(
+                transcript,
+                setup,
+                stage2,
+                stage1,
+                rs,
+                relation_claim,
+                witness_eval,
+                setup_claim,
+                evaluation_trace,
+                evaluation_trace_row_weight,
+                evaluation_trace_opening_claim,
+            )
+        }
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -598,7 +602,7 @@ where
         opening_source_len: next_opening_source_len,
         opening_ring_dim: next_witness_ring_dim,
     };
-    let d_a = role_dims.d_a();
+    let carrier_ring_dimension = prepared.lp.relation_witness_carrier_ring_dimension();
     {
         let _span = tracing::info_span!("fold_bind_next_witness").entered();
         match next_witness {
@@ -617,9 +621,12 @@ where
             PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
         }
     }
-    let rs = dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        ring_switch_verifier::<F, E, T, D>(&ring_switch_replay, prepared.w_len, transcript)
-    })?;
+    let rs = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        carrier_ring_dimension,
+        |D| ring_switch_verifier::<F, E, T, D>(&ring_switch_replay, prepared.w_len, transcript)
+    )?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,
@@ -648,22 +655,26 @@ where
         claims = opening_batch.num_total_polynomials(),
         groups = opening_batch.num_groups(),
         chunks = trace_witness_layout.units().len(),
-        source_ring_dimension = d_a,
+        source_ring_dimension = carrier_ring_dimension,
     )
     .entered();
-    let evaluation_trace =
-        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+    let evaluation_trace = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        carrier_ring_dimension,
+        |D| {
             prepare_evaluation_trace::<F, E, D>(&EvaluationTraceInputs {
                 digit_witness_domain: trace_domain,
                 witness_layout: trace_witness_layout,
-                role_dims: relation_instance.role_dims(),
+                carrier_ring_dimension,
                 level_params: prepared.lp,
                 opening_batch,
                 prepared_points: evaluation_trace_points,
                 claim_coefficients: &prepared.evaluation_trace_claim_coefficients,
                 basis: prepared.evaluation_trace_basis,
             })
-        })?;
+        }
+    )?;
     drop(trace_preparation_span);
     let evaluation_trace_opening_claim = evaluation_trace_weight * prepared.evaluation_trace_claim;
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
@@ -674,7 +685,6 @@ where
         stage1_replay,
         &rs,
         relation_claim,
-        prepared.lp,
         setup_claim,
         evaluation_trace,
         evaluation_trace_weight,

@@ -28,7 +28,7 @@ fn freeze_precommitted_group_layout(
     layout: &PrecommittedGroupDescriptor,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
-    layout.validate_frozen_precommit(policy.ring_dimension)?;
+    layout.validate_frozen_precommit()?;
 
     let d_a = layout.inner_ring_dimension;
     let d_b = layout.outer_ring_dimension;

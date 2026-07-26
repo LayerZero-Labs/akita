@@ -89,6 +89,7 @@ pub struct RelationWeightEvents<E: FieldCore> {
     inner_alpha_powers: Vec<E>,
     role_dims: CommitmentRingDims,
     group_role_dims: Vec<CommitmentRingDims>,
+    carrier_ring_dimension: usize,
     opening_source_len: usize,
     opening_ring_dim: usize,
     physical_field_len: usize,
@@ -169,7 +170,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
         scalar: E,
         contribution: RelationWeightContribution,
     ) -> Result<(), AkitaError> {
-        let inner_ring_dimension = self.role_dims.d_a();
+        let inner_ring_dimension = self.carrier_ring_dimension;
         if role_ring_dimension == 0
             || !inner_ring_dimension.is_multiple_of(role_ring_dimension)
             || role_subcolumn >= inner_ring_dimension / role_ring_dimension
@@ -426,7 +427,6 @@ where
     let d_a = role_dims.d_a();
     let d_b = role_dims.d_b();
     let d_d = role_dims.d_d();
-    let alpha_pows_a = scalar_powers(alpha, d_a);
     let alpha_pows_b = scalar_powers(alpha, d_b);
     let alpha_pows_d = scalar_powers(alpha, d_d);
     let relation_rhs_layout = relation_rhs_layout_for(lp, opening_batch)?;
@@ -459,6 +459,7 @@ where
     let n_d_active = lp.open_commit_matrix.output_rank();
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
     let witness_layout = instance.segment_layout(lp, None)?;
+    let carrier_ring_dimension = lp.relation_witness_carrier_ring_dimension();
     let expected_r_len = rows.checked_mul(levels).ok_or_else(|| {
         AkitaError::InvalidSetup("relation quotient witness width overflow".to_string())
     })?;
@@ -469,7 +470,7 @@ where
     }
     let physical_field_len = witness_layout
         .total_len()
-        .checked_mul(d_a)
+        .checked_mul(carrier_ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
     let expected_field_len = opening_source_len
         .checked_mul(opening_ring_dim)
@@ -492,11 +493,12 @@ where
     };
     let mut relation_events = RelationWeightEvents {
         events: Vec::new(),
-        inner_alpha_powers: alpha_pows_a,
+        inner_alpha_powers: scalar_powers(alpha, carrier_ring_dimension),
         role_dims,
         group_role_dims: (0..opening_batch.num_groups())
             .map(|group_index| lp.group_role_dims(opening_batch, group_index))
             .collect::<Result<Vec<_>, _>>()?,
+        carrier_ring_dimension,
         opening_source_len,
         opening_ring_dim,
         physical_field_len,

@@ -374,10 +374,11 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .all(|group| group.descriptor.inner_ring_dimension == TestCfg::D),
         "precommitted groups must retain their native A dimension"
     );
+    let expected_carrier = main_params.d_a().max(TestCfg::D);
     assert_eq!(
-        main_params.d_a(),
-        ProtocolCfg::D,
-        "the final group must retain the consuming carrier dimension"
+        main_params.relation_witness_carrier_ring_dimension(),
+        expected_carrier,
+        "relation witness storage must use the largest native group A dimension"
     );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
@@ -622,6 +623,48 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
     multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 28, &[1], 2, true);
+}
+
+#[test]
+fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
+    const PRE_NV: usize = 12;
+    const FINAL_NV: usize = 24;
+    type ProtocolCfg =
+        crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;
+
+    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit layout");
+    let pre_params =
+        <PrecommittedCommitmentConfig<ProtocolCfg> as CommitmentConfig>::
+            get_params_for_batched_commitment(&pre_layout)
+                .expect("precommit params");
+    let test_pre_params =
+        <PrecommittedCommitmentConfig<fp128::D128OneHot> as CommitmentConfig>::
+            get_params_for_batched_commitment(&pre_layout)
+                .expect("test precommit params");
+    assert_eq!(
+        pre_params.outer_commit_matrix.output_rank(),
+        test_pre_params.outer_commit_matrix.output_rank(),
+        "protocol and standalone precommit policies must freeze the same B rank"
+    );
+    let key = akita_types::AkitaScheduleLookupKey {
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
+        precommitteds: vec![akita_types::PrecommittedGroupDescriptor::from_params(
+            akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
+            &pre_params,
+        )],
+    };
+    let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
+    let root = multi_group_root_params(&schedule);
+    assert_eq!(root.d_a(), 64);
+    assert_eq!(root.relation_witness_carrier_ring_dimension(), 128);
+
+    multi_group_root_round_trip_onehot::<fp128::D128OneHot, ProtocolCfg>(
+        PRE_NV,
+        FINAL_NV,
+        &[1],
+        2,
+        true,
+    );
 }
 
 #[test]

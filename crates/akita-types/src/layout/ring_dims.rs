@@ -255,9 +255,7 @@ pub fn validate_schedule_ring_dims(
                 "root precommitted group {group_index} descriptor disagrees with its commitment params"
             )));
         }
-        group
-            .descriptor
-            .validate_frozen_precommit(final_params.d_a())?;
+        group.descriptor.validate_frozen_precommit()?;
         group.commitment.validate()?;
         if group.commitment.log_basis_open != final_params.log_basis_open {
             return Err(AkitaError::InvalidSetup(format!(

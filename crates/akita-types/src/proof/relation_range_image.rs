@@ -56,7 +56,7 @@ impl RelationRangeImagePlan {
     /// # Errors
     ///
     /// Returns an error if role dimensions are unsupported, the flat live prefix does
-    /// not exactly encode the semantic witness layout at the inner ring dimension, or
+    /// not exactly encode the semantic witness layout at the batch carrier dimension, or
     /// witness groups/chunks do not follow the authenticated opening order.
     pub fn new(
         relation_address_geometry: RelationAddressGeometry,
@@ -67,10 +67,9 @@ impl RelationRangeImagePlan {
         opening_batch.check()?;
 
         let digit_witness_domain = relation_address_geometry.digit_witness_domain();
-        let role_dims = relation_address_geometry.role_dims();
         let expected_live_len = witness_layout
             .total_len()
-            .checked_mul(role_dims.d_a())
+            .checked_mul(relation_address_geometry.carrier_ring_dimension())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation/range-image witness size overflow".into())
             })?;

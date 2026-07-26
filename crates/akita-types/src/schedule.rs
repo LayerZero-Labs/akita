@@ -181,17 +181,9 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate metadata frozen by a precommitted group at precommit time.
-    pub fn validate_frozen_precommit(
-        &self,
-        carrier_ring_dimension: usize,
-    ) -> Result<(), AkitaError> {
+    pub fn validate_frozen_precommit(&self) -> Result<(), AkitaError> {
         self.validate()?;
         self.validate_root_geometry()?;
-        if self.inner_ring_dimension > carrier_ring_dimension {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted A dimension exceeds the final-group witness carrier".to_string(),
-            ));
-        }
         Ok(())
     }
 }

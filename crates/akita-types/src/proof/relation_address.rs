@@ -19,6 +19,7 @@ use crate::layout::{opening_domain_len, validate_role_dims, CommitmentRingDims, 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RelationAddressGeometry {
     role_dims: CommitmentRingDims,
+    carrier_ring_dimension: usize,
     digit_witness_domain: FlatBooleanDomain,
     common_relation_witness_coeff_count: usize,
     outgoing_witness_ring_dimension: usize,
@@ -62,6 +63,16 @@ impl RelationAddressGeometry {
         for &dims in group_role_dims {
             validate_role_dims(dims)?;
         }
+        let carrier_ring_dimension = group_role_dims
+            .iter()
+            .map(|dims| dims.d_a())
+            .chain(std::iter::once(role_dims.d_a()))
+            .max()
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "relation geometry requires a witness carrier dimension".into(),
+                )
+            })?;
         if outgoing_witness_ring_dimension == 0
             || !outgoing_witness_ring_dimension.is_power_of_two()
         {
@@ -130,6 +141,7 @@ impl RelationAddressGeometry {
 
         Ok(Self {
             role_dims,
+            carrier_ring_dimension,
             digit_witness_domain,
             common_relation_witness_coeff_count,
             outgoing_witness_ring_dimension,
@@ -141,6 +153,16 @@ impl RelationAddressGeometry {
     #[must_use]
     pub const fn role_dims(self) -> CommitmentRingDims {
         self.role_dims
+    }
+
+    /// Batch-owned ring dimension used as the physical stride of every
+    /// recursive-witness slot.
+    ///
+    /// This is the largest A-role dimension in the opening batch. It is
+    /// independent of group order and of which group happens to be final.
+    #[must_use]
+    pub const fn carrier_ring_dimension(self) -> usize {
+        self.carrier_ring_dimension
     }
 
     /// Complete checked flat digit-witness domain.
@@ -287,6 +309,26 @@ mod tests {
         assert_eq!(geometry.live_relation_lane_count(), 9);
         assert_eq!(geometry.relation_lane_capacity(), 16);
         assert_eq!(geometry.relation_point_variable_count(), 9);
+    }
+
+    #[test]
+    fn carrier_uses_largest_group_a_not_final_group_a() {
+        let final_dims = CommitmentRingDims {
+            inner: 64,
+            outer: 32,
+            opening: 32,
+        };
+        let precommitted_dims = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 32,
+        };
+        let geometry =
+            RelationAddressGeometry::new_for_groups(final_dims, &[precommitted_dims], 64, 9)
+                .expect("larger precommitted A");
+        assert_eq!(geometry.role_dims(), final_dims);
+        assert_eq!(geometry.carrier_ring_dimension(), 128);
+        assert_eq!(geometry.common_relation_witness_coeff_count(), 32);
     }
 
     #[test]

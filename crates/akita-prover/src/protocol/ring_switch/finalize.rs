@@ -7,8 +7,9 @@ use akita_types::dispatch_for_field;
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
 /// The caller must first absorb the next-witness binding into `transcript`.
 ///
-/// Only the current level's inner ring dimension is needed to expand the
-/// full relation-weight table.
+/// The batch-owned relation carrier dimension is used to interpret the flat
+/// witness. Each commitment group still contributes relation events at its
+/// native role dimensions.
 ///
 /// # Errors
 ///
@@ -32,9 +33,8 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let dims = instance.role_dims();
-    let d_a = dims.d_a();
-    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+    let d_w = lp.relation_witness_carrier_ring_dimension();
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_w, |D| {
         let default_gamma;
         let gamma = if let Some(gamma) = gamma {
             gamma

@@ -502,7 +502,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let ring_d = prepared_fold.instance.role_dims().d_a();
+    let opening_batch = prepared_fold.instance.opening_batch();
+    let ring_d = lp.relation_witness_carrier_ring_dimension();
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
@@ -596,7 +597,6 @@ where
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
-    let opening_batch = prepared_fold.instance.opening_batch();
     let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
@@ -622,7 +622,7 @@ where
                 build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
                     digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
                     witness_layout: relation_range_image_plan.witness_layout(),
-                    role_dims: relation_range_image_plan.role_dims(),
+                    carrier_ring_dimension: rs.relation_address_geometry.carrier_ring_dimension(),
                     level_params: lp,
                     opening_batch,
                     prepared_points: evaluation_trace_points,

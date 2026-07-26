@@ -96,15 +96,16 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             prepare_role(role_dims.d_d())?
         };
         let mut additional = Vec::new();
+        let carrier_ring_dimension = geometry.carrier_ring_dimension();
         for &ring_dim in additional_ring_dims {
             if ring_dim == 0
                 || !ring_dim.is_power_of_two()
-                || ring_dim > role_dims.d_a()
-                || !role_dims.d_a().is_multiple_of(ring_dim)
+                || ring_dim > carrier_ring_dimension
+                || !carrier_ring_dimension.is_multiple_of(ring_dim)
             {
                 return Err(AkitaError::InvalidSetup(format!(
                     "relation quotient ring dimension {ring_dim} does not fit the A carrier {}",
-                    role_dims.d_a()
+                    carrier_ring_dimension
                 )));
             }
             if [role_dims.d_a(), role_dims.d_b(), role_dims.d_d()].contains(&ring_dim)
