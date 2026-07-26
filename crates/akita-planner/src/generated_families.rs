@@ -28,6 +28,13 @@ pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 2, 4];
 /// Maximum number of precommitted groups emitted for multi-group-root generated tables.
 pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 3;
 
+/// Precommit arities sampled by the stock generated multi-group catalogs.
+///
+/// This list controls finite catalog coverage only. The protocol accepts any
+/// precommit arity no larger than the final group when an exact schedule row is
+/// available.
+pub const DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS: &[usize] = &[14];
+
 /// One generated schedule-table family.
 ///
 /// Function-pointer fields (instead of generic `Fn` closures) keep the
@@ -166,22 +173,23 @@ fn group_batch_keys<Cfg: CommitmentConfig>(
     }
     let mut keys = Vec::new();
     for main in mains {
-        let pre_num_vars = main.num_vars() / 2;
-        if pre_num_vars < min_precommitted_num_vars {
-            continue;
-        }
-        let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-        let Ok(params) = planner_precommitted_commit_params::<Cfg>(&pre_key) else {
-            continue;
-        };
-        let precommitted = PrecommittedGroupDescriptor::from_params(pre_key, &params);
-        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-            let candidate = AkitaScheduleLookupKey {
-                final_group: main,
-                precommitteds: vec![precommitted; num_precommitted],
+        for &pre_num_vars in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS {
+            if pre_num_vars < min_precommitted_num_vars || pre_num_vars > main.num_vars() {
+                continue;
+            }
+            let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
+            let Ok(params) = planner_precommitted_commit_params::<Cfg>(&pre_key) else {
+                continue;
             };
-            if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
-                keys.push(candidate);
+            let precommitted = PrecommittedGroupDescriptor::from_params(pre_key, &params);
+            for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+                let candidate = AkitaScheduleLookupKey {
+                    final_group: main,
+                    precommitteds: vec![precommitted; num_precommitted],
+                };
+                if regen_group_batch::<Cfg>(candidate.clone()).is_ok() {
+                    keys.push(candidate);
+                }
             }
         }
     }

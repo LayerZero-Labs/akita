@@ -33,8 +33,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - every opened polynomial is a one-hot polynomial;
-- the shared opening point is padded to the maximum group arity; precommitted
-  group arities are independent of the final group arity;
+- the final group defines the maximum opening arity; each precommitted group
+  may use any arity no larger than that maximum;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root level;
@@ -405,12 +405,12 @@ num_vars        = committed/opened arity for this group
 num_polynomials = K_g
 ```
 
-The shared opening point is padded to the maximum arity across all groups.
-Precommitted group entries may have smaller, equal, or larger arity than the
-final group; their `PointVariableSelection` chooses the coordinates they use
-from the shared point. `AkitaScheduleLookupKey::validate` checks per-group
-well-formedness, while setup and schedule capacity decide whether a concrete
-shape is supported by the selected preset.
+The final group defines the shared opening-point arity. Precommitted group
+entries may have any smaller or equal arity; their
+`PointVariableSelection` chooses the coordinates they use from the shared
+point. `AkitaScheduleLookupKey::validate` enforces this maximum and checks
+per-group well-formedness. The enabled schedule catalog decides whether a
+concrete valid key is available under the selected preset.
 
 `AkitaScheduleLookupKey` is the common key shape for scalar and multi-group
 planning:
@@ -502,29 +502,27 @@ The runtime lookup order is:
 
 ```text
 validate AkitaScheduleLookupKey
-if precommitteds is empty:
-    resolve scalar schedule
-else if a generated entry with matching precommitteds exists:
-    expand and validate that multi-group row
-else:
-    run multi-group DP fallback
+find the exact generated entry
+expand and validate that row
 ```
 
 Current generated group-batch tables are emitted only for eligible one-hot,
 non-tiered families that opt in through `GeneratedFamily.emit_group_batch`.
-The emitter enumerates main keys from the normal generated family key grid
-(`num_polynomials in {1, 4}` today), sets each precommitted group's `num_vars`
-to `main.num_vars / 2`, and emits one- or two-precommit patterns:
+The stock emitter enumerates final groups from the generated family key grid,
+adds the three-polynomial final-group shape, and samples an explicit
+precommitted arity from `DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS`:
 
 ```text
-precommitted group counts: 1 or 2
-first precommitted K:      1
-second precommitted K:     max(main.K / 2, 1)
+stock precommitted num_vars: 14
+precommitted group counts:  1, 2, or 3
+precommitted K_g:           1
 ```
 
-The generated row is kept only if conservative precommit params and multi-group DP
-both succeed. Table misses remain safe because runtime DP can derive a schedule.
-A false table hit is not safe.
+This fixed list bounds static catalog size; it is not a protocol constraint.
+Applications may add exact workload arities to their generated catalog. A row
+is kept only if conservative precommit parameters and offline multi-group
+planning both succeed. Runtime table misses return `UnsupportedSchedule`. A
+false table hit is not safe.
 
 Follow-up table generation can broaden the grid:
 
@@ -1130,7 +1128,7 @@ At Phase 1 multi-group schedule lookup time:
   scheduler.
 - `precommitteds` must be well-formed derived group params.
 - The full multi-group key must not be collapsed into a scalar total-polynomial key.
-- Precommitted group arities are independent of the final group arity.
+- Each precommitted group may use any arity no larger than the final group.
 - Dense and tiered multi-group roots must return `AkitaError::InvalidSetup`.
 - Multi-group folded roots must hand off to a singleton recursive suffix; multi-group
   terminal root folds remain rejected until the terminal witness layout is

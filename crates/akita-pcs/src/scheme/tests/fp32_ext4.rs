@@ -187,7 +187,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
 #[cfg(feature = "profile-ci")]
 fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     const PRE_NV: usize = 14;
-    const FINAL_NV: usize = 28;
+    const FINAL_NV: usize = 20;
     type ProtocolCfg =
         crate::test_support::EnvelopeFinalGroupConfig<fp32::D256OneHot, fp32::D128OneHot>;
     type PreNativeCfg = fp32::D256OneHot;

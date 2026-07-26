@@ -789,7 +789,7 @@ fn group_batch_key_rejects_precommitted_num_vars_above_main() {
 }
 
 #[test]
-fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![PrecommittedGroupDescriptor {
@@ -810,7 +810,32 @@ fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
 
     multi_group_key
         .validate()
-        .expect_err("precommitted groups above half the main key must be rejected");
+        .expect("precommitted group arity is not derived from the final group");
+}
+
+#[test]
+fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
+    let multi_group_key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(20, 3),
+        precommitteds: vec![PrecommittedGroupDescriptor {
+            group: PolynomialGroupLayout::new(20, 1),
+            num_live_ring_elements_per_claim: 1 << 14,
+            num_positions_per_block: 16,
+            num_live_blocks: 1 << 10,
+            log_basis_inner: 1,
+            log_basis_outer: 2,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
+            n_a: 3,
+            a_coeff_linf_bound: 1,
+            n_b: 4,
+            b_coeff_linf_bound: 1,
+        }],
+    };
+
+    multi_group_key
+        .validate()
+        .expect("precommitted groups may use the final group's full arity");
 }
 
 #[test]

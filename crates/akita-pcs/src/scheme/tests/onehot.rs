@@ -103,8 +103,8 @@ fn precommit_config_allows_independent_precommitted_groups() {
 
 #[test]
 fn group_batch_schedule_preserves_precommitted_order() {
-    const PRE_NV: usize = 15;
-    const FINAL_NV: usize = PRE_NV * 2;
+    const PRE_NV: usize = 14;
+    const FINAL_NV: usize = 20;
     const PRE_A_SIZE: usize = 1;
     const PRE_B_SIZE: usize = 1;
     const PRE_C_SIZE: usize = 1;
@@ -168,10 +168,11 @@ fn group_batch_schedule_preserves_precommitted_order() {
 }
 
 #[test]
-fn group_batch_commits_precommitteds_then_double_size_final_group() {
-    const PRE_NV: usize = 15;
-    const FINAL_NV: usize = PRE_NV * 2;
+fn group_batch_commits_independent_arity_precommitteds() {
+    const PRE_NV: usize = 14;
+    const FINAL_NV: usize = 20;
     const GROUP_SIZE: usize = 1;
+    const FINAL_SIZE: usize = 4;
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
@@ -183,57 +184,67 @@ fn group_batch_commits_precommitteds_then_double_size_final_group() {
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
     let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
 
-    with_precommit_stack(FINAL_NV, GROUP_SIZE, |setup, stack| {
-        let (pre_a_commitment, _pre_a_hint) =
-            PrecommitCommitter::commit::<_, _>(setup, &pre_a_polys, stack).expect("precommit A");
-        let (pre_b_commitment, _pre_b_hint) =
-            PrecommitCommitter::commit::<_, _>(setup, &pre_b_polys, stack).expect("precommit B");
-        let pre_a_frozen =
-            akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
-        let pre_b_frozen =
-            akita_types::PrecommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
-        let multi_group_key = akita_types::AkitaScheduleLookupKey {
-            final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, GROUP_SIZE),
-            precommitteds: vec![pre_a_frozen, pre_b_frozen],
-        };
+    let setup = OneHotScheme::setup_prover(FINAL_NV, FINAL_SIZE).expect("protocol setup");
+    let prepared = CpuBackend
+        .prepare_setup(&setup)
+        .expect("prepared protocol setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("protocol stack");
+    let (pre_a_commitment, _pre_a_hint) =
+        PrecommitCommitter::commit::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
+    let (pre_b_commitment, _pre_b_hint) =
+        PrecommitCommitter::commit::<_, _>(&setup, &pre_b_polys, &stack).expect("precommit B");
+    let pre_a_frozen =
+        akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen =
+        akita_types::PrecommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+    let multi_group_key = akita_types::AkitaScheduleLookupKey {
+        final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
+        precommitteds: vec![pre_a_frozen, pre_b_frozen],
+    };
 
-        let multi_group_schedule =
-            OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
-        let main_params = multi_group_root_params(&multi_group_schedule);
-        let final_polys = [debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001)];
-        let (final_commitment, final_hint) = OneHotScheme::commit_final_group::<_, _>(
-            setup,
-            &final_polys,
-            stack,
-            vec![pre_a_key, pre_b_key],
-        )
-        .expect("final multi-group commitment");
+    let multi_group_schedule =
+        OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");
+    let main_params = multi_group_root_params(&multi_group_schedule);
+    let final_polys = [
+        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7001),
+        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7002),
+        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7003),
+        debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7004),
+    ];
+    let (final_commitment, final_hint) = OneHotScheme::commit_final_group::<_, _>(
+        &setup,
+        &final_polys,
+        &stack,
+        vec![pre_a_key, pre_b_key],
+    )
+    .expect("final multi-group commitment");
 
-        assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
-        assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
-        assert_eq!(
-            final_commitment.rows().count(),
-            main_params.outer_commit_matrix.output_rank()
-        );
-        assert_eq!(final_hint.decomposed_inner_rows.len(), GROUP_SIZE);
-        assert_eq!(
-            akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
-            FINAL_NV,
-            "final one-hot group should live on the doubled variable domain"
-        );
-        assert_eq!(
-            multi_group_schedule.root.params.precommitted_groups.len(),
-            2
-        );
-        assert_eq!(
-            multi_group_schedule.root.params.precommitted_groups[0].descriptor,
-            pre_a_frozen
-        );
-        assert_eq!(
-            multi_group_schedule.root.params.precommitted_groups[1].descriptor,
-            pre_b_frozen
-        );
-    });
+    assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
+    assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
+    assert_eq!(
+        final_commitment.rows().count(),
+        main_params.outer_commit_matrix.output_rank()
+    );
+    assert_eq!(final_hint.decomposed_inner_rows.len(), FINAL_SIZE);
+    assert_eq!(
+        akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
+        FINAL_NV,
+        "final one-hot group should retain its native variable domain"
+    );
+    assert_eq!(
+        multi_group_schedule.root.params.precommitted_groups.len(),
+        2
+    );
+    assert_eq!(
+        multi_group_schedule.root.params.precommitted_groups[0].descriptor,
+        pre_a_frozen
+    );
+    assert_eq!(
+        multi_group_schedule.root.params.precommitted_groups[1].descriptor,
+        pre_b_frozen
+    );
 }
 
 #[test]
@@ -622,7 +633,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
 #[test]
 fn multi_group_root_folded_group_binding_round_trips() {
-    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 28, &[1], 2, true);
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[1], 2, true);
 }
 
 #[test]
