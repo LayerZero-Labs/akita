@@ -440,83 +440,17 @@ where
 
             for tile_start in (0..my_count).step_by(block_tile) {
                 let tile_end = (tile_start + block_tile).min(my_count);
-                let tile_len = tile_end - tile_start;
                 let tile_blocks = &blocks[block_start + tile_start..block_start + tile_end];
-
-                let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
-                    vec![WideCyclotomicRing::zero(); tile_len];
-                // Overflow control without block splitting: fold each wide
-                // accumulator into a canonical partial whenever it reaches
-                // the accumulation cap (a handful of reduces per block-row).
-                let mut partials: Vec<CyclotomicRing<F, D>> =
-                    vec![CyclotomicRing::zero(); tile_len];
-                let mut accum_counts: Vec<usize> = vec![0usize; tile_len];
-                let mut cursors: Vec<usize> = vec![0usize; tile_len];
-
-                let _span = tracing::info_span!("onehot_merge_sweep").entered();
-                for a_row in a_view.rows().take(n_a) {
-                    for accum in &mut row_accums {
-                        *accum = WideCyclotomicRing::zero();
-                    }
-                    for partial in &mut partials {
-                        *partial = CyclotomicRing::zero();
-                    }
-                    accum_counts.fill(0);
-                    cursors.fill(0);
-
-                    for chunk_start in (0..active_a_cols).step_by(col_chunk) {
-                        let chunk_end = (chunk_start + col_chunk).min(active_a_cols);
-
-                        // Skip widening chunks no block has entries in.
-                        let live = tile_blocks.iter().zip(&cursors).any(|(entries, &cur)| {
-                            entries
-                                .get(cur)
-                                .is_some_and(|e| e.commit_col(num_digits_inner) < chunk_end)
-                        });
-                        if !live {
-                            continue;
-                        }
-                        for (buf, col) in chunk_buf.iter_mut().zip(chunk_start..chunk_end) {
-                            *buf = WideCyclotomicRing::from_ring(&a_row[col]);
-                        }
-
-                        for (local_b, entries) in tile_blocks.iter().enumerate() {
-                            let cur = &mut cursors[local_b];
-                            while let Some(entry) = entries.get(*cur) {
-                                let col = entry.commit_col(num_digits_inner);
-                                if col >= chunk_end {
-                                    break;
-                                }
-                                debug_assert!(
-                                    col >= chunk_start,
-                                    "one-hot entries must be sorted by position within a block"
-                                );
-                                let a_wide = &chunk_buf[col - chunk_start];
-                                let coeffs = entry.coeffs();
-                                if accum_counts[local_b] + coeffs.len()
-                                    > F::MAX_COMMIT_ACCUMULATIONS
-                                {
-                                    partials[local_b] += row_accums[local_b].reduce();
-                                    row_accums[local_b] = WideCyclotomicRing::zero();
-                                    accum_counts[local_b] = 0;
-                                }
-                                accum_counts[local_b] += coeffs.len();
-                                for &coefficient in coeffs {
-                                    a_wide.shift_accumulate_into(
-                                        &mut row_accums[local_b],
-                                        usize::from(coefficient),
-                                    );
-                                }
-                                *cur += 1;
-                            }
-                        }
-                    }
-
-                    for (local_b, accum) in row_accums.iter().enumerate() {
-                        let mut row = partials[local_b];
-                        row += accum.reduce();
-                        result[tile_start + local_b].push(row);
-                    }
+                let tile_rows = merge_sweep_tile::<E, F, D>(
+                    a_view,
+                    tile_blocks,
+                    n_a,
+                    active_a_cols,
+                    num_digits_inner,
+                    &mut chunk_buf,
+                );
+                for (local_b, rows) in tile_rows.into_iter().enumerate() {
+                    result[tile_start + local_b] = rows;
                 }
             }
 
@@ -529,6 +463,103 @@ where
         out.extend(thread_blocks);
     }
     out
+}
+
+/// One L1-resident tile pass of the merge sweep: returns `n_a` commit rows
+/// per tile block. Extracted so eager (pre-built slices) and lazy
+/// (per-tile-materialized) drivers share the exact accumulation order.
+fn merge_sweep_tile<E, F, const D: usize>(
+    a_view: &RingMatrixView<'_, F, D>,
+    tile_blocks: &[&[E]],
+    n_a: usize,
+    active_a_cols: usize,
+    num_digits_inner: usize,
+    chunk_buf: &mut [WideCyclotomicRing<F::CommitAccum, D>],
+) -> Vec<Vec<CyclotomicRing<F, D>>>
+where
+    E: OneHotEntry,
+    F: FieldCore + CanonicalField + HasCommitAccum,
+    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    let col_chunk = chunk_buf.len();
+    let tile_len = tile_blocks.len();
+    let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(tile_len);
+    result.resize_with(tile_len, || Vec::with_capacity(n_a));
+    {
+        let mut row_accums: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
+            vec![WideCyclotomicRing::zero(); tile_len];
+        // Overflow control without block splitting: fold each wide
+        // accumulator into a canonical partial whenever it reaches
+        // the accumulation cap (a handful of reduces per block-row).
+        let mut partials: Vec<CyclotomicRing<F, D>> = vec![CyclotomicRing::zero(); tile_len];
+        let mut accum_counts: Vec<usize> = vec![0usize; tile_len];
+        let mut cursors: Vec<usize> = vec![0usize; tile_len];
+
+        let _span = tracing::info_span!("onehot_merge_sweep").entered();
+        for a_row in a_view.rows().take(n_a) {
+            for accum in &mut row_accums {
+                *accum = WideCyclotomicRing::zero();
+            }
+            for partial in &mut partials {
+                *partial = CyclotomicRing::zero();
+            }
+            accum_counts.fill(0);
+            cursors.fill(0);
+
+            for chunk_start in (0..active_a_cols).step_by(col_chunk) {
+                let chunk_end = (chunk_start + col_chunk).min(active_a_cols);
+
+                // Skip widening chunks no block has entries in.
+                let live = tile_blocks.iter().zip(&cursors).any(|(entries, &cur)| {
+                    entries
+                        .get(cur)
+                        .is_some_and(|e| e.commit_col(num_digits_inner) < chunk_end)
+                });
+                if !live {
+                    continue;
+                }
+                for (buf, col) in chunk_buf.iter_mut().zip(chunk_start..chunk_end) {
+                    *buf = WideCyclotomicRing::from_ring(&a_row[col]);
+                }
+
+                for (local_b, entries) in tile_blocks.iter().enumerate() {
+                    let cur = &mut cursors[local_b];
+                    while let Some(entry) = entries.get(*cur) {
+                        let col = entry.commit_col(num_digits_inner);
+                        if col >= chunk_end {
+                            break;
+                        }
+                        debug_assert!(
+                            col >= chunk_start,
+                            "one-hot entries must be sorted by position within a block"
+                        );
+                        let a_wide = &chunk_buf[col - chunk_start];
+                        let coeffs = entry.coeffs();
+                        if accum_counts[local_b] + coeffs.len() > F::MAX_COMMIT_ACCUMULATIONS {
+                            partials[local_b] += row_accums[local_b].reduce();
+                            row_accums[local_b] = WideCyclotomicRing::zero();
+                            accum_counts[local_b] = 0;
+                        }
+                        accum_counts[local_b] += coeffs.len();
+                        for &coefficient in coeffs {
+                            a_wide.shift_accumulate_into(
+                                &mut row_accums[local_b],
+                                usize::from(coefficient),
+                            );
+                        }
+                        *cur += 1;
+                    }
+                }
+            }
+
+            for (local_b, accum) in row_accums.iter().enumerate() {
+                let mut row = partials[local_b];
+                row += accum.reduce();
+                result[local_b].push(row);
+            }
+        }
+    }
+    result
 }
 
 /// Fused multi-polynomial column-sweep commit: all polynomials of a batch
@@ -599,6 +630,110 @@ where
         .iter()
         .map(|blocks| flat_rows.by_ref().take(blocks.len()).collect())
         .collect()
+}
+
+/// Fused multi-polynomial column-sweep commit over LAZY block sources:
+/// each thread materializes one block tile's entries from the polynomials'
+/// retained index columns, sweeps it, and drops it — the full per-block
+/// entry cache (~200 B/cycle across a 29-poly batch at 2^26) never exists.
+/// Accumulation order matches the eager kernel tile-for-tile, so results
+/// are byte-equal.
+pub(crate) fn column_sweep_ajtai_onehot_multi_lazy<E, F, const D: usize>(
+    a_view: &RingMatrixView<'_, F, D>,
+    sources: &[&LazyOneHotBlocks<'_, E>],
+    n_a: usize,
+    active_a_cols: usize,
+    num_digits_inner: usize,
+) -> Result<Vec<Vec<Vec<CyclotomicRing<F, D>>>>, AkitaError>
+where
+    E: OneHotEntry,
+    F: FieldCore + CanonicalField + HasCommitAccum,
+    F::CommitAccum: AdditiveGroup + From<F> + ReduceTo<F>,
+{
+    let counts: Vec<usize> = sources.iter().map(|s| s.num_live_blocks()).collect();
+    let mut starts = Vec::with_capacity(counts.len() + 1);
+    let mut total = 0usize;
+    for count in &counts {
+        starts.push(total);
+        total += count;
+    }
+    starts.push(total);
+    if total == 0 {
+        return Ok(vec![Vec::new(); sources.len()]);
+    }
+
+    let accum_bytes = D * std::mem::size_of::<F::CommitAccum>();
+    let tile_budget = (accum_bytes * 64).min(L2_TILE_BUDGET);
+    let block_tile = tile_budget
+        .checked_div(accum_bytes)
+        .map_or(total, |tile| tile.max(1));
+
+    #[cfg(feature = "parallel")]
+    let num_threads = rayon::current_num_threads().min(total).max(1);
+    #[cfg(not(feature = "parallel"))]
+    let num_threads = 1;
+    let blocks_per_thread = total.div_ceil(num_threads);
+
+    let thread_results: Vec<Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>> =
+        cfg_into_iter!(0..num_threads)
+            .map(|tid| {
+                let block_start = tid * blocks_per_thread;
+                let block_end = (block_start + blocks_per_thread).min(total);
+                if block_start >= block_end {
+                    return Ok(Vec::new());
+                }
+                let my_count = block_end - block_start;
+                let mut result: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(my_count);
+                result.resize_with(my_count, Vec::new);
+                let mut chunk_buf: Vec<WideCyclotomicRing<F::CommitAccum, D>> =
+                    vec![WideCyclotomicRing::zero(); MERGE_COL_CHUNK];
+
+                for tile_start in (block_start..block_end).step_by(block_tile) {
+                    let tile_end = (tile_start + block_tile).min(block_end);
+                    // Materialize this tile's blocks from each overlapping
+                    // source's index columns; dropped at tile end.
+                    let mut owners: Vec<FlatBlocks<E>> = Vec::new();
+                    for (src_idx, source) in sources.iter().enumerate() {
+                        let src_start = starts[src_idx];
+                        let src_end = starts[src_idx + 1];
+                        let lo = tile_start.max(src_start);
+                        let hi = tile_end.min(src_end);
+                        if lo >= hi {
+                            continue;
+                        }
+                        owners.push(source.build_range(lo - src_start..hi - src_start)?);
+                    }
+                    let tile_blocks: Vec<&[E]> = owners
+                        .iter()
+                        .flat_map(|blocks| {
+                            (0..blocks.num_live_blocks()).map(move |i| blocks.block(i))
+                        })
+                        .collect();
+                    let tile_rows = merge_sweep_tile::<E, F, D>(
+                        a_view,
+                        &tile_blocks,
+                        n_a,
+                        active_a_cols,
+                        num_digits_inner,
+                        &mut chunk_buf,
+                    );
+                    for (local_b, rows) in tile_rows.into_iter().enumerate() {
+                        result[tile_start - block_start + local_b] = rows;
+                    }
+                }
+                Ok(result)
+            })
+            .collect();
+
+    let mut flat: Vec<Vec<CyclotomicRing<F, D>>> = Vec::with_capacity(total);
+    for thread_blocks in thread_results {
+        flat.extend(thread_blocks?);
+    }
+    let mut flat = flat.into_iter();
+    Ok(counts
+        .iter()
+        .map(|&count| flat.by_ref().take(count).collect())
+        .collect())
 }
 
 /// Column-sweep Ajtai commitment for one-hot blocks.

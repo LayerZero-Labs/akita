@@ -73,8 +73,12 @@ pub(crate) mod test_helpers;
 #[cfg(test)]
 mod tests;
 
+pub use blocks::LazyOneHotBlocks;
 pub(crate) use blocks::{FlatBlocks, OneHotBlocks};
-pub(crate) use column_sweep::{column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi};
+pub(crate) use column_sweep::{
+    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi,
+    column_sweep_ajtai_onehot_multi_lazy,
+};
 pub(super) use entries::{shift_accumulation_count, OneHotEntry};
 pub use entries::{MultiChunkEntry, OneHotIndex, SingleChunkEntry};
 #[cfg(test)]

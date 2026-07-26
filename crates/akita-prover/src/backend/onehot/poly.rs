@@ -224,6 +224,77 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         ))
     }
 
+    /// Lazily buildable commit blocks over this polynomial's retained index
+    /// columns: the sweep materializes one block tile at a time instead of
+    /// holding the full entry cache. Performs the same layout validation as
+    /// [`Self::blocks_for`] but never builds or caches anything.
+    pub(super) fn commit_plan_blocks_lazy(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<OneHotCommitBlocks<'_>, AkitaError> {
+        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
+            )));
+        }
+        let field_len = 1usize
+            .checked_shl(self.num_vars as u32)
+            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
+        let ring_elems_at_d = field_len.div_ceil(ring_d);
+        if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
+            return Err(AkitaError::InvalidInput(format!(
+                "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
+                self.onehot_k
+            )));
+        }
+        if u32::try_from(num_positions_per_block).is_err() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
+            )));
+        }
+        if ring_d > usize::from(u16::MAX) + 1 {
+            return Err(AkitaError::InvalidInput(format!(
+                "D={ring_d} exceeds 65536 and cannot be packed into entry coefficient fields"
+            )));
+        }
+        let num_live_blocks = ring_elems_at_d.div_ceil(num_positions_per_block);
+        let onehot_k = self.onehot_k;
+        let indices = &self.indices;
+        if onehot_k >= ring_d && onehot_k.is_multiple_of(ring_d) {
+            Ok(OneHotCommitBlocks::SingleChunkLazy(LazyOneHotBlocks::new(
+                num_live_blocks,
+                move |range| {
+                    FlatBlocks::<SingleChunkEntry>::from_indices_block_range(
+                        onehot_k,
+                        indices,
+                        num_positions_per_block,
+                        ring_d,
+                        range,
+                    )
+                },
+            )))
+        } else {
+            Ok(OneHotCommitBlocks::MultiChunkLazy(LazyOneHotBlocks::new(
+                num_live_blocks,
+                move |range| {
+                    FlatBlocks::<MultiChunkEntry>::from_indices_block_range(
+                        onehot_k,
+                        indices,
+                        num_positions_per_block,
+                        ring_d,
+                        range,
+                    )
+                },
+            )))
+        }
+    }
+
     /// Sparse fast path for `tensor_extension_column_partials_batch`.
     /// (the `split_bits <= low_vars`, power-of-two `onehot_k`, shared-shape
     /// case). Byte-identical to the dense column partials but exploits the

@@ -868,18 +868,20 @@ where
     where
         B: CommitmentComputeBackend<F>,
     {
-        let blocks: Vec<std::sync::Arc<OneHotBlocks>> = cfg_iter!(polys)
-            .map(|poly| poly.blocks_for(D, plan.num_positions_per_block))
-            .collect::<Result<_, _>>()?;
-        let plans = blocks
+        // Lazy plans: the sweep materializes one block tile at a time from
+        // each polynomial's retained index columns — the batch's full entry
+        // cache (~200 B/cycle at trace scale) never exists during commit.
+        let plans = polys
             .iter()
-            .map(|blocks| OneHotCommitRowsPlan {
-                n_a: plan.n_a,
-                num_positions_per_block: plan.num_positions_per_block,
-                num_digits_inner: plan.num_digits_inner,
-                blocks: blocks.commit_plan_blocks(),
+            .map(|poly| {
+                Ok(OneHotCommitRowsPlan {
+                    n_a: plan.n_a,
+                    num_positions_per_block: plan.num_positions_per_block,
+                    num_digits_inner: plan.num_digits_inner,
+                    blocks: poly.commit_plan_blocks_lazy(D, plan.num_positions_per_block)?,
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         let group_t = backend.onehot_commit_rows_multi::<D>(prepared, plans)?;
         cfg_into_iter!(group_t)
             .map(|t| {

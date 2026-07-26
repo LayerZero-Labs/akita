@@ -1,4 +1,4 @@
-use crate::backend::onehot::{MultiChunkEntry, SingleChunkEntry};
+use crate::backend::onehot::{LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::SparseRingBlockEntry;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
@@ -103,6 +103,11 @@ pub enum OneHotCommitBlocks<'a> {
     SingleChunk(FlatBlockTable<'a, SingleChunkEntry>),
     /// One ring may contain several hot coefficients.
     MultiChunk(FlatBlockTable<'a, MultiChunkEntry>),
+    /// Single-chunk layout built lazily per block tile from the retained
+    /// index columns — the full entry cache never materializes.
+    SingleChunkLazy(LazyOneHotBlocks<'a, SingleChunkEntry>),
+    /// Multi-chunk layout built lazily per block tile.
+    MultiChunkLazy(LazyOneHotBlocks<'a, MultiChunkEntry>),
 }
 
 /// One-hot commit operation plan.

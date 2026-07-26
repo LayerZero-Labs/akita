@@ -33,6 +33,7 @@ mod plans;
 mod poly;
 mod stack;
 
+pub use crate::backend::onehot::LazyOneHotBlocks;
 #[cfg(feature = "compression-diagnostics")]
 pub use backend::CompressionDiagnosticBackend;
 pub use backend::{

@@ -186,6 +186,64 @@ impl FlatBlocks<MultiChunkEntry> {
 
         Ok(blocks.finish_build(current_block, num_live_blocks))
     }
+
+    /// Range variant of [`Self::from_indices`]: builds only blocks
+    /// `block_range` (offsets local to the range). Blocks partition the
+    /// ring-element index space contiguously, so this reads exactly the
+    /// range's slice of the index witness — per-tile builds across a sweep
+    /// sum to the same single pass as one full build.
+    pub(crate) fn from_indices_block_range<I: OneHotIndex>(
+        onehot_k: usize,
+        indices: &[Option<I>],
+        num_positions_per_block: usize,
+        d: usize,
+        block_range: std::ops::Range<usize>,
+    ) -> Result<Self, AkitaError> {
+        assert!(
+            onehot_k < d && d.is_multiple_of(onehot_k),
+            "FlatBlocks::<MultiChunkEntry>::from_indices_block_range: K={onehot_k} and D={d} must satisfy K < D with K | D"
+        );
+        let chunks_per_ring = d / onehot_k;
+        let num_range_blocks = block_range.len();
+        let ring_start = block_range.start * num_positions_per_block;
+        let chunk_start = ring_start * chunks_per_ring;
+        let chunk_end =
+            (block_range.end * num_positions_per_block * chunks_per_ring).min(indices.len());
+        let sub = indices.get(chunk_start..chunk_end).unwrap_or(&[]);
+        let total_entries = sub.iter().filter(|opt| opt.is_some()).count();
+        let mut blocks =
+            FlatBlocks::<MultiChunkEntry>::with_capacity(num_range_blocks, total_entries);
+        let mut current_block = 0usize;
+
+        for (local_ring_idx, ring_chunks) in sub.chunks(chunks_per_ring).enumerate() {
+            let mut nonzero_coeffs = Vec::with_capacity(ring_chunks.len());
+            for (chunk_offset, opt) in ring_chunks.iter().copied().enumerate() {
+                let Some(raw) = opt else {
+                    continue;
+                };
+                let idx = raw.as_usize();
+                let coeff_idx = chunk_offset
+                    .checked_mul(onehot_k)
+                    .and_then(|base| base.checked_add(idx))
+                    .ok_or_else(|| AkitaError::InvalidInput("coefficient index overflow".into()))?;
+                debug_assert!(coeff_idx < d);
+                nonzero_coeffs.push(coeff_idx as u16);
+            }
+            if nonzero_coeffs.is_empty() {
+                continue;
+            }
+            let ring_elem_idx = ring_start + local_ring_idx;
+            let block_idx = ring_elem_idx / num_positions_per_block - block_range.start;
+            let pos_in_block = (ring_elem_idx % num_positions_per_block) as u32;
+            blocks.push_entry(
+                &mut current_block,
+                block_idx,
+                num_range_blocks,
+                MultiChunkEntry::new(pos_in_block, nonzero_coeffs),
+            );
+        }
+        Ok(blocks.finish_build(current_block, num_range_blocks))
+    }
 }
 
 impl FlatBlocks<SingleChunkEntry> {
@@ -263,6 +321,110 @@ impl FlatBlocks<SingleChunkEntry> {
         }
 
         Ok(blocks.finish_build(current_block, num_live_blocks))
+    }
+}
+
+impl FlatBlocks<SingleChunkEntry> {
+    /// Range variant of the single-chunk `from_indices`: builds only blocks
+    /// `block_range` (offsets local to the range) from exactly the range's
+    /// slice of the index witness. In the single-chunk layout (`K >= D`,
+    /// `D | K`) each chunk spans `K/D` whole rings, so ring ranges map to
+    /// contiguous chunk ranges.
+    pub(crate) fn from_indices_block_range<I: OneHotIndex>(
+        onehot_k: usize,
+        indices: &[Option<I>],
+        num_positions_per_block: usize,
+        d: usize,
+        block_range: std::ops::Range<usize>,
+    ) -> Result<Self, AkitaError> {
+        assert!(
+            onehot_k >= d && onehot_k.is_multiple_of(d),
+            "FlatBlocks::<SingleChunkEntry>::from_indices_block_range: K={onehot_k} and D={d} must satisfy K >= D with D | K"
+        );
+        let rings_per_chunk = onehot_k / d;
+        let num_range_blocks = block_range.len();
+        let ring_start = block_range.start * num_positions_per_block;
+        let ring_end = block_range.end * num_positions_per_block;
+        let chunk_start = ring_start / rings_per_chunk;
+        let chunk_end = ring_end.div_ceil(rings_per_chunk).min(indices.len());
+        let sub = indices.get(chunk_start..chunk_end).unwrap_or(&[]);
+        let total_entries = sub.iter().filter(|opt| opt.is_some()).count();
+        let mut blocks =
+            FlatBlocks::<SingleChunkEntry>::with_capacity(num_range_blocks, total_entries);
+        let mut current_block = 0usize;
+
+        for (local_chunk_idx, opt) in sub.iter().copied().enumerate() {
+            let Some(raw) = opt else {
+                continue;
+            };
+            let chunk_idx = chunk_start + local_chunk_idx;
+            let idx = raw.as_usize();
+            let field_pos = chunk_idx
+                .checked_mul(onehot_k)
+                .and_then(|base| base.checked_add(idx))
+                .ok_or_else(|| AkitaError::InvalidInput("field position overflow".into()))?;
+            let ring_elem_idx = field_pos / d;
+            if ring_elem_idx < ring_start || ring_elem_idx >= ring_end {
+                // A chunk on the range boundary can own rings on either side;
+                // its out-of-range hits belong to the neighboring tile.
+                continue;
+            }
+            let coeff_idx = (field_pos % d) as u16;
+            let block_idx = ring_elem_idx / num_positions_per_block - block_range.start;
+            let pos_in_block = (ring_elem_idx % num_positions_per_block) as u32;
+            blocks.push_entry(
+                &mut current_block,
+                block_idx,
+                num_range_blocks,
+                SingleChunkEntry::new(pos_in_block, coeff_idx),
+            );
+        }
+        Ok(blocks.finish_build(current_block, num_range_blocks))
+    }
+}
+
+/// Lazily buildable one-hot blocks: a monomorphized builder over the
+/// polynomial's retained index columns, letting the commit sweep materialize
+/// one block tile at a time instead of holding every block's entries.
+pub struct LazyOneHotBlocks<'a, E> {
+    #[expect(clippy::type_complexity, reason = "one boxed builder signature")]
+    build:
+        Box<dyn Fn(std::ops::Range<usize>) -> Result<FlatBlocks<E>, AkitaError> + Send + Sync + 'a>,
+    num_live_blocks: usize,
+}
+
+impl<'a, E> LazyOneHotBlocks<'a, E> {
+    pub(crate) fn new(
+        num_live_blocks: usize,
+        build: impl Fn(std::ops::Range<usize>) -> Result<FlatBlocks<E>, AkitaError> + Send + Sync + 'a,
+    ) -> Self {
+        Self {
+            build: Box::new(build),
+            num_live_blocks,
+        }
+    }
+
+    /// Number of blocks this source can build.
+    #[inline]
+    pub fn num_live_blocks(&self) -> usize {
+        self.num_live_blocks
+    }
+
+    /// Materialize blocks `range` (offsets local to the range).
+    pub(crate) fn build_range(
+        &self,
+        range: std::ops::Range<usize>,
+    ) -> Result<FlatBlocks<E>, AkitaError> {
+        (self.build)(range)
+    }
+}
+
+impl<E> core::fmt::Debug for LazyOneHotBlocks<'_, E> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("LazyOneHotBlocks")
+            .field("num_live_blocks", &self.num_live_blocks)
+            .finish_non_exhaustive()
     }
 }
 

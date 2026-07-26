@@ -1,5 +1,6 @@
 use crate::backend::onehot::{
-    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi, MultiChunkEntry, SingleChunkEntry,
+    column_sweep_ajtai_onehot, column_sweep_ajtai_onehot_multi,
+    column_sweep_ajtai_onehot_multi_lazy, LazyOneHotBlocks, MultiChunkEntry, SingleChunkEntry,
 };
 use crate::backend::sparse_ring::column_sweep_sparse;
 #[cfg(feature = "compression-diagnostics")]
@@ -606,6 +607,30 @@ where
                     plan.num_digits_inner,
                 )
             }
+            // Single-plan lazy callers route through the fused lazy sweep so
+            // the entry cache stays tile-sized here too.
+            OneHotCommitBlocks::SingleChunkLazy(ref source) => {
+                column_sweep_ajtai_onehot_multi_lazy::<SingleChunkEntry, F, D>(
+                    &a_view,
+                    &[source],
+                    plan.n_a,
+                    active_a_cols,
+                    plan.num_digits_inner,
+                )?
+                .pop()
+                .unwrap_or_default()
+            }
+            OneHotCommitBlocks::MultiChunkLazy(ref source) => {
+                column_sweep_ajtai_onehot_multi_lazy::<MultiChunkEntry, F, D>(
+                    &a_view,
+                    &[source],
+                    plan.n_a,
+                    active_a_cols,
+                    plan.num_digits_inner,
+                )?
+                .pop()
+                .unwrap_or_default()
+            }
         })
     }
 
@@ -632,7 +657,13 @@ where
         let all_multi = plans
             .iter()
             .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunk(_)));
-        if !uniform_shape || !(all_single || all_multi) {
+        let all_single_lazy = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::SingleChunkLazy(_)));
+        let all_multi_lazy = plans
+            .iter()
+            .all(|plan| matches!(plan.blocks, OneHotCommitBlocks::MultiChunkLazy(_)));
+        if !uniform_shape || !(all_single || all_multi || all_single_lazy || all_multi_lazy) {
             return plans
                 .into_iter()
                 .map(|plan| self.onehot_commit_rows::<D>(prepared, plan))
@@ -654,12 +685,46 @@ where
         let n_a = first.n_a;
         let num_digits_inner = first.num_digits_inner;
 
+        if all_single_lazy || all_multi_lazy {
+            return if all_single_lazy {
+                let sources: Vec<&LazyOneHotBlocks<'_, SingleChunkEntry>> = plans
+                    .iter()
+                    .map(|plan| match &plan.blocks {
+                        OneHotCommitBlocks::SingleChunkLazy(source) => source,
+                        _ => unreachable!("checked all_single_lazy"),
+                    })
+                    .collect();
+                column_sweep_ajtai_onehot_multi_lazy::<SingleChunkEntry, F, D>(
+                    &a_view,
+                    &sources,
+                    n_a,
+                    active_a_cols,
+                    num_digits_inner,
+                )
+            } else {
+                let sources: Vec<&LazyOneHotBlocks<'_, MultiChunkEntry>> = plans
+                    .iter()
+                    .map(|plan| match &plan.blocks {
+                        OneHotCommitBlocks::MultiChunkLazy(source) => source,
+                        _ => unreachable!("checked all_multi_lazy"),
+                    })
+                    .collect();
+                column_sweep_ajtai_onehot_multi_lazy::<MultiChunkEntry, F, D>(
+                    &a_view,
+                    &sources,
+                    n_a,
+                    active_a_cols,
+                    num_digits_inner,
+                )
+            };
+        }
+
         if all_single {
             let polys_blocks: Vec<Vec<&[SingleChunkEntry]>> = plans
                 .iter()
                 .map(|plan| match &plan.blocks {
                     OneHotCommitBlocks::SingleChunk(blocks) => blocks.block_slices(),
-                    OneHotCommitBlocks::MultiChunk(_) => unreachable!("checked all_single"),
+                    _ => unreachable!("checked all_single"),
                 })
                 .collect::<Result<_, _>>()?;
             Ok(column_sweep_ajtai_onehot_multi::<SingleChunkEntry, F, D>(
@@ -674,7 +739,7 @@ where
                 .iter()
                 .map(|plan| match &plan.blocks {
                     OneHotCommitBlocks::MultiChunk(blocks) => blocks.block_slices(),
-                    OneHotCommitBlocks::SingleChunk(_) => unreachable!("checked all_multi"),
+                    _ => unreachable!("checked all_multi"),
                 })
                 .collect::<Result<_, _>>()?;
             Ok(column_sweep_ajtai_onehot_multi::<MultiChunkEntry, F, D>(
