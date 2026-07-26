@@ -56,7 +56,9 @@ pub use decompose::{
 use digits::*;
 #[cfg(test)]
 pub(crate) use fused_quotients::fused_split_eq_quotients;
-pub(crate) use fused_quotients::fused_split_eq_quotients_prover_bounds;
+pub(crate) use fused_quotients::{
+    fused_split_eq_quotients_prover_bounds, fused_split_eq_quotients_streamed_prover_bounds,
+};
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;
 pub use ntt_matvec::{

@@ -62,6 +62,41 @@ impl<W: PrimeWidth, const K: usize, const D: usize> CyclotomicCrtNtt<W, K, D> {
         Self::from_ring_pair_with_backend::<F, ScalarBackend>(ring, params)
     }
 
+    /// Convert a coefficient-form ring element into the cyclic CRT+NTT domain
+    /// only — half the transform work of [`Self::from_ring_pair_with_params`]
+    /// for consumers that never touch the negacyclic image.
+    pub fn from_ring_cyclic_with_params<F: CrtNttConvertibleField>(
+        ring: &CyclotomicRing<F, D>,
+        params: &CrtNttParamSet<W, K, D>,
+    ) -> Self {
+        let q = (-F::one()).to_canonical_u128() + 1;
+        let half_q = q / 2;
+        let centered_coeffs: [i128; D] = from_fn(|i| {
+            let canonical = ring.coeffs[i].to_canonical_u128();
+            if canonical > half_q {
+                -((q - canonical) as i128)
+            } else {
+                canonical as i128
+            }
+        });
+        let mut cyc_limbs = [[MontCoeff::from_raw(W::default()); D]; K];
+        for ((cyc_limb, prime), tw) in cyc_limbs
+            .iter_mut()
+            .zip(params.primes.iter())
+            .zip(params.twiddles.iter())
+        {
+            let reducer = CenteredPrimeWideReducer::new(*prime);
+            for (dst, centered) in cyc_limb.iter_mut().zip(centered_coeffs.iter()) {
+                *dst = <ScalarBackend as NttPrimeOps<W, D>>::from_canonical(
+                    *prime,
+                    reducer.reduce_i128(*centered),
+                );
+            }
+            forward_ntt_cyclic(cyc_limb, *prime, tw);
+        }
+        Self { limbs: cyc_limbs }
+    }
+
     fn from_ring_pair_with_backend<
         F: CrtNttConvertibleField,
         B: NttPrimeOps<W, D> + NttTransform<W, D>,

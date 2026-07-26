@@ -93,6 +93,7 @@ where
         + HasWide
         + HalvingField
         + PseudoMersenneField
+        + akita_field::unreduced::HasCommitAccum
         + AkitaSerialize
         + Valid
         + 'static,

@@ -17,10 +17,10 @@ use crate::compute::plans::{
 use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
-    mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
-    mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
-    mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
-    CrtI8CapacityProfile,
+    fused_split_eq_quotients_streamed_prover_bounds, mat_vec_mul_ntt_dense_digits_i8,
+    mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
+    mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8,
+    mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
@@ -48,13 +48,21 @@ pub struct CpuBackend;
 
 type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 
+/// A-extent above which one-shot consumers stream per-element transforms from
+/// the field form instead of building (and keeping) a cached NTT slot. At the
+/// jolt 2^26 shape the cached slot costs ~2.5 KiB per ring element, so this
+/// bounds any lazily built slot to ~5 GiB.
+const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
+
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
 /// NTT caches are keyed by [`NttCacheKey`]. [`ComputeBackendSetup::prepare_setup`]
-/// registers the minimum envelope slot on the setup contract; additional slots may
-/// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`]. Every full-envelope
-/// slot serves all matrix prefixes at its ring dimension, and its cell makes concurrent
-/// first use single-flight. Diagnostic compression caches are kept in a separate
+/// reserves the envelope slot on the setup contract without building it; slots
+/// build lazily at the extent consumers actually request (see
+/// [`CpuPreparedSetup::with_shared_ntt`]), or eagerly via
+/// [`ComputeBackendSetup::ensure_ntt_slot`]. A built slot serves all requests
+/// within its extent at its ring dimension, and its cell makes concurrent
+/// first use single-flight. Diagnostic compression caches use a separate
 /// exact-shape namespace because they contain only the negacyclic transform.
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
@@ -124,29 +132,61 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         NttCacheKey::from_envelope(&self.expanded, D)
     }
 
+    /// Run `f` against a transformed-matrix slot covering the first
+    /// `extent_ring_elements` flat ring elements of A.
+    ///
+    /// Slots build lazily on first use: the transformed matrix is a second
+    /// full-matrix residency (5 CRT primes x 2 transforms, ~2.5x the field
+    /// form), and at the jolt 2^26 shape its consumers touch under 1/6 of
+    /// the setup envelope — so the build is sized to the caller-declared
+    /// extent (rounded up to a power of two, capped at the envelope) rather
+    /// than the envelope itself. The smallest already-built covering slot is
+    /// reused, so an explicitly warmed envelope slot (`ensure_ntt_slot`)
+    /// serves every request exactly as before. `get_or_init` keeps each
+    /// build single-flight; concurrent first users join it instead of
+    /// reporting a false cache miss.
     pub(crate) fn with_shared_ntt<const D: usize, R>(
         &self,
+        extent_ring_elements: usize,
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
-        let key = self.envelope_ntt_key::<D>()?;
-        let entry = {
-            let cache = self
+        let envelope = self.envelope_ntt_key::<D>()?;
+        let capped = extent_ring_elements.max(1).min(envelope.num_ring_elements);
+        let rounded = capped
+            .checked_next_power_of_two()
+            .map_or(envelope.num_ring_elements, |p| {
+                p.min(envelope.num_ring_elements)
+            });
+        let (key, entry) = {
+            let mut cache = self
                 .shared_ntt
                 .lock()
                 .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            cache.get(&key).cloned().ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not reserved for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })?
+            let covering = cache
+                .iter()
+                .filter(|(k, cell)| {
+                    k.ring_d == envelope.ring_d
+                        && k.num_ring_elements >= capped
+                        && cell.get().is_some_and(|result| result.is_ok())
+                })
+                .min_by_key(|(k, _)| k.num_ring_elements)
+                .map(|(k, cell)| (*k, Arc::clone(cell)));
+            match covering {
+                Some(found) => found,
+                None => {
+                    let key = NttCacheKey {
+                        ring_d: envelope.ring_d,
+                        num_ring_elements: rounded,
+                    };
+                    let cell = Arc::clone(
+                        cache
+                            .entry(key)
+                            .or_insert_with(|| Arc::new(OnceLock::new())),
+                    );
+                    (key, cell)
+                }
+            }
         };
-        // Registered slots build lazily on first use: the transformed matrix
-        // is a second full-matrix residency (5 CRT primes x 2 transforms,
-        // ~2.5x the field form), and its only consumers are the stage-8 fold
-        // kernels — building it at setup parks tens of GB under the whole
-        // prove. `get_or_init` keeps the build single-flight; concurrent
-        // first users join it instead of reporting a false cache miss.
         let slot = entry
             .get_or_init(|| {
                 #[cfg(test)]
@@ -249,6 +289,13 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
         let view = expanded
             .shared_matrix()
             .ring_view::<RING_D>(1, key.num_ring_elements)?;
+        if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
+            eprintln!(
+                "NTT BUILD rings={} backtrace:\n{}",
+                key.num_ring_elements,
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
         let cache = Arc::new(prepare_ntt_cache(view, NttCacheMode::BothTransforms)?);
         Ok(ErasedCpuNttCache {
             ring_d: RING_D,
@@ -455,7 +502,7 @@ where
                 log_basis_inner,
             } => {
                 let row_width = digit_block_slices.first().map_or(0, |digits| digits.len());
-                prepared.with_shared_ntt::<D, _>(|ntt| {
+                prepared.with_shared_ntt::<D, _>(plan.n_a.saturating_mul(row_width), |ntt| {
                     mat_vec_mul_ntt_dense_digits_i8(
                         ntt,
                         plan.n_a,
@@ -476,7 +523,7 @@ where
                     })
                 })?;
                 if plan.n_a == 1 {
-                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                    prepared.with_shared_ntt::<D, _>(row_width, |ntt| {
                         Ok(mat_vec_mul_ntt_i8_dense_single_row(
                             ntt,
                             row_width,
@@ -489,7 +536,7 @@ where
                         .collect())
                     })
                 } else {
-                    prepared.with_shared_ntt::<D, _>(|ntt| {
+                    prepared.with_shared_ntt::<D, _>(plan.n_a.saturating_mul(row_width), |ntt| {
                         mat_vec_mul_ntt_i8_dense(
                             ntt,
                             plan.n_a,
@@ -668,7 +715,7 @@ where
                 .is_some_and(|source_log_basis| plan.log_basis_inner >= source_log_basis);
             if known_balanced || digit_blocks_are_balanced(&blocks, row_width, plan.log_basis_inner)
             {
-                prepared.with_shared_ntt::<D, _>(|ntt| {
+                prepared.with_shared_ntt::<D, _>(plan.n_rows.saturating_mul(row_width), |ntt| {
                     mat_vec_mul_ntt_digits_i8(
                         ntt,
                         plan.n_rows,
@@ -678,7 +725,7 @@ where
                     )
                 })
             } else {
-                prepared.with_shared_ntt::<D, _>(|ntt| {
+                prepared.with_shared_ntt::<D, _>(plan.n_rows.saturating_mul(row_width), |ntt| {
                     mat_vec_mul_ntt_raw_digits_i8(ntt, plan.n_rows, row_width, &blocks)
                 })
             }
@@ -694,7 +741,7 @@ where
             let blocks = ring_elems
                 .chunks(plan.num_positions_per_block)
                 .collect::<Vec<_>>();
-            prepared.with_shared_ntt::<D, _>(|ntt| {
+            prepared.with_shared_ntt::<D, _>(plan.n_rows.saturating_mul(row_width), |ntt| {
                 mat_vec_mul_ntt_i8(
                     ntt,
                     plan.n_rows,
@@ -727,7 +774,7 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        prepared.with_shared_ntt::<D, _>(row_len.saturating_mul(digits.len()), |ntt| {
             mat_vec_mul_ntt_single_i8(ntt, row_len, digits.len(), digits, log_basis)
         })
     }
@@ -778,7 +825,7 @@ where
                 .shared_matrix
                 .total_ring_elements_at::<D>()?,
         )?;
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        prepared.with_shared_ntt::<D, _>(row_len.saturating_mul(digits.len()), |ntt| {
             mat_vec_mul_ntt_single_i8_cyclic(ntt, row_len, digits.len(), digits, log_basis)
         })
     }
@@ -796,7 +843,42 @@ where
     where
         F: HalvingField,
     {
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let extent = plan
+            .n_d
+            .saturating_mul(plan.e_hat.len())
+            .max(plan.n_b.saturating_mul(plan.t_hat.len()))
+            .max(plan.n_a.saturating_mul(plan.z_segment.len()));
+        // The root-level relation spans nearly the whole matrix but reads
+        // each element exactly once per prove — stream its transforms from
+        // the field form instead of materializing a matrix-scale NTT cache
+        // for one pass. Small (deeper-level) extents keep the cached path,
+        // which is shared with the per-level digit-row products.
+        if extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
+            let flat = prepared.expanded.shared_matrix.ring_view::<D>(1, extent)?;
+            let streamed = prepared.with_shared_ntt::<D, _>(1, |ntt| {
+                fused_split_eq_quotients_streamed_prover_bounds(
+                    ntt,
+                    flat.as_slice(),
+                    plan.n_d,
+                    plan.n_b,
+                    plan.n_a,
+                    plan.e_hat,
+                    plan.t_hat,
+                    plan.z_segment,
+                    plan.z_folded_centered_inf_norm,
+                    plan.log_basis_open,
+                    plan.log_basis_outer,
+                )
+            })?;
+            if let Some((d_cyclic, b_cyclic, a_quotients)) = streamed {
+                return Ok(RingSwitchRelationRows {
+                    d_cyclic,
+                    b_cyclic,
+                    a_quotients,
+                });
+            }
+        }
+        prepared.with_shared_ntt::<D, _>(extent, |ntt| {
             let (d_cyclic, b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
                 ntt,
                 plan.n_d,
@@ -825,7 +907,29 @@ where
     where
         F: HalvingField,
     {
-        prepared.with_shared_ntt::<D, _>(|ntt| {
+        let extent = plan.n_a.saturating_mul(plan.z_segment.len());
+        if extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
+            let flat = prepared.expanded.shared_matrix.ring_view::<D>(1, extent)?;
+            let streamed = prepared.with_shared_ntt::<D, _>(1, |ntt| {
+                fused_split_eq_quotients_streamed_prover_bounds(
+                    ntt,
+                    flat.as_slice(),
+                    0,
+                    0,
+                    plan.n_a,
+                    &[][..],
+                    &[][..],
+                    plan.z_segment,
+                    plan.z_folded_centered_inf_norm,
+                    1,
+                    1,
+                )
+            })?;
+            if let Some((_d_cyclic, _b_cyclic, a_quotients)) = streamed {
+                return Ok(a_quotients);
+            }
+        }
+        prepared.with_shared_ntt::<D, _>(extent, |ntt| {
             let (_d_cyclic, _b_cyclic, a_quotients) = fused_split_eq_quotients_prover_bounds(
                 ntt,
                 0,
@@ -939,15 +1043,25 @@ mod tests {
         assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 0);
 
         prepared
-            .with_shared_ntt::<D, _>(|_slot| Ok(()))
-            .expect("first use builds the reserved slot");
-        assert!(prepared.shared_ntt_cache_bytes() > 0);
+            .with_shared_ntt::<D, _>(4, |_slot| Ok(()))
+            .expect("first use builds a slot sized to the request");
+        let sized_bytes = prepared.shared_ntt_cache_bytes();
+        assert!(sized_bytes > 0);
         assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 1);
+        // The envelope cell stays reserved: the sized build must be smaller.
+        let full_key = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: envelope_key.num_ring_elements,
+        };
+        CpuBackend
+            .ensure_ntt_slot(&prepared, full_key)
+            .expect("explicit envelope warm still builds the full slot");
+        assert!(prepared.shared_ntt_cache_bytes() > sized_bytes);
 
         prepared
-            .with_shared_ntt::<D, _>(|_slot| Ok(()))
-            .expect("subsequent uses hit the built slot");
-        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 1);
+            .with_shared_ntt::<D, _>(4, |_slot| Ok(()))
+            .expect("subsequent uses hit a built covering slot");
+        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 2);
     }
 
     #[test]
@@ -1029,7 +1143,7 @@ mod tests {
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
         let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+            .with_shared_ntt::<D, _>(2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct digit rows");
@@ -1045,7 +1159,7 @@ mod tests {
             .digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend digit rows");
         let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+            .with_shared_ntt::<D, _>(2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct digit rows");
@@ -1061,11 +1175,105 @@ mod tests {
             .cyclic_digit_rows::<D>(&prepared, 2, &digits, log_basis)
             .expect("backend cyclic digit rows");
         let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+            .with_shared_ntt::<D, _>(2 * digits.len(), |ntt| {
                 mat_vec_mul_ntt_single_i8_cyclic(ntt, 2, digits.len(), &digits, log_basis)
             })
             .expect("direct cyclic digit rows");
         assert_eq!(via_backend, direct);
+    }
+
+    #[test]
+    fn streamed_relation_rows_match_cached_kernel() {
+        let prepared = prepared();
+        let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
+        let t_hat = vec![[-1i8; D], [3i8; D]];
+        let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
+        let extent = 2usize
+            .saturating_mul(e_hat.len())
+            .max(2usize.saturating_mul(t_hat.len()))
+            .max(z_segment.len());
+        let flat = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(1, extent)
+            .expect("field view");
+        let streamed = prepared
+            .with_shared_ntt::<D, _>(1, |ntt| {
+                fused_split_eq_quotients_streamed_prover_bounds(
+                    ntt,
+                    flat.as_slice(),
+                    2,
+                    2,
+                    1,
+                    &e_hat,
+                    &t_hat,
+                    &z_segment,
+                    5,
+                    2,
+                    3,
+                )
+            })
+            .expect("streamed rows")
+            .expect("shape is one-shot safe");
+        let cached = prepared
+            .with_shared_ntt::<D, _>(extent, |ntt| {
+                fused_split_eq_quotients_prover_bounds(
+                    ntt, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+                )
+            })
+            .expect("cached rows");
+        assert_eq!(streamed, cached);
+    }
+
+    #[test]
+    fn streamed_chunked_z_quotient_matches_cached_kernel() {
+        let prepared = prepared();
+        // A capacity bound sized so the safe CRT chunk width lands strictly
+        // between 1 and z_len, forcing the chunked path in both the cached
+        // and streamed kernels.
+        let z_bound = 1u32 << 17;
+        let z_segment: Vec<[i32; D]> = (0..64).map(|i| [(i % 23) - 11; D]).collect();
+        let extent = z_segment.len();
+        let flat = prepared
+            .expanded
+            .shared_matrix
+            .ring_view::<D>(1, extent)
+            .expect("field view");
+        let streamed = prepared
+            .with_shared_ntt::<D, _>(1, |ntt| {
+                fused_split_eq_quotients_streamed_prover_bounds(
+                    ntt,
+                    flat.as_slice(),
+                    0,
+                    0,
+                    1,
+                    &[][..],
+                    &[][..],
+                    &z_segment,
+                    z_bound,
+                    1,
+                    1,
+                )
+            })
+            .expect("streamed rows")
+            .expect("chunked z path streams");
+        let cached = prepared
+            .with_shared_ntt::<D, _>(extent, |ntt| {
+                fused_split_eq_quotients_prover_bounds(
+                    ntt,
+                    0,
+                    0,
+                    1,
+                    &[][..],
+                    &[][..],
+                    &z_segment,
+                    z_bound,
+                    1,
+                    1,
+                )
+            })
+            .expect("cached rows");
+        assert_eq!(streamed, cached);
     }
 
     #[test]
@@ -1091,7 +1299,7 @@ mod tests {
             )
             .expect("backend ring-switch relation rows");
         let direct = prepared
-            .with_shared_ntt::<D, _>(|ntt| {
+            .with_shared_ntt::<D, _>(z_segment.len(), |ntt| {
                 fused_split_eq_quotients(ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3)
             })
             .expect("direct fused split-eq rows");

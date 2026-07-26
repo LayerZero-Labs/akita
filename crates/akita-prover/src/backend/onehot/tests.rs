@@ -1441,7 +1441,7 @@ fn merge_sweep_matches_bucketed_core_across_polys() {
     type F = Prime128Offset275;
     const D: usize = 64;
 
-    let mut rng = StdRng::seed_from_u64(0x5eed_0a5);
+    let mut rng = StdRng::seed_from_u64(0x05ee_d0a5);
     let n_a = 3;
     let num_positions_per_block = 96;
     let num_digits_inner = 1;

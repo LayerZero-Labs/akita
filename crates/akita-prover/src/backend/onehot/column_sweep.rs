@@ -513,7 +513,7 @@ where
                     }
 
                     for (local_b, accum) in row_accums.iter().enumerate() {
-                        let mut row = partials[local_b].clone();
+                        let mut row = partials[local_b];
                         row += accum.reduce();
                         result[tile_start + local_b].push(row);
                     }

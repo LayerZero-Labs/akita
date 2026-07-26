@@ -221,12 +221,16 @@ where
             .prove_stack_at_level(offset + 1)
             .ensure_fold_level_role_ntt(expanded.as_ref(), step.params.witness.role_dims())?;
     }
-    stacks
-        .prove_stack_at_level(schedule.num_fold_levels() - 1)
-        .ensure_fold_level_envelope_ntt(
-            expanded.as_ref(),
-            schedule.terminal.params.witness.d_a(),
-        )?;
+    // Terminal-level warm follows the same base-dim skip as the role warms:
+    // base-dim slots build extent-sized on first use.
+    if schedule.terminal.params.witness.d_a() != expanded.seed().gen_ring_dim {
+        stacks
+            .prove_stack_at_level(schedule.num_fold_levels() - 1)
+            .ensure_fold_level_envelope_ntt(
+                expanded.as_ref(),
+                schedule.terminal.params.witness.d_a(),
+            )?;
+    }
     {
         // §6 invariant — commitment vector length == num_rings · ring_dim.
         // The flat `Commitment` stores raw coefficients; validate its ring count

@@ -198,6 +198,15 @@ where
             }
             unique[count] = d;
             count += 1;
+            // The base-dim slot is deliberately NOT warmed: its consumers
+            // build extent-sized slots on first use and the matrix-scale
+            // relation streams its transforms, so a full-envelope warm here
+            // would park ~2.5 KiB per setup ring element (~30 GiB at the
+            // jolt 2^26 shape) under the whole fold. Cross-D slots keep the
+            // eager warm — their keys sit outside the prepare contract.
+            if d == expanded.seed().gen_ring_dim {
+                continue;
+            }
             self.ensure_fold_level_envelope_ntt(expanded, d)?;
         }
         Ok(())
