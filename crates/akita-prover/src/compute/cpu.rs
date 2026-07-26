@@ -136,14 +136,26 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                 .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
             cache.get(&key).cloned().ok_or_else(|| {
                 AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
+                    "prepared setup NTT slot not reserved for ring_d={} num_ring_elements={}",
                     key.ring_d, key.num_ring_elements
                 ))
             })?
         };
-        // A registered cell may still be under construction by another thread.
-        // Join that single-flight build instead of reporting a false cache miss.
-        let slot = entry.wait().as_ref().map_err(Clone::clone)?.clone();
+        // Registered slots build lazily on first use: the transformed matrix
+        // is a second full-matrix residency (5 CRT primes x 2 transforms,
+        // ~2.5x the field form), and its only consumers are the stage-8 fold
+        // kernels — building it at setup parks tens of GB under the whole
+        // prove. `get_or_init` keeps the build single-flight; concurrent
+        // first users join it instead of reporting a false cache miss.
+        let slot = entry
+            .get_or_init(|| {
+                #[cfg(test)]
+                self.ntt_slot_build_count.fetch_add(1, Ordering::Relaxed);
+                build_ntt_slot_for_key(self.expanded.as_ref(), key).map(Arc::new)
+            })
+            .as_ref()
+            .map_err(Clone::clone)?
+            .clone();
         if slot.ring_d != D {
             return Err(AkitaError::InvalidSetup(format!(
                 "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
@@ -165,6 +177,34 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     ) -> Result<R, AkitaError> {
         self.compression_ntt
             .with_ntt(self.expanded.as_ref(), input_width, f)
+    }
+
+    /// Drop every built NTT slot back to its reserved (empty) state and
+    /// return the bytes freed. Keys and the setup contract are kept, so the
+    /// next [`Self::with_shared_ntt`] use rebuilds single-flight — callers
+    /// may drop between pipeline windows that don't touch A's transformed
+    /// form (e.g. after the commit's terminal product, before the fold) to
+    /// keep the transform out of the intervening standing footprint. A user
+    /// that raced ahead with the old cell finishes against it unaffected;
+    /// the swap only redirects future lookups.
+    pub fn drop_built_ntt_slots(&self) -> usize {
+        let mut freed = 0;
+        if let Ok(mut cache) = self.shared_ntt.lock() {
+            for cell in cache.values_mut() {
+                let built = cell
+                    .get()
+                    .and_then(|result| result.as_ref().ok())
+                    .map(|slot| slot.cache_bytes);
+                if let Some(bytes) = built {
+                    freed += bytes;
+                    *cell = Arc::new(OnceLock::new());
+                }
+            }
+        }
+        if freed > 0 {
+            tracing::info!(freed_bytes = freed, "dropped built NTT slots");
+        }
+        freed
     }
 
     /// In-memory byte footprint of all shared setup NTT caches.
@@ -232,6 +272,28 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
     Ok(())
 }
 
+/// Reserve a slot cell and record its CRT profile without transforming the
+/// matrix; the build happens on first [`CpuPreparedSetup::with_shared_ntt`]
+/// use (or an explicit [`ensure_ntt_slot_on_prepared`] warm-up).
+fn reserve_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+    prepared: &CpuPreparedSetup<F>,
+    key: NttCacheKey,
+) -> Result<(), AkitaError> {
+    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
+        selected_crt_i8_capacity_profile::<F, RING_D>()
+    })?;
+    {
+        let mut cache = prepared
+            .shared_ntt
+            .lock()
+            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+        let _reserved = cache
+            .entry(key)
+            .or_insert_with(|| Arc::new(OnceLock::new()));
+    }
+    record_ntt_profile_on_prepared(prepared, key, profile)
+}
+
 fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
@@ -265,7 +327,7 @@ fn register_setup_contract_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    insert_ntt_slot_on_prepared(prepared, key)?;
+    reserve_ntt_slot_on_prepared(prepared, key)?;
     prepared
         .setup_contract_ntt_keys
         .lock()
@@ -863,7 +925,10 @@ mod tests {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
-        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        // Registration reserves the slot without transforming the matrix; the
+        // build is deferred to first use so the transformed A does not sit in
+        // memory across stages that never touch it.
+        assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         let envelope_key =
             NttCacheKey::from_envelope(setup.expanded.as_ref(), D).expect("envelope key");
         assert!(prepared
@@ -871,6 +936,18 @@ mod tests {
             .lock()
             .unwrap()
             .contains_key(&envelope_key));
+        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 0);
+
+        prepared
+            .with_shared_ntt::<D, _>(|_slot| Ok(()))
+            .expect("first use builds the reserved slot");
+        assert!(prepared.shared_ntt_cache_bytes() > 0);
+        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 1);
+
+        prepared
+            .with_shared_ntt::<D, _>(|_slot| Ok(()))
+            .expect("subsequent uses hit the built slot");
+        assert_eq!(prepared.ntt_slot_build_count.load(Ordering::Relaxed), 1);
     }
 
     #[test]
