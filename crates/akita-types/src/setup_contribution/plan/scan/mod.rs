@@ -136,7 +136,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "shared matrix is too small for selected verifier layout".into(),
             ));
         }
-        let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
+        // The scan reads `required` leading rings; covering the full setup
+        // length would re-derive the whole released matrix per level.
+        let setup_matrix = setup.shared_matrix().covering_at_dyn(required, BASE_D)?;
+        let setup_view = setup_matrix.ring_view::<BASE_D>(1, required)?;
         if fused_groups {
             return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_pows, projections);
         }

@@ -21,6 +21,7 @@ use crate::kernels::linear::{
     mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8, mat_vec_mul_ntt_i8_dense,
     mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8, mat_vec_mul_ntt_single_i8,
     mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile, CrtI8CapacityProfile,
+    StreamedASource,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasCommitAccum, HasWide, ReduceTo};
@@ -219,6 +220,16 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .with_ntt(self.expanded.as_ref(), input_width, f)
     }
 
+    /// Release the setup matrix's backing store down to its first
+    /// `keep_ring_elements` (generation dimension), returning bytes freed.
+    /// The retained prefix serves slot rebuilds and small setup reads; wider
+    /// consumers stream per-element from the seed or re-derive per call.
+    pub fn release_setup_matrix_to_prefix(&self, keep_ring_elements: usize) -> usize {
+        self.expanded
+            .shared_matrix()
+            .release_to_prefix(keep_ring_elements)
+    }
+
     /// Drop every built NTT slot back to its reserved (empty) state and
     /// return the bytes freed. Keys and the setup contract are kept, so the
     /// next [`Self::with_shared_ntt`] use rebuilds single-flight — callers
@@ -286,9 +297,10 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     key: NttCacheKey,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
     dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
-        let view = expanded
+        let matrix = expanded
             .shared_matrix()
-            .ring_view::<RING_D>(1, key.num_ring_elements)?;
+            .covering_at_dyn(key.num_ring_elements, RING_D)?;
+        let view = matrix.ring_view::<RING_D>(1, key.num_ring_elements)?;
         if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
             eprintln!(
                 "NTT BUILD rings={} backtrace:\n{}",
@@ -568,10 +580,13 @@ where
             .num_positions_per_block
             .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
+        let a_matrix = prepared.expanded.shared_matrix.covering_at_dyn(
+            plan.n_a
+                .checked_mul(active_a_cols)
+                .ok_or_else(|| AkitaError::InvalidSetup("active A extent overflow".to_string()))?,
+            D,
+        )?;
+        let a_view = a_matrix.ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(match plan.blocks {
             OneHotCommitBlocks::SingleChunk(blocks) => {
                 column_sweep_ajtai_onehot::<SingleChunkEntry, F, D>(
@@ -628,10 +643,14 @@ where
             .num_positions_per_block
             .checked_mul(first.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(first.n_a, active_a_cols)?;
+        let a_matrix = prepared.expanded.shared_matrix.covering_at_dyn(
+            first
+                .n_a
+                .checked_mul(active_a_cols)
+                .ok_or_else(|| AkitaError::InvalidSetup("active A extent overflow".to_string()))?,
+            D,
+        )?;
+        let a_view = a_matrix.ring_view::<D>(first.n_a, active_a_cols)?;
         let n_a = first.n_a;
         let num_digits_inner = first.num_digits_inner;
 
@@ -681,10 +700,13 @@ where
             .num_positions_per_block
             .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("active A width overflow".to_string()))?;
-        let a_view = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(plan.n_a, active_a_cols)?;
+        let a_matrix = prepared.expanded.shared_matrix.covering_at_dyn(
+            plan.n_a
+                .checked_mul(active_a_cols)
+                .ok_or_else(|| AkitaError::InvalidSetup("active A extent overflow".to_string()))?,
+            D,
+        )?;
+        let a_view = a_matrix.ring_view::<D>(plan.n_a, active_a_cols)?;
         Ok(column_sweep_sparse(
             &a_view,
             &plan.blocks.block_slices()?,
@@ -757,6 +779,57 @@ where
             })
         }
     }
+}
+
+/// Owned parts backing a [`StreamedASource`]: the materialized matrix when it
+/// still covers the extent (pre-release), else a seed deriver (post-release).
+#[allow(clippy::type_complexity)]
+fn streamed_a_source_parts<F: FieldCore + CanonicalField, const D: usize>(
+    prepared: &CpuPreparedSetup<F>,
+    extent: usize,
+) -> Result<
+    (
+        Option<std::sync::Arc<akita_types::FlatMatrix<F>>>,
+        Option<akita_types::MatrixElementDeriver<F>>,
+    ),
+    AkitaError,
+> {
+    let shared = prepared.expanded.shared_matrix();
+    if let Some(matrix) = shared.materialized_covering_at_dyn(extent, D) {
+        return Ok((Some(matrix), None));
+    }
+    if shared.gen_ring_dim() != D {
+        // Seed entries are generation-dimension rings; a mismatched view
+        // cannot stream per-element — fall back to a derived prefix.
+        return Ok((Some(shared.covering_at_dyn(extent, D)?), None));
+    }
+    let full = shared.total_ring_elements_at_dyn(D)?;
+    if extent > full {
+        return Err(AkitaError::InvalidSetup(format!(
+            "streamed A extent {extent} exceeds the setup envelope {full}"
+        )));
+    }
+    Ok((None, Some(shared.element_deriver())))
+}
+
+/// Borrow the parts into the kernel-facing source view.
+fn streamed_a_source<'a, F: FieldCore + CanonicalField, const D: usize>(
+    matrix: &'a Option<std::sync::Arc<akita_types::FlatMatrix<F>>>,
+    deriver: &'a Option<akita_types::MatrixElementDeriver<F>>,
+    extent: usize,
+) -> Result<StreamedASource<'a, F, D>, AkitaError> {
+    if let Some(matrix) = matrix {
+        return Ok(StreamedASource::Flat(
+            matrix.ring_view::<D>(1, extent)?.as_slice(),
+        ));
+    }
+    let deriver = deriver
+        .as_ref()
+        .ok_or_else(|| AkitaError::InvalidSetup("streamed A source has no backing".into()))?;
+    Ok(StreamedASource::Seed {
+        deriver,
+        len: extent,
+    })
 }
 
 impl<F> DigitRowsComputeBackend<F> for CpuBackend
@@ -858,11 +931,12 @@ where
         // for one pass. Small (deeper-level) extents keep the cached path,
         // which is shared with the per-level digit-row products.
         if extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
-            let flat = prepared.expanded.shared_matrix.ring_view::<D>(1, extent)?;
+            let (matrix, deriver) = streamed_a_source_parts::<F, D>(prepared, extent)?;
+            let source = streamed_a_source::<F, D>(&matrix, &deriver, extent)?;
             let streamed = prepared.with_shared_ntt::<D, _>(1, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
                     ntt,
-                    flat.as_slice(),
+                    &source,
                     plan.n_d,
                     plan.n_b,
                     plan.n_a,
@@ -913,11 +987,12 @@ where
     {
         let extent = plan.n_a.saturating_mul(plan.z_segment.len());
         if extent > NTT_STREAM_THRESHOLD_RING_ELEMENTS {
-            let flat = prepared.expanded.shared_matrix.ring_view::<D>(1, extent)?;
+            let (matrix, deriver) = streamed_a_source_parts::<F, D>(prepared, extent)?;
+            let source = streamed_a_source::<F, D>(&matrix, &deriver, extent)?;
             let streamed = prepared.with_shared_ntt::<D, _>(1, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
                     ntt,
-                    flat.as_slice(),
+                    &source,
                     0,
                     0,
                     plan.n_a,
@@ -1196,25 +1271,17 @@ mod tests {
             .saturating_mul(e_hat.len())
             .max(2usize.saturating_mul(t_hat.len()))
             .max(z_segment.len());
-        let flat = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(1, extent)
-            .expect("field view");
+        let matrix = prepared.expanded.shared_matrix().full();
+        let source = StreamedASource::Flat(
+            matrix
+                .ring_view::<D>(1, extent)
+                .expect("field view")
+                .as_slice(),
+        );
         let streamed = prepared
             .with_shared_ntt::<D, _>(1, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
-                    ntt,
-                    flat.as_slice(),
-                    2,
-                    2,
-                    1,
-                    &e_hat,
-                    &t_hat,
-                    &z_segment,
-                    5,
-                    2,
-                    3,
+                    ntt, &source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
                 )
             })
             .expect("streamed rows")
@@ -1238,16 +1305,18 @@ mod tests {
         let z_bound = 1u32 << 17;
         let z_segment: Vec<[i32; D]> = (0..64).map(|i| [(i % 23) - 11; D]).collect();
         let extent = z_segment.len();
-        let flat = prepared
-            .expanded
-            .shared_matrix
-            .ring_view::<D>(1, extent)
-            .expect("field view");
+        let matrix = prepared.expanded.shared_matrix().full();
+        let source = StreamedASource::Flat(
+            matrix
+                .ring_view::<D>(1, extent)
+                .expect("field view")
+                .as_slice(),
+        );
         let streamed = prepared
             .with_shared_ntt::<D, _>(1, |ntt| {
                 fused_split_eq_quotients_streamed_prover_bounds(
                     ntt,
-                    flat.as_slice(),
+                    &source,
                     0,
                     0,
                     1,
@@ -1278,6 +1347,85 @@ mod tests {
             })
             .expect("cached rows");
         assert_eq!(streamed, cached);
+    }
+
+    #[test]
+    fn seed_derived_elements_match_materialized_matrix() {
+        let prepared = prepared();
+        let shared = prepared.expanded.shared_matrix();
+        let matrix = shared.full();
+        let deriver = shared.element_deriver();
+        let mut coeffs = [F::zero(); D];
+        for idx in [0usize, 1, 7, matrix.total_ring_elements() - 1] {
+            deriver.entry_coeffs(idx, &mut coeffs);
+            assert_eq!(
+                coeffs.as_slice(),
+                &matrix.as_field_slice()[idx * D..(idx + 1) * D],
+                "seed-derived entry {idx} disagrees with the materialized matrix"
+            );
+        }
+    }
+
+    #[test]
+    fn seed_source_relation_rows_match_flat_source() {
+        let prepared = prepared();
+        let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
+        let t_hat = vec![[-1i8; D], [3i8; D]];
+        let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [5i32; D]];
+        let extent = 2usize
+            .saturating_mul(e_hat.len())
+            .max(2usize.saturating_mul(t_hat.len()))
+            .max(z_segment.len());
+        let shared = prepared.expanded.shared_matrix();
+        let matrix = shared.full();
+        let deriver = shared.element_deriver();
+        let flat_source =
+            StreamedASource::Flat(matrix.ring_view::<D>(1, extent).expect("view").as_slice());
+        let seed_source = StreamedASource::Seed {
+            deriver: &deriver,
+            len: extent,
+        };
+        let run = |source: &StreamedASource<'_, F, D>| {
+            prepared
+                .with_shared_ntt::<D, _>(1, |ntt| {
+                    fused_split_eq_quotients_streamed_prover_bounds(
+                        ntt, source, 2, 2, 1, &e_hat, &t_hat, &z_segment, 5, 2, 3,
+                    )
+                })
+                .expect("streamed rows")
+                .expect("one-shot safe")
+        };
+        assert_eq!(run(&flat_source), run(&seed_source));
+    }
+
+    #[test]
+    fn released_matrix_serves_prefix_and_rederives_beyond() {
+        let prepared = prepared();
+        let shared = prepared.expanded.shared_matrix();
+        let full = shared.total_ring_elements();
+        let matrix_before = shared.full();
+        let freed = prepared.release_setup_matrix_to_prefix(2);
+        assert!(freed > 0);
+        assert_eq!(
+            shared.total_ring_elements(),
+            full,
+            "metadata must not shrink"
+        );
+        // Within the prefix: served without derivation, identical contents.
+        let prefix = shared.covering_at_dyn(2, D).expect("prefix");
+        assert_eq!(
+            &prefix.as_field_slice()[..2 * D],
+            &matrix_before.as_field_slice()[..2 * D]
+        );
+        // Beyond the prefix: re-derived, still identical to the original.
+        let rederived = shared.covering_at_dyn(full, D).expect("rederived");
+        assert_eq!(rederived.as_field_slice(), matrix_before.as_field_slice());
+        // Backend paths keep working post-release (slot build reads a prefix).
+        let digits = vec![[1i8; D], [-1i8; D]];
+        let rows = CpuBackend
+            .digit_rows::<D>(&prepared, 1, &digits, 3)
+            .expect("digit rows post-release");
+        assert_eq!(rows.len(), 1);
     }
 
     #[test]

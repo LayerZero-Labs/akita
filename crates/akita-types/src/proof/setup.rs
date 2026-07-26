@@ -15,6 +15,7 @@ use sha3::digest::{ExtendableOutput, Update, XofReader};
 use sha3::Shake256;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use std::sync::Mutex;
 
 /// Public seed used to derive commitment matrices.
 pub type PublicMatrixSeed = [u8; 32];
@@ -86,12 +87,344 @@ impl AkitaSetupSeed {
 ///
 /// Base role matrices (A, B, D) are packed row/column prefix views of
 /// `shared_matrix`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct AkitaExpandedSetup<F: FieldCore> {
     /// Setup seed and runtime layout metadata.
     pub seed: AkitaSetupSeed,
-    /// Shared 1D flat backing vector.
-    pub shared_matrix: FlatMatrix<F>,
+    /// Shared 1D flat backing vector, releasable to a prefix after its last
+    /// full-width consumer (the commit sweep) has run.
+    pub shared_matrix: SharedSetupMatrix<F>,
+}
+
+impl<F: FieldCore> Clone for AkitaExpandedSetup<F> {
+    fn clone(&self) -> Self {
+        Self {
+            seed: self.seed.clone(),
+            shared_matrix: self.shared_matrix.clone(),
+        }
+    }
+}
+
+/// Equality is by seed and declared shape: the matrix contents are a pure
+/// function of the seed, so comparing the (possibly released) backing store
+/// would be redundant — and prohibitively expensive at real setup sizes.
+impl<F: FieldCore> PartialEq for AkitaExpandedSetup<F> {
+    fn eq(&self, other: &Self) -> bool {
+        self.seed == other.seed
+    }
+}
+
+impl<F: FieldCore> Eq for AkitaExpandedSetup<F> {}
+
+/// Shared coefficient-form setup matrix with a releasable backing store.
+///
+/// The matrix is a deterministic function of the public seed
+/// ([`derive_public_matrix_flat`]), which makes the materialized form pure
+/// cache: once the last full-width consumer has run, the store can be
+/// released to a small prefix (serving slot rebuilds and verifier prefix
+/// scans) while full-width readers either re-derive on demand or stream
+/// per-element from the seed ([`Self::element_deriver`]).
+///
+/// Shape metadata (lengths, ring dimension) always reflects the FULL
+/// seed-declared matrix regardless of what is materialized — envelope keys
+/// and validation must not shrink when the store is released.
+pub struct SharedSetupMatrix<F: FieldCore> {
+    public_seed: PublicMatrixSeed,
+    gen_ring_dim: usize,
+    full_ring_elements: usize,
+    cached: Mutex<Arc<FlatMatrix<F>>>,
+    /// Monomorphized prefix derivation, captured at construction (the only
+    /// place a `RandomSampling` bound exists) so re-materialization needs no
+    /// extra bounds at ~all consumer sites.
+    derive_prefix: fn(usize, usize, &PublicMatrixSeed) -> FlatMatrix<F>,
+    /// Monomorphized single-entry derivation for streaming consumers.
+    fill_entry: fn(&LabeledMatrixXof, usize, &mut [F]),
+}
+
+impl<F: FieldCore> core::fmt::Debug for SharedSetupMatrix<F> {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        formatter
+            .debug_struct("SharedSetupMatrix")
+            .field("gen_ring_dim", &self.gen_ring_dim)
+            .field("full_ring_elements", &self.full_ring_elements)
+            .field(
+                "materialized_ring_elements",
+                &self.snapshot().total_ring_elements(),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl<F: FieldCore> Clone for SharedSetupMatrix<F> {
+    fn clone(&self) -> Self {
+        Self {
+            public_seed: self.public_seed,
+            gen_ring_dim: self.gen_ring_dim,
+            full_ring_elements: self.full_ring_elements,
+            cached: Mutex::new(self.snapshot()),
+            derive_prefix: self.derive_prefix,
+            fill_entry: self.fill_entry,
+        }
+    }
+}
+
+fn fill_matrix_entry<F: FieldCore + RandomSampling>(
+    xof: &LabeledMatrixXof,
+    gen_index: usize,
+    coeffs: &mut [F],
+) {
+    let mut entry_rng = xof.entry_rng(gen_index);
+    for coeff in coeffs.iter_mut() {
+        *coeff = F::random(&mut entry_rng);
+    }
+}
+
+impl<F: FieldCore> SharedSetupMatrix<F> {
+    /// Wrap a matrix the caller derived (or deserialized) from `public_seed`.
+    ///
+    /// This is the ONLY place a `RandomSampling` bound is required: the
+    /// derivation functions are captured here as monomorphized pointers so
+    /// later re-materialization is bound-free.
+    #[must_use]
+    pub fn from_seed_derived(public_seed: PublicMatrixSeed, matrix: FlatMatrix<F>) -> Self
+    where
+        F: RandomSampling,
+    {
+        Self {
+            public_seed,
+            gen_ring_dim: matrix.gen_ring_dim(),
+            full_ring_elements: matrix.total_ring_elements(),
+            cached: Mutex::new(Arc::new(matrix)),
+            derive_prefix: derive_public_matrix_flat_prefix::<F>,
+            fill_entry: fill_matrix_entry::<F>,
+        }
+    }
+
+    fn snapshot(&self) -> Arc<FlatMatrix<F>> {
+        Arc::clone(&self.cached.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    /// Generation-time ring dimension (seed metadata, release-independent).
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.gen_ring_dim
+    }
+
+    /// FULL matrix length in generation-dimension ring elements, regardless
+    /// of what is currently materialized.
+    #[must_use]
+    pub fn total_ring_elements(&self) -> usize {
+        self.full_ring_elements
+    }
+
+    /// FULL matrix length viewed at ring dimension `D`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `D` does not evenly view the matrix.
+    pub fn total_ring_elements_at<const D: usize>(&self) -> Result<usize, AkitaError> {
+        self.total_ring_elements_at_dyn(D)
+    }
+
+    /// FULL matrix length viewed at runtime ring dimension `ring_d`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `ring_d` does not evenly view the matrix.
+    pub fn total_ring_elements_at_dyn(&self, ring_d: usize) -> Result<usize, AkitaError> {
+        let total_coeffs = self
+            .full_ring_elements
+            .checked_mul(self.gen_ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup matrix length overflow".into()))?;
+        if ring_d == 0 || total_coeffs % ring_d != 0 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "ring dimension {ring_d} does not evenly view {total_coeffs} setup coefficients"
+            )));
+        }
+        Ok(total_coeffs / ring_d)
+    }
+
+    /// Number of field coefficients currently materialized (diagnostics).
+    #[must_use]
+    pub fn materialized_field_elements(&self) -> usize {
+        self.snapshot().total_ring_elements() * self.gen_ring_dim
+    }
+
+    /// The current store if (and only if) it already covers
+    /// `num_ring_elements` at `ring_d` — never derives. Streaming consumers
+    /// use this to prefer the materialized matrix pre-release and fall back
+    /// to per-element seed derivation after it.
+    #[must_use]
+    pub fn materialized_covering_at_dyn(
+        &self,
+        num_ring_elements: usize,
+        ring_d: usize,
+    ) -> Option<Arc<FlatMatrix<F>>> {
+        let needed_coeffs = num_ring_elements.checked_mul(ring_d)?;
+        let cached = self.snapshot();
+        (cached.total_ring_elements() * self.gen_ring_dim >= needed_coeffs).then_some(cached)
+    }
+}
+
+impl<F: FieldCore> SharedSetupMatrix<F> {
+    /// A backing store covering at least `num_ring_elements` at `ring_d`.
+    ///
+    /// Serves the cached store when it covers the request (pre-release this
+    /// is the full matrix and costs an `Arc` clone); otherwise derives
+    /// exactly the requested prefix from the seed WITHOUT growing the cache,
+    /// so a release stays effective.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the request does not evenly view the matrix or
+    /// exceeds the full seed-declared length.
+    pub fn covering_at_dyn(
+        &self,
+        num_ring_elements: usize,
+        ring_d: usize,
+    ) -> Result<Arc<FlatMatrix<F>>, AkitaError> {
+        let full_at_d = self.total_ring_elements_at_dyn(ring_d)?;
+        if num_ring_elements > full_at_d {
+            return Err(AkitaError::InvalidSetup(format!(
+                "requested {num_ring_elements} setup ring elements at D={ring_d}, but the setup has {full_at_d}"
+            )));
+        }
+        let needed_coeffs = num_ring_elements * ring_d;
+        let needed_gen = needed_coeffs.div_ceil(self.gen_ring_dim);
+        let cached = self.snapshot();
+        if cached.total_ring_elements() >= needed_gen {
+            return Ok(cached);
+        }
+        if needed_gen >= self.full_ring_elements {
+            // A full-width request re-caches the store (the verifier's
+            // root-level setup scan legitimately reads the whole matrix):
+            // later proves release it again post-commit, so within one
+            // process the derive amortizes to once per prove/verify cycle.
+            return Ok(self.full());
+        }
+        // Post-release consumers beyond the retained prefix pay a fresh
+        // derivation per call; keep it visible so hot paths get moved to
+        // per-element streaming (or a larger retained prefix) instead.
+        tracing::info!(
+            needed_gen_ring_elements = needed_gen,
+            "re-deriving a released setup-matrix prefix"
+        );
+        if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
+            eprintln!(
+                "MATRIX RE-DERIVE rings={needed_gen} backtrace:\n{}",
+                std::backtrace::Backtrace::force_capture()
+            );
+        }
+        Ok(Arc::new((self.derive_prefix)(
+            needed_gen,
+            self.gen_ring_dim,
+            &self.public_seed,
+        )))
+    }
+
+    /// The full backing store, re-deriving (and re-caching) it if released.
+    ///
+    /// Full-width consumers that run pre-release (the commit sweep) get the
+    /// original store for an `Arc` clone; calling this post-release costs a
+    /// full re-derivation — prefer [`Self::covering_at_dyn`] or
+    /// [`Self::element_deriver`].
+    #[must_use]
+    pub fn full(&self) -> Arc<FlatMatrix<F>> {
+        {
+            let cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+            if cached.total_ring_elements() == self.full_ring_elements {
+                return Arc::clone(&cached);
+            }
+        }
+        tracing::info!("re-deriving the FULL released setup matrix");
+        let rebuilt = Arc::new((self.derive_prefix)(
+            self.full_ring_elements,
+            self.gen_ring_dim,
+            &self.public_seed,
+        ));
+        *self.cached.lock().unwrap_or_else(|e| e.into_inner()) = Arc::clone(&rebuilt);
+        rebuilt
+    }
+
+    /// Release the backing store down to its first `keep_ring_elements`
+    /// (generation dimension), returning the approximate bytes freed.
+    ///
+    /// In-flight readers holding the old `Arc` keep it alive until they
+    /// finish; new readers see the prefix. Requests beyond the prefix
+    /// re-derive from seed per call.
+    pub fn release_to_prefix(&self, keep_ring_elements: usize) -> usize {
+        let keep = keep_ring_elements.min(self.full_ring_elements);
+        let mut cached = self.cached.lock().unwrap_or_else(|e| e.into_inner());
+        let current = cached.total_ring_elements();
+        if current <= keep {
+            return 0;
+        }
+        let prefix = FlatMatrix::from_flat_data(
+            cached.as_field_slice()[..keep * self.gen_ring_dim].to_vec(),
+            self.gen_ring_dim,
+        );
+        *cached = Arc::new(prefix);
+        (current - keep) * self.gen_ring_dim * core::mem::size_of::<F>()
+    }
+
+    /// Per-element derivation handle for streaming consumers.
+    #[must_use]
+    pub fn element_deriver(&self) -> MatrixElementDeriver<F> {
+        MatrixElementDeriver {
+            xof: LabeledMatrixXof::new(&self.public_seed, SHARED_MATRIX_LABEL),
+            gen_ring_dim: self.gen_ring_dim,
+            fill_entry: self.fill_entry,
+        }
+    }
+}
+
+/// Derives individual setup-matrix ring elements straight from the public
+/// seed — the same per-entry XOF stream as [`derive_public_matrix_flat`], so
+/// derived values are bit-identical to the materialized matrix.
+pub struct MatrixElementDeriver<F: FieldCore> {
+    xof: LabeledMatrixXof,
+    gen_ring_dim: usize,
+    fill_entry: fn(&LabeledMatrixXof, usize, &mut [F]),
+}
+
+impl<F: FieldCore> MatrixElementDeriver<F> {
+    /// Generation-time ring dimension the entry indexing is defined over.
+    #[must_use]
+    pub fn gen_ring_dim(&self) -> usize {
+        self.gen_ring_dim
+    }
+
+    /// Fill `coeffs` with the generation-dimension entry at `gen_index`.
+    ///
+    /// `coeffs.len()` must equal the generation ring dimension; callers
+    /// viewing the matrix at a different ring dimension must map their
+    /// indices to generation entries first.
+    pub fn entry_coeffs(&self, gen_index: usize, coeffs: &mut [F]) {
+        debug_assert_eq!(coeffs.len(), self.gen_ring_dim);
+        (self.fill_entry)(&self.xof, gen_index, coeffs);
+    }
+
+    /// Derive an arbitrary contiguous coefficient range of the flat matrix
+    /// (spanning generation entries as needed) — the random-access primitive
+    /// for consumers whose reads stride across the full matrix width.
+    #[must_use]
+    pub fn coeff_range(&self, start_coeff: usize, len: usize) -> Vec<F> {
+        let gen = self.gen_ring_dim;
+        let first_entry = start_coeff / gen;
+        let last_entry = (start_coeff + len).div_ceil(gen);
+        let mut coeffs = vec![F::zero(); (last_entry - first_entry) * gen];
+        for (offset, entry) in (first_entry..last_entry).enumerate() {
+            (self.fill_entry)(
+                &self.xof,
+                entry,
+                &mut coeffs[offset * gen..(offset + 1) * gen],
+            );
+        }
+        let skip = start_coeff - first_entry * gen;
+        coeffs.drain(..skip);
+        coeffs.truncate(len);
+        coeffs
+    }
 }
 
 /// Verifier setup artifact derived from prover setup.
@@ -170,7 +503,12 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
     pub fn from_trusted_seed_derived_parts_unchecked(
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
-    ) -> Self {
+    ) -> Self
+    where
+        F: RandomSampling,
+    {
+        let shared_matrix =
+            SharedSetupMatrix::from_seed_derived(seed.public_matrix_seed, shared_matrix);
         Self {
             seed,
             shared_matrix,
@@ -185,7 +523,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
 
     /// Shared coefficient-form matrix backing all setup roles.
     #[must_use]
-    pub fn shared_matrix(&self) -> &FlatMatrix<F> {
+    pub fn shared_matrix(&self) -> &SharedSetupMatrix<F> {
         &self.shared_matrix
     }
 }
@@ -205,10 +543,7 @@ where
         seed: AkitaSetupSeed,
         shared_matrix: FlatMatrix<F>,
     ) -> Result<Self, SerializationError> {
-        let out = Self {
-            seed,
-            shared_matrix,
-        };
+        let out = Self::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix);
         out.check()?;
         Ok(out)
     }
@@ -232,6 +567,26 @@ pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
 /// a prefix of any vector of length M > N derived from the same seed.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
 #[must_use]
+/// Runtime-dimension prefix derivation — identical entry streams to
+/// [`derive_public_matrix_flat`], usable for partial re-materialization.
+pub fn derive_public_matrix_flat_prefix<F: FieldCore + RandomSampling>(
+    total_ring_elements: usize,
+    gen_ring_dim: usize,
+    seed: &PublicMatrixSeed,
+) -> FlatMatrix<F> {
+    let xof = LabeledMatrixXof::new(seed, SHARED_MATRIX_LABEL);
+    let mut data = vec![F::zero(); total_ring_elements * gen_ring_dim];
+    cfg_chunks_mut!(data, gen_ring_dim)
+        .enumerate()
+        .for_each(|(idx, coeffs)| {
+            let mut entry_rng = xof.entry_rng(idx);
+            for coeff in coeffs.iter_mut() {
+                *coeff = F::random(&mut entry_rng);
+            }
+        });
+    FlatMatrix::from_flat_data(data, gen_ring_dim)
+}
+
 pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
@@ -477,8 +832,9 @@ impl AkitaDeserialize for AkitaSetupSeed {
 impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
-        self.shared_matrix.check()?;
-        validate_public_matrix_matches_seed(&self.shared_matrix, &self.seed)?;
+        let materialized = self.shared_matrix.full();
+        materialized.check()?;
+        validate_public_matrix_matches_seed(&materialized, &self.seed)?;
         Ok(())
     }
 }
@@ -491,12 +847,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     ) -> Result<(), SerializationError> {
         self.seed.serialize_with_mode(&mut writer, compress)?;
         self.shared_matrix
+            .full()
             .serialize_with_mode(&mut writer, compress)?;
         Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress) + self.shared_matrix.serialized_size(compress)
+        self.seed.serialized_size(compress) + self.shared_matrix.full().serialized_size(compress)
     }
 }
 

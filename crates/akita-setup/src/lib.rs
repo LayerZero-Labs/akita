@@ -382,7 +382,7 @@ pub(crate) fn load_prover_setup<
 
 #[cfg(feature = "disk-persistence")]
 fn deserialize_cached_setup<
-    F: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    F: FieldCore + Valid + akita_field::RandomSampling + AkitaDeserialize<Context = ()>,
     Cfg: CommitmentConfig<Field = F>,
 >(
     reader: &mut impl Read,
@@ -717,7 +717,7 @@ mod tests {
                 stale_seed.max_num_batched_polys = MAX_BATCH - 1;
                 let stale = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     stale_seed,
-                    prover_setup.expanded.shared_matrix().clone(),
+                    (*prover_setup.expanded.shared_matrix().full()).clone(),
                 );
                 let stale = AkitaProverSetup {
                     expanded: Arc::new(stale),

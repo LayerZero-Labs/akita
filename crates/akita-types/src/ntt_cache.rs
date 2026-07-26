@@ -844,9 +844,10 @@ impl VerifierNttCache {
         let tail_prefix_len = slots.get(&key).map_or(tail_prefix_len, |slot| {
             slot.tail_prefix_len.max(tail_prefix_len)
         });
-        let view = expanded
+        let matrix = expanded
             .shared_matrix()
-            .ring_view::<D>(1, base_prefix_len)?;
+            .covering_at_dyn(base_prefix_len, D)?;
+        let view = matrix.ring_view::<D>(1, base_prefix_len)?;
         let prepared = Arc::new(prepare_ntt_cache_with_tail_prefix(
             view,
             mode,

@@ -982,8 +982,8 @@ fn single_group_plan_supports_multi_chunk_weights() {
     let setup_index_weight = plan
         .materialize_setup_index_weights(test_scalar(3))
         .unwrap();
-    let setup_view = setup
-        .shared_matrix()
+    let setup_matrix = setup.shared_matrix().full();
+    let setup_view = setup_matrix
         .ring_view::<TEST_D>(1, setup_index_weight.len())
         .unwrap();
     let tie: F = setup_index_weight
@@ -1112,8 +1112,8 @@ fn multi_group_packed_direct_matches_row_fallback() {
     let setup_index_weight = plan
         .materialize_setup_index_weights(test_scalar(3))
         .unwrap();
-    let setup_view = setup
-        .shared_matrix()
+    let setup_matrix = setup.shared_matrix().full();
+    let setup_view = setup_matrix
         .ring_view::<TEST_D>(1, setup_index_weight.len())
         .unwrap();
     let tie: F = setup_index_weight

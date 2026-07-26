@@ -160,7 +160,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
         expanded.seed().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup seed validation failed: {err}"))
         })?;
-        expanded.shared_matrix().check().map_err(|err| {
+        expanded.shared_matrix().full().check().map_err(|err| {
             AkitaError::InvalidSetup(format!("expanded setup matrix validation failed: {err}"))
         })?;
         if expanded.shared_matrix().gen_ring_dim() != expanded.seed().gen_ring_dim {

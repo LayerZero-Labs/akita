@@ -492,10 +492,13 @@ where
     if row_weights.len() != row_count || alpha_powers.len() != ring_dimension {
         return Err(AkitaError::InvalidProof);
     }
-    let view =
-        setup
-            .shared_matrix
-            .ring_view_dyn(row_count, column_weights.len(), ring_dimension)?;
+    let matrix = setup.shared_matrix.covering_at_dyn(
+        row_count
+            .checked_mul(column_weights.len())
+            .ok_or(AkitaError::InvalidProof)?,
+        ring_dimension,
+    )?;
+    let view = matrix.ring_view_dyn(row_count, column_weights.len(), ring_dimension)?;
     let rows = (0..row_count)
         .map(|row| view.row_flat(row))
         .collect::<Result<Vec<_>, _>>()?;

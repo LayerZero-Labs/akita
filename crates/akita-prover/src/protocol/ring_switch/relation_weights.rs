@@ -2,6 +2,51 @@
 
 use std::ops::Range;
 
+/// One family of setup-matrix rows read as per-column ring slices.
+///
+/// `Flat` borrows the materialized store; `Seed` derives each touched slice
+/// on demand — the weight events read sparse column slices strided across
+/// the FULL matrix width, so no retained prefix can serve them once the
+/// store is released, and materializing the whole extent for a handful of
+/// slices is exactly the residency this path is trying to avoid.
+#[allow(clippy::large_enum_variant)]
+enum SetupRowFamily<'a, F: akita_field::FieldCore> {
+    Flat {
+        rows: Vec<&'a [F]>,
+        ring_d: usize,
+    },
+    Seed {
+        deriver: akita_types::MatrixElementDeriver<F>,
+        row_width_rings: usize,
+        ring_d: usize,
+    },
+}
+
+impl<F: akita_field::FieldCore> SetupRowFamily<'_, F> {
+    fn ring_slice(&self, row: usize, col: usize) -> Result<std::borrow::Cow<'_, [F]>, AkitaError> {
+        match self {
+            Self::Flat { rows, ring_d } => rows
+                .get(row)
+                .and_then(|row| row.get(col * ring_d..(col + 1) * ring_d))
+                .map(std::borrow::Cow::Borrowed)
+                .ok_or(AkitaError::InvalidProof),
+            Self::Seed {
+                deriver,
+                row_width_rings,
+                ring_d,
+            } => {
+                let flat_ring = row
+                    .checked_mul(*row_width_rings)
+                    .and_then(|base| base.checked_add(col))
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok(std::borrow::Cow::Owned(
+                    deriver.coeff_range(flat_ring * ring_d, *ring_d),
+                ))
+            }
+        }
+    }
+}
+
 use akita_algebra::eq_poly::SplitEqEvals;
 use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_algebra::poly::multilinear_eval;
@@ -510,20 +555,39 @@ where
             .map(|range| range.end)
             .max()
             .unwrap_or(0);
-        Some(setup.shared_matrix.ring_view_dyn(
-            lp.open_commit_matrix.output_rank(),
+        let rank = lp.open_commit_matrix.output_rank();
+        let extent = rank
+            .checked_mul(d_physical_columns)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".to_string()))?;
+        Some((
+            setup
+                .shared_matrix
+                .materialized_covering_at_dyn(extent, d_d),
+            rank,
             d_physical_columns,
-            d_d,
-        )?)
+        ))
     } else {
         None
     };
-    let d_rows = if let Some(d_view) = &d_view {
-        (0..lp.open_commit_matrix.output_rank())
-            .map(|row| d_view.row_flat(row))
-            .collect::<Result<Vec<_>, _>>()?
-    } else {
-        Vec::new()
+    let d_family = match &d_view {
+        Some((Some(matrix), rows, cols)) => {
+            let view = matrix.ring_view_dyn(*rows, *cols, d_d)?;
+            Some(SetupRowFamily::Flat {
+                rows: (0..*rows)
+                    .map(|row| view.row_flat(row))
+                    .collect::<Result<Vec<_>, _>>()?,
+                ring_d: d_d,
+            })
+        }
+        Some((None, _, cols)) => Some(SetupRowFamily::Seed {
+            deriver: setup_matrix
+                .ok_or(AkitaError::InvalidProof)?
+                .shared_matrix
+                .element_deriver(),
+            row_width_rings: *cols,
+            ring_d: d_d,
+        }),
+        None => None,
     };
     let d_start = rows
         .checked_sub(n_d_active)
@@ -601,26 +665,63 @@ where
         let b_width = k_g
             .checked_mul(t_vector_width)
             .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
-        let setup_views = if let Some(setup) = setup_matrix {
+        let setup_arcs = if let Some(setup) = setup_matrix {
+            let a_extent = n_a
+                .checked_mul(inner_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A extent overflow".to_string()))?;
+            let b_extent = n_b
+                .checked_mul(b_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup B extent overflow".to_string()))?;
             Some((
                 setup
                     .shared_matrix
-                    .ring_view_dyn(n_a, inner_width, group_d_a)?,
-                setup.shared_matrix.ring_view_dyn(n_b, b_width, group_d_b)?,
+                    .materialized_covering_at_dyn(a_extent, group_d_a),
+                setup
+                    .shared_matrix
+                    .materialized_covering_at_dyn(b_extent, group_d_b),
             ))
         } else {
             None
         };
-        let (setup_a_rows, b_rows) = if let Some((setup_a_view, b_view)) = &setup_views {
-            let setup_a_rows = (0..n_a)
-                .map(|row| setup_a_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?;
-            let b_rows = (0..n_b)
-                .map(|row| b_view.row_flat(row))
-                .collect::<Result<Vec<_>, _>>()?;
-            (setup_a_rows, b_rows)
+        let (setup_a_family, b_family) = if let Some((a_matrix, b_matrix)) = &setup_arcs {
+            let setup_shared = setup_matrix
+                .map(|setup| &setup.shared_matrix)
+                .ok_or(AkitaError::InvalidProof)?;
+            let a_family = match a_matrix {
+                Some(matrix) => {
+                    let view = matrix.ring_view_dyn(n_a, inner_width, group_d_a)?;
+                    SetupRowFamily::Flat {
+                        rows: (0..n_a)
+                            .map(|row| view.row_flat(row))
+                            .collect::<Result<Vec<_>, _>>()?,
+                        ring_d: group_d_a,
+                    }
+                }
+                None => SetupRowFamily::Seed {
+                    deriver: setup_shared.element_deriver(),
+                    row_width_rings: inner_width,
+                    ring_d: group_d_a,
+                },
+            };
+            let b_family = match b_matrix {
+                Some(matrix) => {
+                    let view = matrix.ring_view_dyn(n_b, b_width, group_d_b)?;
+                    SetupRowFamily::Flat {
+                        rows: (0..n_b)
+                            .map(|row| view.row_flat(row))
+                            .collect::<Result<Vec<_>, _>>()?,
+                        ring_d: group_d_b,
+                    }
+                }
+                None => SetupRowFamily::Seed {
+                    deriver: setup_shared.element_deriver(),
+                    row_width_rings: b_width,
+                    ring_d: group_d_b,
+                },
+            };
+            (Some(a_family), Some(b_family))
         } else {
-            (Vec::new(), Vec::new())
+            (None, None)
         };
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
@@ -670,15 +771,16 @@ where
                             .ok_or(AkitaError::InvalidProof)?;
                         let consistency_acc = consistency_weight * challenge_alpha * opening_gadget;
                         let mut setup_acc = E::zero();
-                        for (di, d_row) in d_rows.iter().take(n_d_active).enumerate() {
-                            let eq_i = eq_tau1.eval_at(d_start + di)?;
-                            if !eq_i.is_zero() {
-                                setup_acc += eq_i
-                                    * eval_flat_ring_at_pows_fast(
-                                        &d_row
-                                            [d_phys_col * group_d_d..(d_phys_col + 1) * group_d_d],
-                                        &group_alpha_pows_d,
-                                    );
+                        if let Some(d_family) = &d_family {
+                            for di in 0..n_d_active {
+                                let eq_i = eq_tau1.eval_at(d_start + di)?;
+                                if !eq_i.is_zero() {
+                                    setup_acc += eq_i
+                                        * eval_flat_ring_at_pows_fast(
+                                            d_family.ring_slice(di, d_phys_col)?.as_ref(),
+                                            &group_alpha_pows_d,
+                                        );
+                                }
                             }
                         }
                         relation_events.push_role(
@@ -732,15 +834,16 @@ where
                                 .ok_or(AkitaError::InvalidProof)?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
                             let mut b_acc = E::zero();
-                            for (row_idx, b_row) in b_rows.iter().take(n_b).enumerate() {
-                                let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;
-                                if !eq_i.is_zero() {
-                                    b_acc += eq_i
-                                        * eval_flat_ring_at_pows_fast(
-                                            &b_row[local_col * group_d_b
-                                                ..(local_col + 1) * group_d_b],
-                                            &group_alpha_pows_b,
-                                        );
+                            if let Some(b_family) = &b_family {
+                                for row_idx in 0..n_b {
+                                    let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;
+                                    if !eq_i.is_zero() {
+                                        b_acc += eq_i
+                                            * eval_flat_ring_at_pows_fast(
+                                                b_family.ring_slice(row_idx, local_col)?.as_ref(),
+                                                &group_alpha_pows_b,
+                                            );
+                                    }
                                 }
                             }
                             relation_events.push_role(
@@ -785,14 +888,16 @@ where
                     .eval_position_at_dyn::<E>(block_idx, &group_alpha_pows_a)?;
                 let constraint = consistency_weight * opening_a_eval * witness_gadget[digit_idx];
                 let mut setup = E::zero();
-                for (a_idx, a_row) in setup_a_rows.iter().take(n_a).enumerate() {
-                    let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
-                    if !eq_i.is_zero() {
-                        setup += eq_i
-                            * eval_flat_ring_at_pows_fast(
-                                &a_row[k * group_d_a..(k + 1) * group_d_a],
-                                &group_alpha_pows_a,
-                            );
+                if let Some(setup_a_family) = &setup_a_family {
+                    for a_idx in 0..n_a {
+                        let eq_i = eq_tau1.eval_at(a_range.start + a_idx)?;
+                        if !eq_i.is_zero() {
+                            setup += eq_i
+                                * eval_flat_ring_at_pows_fast(
+                                    setup_a_family.ring_slice(a_idx, k)?.as_ref(),
+                                    &group_alpha_pows_a,
+                                );
+                        }
                     }
                 }
                 Ok((constraint, setup))

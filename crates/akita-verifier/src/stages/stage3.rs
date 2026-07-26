@@ -310,7 +310,11 @@ where
             actual: eq_y.len(),
         });
     }
-    let setup_view = setup.shared_matrix().ring_view::<D>(1, setup_eval_len)?;
+    // Cover only the rows the scan actually reads: `setup_eval_len` is the
+    // padded evaluation-domain length (zero beyond `required`), and covering
+    // it would re-derive the full released matrix instead of a prefix.
+    let setup_matrix = setup.shared_matrix().covering_at_dyn(required, D)?;
+    let setup_view = setup_matrix.ring_view::<D>(1, required)?;
     let setup_entries = setup_view.as_slice();
 
     // Scan the selected setup prefix once. Each entry contracts the ring with

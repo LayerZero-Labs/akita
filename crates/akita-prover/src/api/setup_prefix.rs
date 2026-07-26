@@ -181,7 +181,8 @@ fn extract_setup_prefix_ring_elems<F, const D: usize>(
 where
     F: FieldCore,
 {
-    let fields = expanded.shared_matrix().as_field_slice();
+    let matrix = expanded.shared_matrix().full();
+    let fields = matrix.as_field_slice();
     let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())
     })?;
@@ -292,7 +293,8 @@ mod tests {
             SetupMatrixEnvelope { max_setup_len: 3 },
         )
         .expect("setup");
-        let fields = setup.expanded.shared_matrix().as_field_slice();
+        let matrix = setup.expanded.shared_matrix().full();
+        let fields = matrix.as_field_slice();
         assert_eq!(fields.len(), 192);
         assert!(fields.len() < padded_ring_slots * 64);
 
@@ -342,7 +344,7 @@ mod tests {
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let natural_len = n_prefix / 2 + 1;
         let mut setup = test_setup::<64>(&level_params, natural_len.div_ceil(64));
-        let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
+        let available_field_len = setup.expanded.shared_matrix().full().as_field_slice().len();
         assert!(available_field_len >= natural_len);
         assert!(available_field_len < n_prefix);
 

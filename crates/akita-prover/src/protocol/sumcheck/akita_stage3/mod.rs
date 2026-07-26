@@ -39,12 +39,12 @@ pub struct AkitaStage3ProverOutput<E: FieldCore> {
 }
 
 /// Stage-3 setup-product sumcheck prover.
-pub struct AkitaStage3Prover<'a, F: FieldCore, E: FieldCore> {
-    setup: RectangularSetupProductTerm<'a, F, E>,
+pub struct AkitaStage3Prover<F: FieldCore, E: FieldCore> {
+    setup: RectangularSetupProductTerm<F, E>,
     setup_product_claim: E,
 }
 
-impl<'a, F, E> AkitaStage3Prover<'a, F, E>
+impl<F, E> AkitaStage3Prover<F, E>
 where
     F: FieldCore,
     E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -52,7 +52,7 @@ where
     /// Construct a recursive setup-product sumcheck prover.
     #[allow(clippy::too_many_arguments)]
     pub fn new<T>(
-        expanded: &'a AkitaExpandedSetup<F>,
+        expanded: &AkitaExpandedSetup<F>,
         prefix_slots: &SetupPrefixProverRegistry<F>,
         lp: &CommittedGroupParams,
         next_fold_level_params: &CommittedGroupParams,
@@ -121,7 +121,7 @@ where
     }
 }
 
-impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<'_, F, E>
+impl<F, E> SumcheckInstanceProver<E> for AkitaStage3Prover<F, E>
 where
     F: FieldCore,
     E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
@@ -148,8 +148,8 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_setup_product_term<'a, F, E, T>(
-    expanded: &'a AkitaExpandedSetup<F>,
+fn build_setup_product_term<F, E, T>(
+    expanded: &AkitaExpandedSetup<F>,
     prefix_slots: &SetupPrefixProverRegistry<F>,
     lp: &CommittedGroupParams,
     next_fold_level_params: &CommittedGroupParams,
@@ -159,7 +159,7 @@ fn build_setup_product_term<'a, F, E, T>(
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
     transcript: &mut T,
-) -> Result<RectangularSetupProductTerm<'a, F, E>, AkitaError>
+) -> Result<RectangularSetupProductTerm<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + MulBaseUnreduced<F> + AkitaSerialize,
@@ -222,7 +222,9 @@ where
     // setup-prefix slot may have a padded evaluation domain larger than this
     // source: only `required` natural rows are read, and the table remainder is
     // explicit zero padding.
-    let setup_field = expanded.shared_matrix().as_field_slice();
+    // Cover only the `required` rows the product term reads — the padded
+    // view length would re-derive the full released matrix.
+    let setup_matrix = expanded.shared_matrix().covering_at_dyn(required, ring_d)?;
     if required > setup_eval_len {
         return Err(AkitaError::InvalidSetup(
             "setup product exceeds selected setup view".to_string(),
@@ -236,13 +238,16 @@ where
     let required_source_len = required
         .checked_mul(ring_d)
         .ok_or_else(|| AkitaError::InvalidSetup("setup product source length overflow".into()))?;
-    let setup_source = setup_field.get(..required_source_len).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup source is shorter than product view".into())
-    })?;
+    if setup_matrix.as_field_slice().len() < required_source_len {
+        return Err(AkitaError::InvalidSetup(
+            "setup source is shorter than product view".into(),
+        ));
+    }
     drop(_source_span);
 
     RectangularSetupProductTerm::new(
-        setup_source,
+        setup_matrix,
+        required_source_len,
         required,
         setup_index_weight,
         alpha_pows.to_vec(),

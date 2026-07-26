@@ -98,7 +98,8 @@ fn build_slot<F: FieldCore + CanonicalField, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
     input_width: usize,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
-    let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
+    let matrix = expanded.shared_matrix().covering_at_dyn(input_width, D)?;
+    let view = matrix.ring_view::<D>(1, input_width)?;
     let cache = Arc::new(prepare_compression_ntt_cache(view, input_width)?);
     if cache.has_cyclic() {
         return Err(AkitaError::InvalidSetup(

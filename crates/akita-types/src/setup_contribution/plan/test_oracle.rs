@@ -18,10 +18,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let d_b = alpha_pows_b.len();
         let mut acc = E::zero();
         if self.d_rows != 0 {
-            let d_view =
-                setup
-                    .shared_matrix
-                    .ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
+            let d_matrix = setup
+                .shared_matrix
+                .covering_at_dyn(self.d_rows * self.d_physical_cols, d_d)?;
+            let d_view = d_matrix.ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for group in &self.groups {
                 for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
@@ -40,9 +40,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
 
         for group in &self.groups {
-            let a_view = setup
+            let a_matrix = setup
                 .shared_matrix
-                .ring_view_dyn(group.n_a, group.z_cols, d_a)?;
+                .covering_at_dyn(group.n_a * group.z_cols, d_a)?;
+            let a_view = a_matrix.ring_view_dyn(group.n_a, group.z_cols, d_a)?;
             for (row_idx, &row_weight) in group.a_row_weights.iter().enumerate() {
                 if row_weight.is_zero() {
                     continue;
@@ -57,9 +58,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 )?;
             }
 
-            let b_view = setup
+            let b_matrix = setup
                 .shared_matrix
-                .ring_view_dyn(group.n_b, group.t_cols, d_b)?;
+                .covering_at_dyn(group.n_b * group.t_cols, d_b)?;
+            let b_view = b_matrix.ring_view_dyn(group.n_b, group.t_cols, d_b)?;
             for (row_idx, &row_weight) in group.b_weights.iter().enumerate() {
                 if row_weight.is_zero() {
                     continue;

@@ -28,8 +28,10 @@ pub(super) struct FactoredProductTerm<E: FieldCore> {
 /// the Stage-3 suffix-opening projection while storing only one contracted
 /// coefficient vector and one contracted setup-index vector in the extension
 /// field.
-pub(super) struct RectangularSetupProductTerm<'a, F: FieldCore, E: FieldCore> {
-    setup: &'a [F],
+pub(super) struct RectangularSetupProductTerm<F: FieldCore, E: FieldCore> {
+    /// Owned handle on the (possibly prefix-materialized) setup matrix; the
+    /// term reads its `required_rows * coefficient_len` leading coefficients.
+    setup_matrix: std::sync::Arc<akita_types::FlatMatrix<F>>,
     required_rows: usize,
     row_capacity: usize,
     coefficient_len: usize,
@@ -43,13 +45,14 @@ pub(super) struct RectangularSetupProductTerm<'a, F: FieldCore, E: FieldCore> {
     input_claim: E,
 }
 
-impl<'a, F, E> RectangularSetupProductTerm<'a, F, E>
+impl<F, E> RectangularSetupProductTerm<F, E>
 where
     F: FieldCore,
     E: FieldCore + FromPrimitiveInt + MulBaseUnreduced<F>,
 {
     pub(super) fn new(
-        setup: &'a [F],
+        setup_matrix: std::sync::Arc<akita_types::FlatMatrix<F>>,
+        setup_len: usize,
         required_rows: usize,
         index_factor: Vec<E>,
         coefficient_factor: Vec<E>,
@@ -68,12 +71,13 @@ where
         let required_source_len = required_rows
             .checked_mul(coefficient_factor.len())
             .ok_or_else(|| AkitaError::InvalidSetup("setup source length overflow".into()))?;
-        if setup.len() < required_source_len {
+        if setup_len < required_source_len || setup_matrix.as_field_slice().len() < setup_len {
             return Err(AkitaError::InvalidSize {
                 expected: required_source_len,
-                actual: setup.len(),
+                actual: setup_len.min(setup_matrix.as_field_slice().len()),
             });
         }
+        let setup = &setup_matrix.as_field_slice()[..setup_len];
 
         let coefficient_len = coefficient_factor.len();
         let coefficient_table = {
@@ -125,7 +129,7 @@ where
         let total_rounds = coefficient_rounds + index_factor.len().trailing_zeros() as usize;
 
         let mut term = Self {
-            setup,
+            setup_matrix,
             required_rows,
             row_capacity: index_factor.len(),
             coefficient_len,
@@ -208,7 +212,7 @@ where
             .map(|setup_index| {
                 let start = setup_index * self.coefficient_len;
                 eval_flat_ring_at_pows_fast(
-                    &self.setup[start..start + self.coefficient_len],
+                    &self.setup_matrix.as_field_slice()[start..start + self.coefficient_len],
                     &coefficient_eq,
                 )
             })
@@ -358,8 +362,11 @@ mod tests {
             index_factor.clone(),
             coefficient_factor.clone(),
         );
+        let setup_matrix =
+            std::sync::Arc::new(akita_types::FlatMatrix::from_flat_data(setup.clone(), 1));
         let mut rectangular = RectangularSetupProductTerm::new(
-            &setup,
+            setup_matrix,
+            setup.len(),
             required_rows,
             index_factor,
             coefficient_factor,
@@ -450,7 +457,8 @@ mod tests {
         let rectangular_elapsed = elapsed(
             || {
                 let mut term = RectangularSetupProductTerm::new(
-                    &setup,
+                    std::sync::Arc::new(akita_types::FlatMatrix::from_flat_data(setup.clone(), 1)),
+                    setup.len(),
                     REQUIRED_ROWS,
                     index_factor.clone(),
                     coefficient_factor.clone(),

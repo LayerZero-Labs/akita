@@ -293,9 +293,8 @@ impl SetupContributionFixture {
             setup_len >= setup_index_weight.len(),
             "fixture setup must cover materialized setup weights"
         );
-        let setup_view = self
-            .setup
-            .shared_matrix()
+        let setup_matrix = self.setup.shared_matrix().full();
+        let setup_view = setup_matrix
             .ring_view::<TEST_RING_DIM>(1, setup_len)
             .unwrap();
         setup_view

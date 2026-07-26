@@ -58,6 +58,7 @@ use digits::*;
 pub(crate) use fused_quotients::fused_split_eq_quotients;
 pub(crate) use fused_quotients::{
     fused_split_eq_quotients_prover_bounds, fused_split_eq_quotients_streamed_prover_bounds,
+    StreamedASource,
 };
 use i8_matvec::*;
 pub(crate) use ntt_matvec::mat_vec_mul_ntt_dense_digits_i8;

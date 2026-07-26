@@ -67,8 +67,8 @@ pub use ring_relation::{
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, MatrixElementDeriver, PublicMatrixSeed,
+    SetupMatrixEnvelope, SharedSetupMatrix, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
     accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,

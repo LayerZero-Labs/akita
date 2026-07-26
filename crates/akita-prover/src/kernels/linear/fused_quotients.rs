@@ -285,6 +285,40 @@ fn fused_split_eq_quotients_one_shot<
     (d_result, b_result, a_result)
 }
 
+/// Element source for the streamed kernels: A's materialized field form when
+/// it covers the request, or per-element seed derivation after the store has
+/// been released. Seed-derived values are bit-identical to the matrix by
+/// construction, so the two variants are interchangeable.
+pub(crate) enum StreamedASource<'a, F: FieldCore, const D: usize> {
+    Flat(&'a [CyclotomicRing<F, D>]),
+    Seed {
+        deriver: &'a akita_types::MatrixElementDeriver<F>,
+        len: usize,
+    },
+}
+
+impl<F: FieldCore, const D: usize> StreamedASource<'_, F, D> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Flat(flat) => flat.len(),
+            Self::Seed { len, .. } => *len,
+        }
+    }
+
+    #[inline]
+    fn ring_at(&self, flat_index: usize) -> CyclotomicRing<F, D> {
+        match self {
+            Self::Flat(flat) => flat[flat_index],
+            Self::Seed { deriver, .. } => {
+                debug_assert_eq!(deriver.gen_ring_dim(), D);
+                let mut coeffs = [F::zero(); D];
+                deriver.entry_coeffs(flat_index, &mut coeffs);
+                CyclotomicRing::from_coefficients(coeffs)
+            }
+        }
+    }
+}
+
 /// Streamed variant of [`fused_split_eq_quotients_one_shot`]: instead of
 /// reading pre-transformed entries from a prepared NTT cache, it transforms
 /// each needed element of A's field form on the fly inside the column-tile
@@ -303,7 +337,7 @@ fn fused_split_eq_quotients_one_shot_streamed<
     const K: usize,
     const D: usize,
 >(
-    flat: &[CyclotomicRing<F, D>],
+    source: &StreamedASource<'_, F, D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -359,10 +393,8 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_w = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&e_hat[j], params, lut);
                     for (i, acc_d) in accs.0.iter_mut().enumerate() {
-                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(
-                            &flat[i * d_width + j],
-                            params,
-                        );
+                        let a_ring = source.ring_at(i * d_width + j);
+                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
                         accumulate_pointwise_product_into(acc_d, &a_cyc, &ntt_w, params);
                     }
                 }
@@ -371,10 +403,8 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     let lut = digit_lut.as_ref().expect("digit LUT exists");
                     let ntt_t = CyclotomicCrtNtt::from_i8_cyclic_with_lut(&t_hat[j], params, lut);
                     for (i, acc_b) in accs.1.iter_mut().enumerate() {
-                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(
-                            &flat[i * b_width + j],
-                            params,
-                        );
+                        let a_ring = source.ring_at(i * b_width + j);
+                        let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
                         accumulate_pointwise_product_into(acc_b, &a_cyc, &ntt_t, params);
                     }
                 }
@@ -397,10 +427,9 @@ fn fused_split_eq_quotients_one_shot_streamed<
                     for (i, (acc_neg, acc_cyc)) in
                         accs.2.iter_mut().zip(accs.3.iter_mut()).enumerate()
                     {
-                        let (a_neg, a_cyc) = CyclotomicCrtNtt::from_ring_pair_with_params(
-                            &flat[i * a_width + j],
-                            params,
-                        );
+                        let a_ring = source.ring_at(i * a_width + j);
+                        let (a_neg, a_cyc) =
+                            CyclotomicCrtNtt::from_ring_pair_with_params(&a_ring, params);
                         accumulate_pointwise_product_into(acc_neg, &a_neg, &ntt_z_neg, params);
                         accumulate_pointwise_product_into(acc_cyc, &a_cyc, &ntt_z_cyc, params);
                     }
@@ -455,13 +484,14 @@ fn fused_split_eq_quotients_one_shot_streamed<
 /// field form (both domains) in-loop and reduce the chunk's accumulators to
 /// a quotient ring contribution. Chunk bracketing matches the cached path;
 /// the arithmetic is exact, so results are identical to it.
+#[allow(clippy::needless_range_loop)]
 fn streamed_centered_quotient_rows_chunked<
     F: FieldCore + CanonicalField + HalvingField,
     W: PrimeWidth,
     const K: usize,
     const D: usize,
 >(
-    flat: &[CyclotomicRing<F, D>],
+    source: &StreamedASource<'_, F, D>,
     num_rows: usize,
     z_folded_rings: &[[i32; D]],
     z_len: usize,
@@ -507,10 +537,9 @@ fn streamed_centered_quotient_rows_chunked<
                 for (i, (neg_acc, cyc_acc)) in
                     neg_accs.iter_mut().zip(cyc_accs.iter_mut()).enumerate()
                 {
-                    let (a_neg, a_cyc) = CyclotomicCrtNtt::from_ring_pair_with_params(
-                        &flat[i * a_width + j],
-                        params,
-                    );
+                    let a_ring = source.ring_at(i * a_width + j);
+                    let (a_neg, a_cyc) =
+                        CyclotomicCrtNtt::from_ring_pair_with_params(&a_ring, params);
                     accumulate_pointwise_product_into(neg_acc, &a_neg, &ntt_z_neg, params);
                     accumulate_pointwise_product_into(cyc_acc, &a_cyc, &ntt_z_cyc, params);
                 }
@@ -545,7 +574,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     const D: usize,
 >(
     slot: &PreparedNttCache<D>,
-    flat: &[CyclotomicRing<F, D>],
+    source: &StreamedASource<'_, F, D>,
     n_d: usize,
     n_b: usize,
     n_a: usize,
@@ -569,10 +598,10 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
         .saturating_mul(e_hat.len())
         .max(n_b.saturating_mul(t_hat.len()))
         .max(n_a.saturating_mul(z_folded_rings.len()));
-    if flat.len() < needed {
+    if source.len() < needed {
         return Err(AkitaError::InvalidSetup(format!(
-            "streamed fused quotients need {needed} field-form ring elements, got {}",
-            flat.len()
+            "streamed fused quotients need {needed} setup ring elements, got {}",
+            source.len()
         )));
     }
     let w_digit_abs_bound = balanced_digit_abs_bound(log_basis_open);
@@ -618,7 +647,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
             }
             if z_safe {
                 return Ok(Some(fused_split_eq_quotients_one_shot_streamed(
-                    flat,
+                    source,
                     n_d,
                     n_b,
                     n_a,
@@ -639,7 +668,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 return Ok(None);
             };
             let (d_rows, b_rows, _) = fused_split_eq_quotients_one_shot_streamed(
-                flat,
+                source,
                 n_d,
                 n_b,
                 0,
@@ -652,7 +681,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 &params,
             );
             let a_rows = streamed_centered_quotient_rows_chunked(
-                flat,
+                source,
                 n_a,
                 z_folded_rings,
                 z_len,

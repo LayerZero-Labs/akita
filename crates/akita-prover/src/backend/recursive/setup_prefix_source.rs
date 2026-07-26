@@ -144,7 +144,8 @@ fn setup_prefix_field_evals<F: FieldCore>(
     slot: &SetupPrefixSlot<F>,
 ) -> Result<Vec<F>, AkitaError> {
     let n_prefix = slot.id.n_prefix()?;
-    let fields = expanded.shared_matrix().as_field_slice();
+    let matrix = expanded.shared_matrix().full();
+    let fields = matrix.as_field_slice();
     if slot.natural_len > fields.len() || slot.natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix slot exceeds shared setup matrix".to_string(),
