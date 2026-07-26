@@ -202,22 +202,26 @@ where
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
-    let ordinary_trace_eval_target = opening_batch
-        .batched_eval_target(&row_coefficients, &openings)
+    let claim_coefficients = reduction.as_ref().map_or_else(
+        || Ok(row_coefficients.clone()),
+        |reduction| {
+            opening_batch
+                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
+        },
+    )?;
+    let expected_trace_eval_target = opening_batch
+        .batched_eval_target(&claim_coefficients, &openings)
         .map_err(|err| {
             AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
         })?;
-    let trace_eval_target =
-        reduction
-            .as_ref()
-            .map_or(Ok(ordinary_trace_eval_target), |reduction| {
-                check_extension_opening_reduction_output(
-                    reduction.final_claim,
-                    ordinary_trace_eval_target,
-                    reduction.final_factor,
-                )?;
-                Ok(reduction.final_claim)
-            })?;
+    let trace_eval_target = reduction
+        .as_ref()
+        .map_or(expected_trace_eval_target, |reduction| {
+            reduction.final_claim
+        });
+    if trace_eval_target != expected_trace_eval_target {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok((TraceTarget { trace_eval_target }, row_coefficients))
 }
 
@@ -327,27 +331,26 @@ where
             sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?
         }
     };
-    let ordinary_trace_eval_target = opening_batch
-        .batched_eval_target(&row_coefficients, openings)
+    let claim_coefficients = reduction.as_ref().map_or_else(
+        || Ok(row_coefficients.clone()),
+        |reduction| {
+            opening_batch
+                .scale_row_coefficients_by_group(&row_coefficients, &reduction.final_factors)
+        },
+    )?;
+    let expected_trace_eval_target = opening_batch
+        .batched_eval_target(&claim_coefficients, openings)
         .map_err(|err| {
             AkitaError::InvalidInput(format!("batched trace evaluation failed: {err:?}"))
         })?;
-    let trace_eval_target =
-        reduction
-            .as_ref()
-            .map_or(Ok(ordinary_trace_eval_target), |reduction| {
-                check_extension_opening_reduction_output(
-                    reduction.final_claim,
-                    ordinary_trace_eval_target,
-                    reduction.final_factor,
-                )?;
-                Ok(reduction.final_claim)
-            })?;
-    let claim_reduction_factor = reduction
+    let trace_eval_target = reduction
         .as_ref()
-        .map_or_else(E::one, |reduction| reduction.final_factor);
-    let claim_coefficients =
-        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
+        .map_or(expected_trace_eval_target, |reduction| {
+            reduction.final_claim
+        });
+    if trace_eval_target != expected_trace_eval_target {
+        return Err(AkitaError::InvalidProof);
+    }
     Ok((
         PreparedEvaluationTraceClaim {
             claimed_evaluation: trace_eval_target,

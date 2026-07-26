@@ -48,11 +48,6 @@ where
     let tensor_projection_enabled =
         root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(root_params.d_a(), num_vars);
 
-    if opening_batch.num_groups() > 1 && Cfg::EXT_DEGREE != 1 {
-        return Err(AkitaError::UnsupportedSchedule(
-            "multi-group extension openings are not supported".to_string(),
-        ));
-    }
     if !supports_opening_shape && !tensor_projection_enabled {
         return Err(AkitaError::UnsupportedSchedule(
             "folded-root opening geometry is unsupported".to_string(),

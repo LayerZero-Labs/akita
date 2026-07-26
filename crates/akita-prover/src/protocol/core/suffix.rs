@@ -291,7 +291,11 @@ where
             )
         )?;
         (
-            proved.protocol_point,
+            proved
+                .protocol_points
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?,
             Some(proved.reduction),
             Some(proved.row_coefficients),
         )
@@ -545,7 +549,7 @@ mod tests {
                 },
             },
             final_claim: TestF::one(),
-            final_factor: TestF::one(),
+            final_factors: vec![TestF::one()],
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");

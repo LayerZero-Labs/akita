@@ -373,6 +373,46 @@ impl OpeningClaimsLayout {
                 Ok(acc + coefficient * opening)
             })
     }
+
+    /// Scale flat row coefficients by one transparent reduction factor per
+    /// opening group.
+    ///
+    /// The returned coefficients remain in canonical flat-claim order. This is
+    /// the shared prover/verifier definition of the final grouped
+    /// extension-opening relation.
+    pub fn scale_row_coefficients_by_group<E>(
+        &self,
+        row_coefficients: &[E],
+        group_factors: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: FieldCore,
+    {
+        if row_coefficients.len() != self.num_total_polynomials() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_total_polynomials(),
+                actual: row_coefficients.len(),
+            });
+        }
+        if group_factors.len() != self.num_groups() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_groups(),
+                actual: group_factors.len(),
+            });
+        }
+        let mut scaled = Vec::with_capacity(row_coefficients.len());
+        for (group_index, &factor) in group_factors.iter().enumerate() {
+            let range = self.root_group_claim_range(group_index)?;
+            scaled.extend(
+                row_coefficients
+                    .get(range)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .iter()
+                    .map(|&coefficient| coefficient * factor),
+            );
+        }
+        Ok(scaled)
+    }
 }
 
 /// Public claims and commitment payload for one polynomial group.

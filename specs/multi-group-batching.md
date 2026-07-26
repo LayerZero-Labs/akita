@@ -203,12 +203,18 @@ Implemented now:
   and emits the final commitment plus hint.
 - `batched_prove` supports `G > 1` folded multi-group-root one-hot openings;
   proving and verification derive setup-contribution behavior from the schedule.
-  The opening field has extension
-  degree one, and the root can hand off to a singleton recursive suffix. The
-  multi-group root carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed
-  by one shared quotient tail.
-- `akita_config::effective_batched_schedule` rejects unsupported multi-group
-  folded-root shapes, including unsupported extension-field openings.
+  Base-field and extension-field openings use the same group layout, and the
+  root can hand off to a singleton recursive suffix. The multi-group root
+  carries per-group `z_hat`, `e_hat`, and `t_hat` sections followed by one
+  shared quotient tail.
+- Extension-field groups use one EOR proof and one batched sumcheck. For group
+  `g`, the sumcheck term is
+  `factor_g(x) * sum_{i in g} gamma_i * witness_i(x)`. Every term shares the
+  maximum tail domain and the same challenge vector. A smaller group is
+  extended only over additional high variables: its witness is independent of
+  those variables, and a fixed zero-point equality factor makes their Boolean
+  sum one. The prover represents this cylindrical extension virtually; it does
+  not repeat the native witness table.
 - The multi-group root relation quotient, verifier ring-switch replay, setup
   contribution, relation-matrix column table, and multi-group stage-2 trace table are
   implemented for the supported folded root shape.
@@ -220,11 +226,7 @@ Still future / guarded:
 - Distributed multi-group execution beyond the shipped multi-chunk layouts.
 - Dense polynomial multi-group roots and tiered multi-group commitments remain
   guarded. Recursive setup contribution is config-typed and covered end to end.
-- Folded multi-group roots over extension-field openings remain guarded until
-  the multi-group trace and output contribution support them; there is no
-  root-direct fallback.
-- Immediately terminal multi-group root folds and EOR-bearing multi-group roots remain
-  guarded.
+- Immediately terminal multi-group root folds remain guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
   one for this flow. The current descriptor binds call shape through
   `CallSection.opening_batch_digest` and binds the materialized multi-group schedule
@@ -1335,6 +1337,8 @@ kernels land if B-row time is a bottleneck.
 - Phase 2: scalar `[4]` descriptor bytes do not verify as multi-group `[1, 3]`.
 - Phase 2: swapping group commitments rejects.
 - Phase 2: tampering group `1` opening rejects.
+- Implemented: extension-field groups with unequal arities use one
+  maximum-arity EOR sumcheck; tampering the smaller group opening rejects.
 - Phase 2: tampering group `1` hint or `t_hat` segment rejects.
 - Phase 2: truncating one group's commitment rows rejects.
 - Phase 2: changing a precommitted group's `PrecommittedGroupDescriptor` rejects.
