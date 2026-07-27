@@ -144,7 +144,10 @@ fn setup_prefix_field_evals<F: FieldCore>(
     slot: &SetupPrefixSlot<F>,
 ) -> Result<Vec<F>, AkitaError> {
     let n_prefix = slot.id.n_prefix()?;
-    let matrix = expanded.shared_matrix().full();
+    let gen_ring_dim = expanded.shared_matrix().gen_ring_dim();
+    let matrix = expanded
+        .shared_matrix()
+        .covering_at_dyn(slot.natural_len.div_ceil(gen_ring_dim).max(1), gen_ring_dim)?;
     let fields = matrix.as_field_slice();
     if slot.natural_len > fields.len() || slot.natural_len > n_prefix {
         return Err(AkitaError::InvalidSetup(

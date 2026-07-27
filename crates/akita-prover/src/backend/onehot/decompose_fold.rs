@@ -163,12 +163,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
     where
         F: CanonicalField,
     {
-        let Some(first) = polys.first() else {
+        if polys.is_empty() {
             return Ok(None);
-        };
-        let first_blocks = first
-            .blocks_for(D, num_positions_per_block)
-            .expect("OneHotPoly::decompose_fold_batched_tensor_onehot: invalid num_positions_per_block for first polynomial");
+        }
         let expected_blocks = tensor.total_blocks()?;
         validate_tensor_blocks::<D>(tensor, expected_blocks)?;
         let modulus = (-F::one()).to_canonical_u128() + 1;
@@ -182,8 +179,8 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             .iter()
             .map(|poly| poly.commit_plan_blocks_lazy(D, num_positions_per_block))
             .collect::<Result<Vec<_>, _>>()?;
-        let witness = match first_blocks.as_ref() {
-            OneHotBlocks::SingleChunk(_) => {
+        let witness = match lazy_plans.first() {
+            Some(OneHotCommitBlocks::SingleChunkLazy(_)) => {
                 let mut sources: Vec<(&LazyOneHotBlocks<'_, SingleChunkEntry>, usize)> =
                     Vec::with_capacity(expected_blocks);
                 for plan in &lazy_plans {
@@ -213,7 +210,7 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
                 let coeff_accum = expand_onehot_accum(compressed_accum, num_digits);
                 build_decompose_fold_witness::<F, D>(coeff_accum, modulus)
             }
-            OneHotBlocks::MultiChunk(_) => {
+            _ => {
                 let mut sources: Vec<(&LazyOneHotBlocks<'_, MultiChunkEntry>, usize)> =
                     Vec::with_capacity(expected_blocks);
                 for plan in &lazy_plans {

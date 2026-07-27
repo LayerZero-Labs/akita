@@ -181,7 +181,14 @@ fn extract_setup_prefix_ring_elems<F, const D: usize>(
 where
     F: FieldCore,
 {
-    let matrix = expanded.shared_matrix().full();
+    // Cover only the natural (materialized) prefix; the padded remainder is
+    // explicit zero padding and may exceed the matrix entirely.
+    let shared = expanded.shared_matrix();
+    let covered_rings = natural_len
+        .div_ceil(D)
+        .min(shared.total_ring_elements_at_dyn(D)?)
+        .max(1);
+    let matrix = shared.covering_at_dyn(covered_rings, D)?;
     let fields = matrix.as_field_slice();
     let padded_field_len = padded_ring_slots.checked_mul(D).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded field length overflow".to_string())

@@ -202,8 +202,16 @@ fn onehot_poly_caches_multiple_runtime_layouts() {
     let d32_blocks = poly.blocks_for(32, 4).unwrap();
     let d64_blocks = poly.blocks_for(64, 2).unwrap();
 
-    assert_eq!(d32_blocks.num_live_blocks(), 2);
-    assert_eq!(d64_blocks.num_live_blocks(), 2);
+    let live32 = match d32_blocks.as_ref() {
+        OneHotBlocks::SingleChunk(b) => b.num_live_blocks(),
+        OneHotBlocks::MultiChunk(b) => b.num_live_blocks(),
+    };
+    assert_eq!(live32, 2);
+    let live = match d64_blocks.as_ref() {
+        OneHotBlocks::SingleChunk(b) => b.num_live_blocks(),
+        OneHotBlocks::MultiChunk(b) => b.num_live_blocks(),
+    };
+    assert_eq!(live, 2);
     assert_eq!(poly.block_cache.lock().unwrap().len(), 2);
 }
 
@@ -1287,96 +1295,6 @@ fn multi_chunk_onehot_ring_fold_matches_dense_materialization() {
         poly.fold_blocks_ring(&position_weights, num_positions_per_block),
         dense.fold_blocks_ring(&position_weights, num_positions_per_block)
     );
-}
-
-/// Sweep-structure microbench at the one-column 2^26 / K=256 shape.
-/// Run: cargo test -p akita-prover --release --features parallel --lib \
-///   sweep_structure_bench -- --ignored --nocapture
-#[test]
-#[ignore = "perf microbench"]
-fn sweep_structure_bench() {
-    use std::time::Instant;
-    type F = Prime128Offset275;
-    const D: usize = 64;
-
-    let n_a = 8;
-    let num_digits_inner = 2;
-    let log_positions_per_block = 16usize;
-    let num_parent_blocks = 1usize << 10;
-    let positions_per_block = 1usize << log_positions_per_block;
-    let active_a_cols = positions_per_block * num_digits_inner;
-
-    let mut rng = StdRng::seed_from_u64(0xbeef);
-    eprintln!(
-        "[bench] building A: {} rings ({} MB)",
-        n_a * active_a_cols,
-        n_a * active_a_cols * D * 16 / (1 << 20)
-    );
-    let a_rings: Vec<CyclotomicRing<F, D>> = (0..n_a * active_a_cols)
-        .map(|_| CyclotomicRing::random(&mut rng))
-        .collect();
-    let a_flat = FlatMatrix::from_ring_slice(&a_rings);
-    let a_view = a_flat.ring_view::<D>(n_a, active_a_cols).unwrap();
-
-    // One dense one-hot column: every position hot, chunked at the wide cap.
-    let cap = MAX_WIDE_SHIFT_ACCUMULATIONS;
-    let mut buckets: Vec<Vec<SingleChunkEntry>> = Vec::new();
-    for _parent in 0..num_parent_blocks {
-        let mut pos = 0usize;
-        while pos < positions_per_block {
-            let seg = cap.min(positions_per_block - pos);
-            buckets.push(
-                (pos..pos + seg)
-                    .map(|p| SingleChunkEntry::new(p as u32, (p % D) as u16))
-                    .collect(),
-            );
-            pos += seg;
-        }
-    }
-    let blocks = super::test_helpers::from_buckets(buckets);
-    let views: Vec<&[SingleChunkEntry]> = (0..blocks.num_live_blocks())
-        .map(|i| blocks.block(i))
-        .collect();
-    let total_entries: usize = views.iter().map(|v| v.len()).sum();
-    eprintln!(
-        "[bench] {} sub-blocks, {} entries ({}M accumulations x n_a={})",
-        views.len(),
-        total_entries,
-        total_entries / 1_000_000,
-        n_a
-    );
-
-    let mut reference: Option<Vec<Vec<CyclotomicRing<F, D>>>> = None;
-    for (variant, budget_kb) in [
-        ("row_pass", 64),
-        ("row_pass", 128),
-        ("row_pass", 256),
-        ("row_pass", 512),
-        ("row_pass", 1024),
-        ("row_pass", 2048),
-        ("row_outer", 2048),
-    ] {
-        let start = Instant::now();
-        let out = super::column_sweep::sweep_bench_entry::<SingleChunkEntry, F, D>(
-            variant,
-            &a_view,
-            &views,
-            n_a,
-            active_a_cols,
-            num_digits_inner,
-            budget_kb << 10,
-        );
-        let elapsed = start.elapsed();
-        let gadds = (total_entries * n_a * D) as f64 / 1e9;
-        eprintln!(
-            "[bench] {variant:>9} budget {budget_kb:>4} KB: {elapsed:>8.2?}  ({:.1} G wide-adds/s)",
-            gadds / elapsed.as_secs_f64()
-        );
-        match &reference {
-            None => reference = Some(out),
-            Some(reference) => assert_eq!(reference, &out, "{variant} diverges"),
-        }
-    }
 }
 
 /// Isolates the shift-accumulate inner loop: L1-resident accumulator vs

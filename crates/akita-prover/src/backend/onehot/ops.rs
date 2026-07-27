@@ -10,6 +10,39 @@ use crate::compute::{
 };
 use akita_field::MulBaseUnreduced;
 
+/// Build each lazy block once (parallel, in block order) and map its entry
+/// slice through the body — shared driver for the per-block opening folds,
+/// monomorphized per entry type by the match.
+macro_rules! for_each_lazy_block {
+    ($lazy:expr, |$entries:ident| $body:expr) => {
+        match &$lazy {
+            OneHotCommitBlocks::SingleChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        let $entries = built.block(0);
+                        $body
+                    })
+                    .collect()
+            }
+            OneHotCommitBlocks::MultiChunkLazy(source) => {
+                cfg_into_iter!(0..source.num_live_blocks())
+                    .map(|i| {
+                        let built = source
+                            .build_range(i..i + 1)
+                            .expect("in-range single block build");
+                        let $entries = built.block(0);
+                        $body
+                    })
+                    .collect()
+            }
+            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
+        }
+    };
+}
+
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
 /// (a small, reusable, cache-resident `low_eq` table) and the remaining high
@@ -171,8 +204,12 @@ where
         source: OneHotView<'_, F, D, I>,
         plan: OpeningFoldPlan<'_, F, D>,
     ) -> Result<OpeningFoldOutput<F, D>, AkitaError> {
-        let blocks = source.poly.blocks_for(D, plan.num_positions_per_block())?;
-        plan.validate(blocks.num_live_blocks())?;
+        // Count-only validation: building (and caching) every block here
+        // would defeat the lazy per-block folds below.
+        let num_live_blocks = source
+            .poly
+            .num_live_blocks_for(D, plan.num_positions_per_block())?;
+        plan.validate(num_live_blocks)?;
         let (eval, folded) = match plan {
             OpeningFoldPlan::Base {
                 live_block_weights,
@@ -343,29 +380,11 @@ where
         let lazy = self
             .commit_plan_blocks_lazy(D, num_positions_per_block)
             .expect("OneHotPoly::fold_blocks: invalid num_positions_per_block for this polynomial");
-        match &lazy {
-            OneHotCommitBlocks::SingleChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        fold_onehot_block(built.block(0), scalars, num_positions_per_block)
-                    })
-                    .collect()
-            }
-            OneHotCommitBlocks::MultiChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        fold_onehot_block(built.block(0), scalars, num_positions_per_block)
-                    })
-                    .collect()
-            }
-            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
-        }
+        for_each_lazy_block!(lazy, |entries| fold_onehot_block(
+            entries,
+            scalars,
+            num_positions_per_block
+        ))
     }
 
     pub(crate) fn fold_blocks_ring<const D: usize>(
@@ -378,29 +397,11 @@ where
             .expect(
                 "OneHotPoly::fold_blocks_ring: invalid num_positions_per_block for this polynomial",
             );
-        match &lazy {
-            OneHotCommitBlocks::SingleChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        fold_onehot_block_ring(built.block(0), scalars, num_positions_per_block)
-                    })
-                    .collect()
-            }
-            OneHotCommitBlocks::MultiChunkLazy(source) => {
-                cfg_into_iter!(0..source.num_live_blocks())
-                    .map(|i| {
-                        let built = source
-                            .build_range(i..i + 1)
-                            .expect("in-range single block build");
-                        fold_onehot_block_ring(built.block(0), scalars, num_positions_per_block)
-                    })
-                    .collect()
-            }
-            _ => unreachable!("commit_plan_blocks_lazy returns lazy variants"),
-        }
+        for_each_lazy_block!(lazy, |entries| fold_onehot_block_ring(
+            entries,
+            scalars,
+            num_positions_per_block
+        ))
     }
 
     pub(crate) fn evaluate_and_fold<const D: usize>(

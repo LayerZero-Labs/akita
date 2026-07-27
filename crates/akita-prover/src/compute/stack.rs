@@ -89,6 +89,16 @@ where
         expanded: &AkitaExpandedSetup<F>,
         ring_d: usize,
     ) -> Result<(), AkitaError> {
+        // Base-dim slots are deliberately NOT warmed: their consumers build
+        // extent-sized slots on first use and the matrix-scale relation
+        // streams its transforms, so a full-envelope warm would park
+        // ~2.5 KiB per setup ring element (~30 GiB at the jolt 2^26 shape)
+        // under the windows that follow. Cross-D slots keep the eager warm —
+        // their keys sit outside the prepare contract. Callers that truly
+        // need a base-dim envelope go through `ensure_ntt_slot` directly.
+        if ring_d == expanded.seed().gen_ring_dim {
+            return Ok(());
+        }
         let key = NttCacheKey::from_envelope(expanded, ring_d)?;
         self.backend.ensure_ntt_slot(self.prepared, key)
     }
@@ -169,28 +179,6 @@ where
     /// # Errors
     ///
     /// Returns an error when any cluster fails envelope key derivation or cache build.
-    /// Drop built NTT slots across all four clusters (idempotent when they
-    /// share one prepared setup). Called between fold levels whose slot
-    /// extents differ by orders of magnitude; dropped slots rebuild on use.
-    pub fn release_built_ntt_slots(&self) {
-        let _ = self
-            .commit
-            .backend()
-            .release_built_ntt_slots(self.commit.prepared());
-        let _ = self
-            .opening
-            .backend()
-            .release_built_ntt_slots(self.opening.prepared());
-        let _ = self
-            .tensor
-            .backend()
-            .release_built_ntt_slots(self.tensor.prepared());
-        let _ = self
-            .ring_switch
-            .backend()
-            .release_built_ntt_slots(self.ring_switch.prepared());
-    }
-
     pub fn ensure_fold_level_envelope_ntt(
         &self,
         expanded: &AkitaExpandedSetup<F>,
@@ -220,18 +208,31 @@ where
             }
             unique[count] = d;
             count += 1;
-            // The base-dim slot is deliberately NOT warmed: its consumers
-            // build extent-sized slots on first use and the matrix-scale
-            // relation streams its transforms, so a full-envelope warm here
-            // would park ~2.5 KiB per setup ring element (~30 GiB at the
-            // jolt 2^26 shape) under the whole fold. Cross-D slots keep the
-            // eager warm — their keys sit outside the prepare contract.
-            if d == expanded.seed().gen_ring_dim {
-                continue;
-            }
             self.ensure_fold_level_envelope_ntt(expanded, d)?;
         }
         Ok(())
+    }
+
+    /// Drop built NTT slots across all four clusters (idempotent when they
+    /// share one prepared setup). Called between fold levels whose slot
+    /// extents differ by orders of magnitude; dropped slots rebuild on use.
+    pub fn release_built_ntt_slots(&self) {
+        let _ = self
+            .commit
+            .backend()
+            .release_built_ntt_slots(self.commit.prepared());
+        let _ = self
+            .opening
+            .backend()
+            .release_built_ntt_slots(self.opening.prepared());
+        let _ = self
+            .tensor
+            .backend()
+            .release_built_ntt_slots(self.tensor.prepared());
+        let _ = self
+            .ring_switch
+            .backend()
+            .release_built_ntt_slots(self.ring_switch.prepared());
     }
 }
 

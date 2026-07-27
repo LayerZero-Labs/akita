@@ -47,16 +47,8 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
-    // Cross-D slots are warmed eagerly (their keys sit outside the setup
-    // prepare contract); the base-dim slot is NOT — its consumers build
-    // extent-sized slots on first use and the matrix-scale relation streams
-    // its transforms, so an eager full-envelope warm here would park ~30 GiB
-    // (jolt 2^26) under the whole fold for nothing.
-    let gen_ring_dim = expanded.seed().gen_ring_dim;
     for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim {
-            commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
-        }
+        commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
     }
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
@@ -161,9 +153,7 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let ring_dim = commit_params.d_a();
-    if ring_dim != expanded.seed().gen_ring_dim {
-        commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
-    }
+    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;

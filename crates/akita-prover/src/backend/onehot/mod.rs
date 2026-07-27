@@ -57,6 +57,7 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness, SparseRingPoly};
 
 /// Wide accumulators use 16-bit chunks in `i32` limbs, so they can safely
 /// absorb at most 32,768 unit-scale additions before overflow.
+#[cfg(test)]
 pub(super) const MAX_WIDE_SHIFT_ACCUMULATIONS: usize = 1 << 15;
 
 mod accumulate;

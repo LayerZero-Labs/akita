@@ -397,16 +397,9 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
+    // `ensure_envelope_ntt` skips base-dim warms and is idempotent per key.
     for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
+        ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
     }
     let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),

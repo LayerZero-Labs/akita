@@ -54,7 +54,13 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// the field form instead of building (and keeping) a cached NTT slot. At the
 /// jolt 2^26 shape the cached slot costs ~2.5 KiB per ring element, so this
 /// bounds any lazily built slot to ~5 GiB.
-const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
+///
+/// Public because callers releasing the setup matrix must retain at least
+/// this prefix: cached-path consumers below the threshold read the retained
+/// store, and a smaller prefix silently degrades their slot rebuilds to
+/// per-call re-derivations (see
+/// [`CpuPreparedSetup::release_setup_matrix_to_streaming_prefix`]).
+pub const NTT_STREAM_THRESHOLD_RING_ELEMENTS: usize = 1 << 21;
 
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
@@ -231,6 +237,13 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .release_to_prefix(keep_ring_elements)
     }
 
+    /// [`Self::release_setup_matrix_to_prefix`] with the retained prefix
+    /// pinned to the streaming threshold, so cached-path consumers keep
+    /// hitting the store instead of re-deriving.
+    pub fn release_setup_matrix_to_streaming_prefix(&self) -> usize {
+        self.release_setup_matrix_to_prefix(NTT_STREAM_THRESHOLD_RING_ELEMENTS)
+    }
+
     /// Drop every built NTT slot back to its reserved (empty) state and
     /// return the bytes freed. Keys and the setup contract are kept, so the
     /// next [`Self::with_shared_ntt`] use rebuilds single-flight — callers
@@ -302,13 +315,6 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
             .shared_matrix()
             .covering_at_dyn(key.num_ring_elements, RING_D)?;
         let view = matrix.ring_view::<RING_D>(1, key.num_ring_elements)?;
-        if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
-            eprintln!(
-                "NTT BUILD rings={} backtrace:\n{}",
-                key.num_ring_elements,
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         let cache = Arc::new(prepare_ntt_cache(view, NttCacheMode::BothTransforms)?);
         Ok(ErasedCpuNttCache {
             ring_d: RING_D,

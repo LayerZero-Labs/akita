@@ -309,12 +309,6 @@ impl<F: FieldCore> SharedSetupMatrix<F> {
             needed_gen_ring_elements = needed_gen,
             "re-deriving a released setup-matrix prefix"
         );
-        if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
-            eprintln!(
-                "MATRIX RE-DERIVE rings={needed_gen} backtrace:\n{}",
-                std::backtrace::Backtrace::force_capture()
-            );
-        }
         Ok(Arc::new((self.derive_prefix)(
             needed_gen,
             self.gen_ring_dim,
@@ -414,11 +408,7 @@ impl<F: FieldCore> MatrixElementDeriver<F> {
         let last_entry = (start_coeff + len).div_ceil(gen);
         let mut coeffs = vec![F::zero(); (last_entry - first_entry) * gen];
         for (offset, entry) in (first_entry..last_entry).enumerate() {
-            (self.fill_entry)(
-                &self.xof,
-                entry,
-                &mut coeffs[offset * gen..(offset + 1) * gen],
-            );
+            self.entry_coeffs(entry, &mut coeffs[offset * gen..(offset + 1) * gen]);
         }
         let skip = start_coeff - first_entry * gen;
         coeffs.drain(..skip);
@@ -557,18 +547,19 @@ pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
     seed
 }
 
-/// Derive a flat public vector of ring elements from a seed.
+/// Derive a flat public vector of ring elements from a seed, at a runtime
+/// generation dimension and any prefix length.
 ///
 /// All role matrices (A, B, D) share one backing vector with a fixed label
 /// (`"shared"`). Each role views a prefix of this vector reshaped with its
 /// own `(num_rows, num_cols)` dimensions.
 ///
 /// Domain separation uses a single flat index so that a vector of length N is
-/// a prefix of any vector of length M > N derived from the same seed.
+/// a prefix of any vector of length M > N derived from the same seed —
+/// which is also what makes partial re-materialization of a released store
+/// byte-identical to the original.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
 #[must_use]
-/// Runtime-dimension prefix derivation — identical entry streams to
-/// [`derive_public_matrix_flat`], usable for partial re-materialization.
 pub fn derive_public_matrix_flat_prefix<F: FieldCore + RandomSampling>(
     total_ring_elements: usize,
     gen_ring_dim: usize,
@@ -578,31 +569,18 @@ pub fn derive_public_matrix_flat_prefix<F: FieldCore + RandomSampling>(
     let mut data = vec![F::zero(); total_ring_elements * gen_ring_dim];
     cfg_chunks_mut!(data, gen_ring_dim)
         .enumerate()
-        .for_each(|(idx, coeffs)| {
-            let mut entry_rng = xof.entry_rng(idx);
-            for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut entry_rng);
-            }
-        });
+        .for_each(|(idx, coeffs)| fill_matrix_entry(&xof, idx, coeffs));
     FlatMatrix::from_flat_data(data, gen_ring_dim)
 }
 
+/// Const-dimension convenience wrapper over
+/// [`derive_public_matrix_flat_prefix`].
+#[must_use]
 pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    let xof = LabeledMatrixXof::new(seed, SHARED_MATRIX_LABEL);
-    let mut data = vec![F::zero(); total_ring_elements * D];
-    cfg_chunks_mut!(data, D)
-        .enumerate()
-        .for_each(|(idx, coeffs)| {
-            let mut entry_rng = xof.entry_rng(idx);
-            for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut entry_rng);
-            }
-        });
-
-    FlatMatrix::from_flat_data(data, D)
+    derive_public_matrix_flat_prefix::<F>(total_ring_elements, D, seed)
 }
 
 /// Check that a materialized public matrix has exactly the shape declared by
@@ -853,7 +831,17 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.seed.serialized_size(compress) + self.shared_matrix.full().serialized_size(compress)
+        // Sizing must reflect the FULL matrix (serialization materializes
+        // it), but must not permanently re-cache a released store.
+        self.seed.serialized_size(compress)
+            + self
+                .shared_matrix
+                .covering_at_dyn(
+                    self.shared_matrix.total_ring_elements(),
+                    self.shared_matrix.gen_ring_dim(),
+                )
+                .map(|matrix| matrix.serialized_size(compress))
+                .unwrap_or(0)
     }
 }
 

@@ -185,37 +185,9 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
             return Ok(Arc::clone(blocks));
         }
         // Slow path: build blocks and install them. Validate `ring_d` and
-        // `num_positions_per_block` *before* building so the error path is cheap.
-        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
-            )));
-        }
-        let field_len = 1usize
-            .checked_shl(self.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
-        if ring_d == 0 {
-            return Err(AkitaError::InvalidInput(
-                "ring_d must be nonzero".to_string(),
-            ));
-        }
-        let ring_elems_at_d = field_len.div_ceil(ring_d);
-        // Kernel-entry view validation: the layout invariants `OneHotPoly::new`
-        // pinned at the construction dimension must also hold at the view
-        // dimension the blocks are built for.
-        if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
-            return Err(AkitaError::InvalidInput(format!(
-                "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
-                self.onehot_k
-            )));
-        }
+        let (ring_elems_at_d, _num_live_blocks) =
+            self.view_layout(ring_d, num_positions_per_block)?;
         let built = {
-            if std::env::var_os("AKITA_NTT_BUILD_BACKTRACE").is_some() {
-                eprintln!(
-                    "BLOCKS_FOR BUILD ring_d={ring_d} ppb={num_positions_per_block} backtrace:\n{}",
-                    std::backtrace::Backtrace::force_capture()
-                );
-            }
             let _span =
                 tracing::debug_span!("OneHotPoly::build_blocks", ring_d, num_positions_per_block)
                     .entered();
@@ -230,6 +202,61 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         ))
     }
 
+    /// Validate a `(ring_d, num_positions_per_block)` view against this
+    /// polynomial's layout and return `(ring_elems_at_d, num_live_blocks)`.
+    /// Single home for the checks shared by [`Self::blocks_for`],
+    /// [`Self::num_live_blocks_for`], and [`Self::commit_plan_blocks_lazy`].
+    fn view_layout(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<(usize, usize), AkitaError> {
+        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
+            )));
+        }
+        if u32::try_from(num_positions_per_block).is_err() {
+            return Err(AkitaError::InvalidInput(format!(
+                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
+            )));
+        }
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidInput(
+                "ring_d must be nonzero".to_string(),
+            ));
+        }
+        if ring_d > usize::from(u16::MAX) + 1 {
+            return Err(AkitaError::InvalidInput(format!(
+                "D={ring_d} exceeds 65536 and cannot be packed into entry coefficient fields"
+            )));
+        }
+        if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
+            return Err(AkitaError::InvalidInput(format!(
+                "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
+                self.onehot_k
+            )));
+        }
+        let field_len = 1usize
+            .checked_shl(self.num_vars as u32)
+            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
+        let ring_elems_at_d = field_len.div_ceil(ring_d);
+        Ok((
+            ring_elems_at_d,
+            ring_elems_at_d.div_ceil(num_positions_per_block),
+        ))
+    }
+
+    /// Number of live blocks at a `(ring_d, num_positions_per_block)` view,
+    /// computed from the layout without building anything.
+    pub(crate) fn num_live_blocks_for(
+        &self,
+        ring_d: usize,
+        num_positions_per_block: usize,
+    ) -> Result<usize, AkitaError> {
+        Ok(self.view_layout(ring_d, num_positions_per_block)?.1)
+    }
+
     /// Lazily buildable commit blocks over this polynomial's retained index
     /// columns: the sweep materializes one block tile at a time instead of
     /// holding the full entry cache. Performs the same layout validation as
@@ -239,37 +266,8 @@ impl<F: FieldCore, I: OneHotIndex> OneHotPoly<F, I> {
         ring_d: usize,
         num_positions_per_block: usize,
     ) -> Result<OneHotCommitBlocks<'_>, AkitaError> {
-        if num_positions_per_block == 0 || !num_positions_per_block.is_power_of_two() {
-            return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} must be a nonzero power of two"
-            )));
-        }
-        let field_len = 1usize
-            .checked_shl(self.num_vars as u32)
-            .ok_or_else(|| AkitaError::InvalidInput("onehot arity overflow".to_string()))?;
-        if ring_d == 0 {
-            return Err(AkitaError::InvalidInput(
-                "ring_d must be nonzero".to_string(),
-            ));
-        }
-        let ring_elems_at_d = field_len.div_ceil(ring_d);
-        if !(self.onehot_k.is_multiple_of(ring_d) || ring_d.is_multiple_of(self.onehot_k)) {
-            return Err(AkitaError::InvalidInput(format!(
-                "onehot_k={} and D={ring_d} must be nicely matched (one divides the other)",
-                self.onehot_k
-            )));
-        }
-        if u32::try_from(num_positions_per_block).is_err() {
-            return Err(AkitaError::InvalidInput(format!(
-                "num_positions_per_block={num_positions_per_block} exceeds u32::MAX and cannot be packed into an entry"
-            )));
-        }
-        if ring_d > usize::from(u16::MAX) + 1 {
-            return Err(AkitaError::InvalidInput(format!(
-                "D={ring_d} exceeds 65536 and cannot be packed into entry coefficient fields"
-            )));
-        }
-        let num_live_blocks = ring_elems_at_d.div_ceil(num_positions_per_block);
+        let (_ring_elems_at_d, num_live_blocks) =
+            self.view_layout(ring_d, num_positions_per_block)?;
         let onehot_k = self.onehot_k;
         let indices = &self.indices;
         if onehot_k >= ring_d && onehot_k.is_multiple_of(ring_d) {
