@@ -152,7 +152,7 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
-    use akita_field::{FieldCore, Prime128OffsetA7F7};
+    use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, RelationAddressGeometry,
         SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
