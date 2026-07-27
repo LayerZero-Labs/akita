@@ -454,6 +454,7 @@ mod tests {
 
     type F = Fp32<251>;
     const D: usize = 32;
+    const MULTI_GROUP_D: usize = 64;
 
     fn marker(index: usize) -> [i8; 2] {
         let value = (index % 100 + 1) as i8;
@@ -771,25 +772,27 @@ mod tests {
 
     fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
         use crate::schedule::PrecommittedGroupDescriptor;
+        let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
+            .expect("multi-group test ring dimension has a production challenge");
         let lp = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q128OffsetA7F7,
-            D,
+            MULTI_GROUP_D,
             3,
             2,
             4,
             3,
-            fold_challenge_config(),
+            fold_challenge_config,
         )
         .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group main params");
         let mut precommit_lp = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q128OffsetA7F7,
-            D,
+            MULTI_GROUP_D,
             3,
             2,
             4,
             3,
-            fold_challenge_config(),
+            fold_challenge_config,
         )
         .with_decomp(4, 16, 2, 2, 2)
         .expect("multi-group precommit params");
@@ -834,16 +837,19 @@ mod tests {
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch.clone(),
             vec![F::one(); opening_batch.num_total_polynomials()],
-            RingVec::from_ring_elems::<D>(&vec![
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
                 CyclotomicRing::one();
                 opening_batch.num_total_polynomials()
             ]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
-            RingVec::from_ring_elems::<D>(&vec![
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
+                CyclotomicRing::zero();
+                relation_rhs_rows
+            ]),
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
                 CyclotomicRing::zero();
                 lp.open_commit_matrix.output_rank()
             ]),
-            CommitmentRingDims::uniform(D),
+            CommitmentRingDims::uniform(MULTI_GROUP_D),
         )
         .expect("multi-group instance");
 
@@ -875,7 +881,7 @@ mod tests {
         let expected_witness_len = lp
             .output_witness_len::<F>(&opening_batch)
             .expect("next w len");
-        assert_eq!(witness_ring_cols * D, expected_witness_len);
+        assert_eq!(witness_ring_cols * MULTI_GROUP_D, expected_witness_len);
     }
 
     #[test]
@@ -899,13 +905,16 @@ mod tests {
             vec![ring_multiplier_pre, ring_multiplier_final],
             opening_batch,
             vec![F::one(); gamma_len],
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::one(); gamma_len]),
-            RingVec::from_ring_elems::<D>(&vec![CyclotomicRing::zero(); relation_rhs_rows]),
-            RingVec::from_ring_elems::<D>(&vec![
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![CyclotomicRing::one(); gamma_len]),
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
+                CyclotomicRing::zero();
+                relation_rhs_rows
+            ]),
+            RingVec::from_ring_elems::<MULTI_GROUP_D>(&vec![
                 CyclotomicRing::zero();
                 lp.open_commit_matrix.output_rank()
             ]),
-            CommitmentRingDims::uniform(D),
+            CommitmentRingDims::uniform(MULTI_GROUP_D),
         )
         .expect("multi-group instance");
         let layout = instance

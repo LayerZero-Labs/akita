@@ -325,6 +325,9 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
     let precommitted_group = PolynomialGroupLayout::new(9, 1);
     let mut group_params = producer.clone();
+    group_params.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
+            .expect("precommitted test group uses a production ring dimension");
     let inner = &group_params.inner_commit_matrix;
     group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
