@@ -305,23 +305,63 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     if materialization.materializes_column_slices() {
                         let e_eq_slice = {
                             let _span = tracing::info_span!("setup_prepare_e_weights").entered();
-                            materialize_span_weights::<F, E>(
-                                d_col_range.len(),
-                                &d_spans,
-                                &eq_window,
-                                &lanes.opening_alpha,
-                                None,
-                            )?
+                            if lanes.carrier_lane_count == 1
+                                && lanes.opening_lane_count == 1
+                                && lanes.d_subcolumns == 1
+                            {
+                                materialize_uniform_role_weights(
+                                    witness_layout,
+                                    group.group_id,
+                                    num_live_blocks,
+                                    group.num_claims,
+                                    depth_open,
+                                    d_col_range.len(),
+                                    relation_address_geometry.relation_lane_capacity(),
+                                    &eq_window,
+                                    RingRole::Opening,
+                                )?
+                            } else {
+                                materialize_span_weights::<F, E>(
+                                    d_col_range.len(),
+                                    &d_spans,
+                                    &eq_window,
+                                    &lanes.opening_alpha,
+                                    None,
+                                )?
+                            }
                         };
                         let t_eq_slice = {
                             let _span = tracing::info_span!("setup_prepare_t_weights").entered();
-                            materialize_span_weights::<F, E>(
-                                t_cols,
-                                &b_spans,
-                                &eq_window,
-                                &lanes.outer_alpha,
-                                None,
-                            )?
+                            if lanes.carrier_lane_count == 1
+                                && lanes.outer_lane_count == 1
+                                && lanes.b_subcolumns == 1
+                            {
+                                let columns_per_block =
+                                    n_a.checked_mul(depth_commit).ok_or_else(|| {
+                                        AkitaError::InvalidSetup(
+                                            "setup B columns per block overflow".into(),
+                                        )
+                                    })?;
+                                materialize_uniform_role_weights(
+                                    witness_layout,
+                                    group.group_id,
+                                    num_live_blocks,
+                                    group.num_claims,
+                                    columns_per_block,
+                                    t_cols,
+                                    relation_address_geometry.relation_lane_capacity(),
+                                    &eq_window,
+                                    RingRole::Outer,
+                                )?
+                            } else {
+                                materialize_span_weights::<F, E>(
+                                    t_cols,
+                                    &b_spans,
+                                    &eq_window,
+                                    &lanes.outer_alpha,
+                                    None,
+                                )?
+                            }
                         };
                         let z_eq_slice = {
                             let _span = tracing::info_span!("setup_prepare_z_weights").entered();
@@ -615,6 +655,86 @@ fn build_setup_contribution_spans<E: FieldCore>(
     }
 
     Ok((d_spans, b_spans, a_spans))
+}
+
+/// Materialize the original contiguous-column path when the relation carrier
+/// and the selected setup role are the same ring. In that geometry each
+/// physical setup column maps to exactly one witness column, so filling whole
+/// unit intervals avoids compiling one span job per column.
+#[allow(clippy::too_many_arguments)]
+fn materialize_uniform_role_weights<E: FieldCore>(
+    witness_layout: &WitnessLayout,
+    group_id: usize,
+    num_live_blocks: usize,
+    num_claims: usize,
+    columns_per_block: usize,
+    column_count: usize,
+    relation_lane_capacity: usize,
+    eq_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    role: RingRole,
+) -> Result<Vec<E>, AkitaError> {
+    if !matches!(role, RingRole::Outer | RingRole::Opening) {
+        return Err(AkitaError::InvalidSetup(
+            "uniform setup interval requires the B or D role".into(),
+        ));
+    }
+    let mut weights = vec![E::zero(); column_count];
+    for claim in 0..num_claims {
+        for unit in witness_layout.units_for_group(group_id)? {
+            let unit_width = unit
+                .num_live_blocks()
+                .checked_mul(columns_per_block)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup unit width overflow".into()))?;
+            let expected_source_len = num_claims
+                .checked_mul(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup unit shape overflow".into()))?;
+            let source_range = match role {
+                RingRole::Outer => unit.t_range(),
+                RingRole::Opening => unit.e_range(),
+                RingRole::Inner => {
+                    return Err(AkitaError::InvalidSetup(
+                        "uniform setup interval does not support the A role".into(),
+                    ));
+                }
+            };
+            if source_range.len() != expected_source_len {
+                return Err(AkitaError::InvalidSetup(
+                    "setup unit shape disagrees with resolved witness range".into(),
+                ));
+            }
+            let claim_offset = claim
+                .checked_mul(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup source offset overflow".into()))?;
+            let source_start = source_range
+                .start
+                .checked_add(claim_offset)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup source interval overflow".into()))?;
+            let source_end = source_start
+                .checked_add(unit_width)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup source interval overflow".into()))?;
+            if source_end > source_range.end || source_end > relation_lane_capacity {
+                return Err(AkitaError::InvalidInput(
+                    "setup source interval is out of range".into(),
+                ));
+            }
+
+            let destination_start = claim
+                .checked_mul(num_live_blocks)
+                .and_then(|base| base.checked_add(unit.global_block_start()))
+                .and_then(|block| block.checked_mul(columns_per_block))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup destination interval overflow".into())
+                })?;
+            let destination_end = destination_start.checked_add(unit_width).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup destination interval overflow".into())
+            })?;
+            let destination = weights
+                .get_mut(destination_start..destination_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            eq_window.fill_interval(source_start, destination)?;
+        }
+    }
+    Ok(weights)
 }
 
 fn materialize_span_weights<F, E>(
