@@ -24,7 +24,59 @@ use akita_types::{
     SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId, SisTableDigest, TerminalFoldParams,
     TerminalFoldStep, WitnessPartition,
 };
-use std::marker::PhantomData;
+use std::{
+    any::TypeId,
+    marker::PhantomData,
+    sync::{Mutex, OnceLock},
+};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SyntheticScheduleKind {
+    MixedD,
+    RoleSwitch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SyntheticScheduleCacheKey {
+    kind: SyntheticScheduleKind,
+    envelope: TypeId,
+    suffix: TypeId,
+    num_vars: usize,
+    num_polynomials: usize,
+    first_parameter: usize,
+    second_parameter: usize,
+}
+
+/// Cache only the most recently used synthetic schedule.
+///
+/// These test-only adapters invoke the offline planner, and setup, commit,
+/// prove, and verify resolve the same schedule independently. A one-entry
+/// cache removes that repeated planning work without allowing verifier-chosen
+/// layouts to grow process memory without bound.
+fn cached_synthetic_schedule(
+    key: SyntheticScheduleCacheKey,
+    build: impl FnOnce() -> Result<FoldSchedule, AkitaError>,
+) -> Result<FoldSchedule, AkitaError> {
+    static CACHE: OnceLock<Mutex<Option<(SyntheticScheduleCacheKey, FoldSchedule)>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+    if let Some(schedule) = cache
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("synthetic schedule cache is poisoned".into()))?
+        .as_ref()
+        .filter(|(cached_key, _)| *cached_key == key)
+        .map(|(_, schedule)| schedule.clone())
+    {
+        return Ok(schedule);
+    }
+
+    let schedule = build()?;
+    *cache
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("synthetic schedule cache is poisoned".into()))? =
+        Some((key, schedule.clone()));
+    Ok(schedule)
+}
 
 // -------------------------------------------------------------------------
 // Multi-group carrier fixture: precommitted groups use the envelope config,
@@ -208,82 +260,95 @@ where
     EnvelopeCfg: CommitmentConfig,
     SuffixCfg: CommitmentConfig,
 {
-    if num_polynomials != 1 || switch_at_fold == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D fixture requires a singleton and a non-root switch".into(),
-        ));
-    }
-    let envelope = akita_planner::find_schedule(
-        PolynomialGroupLayout::new(num_vars, num_polynomials),
-        &policy_of::<EnvelopeCfg>(),
-        EnvelopeCfg::ring_challenge_config,
-        EnvelopeCfg::fold_challenge_shape_at_level,
-    )?
-    .schedule;
-    let keep_recursive = switch_at_fold - 1;
-    if keep_recursive > envelope.recursive_folds.len() {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D switch skips beyond the recursive suffix".into(),
-        ));
-    }
-    // Envelope prefix kept at the envelope ring dimension: root + the recursive
-    // folds before the switch point.
-    let recursive_prefix = envelope.recursive_folds[..keep_recursive].to_vec();
-    let (prefix_output_len, prefix_lb) = match recursive_prefix.last() {
-        Some(last) => (last.output_witness_len, last.params.witness.log_basis_open),
-        None => (
-            envelope.root.output_witness_len,
-            envelope.root.params.final_group.commitment.log_basis_open,
-        ),
-    };
-
-    // Optimal small-ring-dimension continuation from the prefix output.
-    let suffix = akita_planner::plan_optimal_suffix(
-        &policy_of::<SuffixCfg>(),
-        SuffixCfg::ring_challenge_config,
-        SuffixCfg::fold_challenge_shape_at_level,
-        num_vars,
-        switch_at_fold,
-        prefix_output_len,
-        prefix_lb,
-    )?;
-
-    let mut recursive_folds = recursive_prefix;
-    for fold in &suffix.folds {
-        recursive_folds.push(RecursiveFoldStep {
-            params: RecursiveFoldParams {
-                open_commit_matrix: fold.params.open_commit_matrix.clone(),
-                sparse_challenge_config: fold.params.fold_challenge_config,
-                witness: fold.params.clone(),
-                incoming_setup_prefix: None,
-                witness_partition: WitnessPartition::Single,
-            },
-            input_witness_len: fold.input_witness_len,
-            output_witness_len: fold.output_witness_len,
-        });
-    }
-
-    let schedule = FoldSchedule {
-        root: envelope.root,
-        recursive_folds,
-        terminal: TerminalFoldStep {
-            params: TerminalFoldParams {
-                witness: suffix.terminal.params,
-                sparse_challenge_config: suffix.terminal.sparse_challenge_config,
-                response_shape: suffix.terminal.response_shape,
-            },
-            input_witness_len: suffix.terminal.input_witness_len,
+    cached_synthetic_schedule(
+        SyntheticScheduleCacheKey {
+            kind: SyntheticScheduleKind::MixedD,
+            envelope: TypeId::of::<EnvelopeCfg>(),
+            suffix: TypeId::of::<SuffixCfg>(),
+            num_vars,
+            num_polynomials,
+            first_parameter: switch_at_fold,
+            second_parameter: 0,
         },
-    };
-    schedule.validate_structure()?;
-    let opening_batch = OpeningClaimsLayout::new(num_vars, 1)?;
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .validate_opening_batch(&opening_batch)?;
-    Ok(schedule)
+        || {
+            if num_polynomials != 1 || switch_at_fold == 0 {
+                return Err(AkitaError::InvalidSetup(
+                    "mixed-D fixture requires a singleton and a non-root switch".into(),
+                ));
+            }
+            let envelope = akita_planner::find_schedule(
+                PolynomialGroupLayout::new(num_vars, num_polynomials),
+                &policy_of::<EnvelopeCfg>(),
+                EnvelopeCfg::ring_challenge_config,
+                EnvelopeCfg::fold_challenge_shape_at_level,
+            )?
+            .schedule;
+            let keep_recursive = switch_at_fold - 1;
+            if keep_recursive > envelope.recursive_folds.len() {
+                return Err(AkitaError::InvalidSetup(
+                    "mixed-D switch skips beyond the recursive suffix".into(),
+                ));
+            }
+            // Envelope prefix kept at the envelope ring dimension: root + the recursive
+            // folds before the switch point.
+            let recursive_prefix = envelope.recursive_folds[..keep_recursive].to_vec();
+            let (prefix_output_len, prefix_lb) = match recursive_prefix.last() {
+                Some(last) => (last.output_witness_len, last.params.witness.log_basis_open),
+                None => (
+                    envelope.root.output_witness_len,
+                    envelope.root.params.final_group.commitment.log_basis_open,
+                ),
+            };
+
+            // Optimal small-ring-dimension continuation from the prefix output.
+            let suffix = akita_planner::plan_optimal_suffix(
+                &policy_of::<SuffixCfg>(),
+                SuffixCfg::ring_challenge_config,
+                SuffixCfg::fold_challenge_shape_at_level,
+                num_vars,
+                switch_at_fold,
+                prefix_output_len,
+                prefix_lb,
+            )?;
+
+            let mut recursive_folds = recursive_prefix;
+            for fold in &suffix.folds {
+                recursive_folds.push(RecursiveFoldStep {
+                    params: RecursiveFoldParams {
+                        open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                        sparse_challenge_config: fold.params.fold_challenge_config,
+                        witness: fold.params.clone(),
+                        incoming_setup_prefix: None,
+                        witness_partition: WitnessPartition::Single,
+                    },
+                    input_witness_len: fold.input_witness_len,
+                    output_witness_len: fold.output_witness_len,
+                });
+            }
+
+            let schedule = FoldSchedule {
+                root: envelope.root,
+                recursive_folds,
+                terminal: TerminalFoldStep {
+                    params: TerminalFoldParams {
+                        witness: suffix.terminal.params,
+                        sparse_challenge_config: suffix.terminal.sparse_challenge_config,
+                        response_shape: suffix.terminal.response_shape,
+                    },
+                    input_witness_len: suffix.terminal.input_witness_len,
+                },
+            };
+            schedule.validate_structure()?;
+            let opening_batch = OpeningClaimsLayout::new(num_vars, 1)?;
+            schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .validate_opening_batch(&opening_batch)?;
+            Ok(schedule)
+        },
+    )
 }
 
 /// Config adapter that opens through a mixed ring-dimension-per-level schedule:
@@ -569,69 +634,83 @@ where
     Env: CommitmentConfig,
     Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField>,
 {
-    let mut schedule = mixed_d_per_level_schedule::<Env, Suffix>(num_vars, num_polynomials, 2)?;
-    if schedule.recursive_folds.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "role-switch schedule needs at least one recursive fold (L1)".into(),
-        ));
-    }
-    let field_bits = Env::decomposition().field_bits();
+    cached_synthetic_schedule(
+        SyntheticScheduleCacheKey {
+            kind: SyntheticScheduleKind::RoleSwitch,
+            envelope: TypeId::of::<Env>(),
+            suffix: TypeId::of::<Suffix>(),
+            num_vars,
+            num_polynomials,
+            first_parameter: mid_d,
+            second_parameter: root_open_d,
+        },
+        || {
+            let mut schedule =
+                mixed_d_per_level_schedule::<Env, Suffix>(num_vars, num_polynomials, 2)?;
+            if schedule.recursive_folds.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "role-switch schedule needs at least one recursive fold (L1)".into(),
+                ));
+            }
+            let field_bits = Env::decomposition().field_bits();
 
-    // L0 (root): compress the D (open) role to `root_open_d` (== `Env::D` leaves
-    // the root fully uniform); A and B stay at `Env::D`.
-    retarget_open_matrix(&mut schedule.root.params.open_commit_matrix, root_open_d)?;
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .open_commit_matrix = schedule.root.params.open_commit_matrix.clone();
+            // L0 (root): compress the D (open) role to `root_open_d` (== `Env::D` leaves
+            // the root fully uniform); A and B stay at `Env::D`.
+            retarget_open_matrix(&mut schedule.root.params.open_commit_matrix, root_open_d)?;
+            schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .open_commit_matrix = schedule.root.params.open_commit_matrix.clone();
 
-    // L1 (first recursive fold): compress B (outer) and D (open); A stays.
-    {
-        let l1 = &mut schedule.recursive_folds[0].params;
-        retarget_outer_matrix(&mut l1.witness.outer_commit_matrix, mid_d)?;
-        retarget_open_matrix(&mut l1.witness.open_commit_matrix, mid_d)?;
-        // The fold-shared opening matrix mirrors the witness D role.
-        retarget_open_matrix(&mut l1.open_commit_matrix, mid_d)?;
-    }
+            // L1 (first recursive fold): compress B (outer) and D (open); A stays.
+            {
+                let l1 = &mut schedule.recursive_folds[0].params;
+                retarget_outer_matrix(&mut l1.witness.outer_commit_matrix, mid_d)?;
+                retarget_open_matrix(&mut l1.witness.open_commit_matrix, mid_d)?;
+                // The fold-shared opening matrix mirrors the witness D role.
+                retarget_open_matrix(&mut l1.open_commit_matrix, mid_d)?;
+            }
 
-    // Re-stitch outgoing witness lengths L0 -> L1 -> L2. The folded witness
-    // lives in the *producing* level's inner ring (the successor re-groups it),
-    // so the field length is `outgoing ring-element count × producing inner d`.
-    let root_inner_d = schedule.root.params.final_group.commitment.d_a();
-    let root_out = outgoing_witness_len(
-        field_bits,
-        &schedule.root.params.final_group.commitment,
-        num_polynomials,
-        root_inner_d,
-    )?;
-    schedule.root.output_witness_len = root_out;
-    schedule.recursive_folds[0].input_witness_len = root_out;
+            // Re-stitch outgoing witness lengths L0 -> L1 -> L2. The folded witness
+            // lives in the *producing* level's inner ring (the successor re-groups it),
+            // so the field length is `outgoing ring-element count × producing inner d`.
+            let root_inner_d = schedule.root.params.final_group.commitment.d_a();
+            let root_out = outgoing_witness_len(
+                field_bits,
+                &schedule.root.params.final_group.commitment,
+                num_polynomials,
+                root_inner_d,
+            )?;
+            schedule.root.output_witness_len = root_out;
+            schedule.recursive_folds[0].input_witness_len = root_out;
 
-    let l1_inner_d = schedule.recursive_folds[0].params.witness.d_a();
-    let l1_out = outgoing_witness_len(
-        field_bits,
-        &schedule.recursive_folds[0].params.witness,
-        num_polynomials,
-        l1_inner_d,
-    )?;
-    schedule.recursive_folds[0].output_witness_len = l1_out;
-    if let Some(next) = schedule.recursive_folds.get_mut(1) {
-        next.input_witness_len = l1_out;
-    } else {
-        schedule.terminal.input_witness_len = l1_out;
-    }
+            let l1_inner_d = schedule.recursive_folds[0].params.witness.d_a();
+            let l1_out = outgoing_witness_len(
+                field_bits,
+                &schedule.recursive_folds[0].params.witness,
+                num_polynomials,
+                l1_inner_d,
+            )?;
+            schedule.recursive_folds[0].output_witness_len = l1_out;
+            if let Some(next) = schedule.recursive_folds.get_mut(1) {
+                next.input_witness_len = l1_out;
+            } else {
+                schedule.terminal.input_witness_len = l1_out;
+            }
 
-    schedule.validate_structure()?;
-    let opening_batch = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
-    schedule
-        .root
-        .params
-        .final_group
-        .commitment
-        .validate_opening_batch(&opening_batch)?;
-    Ok(schedule)
+            schedule.validate_structure()?;
+            let opening_batch = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
+            schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .validate_opening_batch(&opening_batch)?;
+            Ok(schedule)
+        },
+    )
 }
 
 /// Config adapter for [`role_switch_schedule`]: L0 `A=B=Env::D, D=ROOT_OPEN_D`,
