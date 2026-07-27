@@ -5,8 +5,9 @@ use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::Prime128OffsetA7F7;
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
-    WitnessLayout,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
+    MAX_WITNESS_CHUNKS,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -51,7 +52,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
     let n_b = 2;
     let n_d = 2;
     let log_basis = 4;
-    let level_params = CommittedGroupParams::params_only(
+    let mut level_params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         log_basis,
@@ -68,6 +69,39 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         depth_open,
     )
     .unwrap();
+    level_params.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+        level_params.inner_commit_matrix.security_policy(),
+        level_params
+            .inner_commit_matrix
+            .sis_table_key()
+            .table_digest,
+        level_params.inner_commit_matrix.sis_modulus_profile(),
+        n_a,
+        num_positions_per_block * depth_commit,
+        1,
+        D,
+    );
+    level_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        level_params.outer_commit_matrix.security_policy(),
+        level_params
+            .outer_commit_matrix
+            .sis_table_key()
+            .table_digest,
+        level_params.outer_commit_matrix.sis_modulus_profile(),
+        n_b,
+        num_claims * n_a * depth_commit * num_live_blocks,
+        1,
+        D,
+    );
+    level_params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+        level_params.open_commit_matrix.security_policy(),
+        level_params.open_commit_matrix.sis_table_key().table_digest,
+        level_params.open_commit_matrix.sis_modulus_profile(),
+        n_d,
+        num_claims * depth_open * num_live_blocks,
+        1,
+        D,
+    );
     let depth_fold = level_params
         .num_digits_fold(num_claims, level_params.field_bits_for_cache())
         .unwrap();
@@ -93,17 +127,17 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         a_row_start: 1,
         b_row_start: 1 + n_a,
     }];
-    let full_vec_randomness = (0..24)
-        .map(|idx| test_scalar(101 + idx as u128))
-        .collect::<Vec<_>>();
-    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let alpha = test_scalar(3);
     let relation_address_geometry = akita_types::RelationAddressGeometry::new(
         CommitmentRingDims::uniform(D),
         D,
         opening_source_len,
     )
     .unwrap();
+    let full_vec_randomness = (0..relation_address_geometry.relation_lane_variable_count())
+        .map(|idx| test_scalar(101 + idx as u128))
+        .collect::<Vec<_>>();
+    let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
+    let alpha = test_scalar(3);
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
@@ -149,7 +183,12 @@ fn bench_setup_index_weight(c: &mut Criterion) {
     for num_live_blocks in [64usize, 256, 1024, 4096, 16384] {
         for (layout, blocks_per_chunk) in [
             ("single_chunk", num_live_blocks),
-            ("chunk64", 64usize.min(num_live_blocks)),
+            (
+                "up_to_64_chunks",
+                64usize
+                    .max(num_live_blocks / MAX_WITNESS_CHUNKS)
+                    .min(num_live_blocks),
+            ),
         ] {
             let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(

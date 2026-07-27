@@ -629,6 +629,90 @@ where
     E: FieldCore + MulBase<F>,
 {
     let mut weights = vec![E::zero(); column_count];
+
+    // Dense overlapping families (notably one span per fold digit/unit) all
+    // cover the same destination domain. Assign one destination per worker so
+    // every overlap is accumulated locally without synchronization.
+    let dense_overlaps = spans.iter().all(|span| {
+        span.setup_column_start == 0
+            && span.setup_column_stride == 1
+            && span.occurrence_count == column_count
+    });
+    if dense_overlaps {
+        cfg_iter_mut!(weights)
+            .enumerate()
+            .try_for_each(|(setup_column, destination)| {
+                for span in spans {
+                    if span.relation_lane_count != lane_alpha.len() {
+                        return Err(AkitaError::InvalidSetup(
+                            "setup contribution span disagrees with role lane geometry".into(),
+                        ));
+                    }
+                    let relation_lane_start = span
+                        .relation_lane_stride
+                        .checked_mul(setup_column)
+                        .and_then(|offset| span.relation_lane_start.checked_add(offset))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "setup contribution relation span overflow".into(),
+                            )
+                        })?;
+                    *destination += materialized_span_contribution(
+                        span,
+                        relation_lane_start,
+                        eq_window,
+                        lane_alpha,
+                        fold_gadget,
+                    )?;
+                }
+                Ok::<_, AkitaError>(())
+            })?;
+        return Ok(weights);
+    }
+
+    // For a disjoint family, first compile the affine spans into one checked
+    // job per destination and then evaluate those jobs in parallel. The test is
+    // purely geometric, so mixed physical subcolumns use the same path.
+    let mut jobs = vec![None; column_count];
+    let mut disjoint = true;
+    'spans: for (span_index, span) in spans.iter().enumerate() {
+        if span.relation_lane_count != lane_alpha.len() {
+            return Err(AkitaError::InvalidSetup(
+                "setup contribution span disagrees with role lane geometry".into(),
+            ));
+        }
+        for addresses in span.occurrences() {
+            let (setup_column, relation_lane_start) = addresses?;
+            let slot = jobs.get_mut(setup_column).ok_or(AkitaError::InvalidProof)?;
+            if slot.is_some() {
+                disjoint = false;
+                break 'spans;
+            }
+            *slot = Some((span_index, relation_lane_start));
+        }
+    }
+    if disjoint {
+        cfg_iter_mut!(weights)
+            .enumerate()
+            .try_for_each(|(setup_column, destination)| {
+                let Some(&(span_index, relation_lane_start)) =
+                    jobs.get(setup_column).and_then(Option::as_ref)
+                else {
+                    return Ok(());
+                };
+                let span = spans.get(span_index).ok_or(AkitaError::InvalidProof)?;
+                *destination = materialized_span_contribution(
+                    span,
+                    relation_lane_start,
+                    eq_window,
+                    lane_alpha,
+                    fold_gadget,
+                )?;
+                Ok::<_, AkitaError>(())
+            })?;
+        return Ok(weights);
+    }
+
     for span in spans {
         if span.relation_lane_count != lane_alpha.len() {
             return Err(AkitaError::InvalidSetup(
@@ -637,28 +721,13 @@ where
         }
         for occurrence in span.occurrences() {
             let (setup_column, relation_lane_start) = occurrence?;
-            let weight =
-                lane_alpha
-                    .iter()
-                    .enumerate()
-                    .try_fold(E::zero(), |weight, (lane, &alpha)| {
-                        let relation_lane =
-                            relation_lane_start.checked_add(lane).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "setup contribution relation lane overflow".into(),
-                                )
-                            })?;
-                        Ok::<_, AkitaError>(weight + eq_window.eval(relation_lane) * alpha)
-                    })?;
-            let contribution = if let Some(fold_digit) = span.fold_digit {
-                let fold = fold_gadget
-                    .and_then(|gadget| gadget.get(fold_digit))
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)?;
-                -weight.mul_base(fold)
-            } else {
-                weight
-            };
+            let contribution = materialized_span_contribution(
+                span,
+                relation_lane_start,
+                eq_window,
+                lane_alpha,
+                fold_gadget,
+            )?;
             let destination = weights
                 .get_mut(setup_column)
                 .ok_or(AkitaError::InvalidProof)?;
@@ -666,6 +735,37 @@ where
         }
     }
     Ok(weights)
+}
+
+fn materialized_span_contribution<F, E>(
+    span: &SetupContributionSpan,
+    relation_lane_start: usize,
+    eq_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    lane_alpha: &[E],
+    fold_gadget: Option<&[F]>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore + MulBase<F>,
+{
+    let weight = lane_alpha
+        .iter()
+        .enumerate()
+        .try_fold(E::zero(), |weight, (lane, &alpha)| {
+            let relation_lane = relation_lane_start.checked_add(lane).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup contribution relation lane overflow".into())
+            })?;
+            Ok::<_, AkitaError>(weight + eq_window.eval(relation_lane) * alpha)
+        })?;
+    if let Some(fold_digit) = span.fold_digit {
+        let fold = fold_gadget
+            .and_then(|gadget| gadget.get(fold_digit))
+            .copied()
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(-weight.mul_base(fold))
+    } else {
+        Ok(weight)
+    }
 }
 
 #[derive(Clone, Copy)]

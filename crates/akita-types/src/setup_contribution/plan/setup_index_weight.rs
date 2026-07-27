@@ -1,5 +1,8 @@
 use super::*;
-use akita_algebra::{offset_eq::eval_compact_pair_eq, ring::scalar_powers};
+use akita_algebra::{
+    offset_eq::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm, MAX_COMPACT_STRIDE_TERMS},
+    ring::scalar_powers,
+};
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Materialize the dense packed setup-position weight vector.
@@ -23,30 +26,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: rho_setup_idx.len(),
             });
         }
+        self.projection_geometry.ensure_evaluation_budget()?;
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        self.groups.iter().try_fold(E::zero(), |acc, group| {
+        let mut terms = Vec::new();
+        for group in &self.groups {
             let scales = self.group_projection_scales(group, alpha);
             let lane_powers = self.group_relation_lane_powers(group, alpha);
-            Ok(acc
-                + self.evaluate_d_spans_at_point(
-                    group,
-                    rho_setup_idx,
-                    &scales[2],
-                    &lane_powers[2],
-                )?
-                + self.evaluate_b_spans_at_point(
-                    group,
-                    rho_setup_idx,
-                    &scales[1],
-                    &lane_powers[1],
-                )?
-                + self.evaluate_a_spans_at_point(
-                    group,
-                    rho_setup_idx,
-                    &scales[0],
-                    &lane_powers[0],
-                )?)
-        })
+            self.append_d_span_terms(group, &scales[2], &lane_powers[2], &mut terms)?;
+            self.append_b_span_terms(group, &scales[1], &lane_powers[1], &mut terms)?;
+            self.append_a_span_terms(group, &scales[0], &lane_powers[0], &mut terms)?;
+        }
+        eval_weighted_compact_pair_eq(rho_setup_idx, &self.address_point, &terms)
     }
 
     fn group_projection_scales(
@@ -144,17 +134,16 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         Ok(weight)
     }
 
-    fn evaluate_d_spans_at_point(
+    fn append_d_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        rho_setup_idx: &[E],
         scales: &[E],
         lane_powers: &[E],
-    ) -> Result<E, AkitaError> {
+        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+    ) -> Result<(), AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
-            return Ok(E::zero());
+            return Ok(());
         }
-        let mut acc = E::zero();
         for span in &group.d_spans {
             super::structured::ensure_lane_count(span, lane_powers)?;
             let setup_col = group
@@ -176,33 +165,31 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         lane,
                     )?;
                     for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        acc += row_weight
-                            * scale
-                            * lane_power
-                            * eval_compact_pair_eq(
-                                rho_setup_idx,
-                                setup_index,
-                                setup_stride,
-                                &self.address_point,
-                                relation_lane_start(span, relation_lane)?,
-                                span.relation_lane_stride,
-                                span.occurrence_count,
-                            )?;
+                        push_weighted_term(
+                            terms,
+                            WeightedCompactPairTerm {
+                                left_offset: setup_index,
+                                left_stride: setup_stride,
+                                right_offset: relation_lane_start(span, relation_lane)?,
+                                right_stride: span.relation_lane_stride,
+                                len: span.occurrence_count,
+                                weight: row_weight * scale * lane_power,
+                            },
+                        )?;
                     }
                 }
             }
         }
-        Ok(acc)
+        Ok(())
     }
 
-    fn evaluate_b_spans_at_point(
+    fn append_b_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        rho_setup_idx: &[E],
         scales: &[E],
         lane_powers: &[E],
-    ) -> Result<E, AkitaError> {
-        let mut acc = E::zero();
+        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+    ) -> Result<(), AkitaError> {
         for span in &group.b_spans {
             super::structured::ensure_lane_count(span, lane_powers)?;
             let setup_stride = group
@@ -219,33 +206,31 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         lane,
                     )?;
                     for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        acc += row_weight
-                            * scale
-                            * lane_power
-                            * eval_compact_pair_eq(
-                                rho_setup_idx,
-                                setup_index,
-                                setup_stride,
-                                &self.address_point,
-                                relation_lane_start(span, relation_lane)?,
-                                span.relation_lane_stride,
-                                span.occurrence_count,
-                            )?;
+                        push_weighted_term(
+                            terms,
+                            WeightedCompactPairTerm {
+                                left_offset: setup_index,
+                                left_stride: setup_stride,
+                                right_offset: relation_lane_start(span, relation_lane)?,
+                                right_stride: span.relation_lane_stride,
+                                len: span.occurrence_count,
+                                weight: row_weight * scale * lane_power,
+                            },
+                        )?;
                     }
                 }
             }
         }
-        Ok(acc)
+        Ok(())
     }
 
-    fn evaluate_a_spans_at_point(
+    fn append_a_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        rho_setup_idx: &[E],
         scales: &[E],
         lane_powers: &[E],
-    ) -> Result<E, AkitaError> {
-        let mut acc = E::zero();
+        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+    ) -> Result<(), AkitaError> {
         for span in &group.a_spans {
             super::structured::ensure_lane_count(span, lane_powers)?;
             let fold = *group
@@ -266,25 +251,42 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         lane,
                     )?;
                     for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        acc -= row_weight
-                            * scale
-                            * fold
-                            * lane_power
-                            * eval_compact_pair_eq(
-                                rho_setup_idx,
-                                setup_index,
-                                setup_stride,
-                                &self.address_point,
-                                relation_lane_start(span, relation_lane)?,
-                                span.relation_lane_stride,
-                                span.occurrence_count,
-                            )?;
+                        push_weighted_term(
+                            terms,
+                            WeightedCompactPairTerm {
+                                left_offset: setup_index,
+                                left_stride: setup_stride,
+                                right_offset: relation_lane_start(span, relation_lane)?,
+                                right_stride: span.relation_lane_stride,
+                                len: span.occurrence_count,
+                                weight: -(row_weight * scale * fold * lane_power),
+                            },
+                        )?;
                     }
                 }
             }
         }
-        Ok(acc)
+        Ok(())
     }
+}
+
+fn push_weighted_term<E: FieldCore>(
+    terms: &mut Vec<WeightedCompactPairTerm<E>>,
+    term: WeightedCompactPairTerm<E>,
+) -> Result<(), AkitaError> {
+    if terms.len() >= MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: terms.len().saturating_add(1),
+        });
+    }
+    if terms.len() == terms.capacity() {
+        terms.try_reserve(1).map_err(|_| {
+            AkitaError::InvalidSetup("setup evaluation term allocation failed".into())
+        })?;
+    }
+    terms.push(term);
+    Ok(())
 }
 
 fn role_column_weight_or_materialized<E: FieldCore>(
