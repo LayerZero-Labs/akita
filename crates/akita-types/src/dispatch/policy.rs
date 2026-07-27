@@ -193,7 +193,7 @@ macro_rules! __dispatch_for_field_inner {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256, 512 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
                 $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 64, 128, 256 })
@@ -332,7 +332,7 @@ macro_rules! dispatch_for_field {
 
 protocol_dispatch_policy! {
     Fp128: {
-        inner: [64, 128]
+        inner: [64, 128, 256, 512]
         outer: [16, 32, 64, 128, 256]
         opening: [16, 32, 64, 128, 256]
         envelope: [64, 128, 256]

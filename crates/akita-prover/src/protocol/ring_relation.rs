@@ -450,6 +450,7 @@ impl RingRelationProver {
             + RootOpeningSource<F, 64>
             + RootOpeningSource<F, 128>
             + RootOpeningSource<F, 256>
+            + RootOpeningSource<F, 512>
             + RootPolyMeta<F>,
         OB: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
         RB: DigitRowsComputeBackend<F>,

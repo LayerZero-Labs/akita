@@ -4,7 +4,7 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
@@ -48,8 +48,8 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .collect(),
     };
     if let Some(catalog) = Cfg::schedule_catalog() {
-        if let Some(entry) = akita_planner::generated::table_entry(catalog, &key) {
-            return akita_planner::estimate_proof_bytes(
+        if let Some(entry) = akita_schedules::generated::table_entry(catalog, &key) {
+            return akita_schedules::estimate_proof_bytes(
                 entry,
                 &key,
                 &akita_config::policy_of::<Cfg>(),
@@ -1106,7 +1106,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
             let opening_batch = OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP)
                 .expect("precommit batch");
-            let layout = ConservativeCommitmentConfig::<Cfg>::get_params_for_batched_commitment(
+            let layout = PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(
                 &opening_batch,
             )
             .expect("precommit layout");
@@ -1119,7 +1119,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let (commitment, hint) =
-                AkitaCommitmentScheme::<ConservativeCommitmentConfig<Cfg>>::batched_commit(
+                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<Cfg>>::batched_commit(
                     &setup, &polys, &stack,
                 )
                 .expect("precommit");

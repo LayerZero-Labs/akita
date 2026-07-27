@@ -10,11 +10,11 @@ The current workspace exposes the main ownership boundaries under `crates/`:
 - `akita-field`, `akita-serialization`, and `akita-algebra` own foundational arithmetic, encoding, NTT, ring, and polynomial utilities.
 - `akita-transcript`, `akita-challenges`, and `akita-sumcheck` own Fiat-Shamir transcripts, challenge sampling, and generic sumcheck machinery.
 - `akita-types` owns shared proof, setup, schedule, layout, SIS, and commitment data shapes used by both roles.
-- `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, and the schedule-search DP. It sits *below* `akita-config`.
-- `akita-schedules` owns feature-gated shipped schedule table data.
-- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-planner` and optionally `akita-schedules` (`runtime_schedule` delegates to `akita_planner::resolve_schedule`).
+- `akita-planner` is the `Cfg`-free schedule engine: generated table types, on-demand expansion, catalog identity validation, the schedule-search DP, and the offline table emitter. It sits *below* `akita-config`.
+- `akita-schedules` owns feature-gated generated schedule table wiring. The large family table modules are not checked in; generate them locally or in CI before compiling schedule-enabled crates.
+- `akita-config` owns concrete runtime config presets and the single `CommitmentConfig` policy trait. It depends on `akita-schedules` (`runtime_schedule` delegates to strict generated-catalog resolution).
 - `akita-setup` owns config-backed setup construction and optional setup cache persistence.
-- `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches `akita-planner` transitively, so the schedule-search DP is verifier-reachable.
+- `akita-verifier` owns verifier replay without prover-only polynomial backends. It is directly `<Cfg>`-generic (depends on `akita-config`) and reaches generated schedule expansion transitively.
 - `akita-prover` owns commitment, proving, setup expansion, recursive/ring-switch witness construction, and polynomial backends.
 - `akita-pcs` is the umbrella package: it owns the end-to-end `AkitaCommitmentScheme` orchestration, re-exports the broad public surface, and hosts examples, benches, and integration tests. (There is no separate `akita-scheme` crate.)
 
@@ -39,6 +39,18 @@ agent command runbook; `docs/` holds maintainer contracts (crate graph,
 verifier contract, CI timing). `specs/` holds design records (lifecycle in
 [`specs/PRUNING.md`](specs/PRUNING.md)). Documentation guardrails (CI + PR
 comments) are in [`docs/documentation.md`](docs/documentation.md).
+
+## Generated Schedules
+
+Schedule-enabled builds require generated schedule family modules under
+`crates/akita-schedules/src/generated/`. They are intentionally ignored by Git
+because they are deterministic planner output. Generate them after checkout and
+before formatting, Clippy, tests, profile builds, or any other schedule-enabled
+Cargo task:
+
+```bash
+scripts/generate-schedule-tables.sh
+```
 
 ## Lineage
 

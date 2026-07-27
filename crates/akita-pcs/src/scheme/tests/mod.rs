@@ -1,7 +1,9 @@
+#![cfg(any(feature = "schedules-default", feature = "profile-ci"))]
+
 use super::*;
 use akita_config::proof_optimized::fp128;
 use akita_config::test_support::akita_batched_root_layout;
-use akita_config::{CommitmentConfig, ConservativeCommitmentConfig};
+use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
@@ -31,13 +33,13 @@ type Scheme = AkitaCommitmentScheme<Cfg>;
 
 type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
-type ConservativeOneHotCfg = ConservativeCommitmentConfig<OneHotCfg>;
+type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::D64OneHot` requires K=256 one-hot schedules (must match
 // `OneHotCfg::onehot_chunk_size()`); chunks span `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
-type ConservativeOneHotScheme = AkitaCommitmentScheme<ConservativeOneHotCfg>;
+type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.

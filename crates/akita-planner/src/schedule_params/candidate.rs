@@ -582,6 +582,13 @@ fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) -> Option<u
         .checked_add(num_live_blocks)
 }
 
+fn recursive_candidate_order_key(
+    score: LayoutCandidateScore,
+    block_index_bits: usize,
+) -> (LayoutCandidateScore, std::cmp::Reverse<usize>) {
+    (score, std::cmp::Reverse(block_index_bits))
+}
+
 pub(crate) fn derive_candidate_level_params(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -636,7 +643,10 @@ pub(crate) fn derive_candidate_level_params(
         None => None,
     };
 
-    let mut best: Option<(LayoutCandidateScore, CommittedGroupParams, usize)> = None;
+    // The exhaustive scan visited larger `r` first and retained the first
+    // equal-scoring candidate. Keep that tie-break explicit because the
+    // seed-first search intentionally evaluates splits in a different order.
+    let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
     let decomp = DecompositionParams {
         log_basis,
         ..policy.decomposition
@@ -662,7 +672,7 @@ pub(crate) fn derive_candidate_level_params(
             continue;
         }
         evaluated.push(r);
-        if let Some((best_score, _, _)) = &best {
+        if let Some((best_score, _, _, _)) = &best {
             if let Some(lower_bound) = recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
                 num_ring_elems,
                 ring_dimension: policy.ring_dimension,
@@ -719,15 +729,15 @@ pub(crate) fn derive_candidate_level_params(
             num_chunks,
             candidate_params.fold_challenge_shape,
         )?;
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _, _)| score < *best_score)
-        {
-            best = Some((score, candidate_params, next_witness_len));
+        if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
+            recursive_candidate_order_key(score, r)
+                < recursive_candidate_order_key(*best_score, *best_r)
+        }) {
+            best = Some((score, r, candidate_params, next_witness_len));
         }
     }
 
-    let Some((_, candidate_params, next_witness_len)) = best else {
+    let Some((_, _, candidate_params, next_witness_len)) = best else {
         return Ok(None);
     };
 
@@ -975,6 +985,20 @@ mod tests {
                 requested_fold_shape: TensorChallengeShape::Flat,
             }),
             Some(5646)
+        );
+    }
+
+    #[test]
+    fn recursive_candidate_order_preserves_exhaustive_tie_break() {
+        let score = (100, 90, 5, 0);
+        assert!(
+            recursive_candidate_order_key(score, 9) < recursive_candidate_order_key(score, 8),
+            "the old descending exhaustive scan retained the larger split on a tie"
+        );
+        assert!(
+            recursive_candidate_order_key((99, 98, 1, 0), 1)
+                < recursive_candidate_order_key(score, 9),
+            "the exact layout score must remain the primary objective"
         );
     }
 }

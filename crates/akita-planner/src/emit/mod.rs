@@ -17,8 +17,9 @@ use akita_types::{
     RootSource, SetupPrefixSlotId, WitnessPartition,
 };
 
-use crate::catalog_identity::expected_catalog_identity;
-use crate::generated::{
+use crate::PlannerPolicy;
+use akita_schedules::expected_catalog_identity;
+use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
@@ -26,7 +27,6 @@ use crate::generated::{
     GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
     GeneratedWitnessPartition,
 };
-use crate::PlannerPolicy;
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
 #[derive(Clone)]
@@ -511,7 +511,7 @@ fn materialized_entries(
     keys.extend(spec.group_batch_keys.iter().cloned());
 
     let workers = std::thread::available_parallelism()
-        .map(|n| n.get())
+        .map(|count| count.get())
         .unwrap_or(1)
         .min(keys.len().max(1));
     let mut entries = Vec::new();
@@ -532,11 +532,23 @@ fn materialized_entries(
                     })
                 })
                 .collect();
+            let mut first_error = None;
             for handle in handles {
-                let local = handle
-                    .join()
-                    .map_err(|_| format!("{}: regen worker panicked", spec.module_name))??;
-                entries.extend(local);
+                match handle.join() {
+                    Ok(Ok(local)) if first_error.is_none() => entries.extend(local),
+                    Ok(Ok(_)) => {}
+                    Ok(Err(error)) => {
+                        first_error.get_or_insert(error);
+                    }
+                    Err(_) => {
+                        first_error.get_or_insert_with(|| {
+                            format!("{}: regen worker panicked", spec.module_name)
+                        });
+                    }
+                }
+            }
+            if let Some(error) = first_error {
+                return Err(error);
             }
             Ok(())
         })?;
@@ -547,9 +559,7 @@ fn materialized_entries(
             }
         }
     }
-
-    entries
-        .sort_by(|(left, _), (right, _)| crate::generated::runtime_schedule_key_cmp(left, right));
+    entries.sort_by(|(left, _), (right, _)| akita_schedules::runtime_schedule_key_cmp(left, right));
     Ok(entries)
 }
 
@@ -612,7 +622,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
         emit_schedule_entry(&mut out, &key, &schedule)?;
         memory_entries.push(generated_entry(&key, &schedule));
     }
-    debug_assert!(crate::generated::catalog_entries_sorted_for_lookup(
+    debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries
     ));
 
