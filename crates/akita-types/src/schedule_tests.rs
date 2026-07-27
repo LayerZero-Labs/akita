@@ -851,6 +851,8 @@ fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
         .expect("commit order must not impose an arity ordering");
     assert_eq!(multi_group_key.final_group.num_vars(), 14);
     assert_eq!(multi_group_key.max_num_vars(), 20);
+    assert!(!multi_group_key.fits_setup_capacity(19, 4).unwrap());
+    assert!(multi_group_key.fits_setup_capacity(20, 4).unwrap());
 
     let opening_layout = multi_group_key.opening_layout().expect("opening layout");
     assert_eq!(opening_layout.max_num_vars(), 20);
@@ -893,7 +895,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![PrecommittedGroupDescriptor {
-            group: PolynomialGroupLayout::new(10, 1),
+            group: PolynomialGroupLayout::new(10, 2),
             num_live_ring_elements_per_claim: 16,
             num_positions_per_block: 4,
             num_live_blocks: 4,
@@ -910,8 +912,11 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 
     multi_group_key
         .validate()
-        .expect("unequal K_g is allowed for a supported precommitted dimension");
+        .expect("a precommitted group may contain multiple polynomials");
     assert_eq!(multi_group_key.num_commitment_groups(), 2);
+    assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
+    assert!(!multi_group_key.fits_setup_capacity(20, 4).unwrap());
+    assert!(multi_group_key.fits_setup_capacity(20, 5).unwrap());
 }
 
 #[test]

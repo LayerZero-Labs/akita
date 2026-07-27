@@ -101,12 +101,6 @@ impl PrecommittedGroupDescriptor {
     /// Validate that this layout is a well-formed standalone commitment group.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.group.validate()?;
-        if self.group.num_polynomials() != 1 {
-            return Err(AkitaError::InvalidSetup(format!(
-                "precommitted groups must contain exactly one polynomial, got {}",
-                self.group.num_polynomials()
-            )));
-        }
         if self.n_a == 0
             || self.n_b == 0
             || self.inner_ring_dimension == 0
@@ -287,6 +281,15 @@ impl AkitaScheduleLookupKey {
                 })?;
         }
         Ok(total)
+    }
+
+    /// Whether the complete opening key fits a setup's public capacity.
+    pub fn fits_setup_capacity(
+        &self,
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<bool, AkitaError> {
+        Ok(self.max_num_vars() <= max_num_vars && self.num_polynomials()? <= max_num_batched_polys)
     }
 
     /// Validate per-group metadata.

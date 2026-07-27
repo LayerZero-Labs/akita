@@ -335,14 +335,15 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_hints = Vec::new();
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
-    for (group_idx, &k) in pre_sizes.iter().enumerate() {
-        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, k);
-        let opening_batch = OpeningClaimsLayout::new(pre_num_vars, k).expect("precommit batch");
+    for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
+        let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
+        let opening_batch =
+            OpeningClaimsLayout::new(pre_num_vars, num_polynomials).expect("precommit batch");
         let layout = PrecommittedCommitmentConfig::<TestCfg>::get_params_for_batched_commitment(
             &opening_batch,
         )
         .expect("precommit layout");
-        let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..k)
+        let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
             .map(|poly_idx| {
                 debug_make_onehot_poly(
                     &layout,
@@ -642,6 +643,11 @@ fn multi_group_root_allows_precommitted_arity_above_final_source() {
     type PlannerCfg = crate::test_support::EnvelopeFinalGroupConfig<OneHotCfg, OneHotCfg>;
 
     multi_group_root_round_trip_onehot::<OneHotCfg, PlannerCfg>(20, 14, &[1], 1, false);
+}
+
+#[test]
+fn multi_group_root_opens_multi_polynomial_precommitted_group() {
+    multi_group_root_round_trip_onehot::<OneHotCfg, OneHotCfg>(14, 20, &[2], 1, false);
 }
 
 #[test]

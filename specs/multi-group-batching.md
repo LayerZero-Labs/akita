@@ -516,13 +516,13 @@ expand and validate that row
 Current generated group-batch tables are emitted only for eligible one-hot,
 non-tiered families that opt in through `GeneratedFamily.emit_group_batch`.
 The stock emitter enumerates final groups from the generated family key grid,
-adds the three-polynomial final-group shape, and samples an explicit
-precommitted arity from `DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS`:
+adds the three-polynomial final-group shape, and samples explicit precommitted
+variable and polynomial counts:
 
 ```text
 stock precommitted num_vars: 14
 precommitted group counts:  1, 2, or 3
-precommitted K_g:           1
+polynomials per precommitted group: 1 or 2
 ```
 
 This fixed list bounds static catalog size; it is not a protocol constraint.

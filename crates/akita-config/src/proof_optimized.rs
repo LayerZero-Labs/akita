@@ -144,6 +144,33 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
 
+    // Generated multi-group rows carry exact frozen precommit descriptors.
+    // Size those schedules from their canonical keys: synthesizing an opening
+    // layout at `max_num_vars` can miss a finite-catalog precommit arity.
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        for entry in catalog.entries {
+            if entry.root.precommitted_groups.is_empty() {
+                continue;
+            }
+            let key = AkitaScheduleLookupKey {
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
+            };
+            if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
+                continue;
+            }
+            let schedule = Cfg::runtime_schedule(key)?;
+            let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+            saw_supported_shape = true;
+            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        }
+    }
+
     // Prefix-slot materialization is driven by these bounded exact recursive
     // keys. Size their shared matrices from the same keys directly: converting
     // through `OpeningClaimsLayout` would discard frozen precommitted params
@@ -191,8 +218,6 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let mut layouts = Vec::new();
     let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
-    let precommitted_group = PolynomialGroupLayout::new(max_num_vars, 1);
-    let precommitted_groups = [precommitted_group; DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS];
 
     let mut push_layout = |layout| {
         if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
@@ -210,17 +235,30 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
             push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
             if supports_multi_group_root {
-                let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
-                let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted) else {
-                    continue;
-                };
-                if total_polynomials > max_num_batched_polys {
-                    continue;
+                for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+                    for precommitted_num_polynomials in 1..=max_num_batched_polys {
+                        let Some(precommitted_polynomials) =
+                            num_precommitted.checked_mul(precommitted_num_polynomials)
+                        else {
+                            continue;
+                        };
+                        let Some(total_polynomials) =
+                            main_num_polys.checked_add(precommitted_polynomials)
+                        else {
+                            continue;
+                        };
+                        if total_polynomials > max_num_batched_polys {
+                            break;
+                        }
+                        let precommitted_group =
+                            PolynomialGroupLayout::new(max_num_vars, precommitted_num_polynomials);
+                        let precommitted_groups = vec![precommitted_group; num_precommitted];
+                        push_layout(OpeningClaimsLayout::from_root_groups(
+                            &precommitted_groups,
+                            main_group,
+                        )?)?;
+                    }
                 }
-                push_layout(OpeningClaimsLayout::from_root_groups(
-                    &precommitted_groups[..num_precommitted],
-                    main_group,
-                )?)?;
             }
         }
     }

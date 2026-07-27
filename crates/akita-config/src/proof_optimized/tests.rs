@@ -122,3 +122,18 @@ fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
     assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
     assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
 }
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
+    let layouts =
+        setup_envelope_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+
+    assert!(layouts.iter().any(|layout| {
+        layout.groups()
+            == [
+                PolynomialGroupLayout::new(14, 2),
+                PolynomialGroupLayout::new(14, 1),
+            ]
+    }));
+}
