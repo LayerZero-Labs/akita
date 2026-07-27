@@ -480,6 +480,115 @@ fn derive_setup_prefix_group(
 /// case (similar to `find_schedule`), we should check that current proof
 /// size + suffix cost is the smallest. However, as time blows up, we
 /// don't do that here.
+fn push_recursive_split_candidate(candidates: &mut Vec<usize>, reduced_vars: usize, p: isize) {
+    if p <= 0 || p >= reduced_vars as isize {
+        return;
+    }
+    let r = reduced_vars - p as usize;
+    if !candidates.contains(&r) {
+        candidates.push(r);
+    }
+}
+
+fn seed_recursive_split_candidates(
+    num_ring_elems: usize,
+    reduced_vars: usize,
+    delta_commit: usize,
+    delta_open: usize,
+    num_chunks: usize,
+) -> Vec<usize> {
+    if reduced_vars <= 12 {
+        return (1..reduced_vars).rev().collect();
+    }
+
+    let mut candidates = Vec::new();
+    push_recursive_split_candidate(&mut candidates, reduced_vars, 1);
+    push_recursive_split_candidate(&mut candidates, reduced_vars, reduced_vars as isize - 1);
+
+    let target_num = 2u128
+        .saturating_mul(delta_open as u128)
+        .saturating_mul(num_ring_elems as u128);
+    let target_den = (delta_commit as u128).saturating_mul(num_chunks.max(1) as u128);
+    if target_num > 0 && target_den > 0 {
+        let mut center = 1usize;
+        let mut best_distance: Option<u128> = None;
+        for p in 1..reduced_vars {
+            let Some(power) = 1u128.checked_shl((2 * p) as u32) else {
+                break;
+            };
+            let scaled = target_den.saturating_mul(power);
+            let distance = scaled.abs_diff(target_num);
+            if best_distance.is_none_or(|best| distance < best) {
+                center = p;
+                best_distance = Some(distance);
+            }
+        }
+        for offset in -5..=5 {
+            push_recursive_split_candidate(&mut candidates, reduced_vars, center as isize + offset);
+        }
+    }
+
+    candidates.sort_by(|left, right| right.cmp(left));
+    candidates
+}
+
+/// Lower bound on the final layout score for one recursive split.
+///
+/// The true score is `next_witness_len + challenge_work + chunk_work +
+/// imbalance`. For any feasible scalar recursive candidate,
+/// `next_witness_len` includes at least `D * (e_hat + t_hat + z_hat)`, with
+/// `n_A >= 1`, `num_digits_fold >= 1`, and any setup-prefix / relation-tail
+/// terms only increasing the witness. A split whose lower bound already exceeds
+/// the current best score therefore cannot become optimal.
+#[derive(Clone, Copy)]
+struct RecursiveSplitLowerBoundInput {
+    num_ring_elems: usize,
+    ring_dimension: usize,
+    reduced_vars: usize,
+    r: usize,
+    delta_commit: usize,
+    delta_open: usize,
+    num_chunks: usize,
+    requested_fold_shape: TensorChallengeShape,
+}
+
+fn recursive_split_lower_bound(input: RecursiveSplitLowerBoundInput) -> Option<usize> {
+    if input.r == 0 || input.r >= input.reduced_vars {
+        return None;
+    }
+    let p = input.reduced_vars.checked_sub(input.r)?;
+    let num_positions_per_block = 1usize.checked_shl(p as u32)?;
+    let num_live_blocks = input.num_ring_elems.div_ceil(num_positions_per_block);
+
+    let e_hat = num_live_blocks.checked_mul(input.delta_open)?;
+    let t_hat_floor = e_hat;
+    let z_hat_floor = num_positions_per_block
+        .checked_mul(input.delta_commit)?
+        .checked_mul(input.num_chunks.max(1))?;
+    let physical_width_floor = e_hat
+        .checked_add(t_hat_floor)?
+        .checked_add(z_hat_floor)?
+        .checked_mul(input.ring_dimension)?;
+    let fold_shape =
+        optimize_fold_challenge_shape(input.requested_fold_shape, num_live_blocks).ok()?;
+    let challenge_work = match fold_shape {
+        TensorChallengeShape::Flat => num_live_blocks,
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            fold_low_len.checked_add(num_live_blocks.div_ceil(fold_low_len))?
+        }
+    };
+    physical_width_floor
+        .checked_add(challenge_work)?
+        .checked_add(num_live_blocks)
+}
+
+fn recursive_candidate_order_key(
+    score: LayoutCandidateScore,
+    block_index_bits: usize,
+) -> (LayoutCandidateScore, std::cmp::Reverse<usize>) {
+    (score, std::cmp::Reverse(block_index_bits))
+}
+
 pub(crate) fn derive_candidate_level_params(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
@@ -534,8 +643,51 @@ pub(crate) fn derive_candidate_level_params(
         None => None,
     };
 
-    let mut best: Option<(LayoutCandidateScore, CommittedGroupParams, usize)> = None;
-    for r in (1..reduced_vars).rev() {
+    // The exhaustive scan visited larger `r` first and retained the first
+    // equal-scoring candidate. Keep that tie-break explicit because the
+    // seed-first search intentionally evaluates splits in a different order.
+    let mut best: Option<(LayoutCandidateScore, usize, CommittedGroupParams, usize)> = None;
+    let decomp = DecompositionParams {
+        log_basis,
+        ..policy.decomposition
+    };
+    let delta_commit = num_digits_inner(decomp, false);
+    let delta_open = num_digits_open(decomp);
+    let mut evaluated = Vec::new();
+    let mut candidates = seed_recursive_split_candidates(
+        num_ring_elems,
+        reduced_vars,
+        delta_commit,
+        delta_open,
+        num_chunks,
+    );
+    candidates.extend((1..reduced_vars).rev());
+
+    // Evaluate a square-root-model seed window first, then finish the exact
+    // search with a cheap lower-bound filter. The filter may evaluate extra
+    // splits when the bound is loose, but it never skips a split that can beat
+    // the current best layout score.
+    for r in candidates {
+        if evaluated.contains(&r) {
+            continue;
+        }
+        evaluated.push(r);
+        if let Some((best_score, _, _, _)) = &best {
+            if let Some(lower_bound) = recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
+                num_ring_elems,
+                ring_dimension: policy.ring_dimension,
+                reduced_vars,
+                r,
+                delta_commit,
+                delta_open,
+                num_chunks,
+                requested_fold_shape,
+            }) {
+                if lower_bound > best_score.0 {
+                    continue;
+                }
+            }
+        }
         let Some(candidate_params) = recursive_fold_level_params_candidate(
             policy,
             ring_challenge_cfg,
@@ -577,15 +729,15 @@ pub(crate) fn derive_candidate_level_params(
             num_chunks,
             candidate_params.fold_challenge_shape,
         )?;
-        if best
-            .as_ref()
-            .is_none_or(|(best_score, _, _)| score < *best_score)
-        {
-            best = Some((score, candidate_params, next_witness_len));
+        if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
+            recursive_candidate_order_key(score, r)
+                < recursive_candidate_order_key(*best_score, *best_r)
+        }) {
+            best = Some((score, r, candidate_params, next_witness_len));
         }
     }
 
-    let Some((_, candidate_params, next_witness_len)) = best else {
+    let Some((_, _, candidate_params, next_witness_len)) = best else {
         return Ok(None);
     };
 
@@ -798,5 +950,55 @@ mod tests {
         let err = planned_next_witness_len(128, &grouped, 1, 1)
             .expect_err("multi-group root suffix sizing must use output_witness_len");
         assert!(matches!(err, AkitaError::InvalidSetup(_)));
+    }
+
+    #[test]
+    fn seed_recursive_split_candidates_falls_back_to_exhaustive_for_small_domains() {
+        assert_eq!(
+            seed_recursive_split_candidates(64, 5, 1, 22, 1),
+            vec![4, 3, 2, 1]
+        );
+    }
+
+    #[test]
+    fn seed_recursive_split_candidates_includes_endpoints_and_unique_window() {
+        let candidates = seed_recursive_split_candidates(8192, 13, 1, 22, 1);
+        assert!(candidates.contains(&1));
+        assert!(candidates.contains(&12));
+        assert!(
+            candidates.windows(2).all(|pair| pair[0] > pair[1]),
+            "candidates must be unique and descending: {candidates:?}"
+        );
+    }
+
+    #[test]
+    fn recursive_split_lower_bound_prices_score_floor() {
+        assert_eq!(
+            recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
+                num_ring_elems: 100,
+                ring_dimension: 64,
+                reduced_vars: 7,
+                r: 3,
+                delta_commit: 1,
+                delta_open: 4,
+                num_chunks: 2,
+                requested_fold_shape: TensorChallengeShape::Flat,
+            }),
+            Some(5646)
+        );
+    }
+
+    #[test]
+    fn recursive_candidate_order_preserves_exhaustive_tie_break() {
+        let score = (100, 90, 5, 0);
+        assert!(
+            recursive_candidate_order_key(score, 9) < recursive_candidate_order_key(score, 8),
+            "the old descending exhaustive scan retained the larger split on a tie"
+        );
+        assert!(
+            recursive_candidate_order_key((99, 98, 1, 0), 1)
+                < recursive_candidate_order_key(score, 9),
+            "the exact layout score must remain the primary objective"
+        );
     }
 }

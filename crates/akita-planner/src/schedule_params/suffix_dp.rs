@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use akita_field::AkitaError;
 use akita_types::{
@@ -129,7 +132,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, terminal_bytes))
 }
 
-pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), SuffixResult>;
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), Arc<SuffixResult>>;
 
 #[derive(Clone)]
 struct CandidateSuffixChoice {
@@ -186,6 +189,7 @@ struct ChildEdge<'a> {
     current_witness_len: usize,
     next_witness_len: usize,
     natural_setup_field_len: usize,
+    level_setup_envelope_ring_elements: usize,
     eor_bytes: usize,
     offloaded: bool,
     require_child_fold: bool,
@@ -193,16 +197,17 @@ struct ChildEdge<'a> {
 }
 
 #[derive(Clone, Copy)]
-enum SuffixObjective {
-    FirstDirectSetupThenPayload,
-    Payload,
+struct ChildObjectives {
+    first_direct_setup_then_payload: bool,
+    payload: bool,
 }
 
 fn consider_child_suffixes(
     edge: &ChildEdge<'_>,
     child_candidates: &BTreeMap<u32, FoldSuffix>,
-    objective: SuffixObjective,
-    best: &mut Option<CandidateSuffixChoice>,
+    objectives: ChildObjectives,
+    best_by_setup: &mut Option<CandidateSuffixChoice>,
+    best_by_payload: &mut Option<CandidateSuffixChoice>,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates.values() {
         let child_is_terminal = suffix.folds.is_empty();
@@ -246,8 +251,9 @@ fn consider_child_suffixes(
             .checked_add(stage3_payload_bytes)
             .and_then(|value| value.checked_add(suffix.total_bytes))
             .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
-        let setup_envelope_ring_elements =
-            level_setup_envelope(edge.candidate_params)?.max(suffix.setup_envelope_ring_elements);
+        let setup_envelope_ring_elements = edge
+            .level_setup_envelope_ring_elements
+            .max(suffix.setup_envelope_ring_elements);
         if edge
             .setup_envelope_budget
             .is_some_and(|budget| setup_envelope_ring_elements > budget)
@@ -259,6 +265,19 @@ fn consider_child_suffixes(
         } else {
             edge.natural_setup_field_len
         };
+        let improves_setup = objectives.first_direct_setup_then_payload
+            && best_by_setup.as_ref().is_none_or(|best| {
+                (first_direct_setup_field_len, total_bytes)
+                    < (best.first_direct_setup_field_len, best.total_bytes)
+            });
+        let improves_payload = objectives.payload
+            && best_by_payload
+                .as_ref()
+                .is_none_or(|best| total_bytes < best.total_bytes);
+        if !improves_setup && !improves_payload {
+            continue;
+        }
+
         let mut folds = Vec::with_capacity(1 + suffix.folds.len());
         folds.push(CandidateFoldStep {
             params: edge.candidate_params.clone(),
@@ -276,18 +295,21 @@ fn consider_child_suffixes(
             terminal: suffix.terminal.clone(),
         };
 
-        let is_better = best.as_ref().is_none_or(|best| match objective {
-            SuffixObjective::FirstDirectSetupThenPayload => {
-                (first_direct_setup_field_len, total_bytes)
-                    < (best.first_direct_setup_field_len, best.total_bytes)
-            }
-            SuffixObjective::Payload => total_bytes < best.total_bytes,
-        });
-        if is_better {
-            *best = Some(candidate);
+        if improves_setup {
+            *best_by_setup = Some(candidate.clone());
+        }
+        if improves_payload {
+            *best_by_payload = Some(candidate);
         }
     }
     Ok(())
+}
+
+fn empty_suffix_result() -> Arc<SuffixResult> {
+    Arc::new(SuffixResult {
+        best_by_first_direct_setup_per_lb: BTreeMap::new(),
+        best_by_payload_per_lb: BTreeMap::new(),
+    })
 }
 
 /// DP-invariant inputs for the suffix search.
@@ -388,12 +410,14 @@ fn price_level_candidate_with_children(
         }
     }
 
+    let level_setup_envelope_ring_elements = level_setup_envelope(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
         candidate_params,
         current_witness_len: state.current_witness_len,
         next_witness_len,
         natural_setup_field_len: natural_len,
+        level_setup_envelope_ring_elements,
         eor_bytes,
         offloaded: false,
         require_child_fold,
@@ -402,13 +426,11 @@ fn price_level_candidate_with_children(
     consider_child_suffixes(
         &direct_edge,
         &direct_child.best_by_payload_per_lb,
-        SuffixObjective::FirstDirectSetupThenPayload,
+        ChildObjectives {
+            first_direct_setup_then_payload: true,
+            payload: true,
+        },
         best_for_this_lb,
-    )?;
-    consider_child_suffixes(
-        &direct_edge,
-        &direct_child.best_by_payload_per_lb,
-        SuffixObjective::Payload,
         best_payload_for_this_lb,
     )?;
 
@@ -420,13 +442,21 @@ fn price_level_candidate_with_children(
         consider_child_suffixes(
             &offloaded_edge,
             &offloaded_child.best_by_first_direct_setup_per_lb,
-            SuffixObjective::FirstDirectSetupThenPayload,
+            ChildObjectives {
+                first_direct_setup_then_payload: true,
+                payload: false,
+            },
             best_for_this_lb,
+            best_payload_for_this_lb,
         )?;
         consider_child_suffixes(
             &offloaded_edge,
             &offloaded_child.best_by_payload_per_lb,
-            SuffixObjective::Payload,
+            ChildObjectives {
+                first_direct_setup_then_payload: false,
+                payload: true,
+            },
+            best_for_this_lb,
             best_payload_for_this_lb,
         )?;
     }
@@ -450,7 +480,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
     memo: &mut ScheduleMemo,
     state: SuffixState,
     depth: usize,
-) -> Result<SuffixResult, AkitaError> {
+) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
         ring_challenge_cfg,
@@ -467,23 +497,15 @@ pub(crate) fn derive_optimal_suffix_schedule(
         incoming_setup_prefix,
     } = state;
     let memo_key = state.memo_key();
-    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
-        num_vars,
-        level,
-        input_witness_len: current_witness_len,
-    });
     if depth <= MAX_RECURSION_DEPTH {
         if let Some(cached) = memo.get(&memo_key) {
-            return Ok(cached.clone());
+            return Ok(Arc::clone(cached));
         }
     }
 
     if depth > MAX_RECURSION_DEPTH {
-        let result = SuffixResult {
-            best_by_first_direct_setup_per_lb: BTreeMap::new(),
-            best_by_payload_per_lb: BTreeMap::new(),
-        };
-        memo.insert(memo_key, result.clone());
+        let result = empty_suffix_result();
+        memo.insert(memo_key, Arc::clone(&result));
         return Ok(result);
     }
 
@@ -505,6 +527,31 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 .map(|total_polys| PolynomialGroupLayout::new(num_vars, total_polys))
         })
         .transpose()?;
+    let eor_key = root_eor_key.unwrap_or_else(|| PolynomialGroupLayout::singleton(num_vars));
+    let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+        policy.claim_ext_degree,
+        level,
+        eor_key,
+        current_witness_len,
+    ) else {
+        let result = empty_suffix_result();
+        memo.insert(memo_key, Arc::clone(&result));
+        return Ok(result);
+    };
+    let scalar_opening_layout = if root_level_key.is_none() {
+        Some(suffix_opening_layout(
+            current_witness_len,
+            incoming_setup_prefix,
+        )?)
+    } else {
+        None
+    };
+    let requested_fold_shape = fold_challenge_shape_at_level(akita_types::AkitaScheduleInputs {
+        num_vars,
+        level,
+        input_witness_len: current_witness_len,
+    });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
@@ -513,48 +560,42 @@ pub(crate) fn derive_optimal_suffix_schedule(
         let mut best_for_this_lb: Option<CandidateSuffixChoice> = None;
         let mut best_payload_for_this_lb: Option<CandidateSuffixChoice> = None;
 
-        let (current_opening_layout, eor_key, candidates, require_child_fold) =
-            if let Some(root_key) = root_level_key {
-                let current_opening_layout = root_opening_layout
-                    .as_ref()
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup(
-                            "multi-group root opening layout is missing".to_string(),
-                        )
-                    })?
-                    .clone();
-                let eor_key = root_eor_key.ok_or_else(|| {
-                    AkitaError::InvalidSetup("multi-group root EOR key is missing".to_string())
-                })?;
-                let candidates = multi_group_root_level_candidates_for_basis(
-                    root_key,
-                    policy,
-                    ring_challenge_cfg,
-                    requested_fold_shape,
-                    current_witness_len,
-                    lb,
-                )?;
-                (current_opening_layout, eor_key, candidates, true)
-            } else {
-                let Some((candidate_params, next_witness_len)) = derive_candidate_level_params(
-                    policy,
-                    ring_challenge_cfg,
-                    current_witness_len,
-                    lb,
-                    level,
-                    incoming_setup_prefix,
-                    requested_fold_shape,
-                )?
-                else {
-                    continue;
-                };
-                (
-                    suffix_opening_layout(current_witness_len, incoming_setup_prefix)?,
-                    PolynomialGroupLayout::singleton(num_vars),
-                    vec![(candidate_params, next_witness_len)],
-                    false,
-                )
+        let (current_opening_layout, candidates, require_child_fold) = if let Some(root_key) =
+            root_level_key
+        {
+            let current_opening_layout = root_opening_layout.as_ref().ok_or_else(|| {
+                AkitaError::InvalidSetup("multi-group root opening layout is missing".to_string())
+            })?;
+            let candidates = multi_group_root_level_candidates_for_basis(
+                root_key,
+                policy,
+                ring_challenge_cfg,
+                requested_fold_shape,
+                current_witness_len,
+                lb,
+            )?;
+            (current_opening_layout, candidates, true)
+        } else {
+            let Some((candidate_params, next_witness_len)) = derive_candidate_level_params(
+                policy,
+                ring_challenge_cfg,
+                current_witness_len,
+                lb,
+                level,
+                incoming_setup_prefix,
+                requested_fold_shape,
+            )?
+            else {
+                continue;
             };
+            (
+                scalar_opening_layout.as_ref().ok_or_else(|| {
+                    AkitaError::InvalidSetup("scalar suffix opening layout is missing".to_string())
+                })?,
+                vec![(candidate_params, next_witness_len)],
+                false,
+            )
+        };
 
         for (candidate_params, next_witness_len) in candidates {
             if let Some(natural_prefix_len) = incoming_setup_prefix {
@@ -571,16 +612,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     continue;
                 }
             }
-            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                policy.claim_ext_degree,
-                level,
-                eor_key,
-                current_witness_len,
-            ) else {
-                continue;
-            };
-            let natural_len = active_setup_field_len(&candidate_params, &current_opening_layout)?;
+            let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
             let direct_child = derive_optimal_suffix_schedule(
                 ctx,
                 memo,
@@ -615,7 +647,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 eor_bytes,
                 natural_len,
                 &direct_child,
-                offloaded_child.as_ref(),
+                offloaded_child.as_deref(),
                 require_child_fold,
                 &mut best_for_this_lb,
                 &mut best_payload_for_this_lb,
@@ -666,11 +698,11 @@ pub(crate) fn derive_optimal_suffix_schedule(
         }
     }
 
-    let result = SuffixResult {
+    let result = Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
-    };
-    memo.insert(memo_key, result.clone());
+    });
+    memo.insert(memo_key, Arc::clone(&result));
     Ok(result)
 }
 
