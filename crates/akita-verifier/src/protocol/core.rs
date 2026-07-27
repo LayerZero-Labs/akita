@@ -63,8 +63,8 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    verify_fold, verify_fold_eor, verify_fold_eor_geometry, verify_grouped_fold_eor, FoldEorReplay,
-    PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
+    verify_fold, verify_fold_eor, verify_terminal_fold_eor, FoldEorReplay, PreparedFoldPayload,
+    PreparedFoldReplay, PreparedNextWitness,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

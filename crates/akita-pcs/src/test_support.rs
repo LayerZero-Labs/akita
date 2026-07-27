@@ -213,8 +213,13 @@ where
             "mixed-D fixture requires a singleton and a non-root switch".into(),
         ));
     }
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
-    let envelope = EnvelopeCfg::runtime_schedule(key)?;
+    let envelope = akita_planner::find_schedule(
+        PolynomialGroupLayout::new(num_vars, num_polynomials),
+        &policy_of::<EnvelopeCfg>(),
+        EnvelopeCfg::ring_challenge_config,
+        EnvelopeCfg::fold_challenge_shape_at_level,
+    )?
+    .schedule;
     let keep_recursive = switch_at_fold - 1;
     if keep_recursive > envelope.recursive_folds.len() {
         return Err(AkitaError::InvalidSetup(
@@ -407,8 +412,7 @@ pub fn compressed_role_root_schedule<Env: CommitmentConfig>(
 ) -> Result<FoldSchedule, AkitaError> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(num_vars, num_polynomials));
     let mut schedule = Env::runtime_schedule(key)?;
-    let root = &mut schedule.root.params.final_group.commitment;
-    let inner_d = root.d_a();
+    let inner_d = schedule.root.params.final_group.commitment.d_a();
     for (label, target_d) in [("B", outer_d), ("D", open_d)] {
         if target_d == 0 || !inner_d.is_multiple_of(target_d) {
             return Err(AkitaError::InvalidSetup(format!(
@@ -418,28 +422,22 @@ pub fn compressed_role_root_schedule<Env: CommitmentConfig>(
     }
 
     // Retarget only the roles that actually shrink (target == inner is a no-op).
-    if outer_d != root.outer_commit_matrix.ring_dimension() {
-        let column_scale = root.outer_commit_matrix.ring_dimension() / outer_d;
-        let outer_key = SisTableKey {
-            ring_dimension: outer_d as u32,
-            ..root.outer_commit_matrix.sis_table_key()
-        };
-        root.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-            outer_key,
-            root.outer_commit_matrix.input_width() * column_scale,
-        )?;
-    }
-    if open_d != root.open_commit_matrix.ring_dimension() {
-        let column_scale = root.open_commit_matrix.ring_dimension() / open_d;
-        let open_key = SisTableKey {
-            ring_dimension: open_d as u32,
-            ..root.open_commit_matrix.sis_table_key()
-        };
-        root.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
-            open_key,
-            root.open_commit_matrix.input_width() * column_scale,
-        )?;
-    }
+    retarget_outer_matrix(
+        &mut schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .outer_commit_matrix,
+        outer_d,
+    )?;
+    retarget_open_matrix(&mut schedule.root.params.open_commit_matrix, open_d)?;
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix = schedule.root.params.open_commit_matrix.clone();
 
     // Recompute the root's outgoing witness length from the compressed root
     // params and stitch it into the (unchanged, uniform) successor level.
@@ -571,15 +569,13 @@ where
 
     // L0 (root): compress the D (open) role to `root_open_d` (== `Env::D` leaves
     // the root fully uniform); A and B stay at `Env::D`.
-    retarget_open_matrix(
-        &mut schedule
-            .root
-            .params
-            .final_group
-            .commitment
-            .open_commit_matrix,
-        root_open_d,
-    )?;
+    retarget_open_matrix(&mut schedule.root.params.open_commit_matrix, root_open_d)?;
+    schedule
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix = schedule.root.params.open_commit_matrix.clone();
 
     // L1 (first recursive fold): compress B (outer) and D (open); A stays.
     {
@@ -890,10 +886,8 @@ where
         &mut root.params.final_group.commitment.outer_commit_matrix,
         root_bd,
     )?;
-    retarget_open_matrix(
-        &mut root.params.final_group.commitment.open_commit_matrix,
-        root_bd,
-    )?;
+    retarget_open_matrix(&mut root.params.open_commit_matrix, root_bd)?;
+    root.params.final_group.commitment.open_commit_matrix = root.params.open_commit_matrix.clone();
     let root_inner_d = root.params.final_group.commitment.d_a();
     let root_out = outgoing_witness_len(
         field_bits,

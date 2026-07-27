@@ -1122,10 +1122,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
             let opening_batch = OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP)
                 .expect("precommit batch");
-            let layout = PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(
-                &opening_batch,
-            )
-            .expect("precommit layout");
+            let layout =
+                PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
+                    &opening_batch,
+                )
+                .expect("precommit layout");
             let polys = vec![make_profile_onehot_poly::<FF, D>(
                 &layout,
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
@@ -1135,7 +1136,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let (commitment, hint) =
-                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<Cfg>>::batched_commit(
+                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<ProofCfg>>::batched_commit(
                     &setup, &polys, &stack,
                 )
                 .expect("precommit");

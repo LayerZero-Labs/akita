@@ -245,9 +245,20 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         let witness_scale = geometry.witness_lift_scale::<E>()?;
         let setup_scale = geometry.setup_lift_scale::<E>()?;
         let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
-        let expected = eta * witness_scale * eq_w * proof.next_w_eval
-            + setup_scale * setup_val * setup_index_weight * alpha_val;
+        let witness_term = eta * eq_w * proof.next_w_eval;
+        let setup_term = setup_val * setup_index_weight * alpha_val;
+        let expected = witness_scale * witness_term + setup_scale * setup_term;
         if final_claim != expected {
+            tracing::error!(
+                witness_rounds,
+                setup_rounds = self.rounds,
+                batched_rounds,
+                matches_unscaled = final_claim == witness_term + setup_term,
+                matches_only_witness_scaled =
+                    final_claim == witness_scale * witness_term + setup_term,
+                matches_only_setup_scaled = final_claim == witness_term + setup_scale * setup_term,
+                "stage-3 final claim disagrees with the lifted product terms"
+            );
             return Err(AkitaError::InvalidProof);
         }
         Ok((rho_w, rho_setup))

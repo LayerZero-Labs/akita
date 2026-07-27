@@ -615,6 +615,21 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .ok_or(AkitaError::InvalidProof)
     }
 
+    /// Materialize one group's opening point in its declared coordinate order.
+    pub fn group_point(&self, g: usize) -> Result<Vec<F>, AkitaError> {
+        self.group_point_vars(g)?
+            .indices()
+            .iter()
+            .map(|&index| {
+                self.point
+                    .as_ref()
+                    .get(index)
+                    .cloned()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect()
+    }
+
     /// Borrow one group's commitment.
     pub fn group_commitment(&self, g: usize) -> Result<&C, AkitaError> {
         self.groups

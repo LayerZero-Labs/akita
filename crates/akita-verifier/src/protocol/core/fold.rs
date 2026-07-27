@@ -185,46 +185,13 @@ where
     }))
 }
 
+/// Verify the terminal fold's single-group extension-opening reduction.
+///
+/// Terminal proofs carry their geometry directly rather than through
+/// `CommittedGroupParams`, so their replay remains an explicit terminal
+/// boundary instead of being disguised as an ordinary committed-group fold.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
-    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    challenge_point: &[E],
-    openings: &[E],
-    row_coefficients: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    basis: BasisMode,
-    lp: &CommittedGroupParams,
-    requires_reduction: bool,
-    transcript: &mut T,
-) -> Result<FoldEorReplay<F, E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let d_a = lp.role_dims().d_a();
-    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        verify_fold_eor_kernel::<F, E, T, D>(
-            extension_opening_reduction,
-            challenge_point,
-            openings,
-            row_coefficients,
-            opening_batch,
-            basis,
-            lp.num_positions_per_block,
-            lp.num_live_blocks,
-            d_a.trailing_zeros() as usize,
-            requires_reduction,
-            transcript,
-        )
-    })
-}
-
-/// Explicit-geometry variant of [`verify_fold_eor`] used by the suffix-terminal
-/// replay, which carries terminal geometry directly rather than a
-/// `CommittedGroupParams`.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_fold_eor_geometry<F, E, T>(
+pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     challenge_point: &[E],
     openings: &[E],
@@ -243,7 +210,7 @@ where
     T: Transcript<F>,
 {
     dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-        verify_fold_eor_kernel::<F, E, T, D>(
+        verify_terminal_fold_eor_kernel::<F, E, T, D>(
             extension_opening_reduction,
             challenge_point,
             openings,
@@ -260,7 +227,7 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_fold_eor_kernel<F, E, T, const D: usize>(
+fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     challenge_point: &[E],
     openings: &[E],
@@ -313,7 +280,11 @@ where
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_grouped_fold_eor<F, E, T>(
+/// Verify one fold's extension-opening reduction over all opening groups.
+///
+/// Every group retains its native opening point and committed geometry. The
+/// groups share one batched sumcheck challenge sequence.
+pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[Vec<E>],
     openings: &[E],

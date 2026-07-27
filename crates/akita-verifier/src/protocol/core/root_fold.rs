@@ -181,9 +181,10 @@ where
     };
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let group_points = [shared_opening_point.to_vec()];
     let root_eor = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
-        shared_opening_point,
+        &group_points,
         openings,
         &row_coefficients,
         opening_batch,
@@ -323,17 +324,7 @@ where
         if point_vars.num_vars() != target_len {
             return Err(AkitaError::InvalidProof);
         }
-        let group_point = point_vars
-            .indices()
-            .iter()
-            .map(|&index| {
-                shared_opening_point
-                    .get(index)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        group_points.push(group_point);
+        group_points.push(claims.group_point(group_index)?);
     }
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     if extension_opening_reduction.is_none() {
@@ -364,7 +355,7 @@ where
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let eor_replay = if extension_opening_reduction.is_some() {
-        let replay = verify_grouped_fold_eor::<F, E, T>(
+        let replay = verify_fold_eor::<F, E, T>(
             extension_opening_reduction,
             &group_points,
             openings,

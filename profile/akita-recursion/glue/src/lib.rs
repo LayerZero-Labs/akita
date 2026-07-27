@@ -487,6 +487,7 @@ pub use akita_algebra as _akita_algebra_dep;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use akita_challenges::SparseChallengeConfig;
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
@@ -542,6 +543,7 @@ mod tests {
                 TEST_D,
             ),
             log_basis_open: 1,
+            fold_challenge_config: SparseChallengeConfig::pm1_only(0),
             num_digits_inner: 1,
             num_digits_outer: 1,
             num_digits_open: 1,

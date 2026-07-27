@@ -724,6 +724,44 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
             .unwrap(),
     );
+
+    let relation_address_geometry = crate::RelationAddressGeometry::new(
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+        opening_source_len,
+    )
+    .unwrap();
+    let deferred = SetupContributionPlan::prepare_deferred::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        inputs.eq_tau1.clone(),
+        &witness_layout,
+        &groups,
+        &full_vec_randomness,
+        Some(&fold_gadget),
+        relation_address_geometry,
+        alpha,
+    )
+    .unwrap();
+    let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
+    let rho_setup_idx = (0..setup_idx_bits)
+        .map(|index| test_scalar(1301 + index as u128))
+        .collect::<Vec<_>>();
+    let dense_mle = plan
+        .materialize_setup_index_weights(alpha)
+        .unwrap()
+        .into_iter()
+        .enumerate()
+        .fold(F::zero(), |acc, (index, weight)| {
+            acc + eq_eval_at_index(&rho_setup_idx, index) * weight
+        });
+    assert_eq!(
+        deferred
+            .evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
+            .unwrap(),
+        dense_mle,
+        "deferred multi-group setup-index MLE must match the full plan"
+    );
 }
 
 #[test]
