@@ -7,7 +7,7 @@
 
 use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Verifier work cap for one compact-stride equality contraction.
 pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
@@ -732,7 +732,7 @@ pub fn eval_weighted_compact_pair_eq<F: FieldCore>(
 
     let left_domain = 1usize << left_challenges.len();
     let right_domain = 1usize << right_challenges.len();
-    let mut batches = BTreeMap::<(usize, usize, usize), BTreeMap<(usize, usize), F>>::new();
+    let mut batches = BTreeMap::<(usize, usize, usize), HashMap<(usize, usize), F>>::new();
     let mut seed_work = 0usize;
     for term in &terms {
         if term.left_offset >= left_domain || term.right_offset >= right_domain {
@@ -791,7 +791,6 @@ pub fn eval_weighted_compact_pair_eq<F: FieldCore>(
             })?;
         }
     }
-
     let mut work = 0usize;
     let mut acc = F::zero();
     for ((left_stride, right_stride, block_index_bits), mut states) in batches {
@@ -818,7 +817,7 @@ pub fn eval_weighted_compact_pair_eq<F: FieldCore>(
                     actual: work,
                 });
             }
-            let mut next = BTreeMap::new();
+            let mut next = HashMap::new();
             for ((left_carry, right_carry), state_weight) in states {
                 for index_bit in 0..=1usize {
                     let left_sum = if index_bit == 0 {
@@ -868,7 +867,7 @@ fn finish_compact_pair_states<F: FieldCore>(
     left_challenges: &[F],
     right_challenges: &[F],
     mut bit: usize,
-    mut states: BTreeMap<(usize, usize), F>,
+    mut states: HashMap<(usize, usize), F>,
     work: &mut usize,
 ) -> Result<F, AkitaError> {
     let max_bits = left_challenges.len().max(right_challenges.len());
@@ -882,7 +881,7 @@ fn finish_compact_pair_states<F: FieldCore>(
                 actual: *work,
             });
         }
-        let mut next = BTreeMap::new();
+        let mut next = HashMap::new();
         for ((left_carry, right_carry), state_weight) in states {
             let (left_high, left_factor) = if let Some(&challenge) = left_challenges.get(bit) {
                 (
@@ -985,10 +984,19 @@ fn coalesce_weighted_compact_pair_terms<F: FieldCore>(
             sorted.push(*term);
         }
     }
-    let mut coalesced = coalesce_contiguous_pair_terms(sorted)?;
+    let mut coalesced = sorted;
     loop {
+        // Exhaust cheap rectangle fusion before building the heavier
+        // predecessor map. A contiguous merge can expose another tensor axis,
+        // so repeat only when that merge actually changes the term set.
+        loop {
+            let previous_len = coalesced.len();
+            coalesced = fuse_interleaved_pair_rectangles(coalesced)?;
+            if coalesced.len() == previous_len {
+                break;
+            }
+        }
         let previous_len = coalesced.len();
-        coalesced = fuse_interleaved_pair_rectangles(coalesced)?;
         coalesced = coalesce_contiguous_pair_terms(coalesced)?;
         if coalesced.len() == previous_len {
             return Ok(coalesced);
@@ -999,6 +1007,17 @@ fn coalesce_weighted_compact_pair_terms<F: FieldCore>(
 fn coalesce_contiguous_pair_terms<F: FieldCore>(
     mut terms: Vec<WeightedCompactPairTerm<F>>,
 ) -> Result<Vec<WeightedCompactPairTerm<F>>, AkitaError> {
+    #[cfg(feature = "parallel")]
+    terms.par_sort_unstable_by_key(|term| {
+        (
+            term.left_stride,
+            term.right_stride,
+            term.left_offset,
+            term.right_offset,
+            term.len,
+        )
+    });
+    #[cfg(not(feature = "parallel"))]
     terms.sort_unstable_by_key(|term| {
         (
             term.left_stride,
@@ -1008,8 +1027,10 @@ fn coalesce_contiguous_pair_terms<F: FieldCore>(
             term.len,
         )
     });
+    // Include the field weight in the hash key so predecessor lookup stays
+    // constant-time even when many projection lanes share one address.
     let mut pending =
-        BTreeMap::<(usize, usize, usize, usize), Vec<WeightedCompactPairTerm<F>>>::new();
+        HashMap::<(usize, usize, usize, usize, F), Vec<WeightedCompactPairTerm<F>>>::new();
     let mut complete = Vec::new();
     complete
         .try_reserve_exact(terms.len())
@@ -1020,16 +1041,11 @@ fn coalesce_contiguous_pair_terms<F: FieldCore>(
             term.right_stride,
             term.left_offset,
             term.right_offset,
+            term.weight,
         );
-        let predecessor = {
-            let candidates = pending.get_mut(&start_key);
-            candidates.and_then(|candidates| {
-                candidates
-                    .iter()
-                    .position(|candidate| candidate.weight == term.weight)
-                    .map(|position| candidates.swap_remove(position))
-            })
-        };
+        let predecessor = pending
+            .get_mut(&start_key)
+            .and_then(|candidates| candidates.pop());
         if pending
             .get(&start_key)
             .is_some_and(|candidates| candidates.is_empty())
@@ -1052,7 +1068,13 @@ fn coalesce_contiguous_pair_terms<F: FieldCore>(
             .and_then(|delta| chain.right_offset.checked_add(delta));
         if let (Some(next_left), Some(next_right)) = (next_left, next_right) {
             pending
-                .entry((chain.left_stride, chain.right_stride, next_left, next_right))
+                .entry((
+                    chain.left_stride,
+                    chain.right_stride,
+                    next_left,
+                    next_right,
+                    chain.weight,
+                ))
                 .or_default()
                 .push(chain);
         } else {
@@ -1073,6 +1095,17 @@ fn coalesce_contiguous_pair_terms<F: FieldCore>(
 fn fuse_interleaved_pair_rectangles<F: FieldCore>(
     mut terms: Vec<WeightedCompactPairTerm<F>>,
 ) -> Result<Vec<WeightedCompactPairTerm<F>>, AkitaError> {
+    #[cfg(feature = "parallel")]
+    terms.par_sort_unstable_by_key(|term| {
+        (
+            term.left_stride,
+            term.right_stride,
+            term.len,
+            term.left_offset,
+            term.right_offset,
+        )
+    });
+    #[cfg(not(feature = "parallel"))]
     terms.sort_unstable_by_key(|term| {
         (
             term.left_stride,

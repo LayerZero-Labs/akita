@@ -105,7 +105,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             },
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
         )?;
-
         evaluation += cfg_fold_reduce!(
             0..group.b_spans.len(),
             || Ok(E::zero()),
@@ -149,60 +148,73 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             },
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
         )?;
-
+        // The canonical A spans are emitted as one complete fold-digit family
+        // per witness unit. Contract a dense family in one affine pass so all
+        // fold digits share the high-row traversal.
+        let a_family_width = group.fold_gadget.len();
+        if a_family_width == 0 || !group.a_spans.len().is_multiple_of(a_family_width) {
+            return Err(AkitaError::InvalidSetup(
+                "setup A spans do not form complete fold families".into(),
+            ));
+        }
+        let a_family_count = group.a_spans.len() / a_family_width;
         evaluation += cfg_fold_reduce!(
-            0..group.a_spans.len(),
+            0..a_family_count,
             || Ok(E::zero()),
-            |acc: Result<E, AkitaError>, span_index| {
+            |acc: Result<E, AkitaError>, family_index| {
                 let mut acc = acc?;
-                let span = group
+                let family_start = family_index.checked_mul(a_family_width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup A span family overflow".into())
+                })?;
+                let family_end = family_start.checked_add(a_family_width).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup A span family overflow".into())
+                })?;
+                let family = group
                     .a_spans
-                    .get(span_index)
+                    .get(family_start..family_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                ensure_lane_count(span, inner_lane_powers)?;
-                let fold = *group
-                    .fold_gadget
-                    .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
-                    .ok_or(AkitaError::InvalidProof)?;
-                // A is affine in (position, witness digit), so contract the
-                // complete rectangle instead of scanning its physical columns.
-                if span.setup_column_start == 0
-                    && span.setup_column_stride == 1
-                    && witness_gadget.len().is_power_of_two()
-                {
-                    let interval = eval_affine_digit_interval(
+                let dense = witness_gadget.len().is_power_of_two()
+                    && family
+                        .iter()
+                        .all(|span| span.setup_column_start == 0 && span.setup_column_stride == 1);
+                if dense {
+                    acc -= evaluate_dense_a_family(
                         &self.address_point,
-                        span.relation_lane_start,
-                        0,
-                        span.occurrence_count,
-                        span.relation_lane_stride,
+                        family,
                         inner_lane_powers,
                         opening_a_evals,
                         &witness_gadget_ext,
-                    )?;
-                    acc -= interval * group.consistency_weight * fold;
-                    return Ok(acc);
-                }
-                for occurrence in span.occurrences() {
-                    let (setup_column, relation_lane_start) = occurrence?;
-                    let position = setup_column / group.depth_witness;
-                    let witness_digit = setup_column % group.depth_witness;
-                    let lane_equality = evaluate_lane_segment(
-                        &self.eq_window,
-                        relation_lane_start,
-                        inner_lane_powers,
-                    )?;
-                    acc -= lane_equality
-                        * group.consistency_weight
-                        * *opening_a_evals
-                            .get(position)
-                            .ok_or(AkitaError::InvalidProof)?
-                        * fold
-                        * E::one().mul_base(
-                            *witness_gadget
-                                .get(witness_digit)
-                                .ok_or(AkitaError::InvalidProof)?,
-                        );
+                        &group.fold_gadget,
+                    )? * group.consistency_weight;
+                } else {
+                    for span in family {
+                        ensure_lane_count(span, inner_lane_powers)?;
+                        let fold = *group
+                            .fold_gadget
+                            .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        for occurrence in span.occurrences() {
+                            let (setup_column, relation_lane_start) = occurrence?;
+                            let position = setup_column / group.depth_witness;
+                            let witness_digit = setup_column % group.depth_witness;
+                            let lane_equality = evaluate_lane_segment(
+                                &self.eq_window,
+                                relation_lane_start,
+                                inner_lane_powers,
+                            )?;
+                            acc -= lane_equality
+                                * group.consistency_weight
+                                * *opening_a_evals
+                                    .get(position)
+                                    .ok_or(AkitaError::InvalidProof)?
+                                * fold
+                                * E::one().mul_base(
+                                    *witness_gadget
+                                        .get(witness_digit)
+                                        .ok_or(AkitaError::InvalidProof)?,
+                                );
+                        }
+                    }
                 }
                 Ok(acc)
             },
@@ -225,6 +237,90 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             relation_lane_powers(alpha, group.role_dims.d_d(), common),
         ]
     }
+}
+
+/// Contract one dense canonical A fold family as a single affine rectangle.
+fn evaluate_dense_a_family<E: FieldCore>(
+    address_point: &[E],
+    spans: &[SetupContributionSpan],
+    lane_powers: &[E],
+    opening_a_evals: &[E],
+    witness_gadget: &[E],
+    fold_gadget: &[E],
+) -> Result<E, AkitaError> {
+    let first = spans
+        .first()
+        .ok_or_else(|| AkitaError::InvalidSetup("setup A span family must be non-empty".into()))?;
+    if !witness_gadget.len().is_power_of_two()
+        || first.setup_column_start != 0
+        || first.setup_column_stride != 1
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup A span family is not a dense affine rectangle".into(),
+        ));
+    }
+
+    let mut digit_count = 0usize;
+    for span in spans {
+        ensure_lane_count(span, lane_powers)?;
+        if span.setup_column_start != first.setup_column_start
+            || span.setup_column_stride != first.setup_column_stride
+            || span.relation_lane_stride != first.relation_lane_stride
+            || span.occurrence_count != first.occurrence_count
+        {
+            return Err(AkitaError::InvalidSetup(
+                "setup A span family has inconsistent affine geometry".into(),
+            ));
+        }
+        let lane_offset = span
+            .relation_lane_start
+            .checked_sub(first.relation_lane_start)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup A span family is not address ordered".into())
+            })?;
+        digit_count = digit_count.max(
+            lane_offset
+                .checked_add(lane_powers.len())
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?,
+        );
+    }
+    if digit_count > first.relation_lane_stride {
+        return Err(AkitaError::InvalidSetup(
+            "setup A digit family exceeds its affine stride".into(),
+        ));
+    }
+
+    let mut digit_weights = vec![E::zero(); digit_count];
+    for span in spans {
+        let fold = *fold_gadget
+            .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
+            .ok_or(AkitaError::InvalidProof)?;
+        let lane_offset = span
+            .relation_lane_start
+            .checked_sub(first.relation_lane_start)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup A span family is not address ordered".into())
+            })?;
+        for (lane, &lane_power) in lane_powers.iter().enumerate() {
+            let digit = lane_offset
+                .checked_add(lane)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?;
+            let weight = digit_weights
+                .get_mut(digit)
+                .ok_or(AkitaError::InvalidProof)?;
+            *weight += fold * lane_power;
+        }
+    }
+    eval_affine_digit_interval(
+        address_point,
+        first.relation_lane_start,
+        0,
+        first.occurrence_count,
+        first.relation_lane_stride,
+        &digit_weights,
+        opening_a_evals,
+        witness_gadget,
+    )
 }
 
 // A span contained in one low-factor row has no high rows to summarize. Reuse
