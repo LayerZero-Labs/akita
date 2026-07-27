@@ -279,9 +279,21 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             }
         }
     }
+    candidates.extend(direct_profile_group_batch_keys_for_cfg::<Cfg>()?);
     let mut keys = supported_group_batch_keys::<Cfg>(candidates)?;
     keys.sort_by(runtime_schedule_key_cmp);
     Ok(keys)
+}
+
+fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHot>();
+    }
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+    }
+    Ok(Vec::new())
 }
 
 fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(

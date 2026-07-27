@@ -73,6 +73,7 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         outer.coeff_linf_bound(),
         32,
     );
+    precommitted.layout.outer_ring_dimension = 32;
     let dims = lp
         .group_role_dims(&batch, 0)
         .expect("precommitted group role dimensions");

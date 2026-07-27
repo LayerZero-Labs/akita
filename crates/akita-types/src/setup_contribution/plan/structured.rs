@@ -35,6 +35,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             crate::gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
         let witness_gadget =
             crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+        let witness_gadget_ext = witness_gadget
+            .iter()
+            .copied()
+            .map(|weight| E::one().mul_base(weight))
+            .collect::<Vec<_>>();
         let lane_powers = self.group_relation_lane_powers(group, alpha);
         let inner_lane_powers = &lane_powers[0];
         let (outer_subcolumns, opening_subcolumns) =
@@ -65,91 +70,144 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
 
         let mut evaluation = E::zero();
-        let high = [E::one()];
-        for span in &group.d_spans {
-            let digit = span.setup_column_start % group.depth_open;
-            let semantic = span.setup_column_start / group.depth_open;
-            let opening_subcolumn = semantic % opening_subcolumns;
-            if opening_subcolumn != 0 {
-                continue;
-            }
-            ensure_projection_partition(span, opening_subcolumns, inner_lane_powers)?;
-            let block_claim = semantic / opening_subcolumns;
-            let claim = block_claim / group.num_live_blocks;
-            let block_start = block_claim % group.num_live_blocks;
-            let interval = eval_affine_digit_interval(
-                &self.address_point,
-                span.relation_lane_start,
-                block_start,
-                span.occurrence_count,
-                span.relation_lane_stride,
-                inner_lane_powers,
-                &high,
-                claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
-            )?;
-            evaluation += group.consistency_weight
-                * interval.mul_base(*opening_gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
-        }
+        evaluation += cfg_fold_reduce!(
+            0..group.d_spans.len(),
+            || Ok(E::zero()),
+            |acc: Result<E, AkitaError>, span_index| {
+                let mut acc = acc?;
+                let span = group
+                    .d_spans
+                    .get(span_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let digit = span.setup_column_start % group.depth_open;
+                let semantic = span.setup_column_start / group.depth_open;
+                let opening_subcolumn = semantic % opening_subcolumns;
+                if opening_subcolumn != 0 {
+                    return Ok(acc);
+                }
+                ensure_projection_partition(span, opening_subcolumns, inner_lane_powers)?;
+                let block_claim = semantic / opening_subcolumns;
+                let claim = block_claim / group.num_live_blocks;
+                let block_start = block_claim % group.num_live_blocks;
+                let interval = evaluate_single_factor_row(
+                    &self.address_point,
+                    &self.eq_window,
+                    span.relation_lane_start,
+                    block_start,
+                    span,
+                    inner_lane_powers,
+                    claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
+                )?;
+                acc += group.consistency_weight
+                    * interval
+                        .mul_base(*opening_gadget.get(digit).ok_or(AkitaError::InvalidProof)?);
+                Ok(acc)
+            },
+            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+        )?;
 
-        for span in &group.b_spans {
-            let outer_subcolumn = span.setup_column_start % outer_subcolumns;
-            if outer_subcolumn != 0 {
-                continue;
-            }
-            ensure_projection_partition(span, outer_subcolumns, inner_lane_powers)?;
-            let semantic = span.setup_column_start / outer_subcolumns;
-            let digit = semantic % group.depth_commit;
-            let row_and_block = semantic / group.depth_commit;
-            let a_row = row_and_block % group.n_a;
-            let block_claim = row_and_block / group.n_a;
-            let claim = block_claim / group.num_live_blocks;
-            let block_start = block_claim % group.num_live_blocks;
-            let interval = eval_affine_digit_interval(
-                &self.address_point,
-                span.relation_lane_start,
-                block_start,
-                span.occurrence_count,
-                span.relation_lane_stride,
-                inner_lane_powers,
-                &high,
-                claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
-            )?;
-            evaluation += *group
-                .a_row_weights
-                .get(a_row)
-                .ok_or(AkitaError::InvalidProof)?
-                * interval.mul_base(
-                    *commitment_gadget
-                        .get(digit)
-                        .ok_or(AkitaError::InvalidProof)?,
-                );
-        }
-
-        for span in &group.a_spans {
-            ensure_lane_count(span, inner_lane_powers)?;
-            let fold = *group
-                .fold_gadget
-                .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
-                .ok_or(AkitaError::InvalidProof)?;
-            for occurrence in span.occurrences() {
-                let (setup_column, relation_lane_start) = occurrence?;
-                let position = setup_column / group.depth_witness;
-                let witness_digit = setup_column % group.depth_witness;
-                let lane_equality =
-                    evaluate_lane_segment(&self.eq_window, relation_lane_start, inner_lane_powers)?;
-                evaluation -= lane_equality
-                    * group.consistency_weight
-                    * *opening_a_evals
-                        .get(position)
-                        .ok_or(AkitaError::InvalidProof)?
-                    * fold
-                    * E::one().mul_base(
-                        *witness_gadget
-                            .get(witness_digit)
+        evaluation += cfg_fold_reduce!(
+            0..group.b_spans.len(),
+            || Ok(E::zero()),
+            |acc: Result<E, AkitaError>, span_index| {
+                let mut acc = acc?;
+                let span = group
+                    .b_spans
+                    .get(span_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let outer_subcolumn = span.setup_column_start % outer_subcolumns;
+                if outer_subcolumn != 0 {
+                    return Ok(acc);
+                }
+                ensure_projection_partition(span, outer_subcolumns, inner_lane_powers)?;
+                let semantic = span.setup_column_start / outer_subcolumns;
+                let digit = semantic % group.depth_commit;
+                let row_and_block = semantic / group.depth_commit;
+                let a_row = row_and_block % group.n_a;
+                let block_claim = row_and_block / group.n_a;
+                let claim = block_claim / group.num_live_blocks;
+                let block_start = block_claim % group.num_live_blocks;
+                let interval = evaluate_single_factor_row(
+                    &self.address_point,
+                    &self.eq_window,
+                    span.relation_lane_start,
+                    block_start,
+                    span,
+                    inner_lane_powers,
+                    claim_factors.get(claim).ok_or(AkitaError::InvalidProof)?,
+                )?;
+                acc += *group
+                    .a_row_weights
+                    .get(a_row)
+                    .ok_or(AkitaError::InvalidProof)?
+                    * interval.mul_base(
+                        *commitment_gadget
+                            .get(digit)
                             .ok_or(AkitaError::InvalidProof)?,
                     );
-            }
-        }
+                Ok(acc)
+            },
+            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+        )?;
+
+        evaluation += cfg_fold_reduce!(
+            0..group.a_spans.len(),
+            || Ok(E::zero()),
+            |acc: Result<E, AkitaError>, span_index| {
+                let mut acc = acc?;
+                let span = group
+                    .a_spans
+                    .get(span_index)
+                    .ok_or(AkitaError::InvalidProof)?;
+                ensure_lane_count(span, inner_lane_powers)?;
+                let fold = *group
+                    .fold_gadget
+                    .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
+                    .ok_or(AkitaError::InvalidProof)?;
+                // A is affine in (position, witness digit), so contract the
+                // complete rectangle instead of scanning its physical columns.
+                if span.setup_column_start == 0
+                    && span.setup_column_stride == 1
+                    && witness_gadget.len().is_power_of_two()
+                {
+                    let interval = eval_affine_digit_interval(
+                        &self.address_point,
+                        span.relation_lane_start,
+                        0,
+                        span.occurrence_count,
+                        span.relation_lane_stride,
+                        inner_lane_powers,
+                        opening_a_evals,
+                        &witness_gadget_ext,
+                    )?;
+                    acc -= interval * group.consistency_weight * fold;
+                    return Ok(acc);
+                }
+                for occurrence in span.occurrences() {
+                    let (setup_column, relation_lane_start) = occurrence?;
+                    let position = setup_column / group.depth_witness;
+                    let witness_digit = setup_column % group.depth_witness;
+                    let lane_equality = evaluate_lane_segment(
+                        &self.eq_window,
+                        relation_lane_start,
+                        inner_lane_powers,
+                    )?;
+                    acc -= lane_equality
+                        * group.consistency_weight
+                        * *opening_a_evals
+                            .get(position)
+                            .ok_or(AkitaError::InvalidProof)?
+                        * fold
+                        * E::one().mul_base(
+                            *witness_gadget
+                                .get(witness_digit)
+                                .ok_or(AkitaError::InvalidProof)?,
+                        );
+                }
+                Ok(acc)
+            },
+            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+        )?;
         Ok(evaluation)
     }
 
@@ -167,6 +225,48 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             relation_lane_powers(alpha, group.role_dims.d_d(), common),
         ]
     }
+}
+
+// A span contained in one low-factor row has no high rows to summarize. Reuse
+// the plan's equality tables; longer spans retain the compact carry recurrence.
+fn evaluate_single_factor_row<E: FieldCore>(
+    address_point: &[E],
+    equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    relation_lane_start: usize,
+    outer_start: usize,
+    span: &SetupContributionSpan,
+    digit_weights: &[E],
+    low_weights: &[E],
+) -> Result<E, AkitaError> {
+    let outer_end = outer_start
+        .checked_add(span.occurrence_count)
+        .ok_or_else(|| AkitaError::InvalidSetup("structured outer window overflow".into()))?;
+    if outer_end > low_weights.len() {
+        return eval_affine_digit_interval(
+            address_point,
+            relation_lane_start,
+            outer_start,
+            span.occurrence_count,
+            span.relation_lane_stride,
+            digit_weights,
+            &[E::one()],
+            low_weights,
+        );
+    }
+
+    (0..span.occurrence_count).try_fold(E::zero(), |sum, occurrence| {
+        let address = span
+            .relation_lane_stride
+            .checked_mul(occurrence)
+            .and_then(|offset| relation_lane_start.checked_add(offset))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("structured relation address overflow".into())
+            })?;
+        let factor = *low_weights
+            .get(outer_start + occurrence)
+            .ok_or(AkitaError::InvalidProof)?;
+        Ok(sum + evaluate_lane_segment(equality_window, address, digit_weights)? * factor)
+    })
 }
 
 fn relation_lane_powers<E: FieldCore>(
