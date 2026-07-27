@@ -25,8 +25,9 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    validate_schedule_ring_dims, AkitaBatchedProof, FoldSchedule, NextWitnessBinding,
-    OpeningClaimsLayout, RingVec,
+    setup_matrix_envelope_for_schedule, validate_schedule_ring_dims, AkitaBatchedProof,
+    AkitaScheduleLookupKey, FoldSchedule, NextWitnessBinding, OpeningClaimsLayout,
+    PolynomialGroupLayout, RingVec,
 };
 use common::*;
 
@@ -272,6 +273,27 @@ fn mixed_d_schedule_shape_and_ring_dim_validation() {
             vec![SUFFIX_D, ENVELOPE_D]
         );
     });
+}
+
+#[test]
+fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
+    type TablelessMixedD = MixedDConfig<fp128::D256OneHot, fp128::D64OneHot, 1>;
+    type TablelessScheme = AkitaCommitmentScheme<TablelessMixedD>;
+    const TABLELESS_NUM_VARS: usize = 20;
+
+    let schedule = TablelessMixedD::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
+    ))
+    .expect("tableless mixed-D schedule");
+    let required =
+        setup_matrix_envelope_for_schedule(&schedule).expect("synthetic schedule envelope");
+    let configured = TablelessMixedD::max_setup_matrix_size(TABLELESS_NUM_VARS, 1)
+        .expect("mixed-D setup envelope");
+    assert!(configured.max_setup_len >= required.max_setup_len);
+
+    let setup = TablelessScheme::setup_prover(TABLELESS_NUM_VARS, 1)
+        .expect("tableless mixed-D prover setup");
+    assert!(setup.expanded.seed().max_setup_len >= required.max_setup_len);
 }
 
 #[test]

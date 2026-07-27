@@ -347,7 +347,17 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        Env::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+        let mut envelope = SetupMatrixEnvelope::minimum();
+        for num_polynomials in 1..=max_num_batched_polys.max(1) {
+            let schedule = mixed_d_per_level_schedule::<Env, Suffix>(
+                max_num_vars,
+                num_polynomials,
+                SWITCH_AT_FOLD,
+            )?;
+            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule)?;
+            envelope.max_setup_len = envelope.max_setup_len.max(required.max_setup_len);
+        }
+        Ok(envelope)
     }
 
     fn basis_range() -> (u32, u32) {
