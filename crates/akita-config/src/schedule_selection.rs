@@ -11,6 +11,9 @@ use akita_types::{
 ///
 /// Prove and verify must call this helper so fold-vs-direct decisions dispatch
 /// on the schedule root `ring_dimension`, not a caller-supplied stack `D`.
+/// `final_group_point` is the final group's routed view of the shared opening
+/// point; root commitment geometry is final/source-local even when a
+/// precommitted group determines the batch's maximum opening arity.
 ///
 /// # Errors
 ///
@@ -18,7 +21,7 @@ use akita_types::{
 /// is encountered during dispatch.
 pub fn effective_batched_schedule<Cfg>(
     opening_batch: &OpeningClaimsLayout,
-    opening_point: &[Cfg::ExtField],
+    final_group_point: &[Cfg::ExtField],
 ) -> Result<FoldSchedule, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -40,7 +43,7 @@ where
             Cfg::ExtField,
             D,
         >(
-            std::slice::from_ref(&opening_point),
+            std::slice::from_ref(&final_group_point),
             root_params,
             alpha_bits,
         ))

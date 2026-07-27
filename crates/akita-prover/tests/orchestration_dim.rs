@@ -20,8 +20,9 @@ fn batched_selection_preserves_typed_schedule_topology() {
     ))
     .expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-    let point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
-    let actual = effective_batched_schedule::<Cfg>(&batch, &point).expect("effective schedule");
+    let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
+    let actual =
+        effective_batched_schedule::<Cfg>(&batch, &final_group_point).expect("effective schedule");
     assert_eq!(actual.recursive_folds.len(), expected.recursive_folds.len());
     assert_eq!(
         actual.terminal.input_witness_len,

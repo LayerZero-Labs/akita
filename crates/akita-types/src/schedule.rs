@@ -262,6 +262,18 @@ impl AkitaScheduleLookupKey {
         self.precommitteds.len() + 1
     }
 
+    /// Maximum opening arity across the final and precommitted groups.
+    ///
+    /// This is the shared opening-point/EOR domain. It is intentionally
+    /// distinct from `final_group.num_vars()`, which remains the source arity
+    /// used to size the final commitment and root witness.
+    pub fn max_num_vars(&self) -> usize {
+        self.precommitteds
+            .iter()
+            .map(|descriptor| descriptor.group.num_vars())
+            .fold(self.final_group.num_vars(), usize::max)
+    }
+
     /// Total number of polynomials across the final and precommitted groups.
     pub fn num_polynomials(&self) -> Result<usize, AkitaError> {
         let mut total = self.final_group.num_polynomials();
@@ -287,12 +299,6 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            if layout.group.num_vars() > self.final_group.num_vars() {
-                return Err(AkitaError::InvalidInput(
-                    "multi-group root requires precommitted groups to have at most the final num_vars"
-                        .to_string(),
-                ));
-            }
             layout.validate()?;
         }
         Ok(())

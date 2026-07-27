@@ -65,8 +65,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 "generated schedule challenge field bit width overflow".to_string(),
             )
         })?;
-    let root_eor_key =
-        PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
+    let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
     let stored_root_shape = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,
         GeneratedRootFinalChallenge::Tensor { fold_low_len } => TensorChallengeShape::Tensor {

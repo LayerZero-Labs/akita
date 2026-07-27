@@ -840,16 +840,28 @@ fn precommitted_descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
 }
 
 #[test]
-fn group_batch_key_rejects_precommitted_num_vars_above_main() {
+fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
     let multi_group_key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![precommitted_descriptor(24)],
+        final_group: PolynomialGroupLayout::new(14, 3),
+        precommitteds: vec![precommitted_descriptor(20)],
     };
 
-    let err = multi_group_key
+    multi_group_key
         .validate()
-        .expect_err("precommitted groups above the main num_vars must be rejected");
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
+        .expect("commit order must not impose an arity ordering");
+    assert_eq!(multi_group_key.final_group.num_vars(), 14);
+    assert_eq!(multi_group_key.max_num_vars(), 20);
+
+    let opening_layout = multi_group_key.opening_layout().expect("opening layout");
+    assert_eq!(opening_layout.max_num_vars(), 20);
+    assert_eq!(
+        opening_layout.groups(),
+        &[
+            PolynomialGroupLayout::new(20, 1),
+            PolynomialGroupLayout::new(14, 3),
+        ],
+        "opening layout must preserve precommitted-then-final transcript order"
+    );
 }
 
 #[test]

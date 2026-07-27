@@ -49,7 +49,7 @@ pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 3;
 /// Precommit arities sampled by the stock generated multi-group catalogs.
 ///
 /// This list controls finite catalog coverage only. The protocol accepts any
-/// precommit arity no larger than the final group when an exact schedule row is
+/// independently supported precommit arity when an exact schedule row is
 /// available.
 pub const DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS: &[usize] = &[14];
 
@@ -252,7 +252,7 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     let mut candidates = Vec::new();
     for main in mains {
         for &pre_num_vars in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS {
-            if pre_num_vars < min_precommitted_num_vars || pre_num_vars > main.num_vars() {
+            if pre_num_vars < min_precommitted_num_vars {
                 continue;
             }
             let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
@@ -331,10 +331,43 @@ fn key_within_setup_capacity(
     if key.precommitteds.is_empty() {
         return false;
     }
-    if key.final_group.num_vars() > max_num_vars {
+    if key.max_num_vars() > max_num_vars {
         return false;
     }
     key.final_group.num_polynomials() <= max_num_batched_polys
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+
+    fn descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
+        PrecommittedGroupDescriptor {
+            group: PolynomialGroupLayout::new(num_vars, 1),
+            num_live_ring_elements_per_claim: 1,
+            num_positions_per_block: 1,
+            num_live_blocks: 1,
+            log_basis_inner: 1,
+            log_basis_outer: 1,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
+            n_a: 1,
+            a_coeff_linf_bound: 1,
+            n_b: 1,
+            b_coeff_linf_bound: 1,
+        }
+    }
+
+    #[test]
+    fn capacity_uses_max_opening_arity_not_final_source_arity() {
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(14, 1),
+            precommitteds: vec![descriptor(20)],
+        };
+
+        assert!(!key_within_setup_capacity(&key, 19, 1));
+        assert!(key_within_setup_capacity(&key, 20, 1));
+    }
 }
 
 /// Selected multi-group recursive keys for setup-prefix capacity work.

@@ -40,8 +40,8 @@ commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
 - the root schedule explicitly selects dense or one-hot source bounds;
-- the final group defines the maximum opening arity; each precommitted group
-  may use any arity no larger than that maximum;
+- the final group defines the newly committed source arity, while the maximum
+  arity across all groups defines the shared opening/EOR domain;
 - all groups are opened at one shared point;
 - group sizes `K_g` may differ;
 - multi-group structure exists only at the root level;
@@ -1135,7 +1135,9 @@ At Phase 1 multi-group schedule lookup time:
   scheduler.
 - `precommitteds` must be well-formed derived group params.
 - The full multi-group key must not be collapsed into a scalar total-polynomial key.
-- Each precommitted group may use any arity no larger than the final group.
+- Commit order does not impose an arity ordering: a precommitted group may have
+  more variables than the final group, while the final commitment and root
+  witness retain the final group's source arity.
 - Tiered multi-group roots must return `AkitaError::InvalidSetup`.
 - Multi-group folded roots must hand off to a singleton recursive suffix; multi-group
   terminal root folds remain rejected until the terminal witness layout is

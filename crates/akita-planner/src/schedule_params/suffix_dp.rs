@@ -527,7 +527,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         .map(|root_key| {
             root_key
                 .num_polynomials()
-                .map(|total_polys| PolynomialGroupLayout::new(num_vars, total_polys))
+                .map(|total_polys| PolynomialGroupLayout::new(root_key.max_num_vars(), total_polys))
         })
         .transpose()?;
     let eor_key = root_eor_key.unwrap_or_else(|| PolynomialGroupLayout::singleton(num_vars));

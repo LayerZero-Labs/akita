@@ -115,7 +115,7 @@ fn key_within_setup_capacity(
     max_num_batched_polys: usize,
 ) -> bool {
     !key.precommitteds.is_empty()
-        && key.final_group.num_vars() <= max_num_vars
+        && key.max_num_vars() <= max_num_vars
         && key.final_group.num_polynomials() <= max_num_batched_polys
 }
 
@@ -125,6 +125,40 @@ fn push_unique_schedule_key(
 ) {
     if !keys.contains(&candidate) {
         keys.push(candidate);
+    }
+}
+
+#[cfg(test)]
+mod capacity_tests {
+    use super::*;
+    use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
+
+    fn descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
+        PrecommittedGroupDescriptor {
+            group: PolynomialGroupLayout::new(num_vars, 1),
+            num_live_ring_elements_per_claim: 1,
+            num_positions_per_block: 1,
+            num_live_blocks: 1,
+            log_basis_inner: 1,
+            log_basis_outer: 1,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
+            n_a: 1,
+            a_coeff_linf_bound: 1,
+            n_b: 1,
+            b_coeff_linf_bound: 1,
+        }
+    }
+
+    #[test]
+    fn capacity_uses_max_opening_arity_not_final_source_arity() {
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(14, 1),
+            precommitteds: vec![descriptor(20)],
+        };
+
+        assert!(!key_within_setup_capacity(&key, 19, 1));
+        assert!(key_within_setup_capacity(&key, 20, 1));
     }
 }
 
