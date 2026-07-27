@@ -208,21 +208,6 @@ use akita_types::{
     BasisMode, Commitment, FoldSchedule, FpExtEncoding, OpeningClaims,
 };
 
-fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
-    schedule: &FoldSchedule,
-) -> Result<(), AkitaError> {
-    let expected = Cfg::onehot_chunk_size();
-    if Cfg::decomposition().log_commit_bound != 1 || expected <= 1 {
-        return Ok(());
-    }
-    let root = schedule.root_fold();
-    let root_params = &root.params.final_group.commitment;
-    if root_params.onehot_chunk_size != expected {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(())
-}
-
 /// Verify a batched proof under config `Cfg`.
 ///
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
@@ -263,7 +248,6 @@ where
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
     validate_proof_against_schedule(proof, &schedule)?;
 
     // Schedule resolution is the earliest point at which the terminal ring

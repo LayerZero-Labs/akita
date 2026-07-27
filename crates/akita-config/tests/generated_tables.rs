@@ -50,7 +50,7 @@ use akita_schedules::generated::table_entry;
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
-    validate_generated_schedule_table,
+    validate_generated_schedule_entry, validate_generated_schedule_table,
 };
 
 #[test]
@@ -59,10 +59,37 @@ fn group_batch_emission_matches_supported_policy_shape() {
         let policy = (family.policy)();
         assert!(
             !family.emit_group_batch || policy.decomposition.log_commit_bound == 1,
-            "family {} must not emit grouped companions for unsupported multi-group-root policies",
+            "family {} opted into the current one-hot-only grouped catalog enumeration",
             family.module_name
         );
     }
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn generated_entry_rejects_root_source_policy_mismatch() {
+    let catalog = fp128::D64Dense::schedule_catalog().expect("dense schedule catalog");
+    let mut entry = catalog.entries[0];
+    entry.root.final_group.source =
+        akita_schedules::generated::GeneratedRootSource::OneHot { chunk_size: 256 };
+    let key = AkitaScheduleLookupKey {
+        final_group: entry.root.final_group.layout,
+        precommitteds: entry
+            .root
+            .precommitted_groups
+            .iter()
+            .map(|group| group.descriptor)
+            .collect(),
+    };
+    let err = validate_generated_schedule_entry(
+        &entry,
+        &key,
+        &policy_of::<fp128::D64Dense>(),
+        &fp128::D64Dense::ring_challenge_config,
+        &fp128::D64Dense::fold_challenge_shape_at_level,
+    )
+    .expect_err("generated source must match the catalog policy");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
 fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {

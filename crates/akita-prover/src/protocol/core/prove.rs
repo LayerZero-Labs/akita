@@ -1,9 +1,9 @@
 use super::*;
-use crate::api::commitment::validate_onehot_chunk_size_for_params;
+use crate::api::commitment::validate_batched_onehot_chunk_size_for_params;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
-    ProveStackFor, RootPolyMeta, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    ProveStackFor, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
     RuntimeRootProvePoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
     SuffixTensorProveBackend,
 };
@@ -11,9 +11,7 @@ use crate::RootTensorProjectionPoly;
 use akita_config::{effective_batched_schedule, ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::unreduced::ReduceTo;
 use akita_field::{AdditiveGroup, CanonicalField};
-use akita_types::{
-    dispatch_for_field, should_reject_multi_group_root, validate_schedule_ring_dims,
-};
+use akita_types::{dispatch_for_field, validate_schedule_ring_dims};
 
 /// Drive batched proving end-to-end under config `Cfg`.
 ///
@@ -91,21 +89,16 @@ where
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
-    if let Some(message) = should_reject_multi_group_root(
-        &opening_batch,
-        flat_polys
-            .iter()
-            .any(|poly| poly.onehot_chunk_size().is_none()),
-    ) {
-        return Err(AkitaError::InvalidInput(message.to_string()));
-    }
     let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
     schedule.validate_structure()?;
     let root_step = schedule.root_fold();
     let root_commit_params = &root_step.params.final_group.commitment;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, &P>(&flat_polys, root_commit_params)?;
+    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, &P>(
+        &flat_polys,
+        root_commit_params,
+    )?;
 
     // The transcript instance descriptor binds the setup-wide root ring
     // dimension (`gen_ring_dim`), NOT the root stack's const `D`. For uniform-D

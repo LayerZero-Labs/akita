@@ -26,9 +26,10 @@ use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    DecompositionParams, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -189,6 +190,65 @@ fn recursive_schedule(
             input_witness_len: successor_ring_dimension,
         },
     }
+}
+
+#[test]
+fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
+    let dense = committed_params(64);
+    assert_eq!(
+        RootSource::from_commitment(&dense),
+        RootSource::Dense {
+            coefficient_bits: 128
+        }
+    );
+    assert_eq!(
+        RootSource::from_config(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 128,
+                log_open_bound: None,
+            },
+            256,
+        ),
+        RootSource::Dense {
+            coefficient_bits: 128
+        }
+    );
+
+    let onehot = dense.with_onehot_chunk_size(256);
+    assert_eq!(
+        RootSource::from_commitment(&onehot),
+        RootSource::OneHot { chunk_size: 256 }
+    );
+    assert_eq!(
+        RootSource::from_config(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 1,
+                log_open_bound: Some(128),
+            },
+            256,
+        ),
+        RootSource::OneHot { chunk_size: 256 }
+    );
+}
+
+#[test]
+fn schedule_rejects_root_source_that_disagrees_with_commitment_bounds() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.root.params.final_group.source = RootSource::OneHot { chunk_size: 256 };
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    schedule.root.params.final_group.source = RootSource::Dense {
+        coefficient_bits: 32,
+    };
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(_))
+    ));
 }
 
 #[test]

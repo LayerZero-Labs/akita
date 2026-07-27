@@ -46,6 +46,7 @@ type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
 const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 
 mod batched;
+mod dense_group;
 mod fp32_ext4;
 mod layout;
 mod onehot;

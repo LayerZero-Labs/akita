@@ -448,6 +448,37 @@ pub enum RootSource {
     OneHot { chunk_size: usize },
 }
 
+impl RootSource {
+    /// Derive the root-source contract selected by a configuration.
+    pub fn from_config(
+        decomposition: crate::DecompositionParams,
+        onehot_chunk_size: usize,
+    ) -> Self {
+        if decomposition.log_commit_bound == 1 && onehot_chunk_size > 0 {
+            Self::OneHot {
+                chunk_size: onehot_chunk_size,
+            }
+        } else {
+            Self::Dense {
+                coefficient_bits: decomposition.field_bits(),
+            }
+        }
+    }
+
+    /// Derive the root-source contract encoded by committed-group parameters.
+    pub fn from_commitment(commitment: &CommittedGroupParams) -> Self {
+        if commitment.onehot_chunk_size > 0 {
+            Self::OneHot {
+                chunk_size: commitment.onehot_chunk_size,
+            }
+        } else {
+            Self::Dense {
+                coefficient_bits: commitment.field_bits_for_cache(),
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RootFinalChallenge {
     Flat,
@@ -474,6 +505,20 @@ pub struct RootFinalGroupParams {
     pub source: RootSource,
     pub challenge: RootFinalChallenge,
     pub commitment: CommittedGroupParams,
+}
+
+impl RootFinalGroupParams {
+    /// Validate that source metadata and commitment bounds describe one root.
+    pub fn validate(&self) -> Result<(), AkitaError> {
+        let expected = RootSource::from_commitment(&self.commitment);
+        if self.source != expected {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root source {:?} disagrees with commitment source {expected:?}",
+                self.source
+            )));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -739,6 +784,7 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        self.root.params.final_group.validate()?;
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "root fold witness lengths must be nonzero".to_string(),

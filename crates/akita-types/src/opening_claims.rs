@@ -11,24 +11,6 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 
-/// Dense polynomials cannot open multi-group root batches yet.
-pub const MULTI_GROUP_ROOT_DENSE_UNSUPPORTED: &str =
-    "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
-
-/// Return the multi-group-root rejection message, if the layout should be rejected.
-pub fn should_reject_multi_group_root(
-    layout: &OpeningClaimsLayout,
-    includes_dense_polynomial: bool,
-) -> Option<&'static str> {
-    if layout.num_groups() <= 1 {
-        return None;
-    }
-    if includes_dense_polynomial {
-        return Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED);
-    }
-    None
-}
-
 /// Ordered coordinate selection into an opening batch's shared point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointVariableSelection {
@@ -847,22 +829,5 @@ mod tests {
         let err = OpeningClaims::with_padded_point(&[F::zero(); 3], 2, 1)
             .expect_err("point longer than num_vars");
         assert!(matches!(err, AkitaError::InvalidPointDimension { .. }));
-    }
-
-    #[test]
-    fn should_reject_multi_group_root_returns_canonical_messages() {
-        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
-        assert_eq!(should_reject_multi_group_root(&layout, false), None);
-        assert_eq!(
-            should_reject_multi_group_root(&layout, true),
-            Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED)
-        );
-        assert_eq!(
-            should_reject_multi_group_root(
-                &OpeningClaimsLayout::new(4, 1).expect("single group"),
-                true,
-            ),
-            None
-        );
     }
 }

@@ -29,9 +29,8 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,

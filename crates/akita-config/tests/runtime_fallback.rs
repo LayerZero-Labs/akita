@@ -12,9 +12,15 @@
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp32};
-use akita_config::{policy_of, CommitmentConfig, RecursiveCommitmentConfig};
+use akita_config::{
+    policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
+};
+use akita_planner::find_group_batch_schedule;
 use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{
+    AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, RootSource,
+};
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
 /// hold singleton / 2-batched / 4-batched keys), so strict runtime resolution
@@ -126,6 +132,50 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
+}
+
+#[test]
+fn offline_planner_admits_dense_multi_group_roots() {
+    type Cfg = fp128::D64Dense;
+    const PRE_NV: usize = 16;
+    const FINAL_NV: usize = 20;
+
+    let pre_group = PolynomialGroupLayout::singleton(PRE_NV);
+    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit opening layout");
+    let pre_params =
+        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
+            &pre_layout,
+        )
+        .expect("dense precommit params");
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::singleton(FINAL_NV),
+        precommitteds: vec![PrecommittedGroupDescriptor::from_params(
+            pre_group,
+            &pre_params,
+        )],
+    };
+    let planned = find_group_batch_schedule(
+        &key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+    .expect("dense multi-group schedule");
+
+    assert_eq!(
+        planned.schedule.root.params.final_group.source,
+        RootSource::Dense {
+            coefficient_bits: Cfg::decomposition().field_bits(),
+        }
+    );
+    assert_eq!(
+        planned.schedule.root.params.precommitted_groups.len(),
+        key.precommitteds.len()
+    );
+    planned
+        .schedule
+        .validate_structure()
+        .expect("dense grouped schedule structure");
 }
 
 #[test]

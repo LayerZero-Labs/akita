@@ -141,15 +141,7 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: if root.params.onehot_chunk_size == 0 {
-                        RootSource::Dense {
-                            coefficient_bits: root.params.field_bits_for_cache(),
-                        }
-                    } else {
-                        RootSource::OneHot {
-                            chunk_size: root.params.onehot_chunk_size,
-                        }
-                    },
+                    source: RootSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {

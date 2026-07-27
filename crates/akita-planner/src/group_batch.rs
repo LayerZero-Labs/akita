@@ -592,12 +592,6 @@ fn find_group_batch_schedule_inner(
             fold_challenge_shape_at_level,
         );
     }
-    if policy.decomposition.log_commit_bound != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "dense multi-group root batching is not supported; see specs/multi-group-batching.md"
-                .to_string(),
-        ));
-    }
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {

@@ -18,6 +18,13 @@
 > Multi-group and multi-chunk witnesses now use the canonical product
 > `WitnessLayout`, with one shared quotient tail.
 
+> **Root-source supersession (2026-07-27).** Multi-group protocol orchestration
+> and offline planning now support both `RootSource::Dense` and
+> `RootSource::OneHot`. The stock generated group-batch catalogs still contain
+> only selected one-hot families; a table-backed dense configuration therefore
+> needs generated dense group-batch rows before it can resolve these schedules
+> without the offline planner.
+
 > **Topology/API supersession (PR #311).** The implementation is folded-only:
 > `Schedule` is structural `folds + terminal`, every supported proof has at
 > least two folds, and unsupported keys return `UnsupportedSchedule`. Later
@@ -32,7 +39,7 @@ object. This spec defines the first production model for batching several
 commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
-- every opened polynomial is a one-hot polynomial;
+- the root schedule explicitly selects dense or one-hot source bounds;
 - the final group defines the maximum opening arity; each precommitted group
   may use any arity no larger than that maximum;
 - all groups are opened at one shared point;
@@ -83,8 +90,7 @@ v:     public D commitment rows
 
 ## Goals
 
-- Support root proofs for several one-hot commitment groups opened at one shared
-point.
+- Support root proofs for several commitment groups opened at one shared point.
 - Allow unequal group sizes `K_g`.
 - Give each group its own `z_hat_g` at the root.
 - Keep recursive suffix folds singleton: the multi-group root produces one next
@@ -166,8 +172,8 @@ singleton proof path.
 ## Current State
 
 The codebase has implemented the multi-group scheduler, conservative precommit,
-`commit_final_group`, and folded-root multi-group opening proofs for one-hot
-polynomials.
+`commit_final_group`, and folded-root multi-group opening proofs for dense and
+one-hot source policies.
 
 Implemented now:
 
@@ -181,7 +187,7 @@ Implemented now:
   `AkitaScheduleLookupKey::single(final_group)` and delegates to the scalar
   scheduler. A multi-group key goes through generated group-batch lookup first, then
   DP fallback.
-- `find_group_batch_schedule` builds folded-root schedules for one-hot,
+- `find_group_batch_schedule` builds folded-root schedules for dense or one-hot,
   non-tiered configs. Unsupported keys return `UnsupportedSchedule`. The
   multi-group root `LevelParams` holds
   the final group in the normal root fields and all precommitted groups in
@@ -201,7 +207,7 @@ Implemented now:
   resolves the runtime schedule, reads its root commit params from
   `schedule.root_fold()?.params`,
   and emits the final commitment plus hint.
-- `batched_prove` supports `G > 1` folded multi-group-root one-hot openings;
+- `batched_prove` supports `G > 1` folded multi-group-root dense and one-hot openings;
   proving and verification derive setup-contribution behavior from the schedule.
   Base-field and extension-field openings use the same group layout, and the
   root can hand off to a singleton recursive suffix. The multi-group root
@@ -224,8 +230,9 @@ Implemented now:
 Still future / guarded:
 
 - Distributed multi-group execution beyond the shipped multi-chunk layouts.
-- Dense polynomial multi-group roots and tiered multi-group commitments remain
-  guarded. Recursive setup contribution is config-typed and covered end to end.
+- Stock generated dense group-batch catalog rows and tiered multi-group
+  commitments remain guarded. Recursive setup contribution is config-typed and
+  covered end to end.
 - Immediately terminal multi-group root folds remain guarded.
 - There is no separate descriptor `CommitSection`, and the design should not add
   one for this flow. The current descriptor binds call shape through
@@ -534,12 +541,12 @@ num_vars in supported family ranges
 
 ## Precommit Configuration
 
-Standalone precommitted group commits use the existing one-hot
-`proof_optimized` presets through `ConservativeCommitmentConfig<Cfg>`. The
+Standalone precommitted group commits use the existing `proof_optimized`
+presets through `PrecommittedCommitmentConfig<Cfg>`. The
 adapter overrides ordinary scalar schedule/commit layout selection so
 precommitted groups can be produced with the existing `batched_commit` API while
-freezing their independently planned inner basis and minimum selected outer basis. Dense
-backends and tiered conservative/multi-group roots return explicit `AkitaError`.
+freezing their independently planned inner basis and minimum selected outer
+basis. Tiered precommit and multi-group roots return explicit `AkitaError`.
 
 ### Standalone Conservative Commit
 
@@ -558,7 +565,7 @@ For a group committed before the final multi-group proof is known:
    ```
    The planner keeps its normal proof-size and weak-binding-aware objective; it
    does not switch to a separate "minimize `t_hat_g`" objective.
-3. Require a one-hot root layout in the conservative precommit path.
+3. Preserve the config-selected dense or one-hot `RootSource` contract.
 4. Freeze the fields that determine the committed `t_hat_g` shape:
    ```text
    key, position_index_bits, block_index_bits,
@@ -1111,8 +1118,8 @@ unless the caller explicitly needs separate commitment objects.
 
 At conservative precommit time:
 
-- the group must be one-hot;
 - the group must be nonempty;
+- the group source must satisfy the config-selected `RootSource` contract;
 - `log_basis` must be `min_basis(Cfg)`;
 - the `PrecommittedGroupDescriptor` must be derived by the proof-optimized planner
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
@@ -1129,7 +1136,7 @@ At Phase 1 multi-group schedule lookup time:
 - `precommitteds` must be well-formed derived group params.
 - The full multi-group key must not be collapsed into a scalar total-polynomial key.
 - Each precommitted group may use any arity no larger than the final group.
-- Dense and tiered multi-group roots must return `AkitaError::InvalidSetup`.
+- Tiered multi-group roots must return `AkitaError::InvalidSetup`.
 - Multi-group folded roots must hand off to a singleton recursive suffix; multi-group
   terminal root folds remain rejected until the terminal witness layout is
   implemented.
@@ -1154,16 +1161,20 @@ At current prove time:
 - `ProverOpeningData` / `OpeningClaimsLayout` must be internally consistent.
 - `G > 1` supports `SetupContributionMode::Recursive` when the folded root can
   hand off to a singleton recursive suffix.
-- Dense commitment configs (`log_commit_bound != 1`) reject multi-group roots.
 - Tiered multi-group proofs reject with `AkitaError::InvalidSetup`.
-- Dense polynomials in a multi-group batch reject with `InvalidInput` on prove.
+- `RootSource::OneHot` requires every polynomial to carry the configured chunk
+  size. `RootSource::Dense` uses conservative dense bounds and may use dense or
+  sparse prover storage.
 
 At current verify time:
 
 - `OpeningClaims` must be internally consistent.
 - `G > 1` with recursive setup contribution verifies against the combined
   setup-index weight vector.
-- Dense commitment configs reject multi-group roots with `InvalidProof`.
+- The reconstructed schedule source must match the root commitment bounds.
+  Generated schedules additionally validate the stored source against the
+  catalog policy while resolving the schedule. This separation permits a
+  mixed envelope/final configuration to select the final policy's root source.
 
 - The verifier must reconstruct the `AkitaScheduleLookupKey` from the public
   opening batch, setup, and config policy.
@@ -1184,9 +1195,9 @@ At current verify time:
 | ----------------------------------------------- | --------------------------------------- | ---------------------------------------- |
 | Tiered preset + multi-group schedule key        | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
 | Tiered preset + `G > 1` proof                   | Prove / verify entry                    | `AkitaError::InvalidSetup`               |
-| Dense config + multi-group schedule key         | `runtime_schedule` / multi-group DP     | `AkitaError::InvalidSetup`               |
-| Dense polynomial at conservative precommit      | `ConservativeCommitmentConfig` commit params / one-hot validators | `AkitaError::InvalidSetup` / `InvalidInput` |
-| Dense polynomial + `G > 1` proof                | Prove entry                             | `AkitaError::InvalidInput`               |
+| Dense grouped key missing from stock catalog    | table-backed `runtime_schedule`         | `AkitaError::UnsupportedSchedule`        |
+| Root source disagrees with commitment/catalog policy | schedule validation / generated resolution | `AkitaError::InvalidSetup` |
+| Dense polynomial under one-hot source bounds    | commit / prove source validation        | `AkitaError::InvalidInput`               |
 | `G > 1` + `witness_chunk.num_chunks > 1`        | schedule selection / prove / verify / relation replay | `AkitaError::InvalidSetup` / `InvalidProof` |
 | Scalar table lookup collapsing `[1,3]` to `[4]` | scalar key construction / multi-group lookup | table miss or `AkitaError::InvalidSetup` |
 | `log_basis != min_basis(Cfg)` at precommit      | conservative layout validation / multi-group root params | `AkitaError::InvalidSetup`               |
@@ -1306,7 +1317,7 @@ kernels land if B-row time is a bottleneck.
 - Independent conservative precommitted groups do not depend on each other.
 - Undersized conservative `n_b` rejects.
 - Exceeding setup capacity rejects.
-- Dense policies reject in the conservative/multi-group precommit path.
+- Dense policies produce exact dense precommit layouts.
 - `commit_final_group(group_last, precommitted_layouts)` commits the final group
   with multi-group params.
 - `commit_final_group` rejects if a precommitted key cannot recompute to a valid
@@ -1321,6 +1332,7 @@ kernels land if B-row time is a bottleneck.
   folded multi-group root can hand off to a singleton recursive suffix.
 - Current prove/verify accept one-hot `G > 1` with recursive setup contribution when the
   folded multi-group root can hand off to a singleton recursive suffix.
+- Current prove/verify accept planner-backed dense `G > 1` schedules.
 - Current prove/verify reject tiered `G > 1` with `AkitaError::InvalidSetup`.
 - Current prove/verify accept the shipped multi-group multi-chunk layout.
 - Removed by PR #311: root-direct two-group round trips.
