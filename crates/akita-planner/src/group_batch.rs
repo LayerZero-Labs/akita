@@ -625,6 +625,31 @@ fn find_group_batch_schedule_inner(
             .best_by_payload_per_lb
             .values()
             .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinRootRankThenPayloadWithinSlack { slack_permille } => {
+            let min_payload = suffix
+                .best_by_payload_per_lb
+                .values()
+                .map(|candidate| candidate.total_bytes)
+                .min();
+            min_payload.and_then(|min_payload| {
+                let max_payload = (min_payload as u128)
+                    .saturating_mul(1_000 + u128::from(slack_permille))
+                    .div_ceil(1_000)
+                    .min(usize::MAX as u128) as usize;
+                suffix
+                    .best_by_payload_per_lb
+                    .values()
+                    .filter(|candidate| candidate.total_bytes <= max_payload)
+                    .min_by_key(|candidate| {
+                        (
+                            candidate.folds.first().map_or(usize::MAX, |fold| {
+                                fold.params.inner_commit_matrix.output_rank()
+                            }),
+                            candidate.total_bytes,
+                        )
+                    })
+            })
+        }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
             .best_by_first_direct_setup_per_lb
             .values()

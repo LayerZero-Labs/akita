@@ -40,6 +40,9 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick the minimum estimated proof payload.
     MinEstimatedProofPayload,
+    /// Minimize the root inner rank, provided the proof payload remains
+    /// within `slack_permille` of the minimum-payload candidate.
+    MinRootRankThenPayloadWithinSlack { slack_permille: u32 },
     /// Pick the first direct setup footprint, then payload, within setup support.
     MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
 }
@@ -50,15 +53,28 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinRootRankThenPayloadWithinSlack { .. } => 3,
+        }
+    }
+
+    /// Variant payload included in catalog identity digests.
+    pub const fn parameter(self) -> u32 {
+        match self {
+            Self::MinRootRankThenPayloadWithinSlack { slack_permille } => slack_permille,
+            Self::MinEstimatedProofPayload
+            | Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 0,
         }
     }
 
     /// Stable identity name.
-    pub const fn name(self) -> &'static str {
+    pub fn name(self) -> String {
         match self {
-            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
+            Self::MinEstimatedProofPayload => "MinEstimatedProofPayload".to_string(),
+            Self::MinRootRankThenPayloadWithinSlack { slack_permille } => {
+                format!("MinRootRankThenPayloadWithinSlack {{ slack_permille: {slack_permille} }}")
+            }
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
-                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
+                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope".to_string()
             }
         }
     }
@@ -146,12 +162,20 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else {
-        SelectionPolicyId::MinEstimatedProofPayload
-    };
-    if policy.selection_policy != expected_selection_policy {
+    let selection_policy_matches_mode = matches!(
+        (policy.recursive_setup_planning, policy.selection_policy),
+        (
+            true,
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        ) | (false, SelectionPolicyId::MinEstimatedProofPayload)
+            | (
+                false,
+                SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                    slack_permille: 1..,
+                },
+            )
+    );
+    if !selection_policy_matches_mode {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with recursive setup capability".to_string(),
         ));
