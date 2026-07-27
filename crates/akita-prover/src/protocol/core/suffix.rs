@@ -476,8 +476,7 @@ where
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    let needs_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
+    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);

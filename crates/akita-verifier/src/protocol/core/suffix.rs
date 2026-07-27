@@ -535,8 +535,7 @@ where
     let group_points = (0..opening_batch.num_groups())
         .map(|group_index| block_claims.group_point(group_index))
         .collect::<Result<Vec<_>, _>>()?;
-    let requires_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
+    let requires_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let FoldEorReplay {
         prepared_points,
         final_relation: eor_trace_final,

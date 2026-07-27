@@ -811,3 +811,111 @@ where
     )?;
     Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::CompressedUniPoly;
+    use akita_field::{FpExt4, Prime32Offset99};
+    use akita_sumcheck::SumcheckProof;
+    use akita_transcript::AkitaTranscript;
+    use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+
+    fn extension_point(num_vars: usize, offset: u64) -> Vec<E> {
+        (0..num_vars)
+            .map(|index| {
+                let value = offset + index as u64;
+                E::from_base_slice(&[
+                    F::from_u64(value + 1),
+                    F::from_u64(value + 2),
+                    F::from_u64(value + 3),
+                    F::from_u64(value + 4),
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recursive_setup_prefix_groups_share_one_max_tail_eor_and_reject_tampering() {
+        const SETUP_PREFIX_VARS: usize = 12;
+        const WITNESS_VARS: usize = 20;
+        let opening_batch = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::singleton(SETUP_PREFIX_VARS),
+            PolynomialGroupLayout::singleton(WITNESS_VARS),
+        ])
+        .expect("recursive setup-prefix opening layout");
+        let group_points = vec![
+            extension_point(SETUP_PREFIX_VARS, 10),
+            extension_point(WITNESS_VARS, 100),
+        ];
+        let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
+        let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
+        let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
+        let max_tail_rounds = WITNESS_VARS - split_bits;
+        let reduction = ExtensionOpeningReductionProof {
+            partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
+            sumcheck: SumcheckProof {
+                round_polys: (0..max_tail_rounds)
+                    .map(|_| CompressedUniPoly {
+                        coeffs_except_linear_term: vec![
+                            E::zero();
+                            EXTENSION_OPENING_REDUCTION_DEGREE
+                        ],
+                    })
+                    .collect(),
+            },
+        };
+
+        let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let replay = verify_eor_sumcheck::<F, E, _>(
+            Some(&reduction),
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut transcript,
+        )
+        .expect("recursive setup-prefix grouped EOR")
+        .expect("extension claims require EOR");
+        assert_eq!(replay.rho.len(), max_tail_rounds);
+        assert_eq!(replay.final_factors.len(), 2);
+
+        let mut tampered = reduction.clone();
+        tampered.partials[0] += E::one();
+        let mut tampered_transcript =
+            AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let tampered_result = verify_eor_sumcheck::<F, E, _>(
+            Some(&tampered),
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut tampered_transcript,
+        );
+        assert!(
+            matches!(tampered_result, Err(AkitaError::InvalidProof)),
+            "tampered setup-prefix EOR partial must reject"
+        );
+
+        let mut missing_transcript =
+            AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let missing_result = verify_eor_sumcheck::<F, E, _>(
+            None,
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut missing_transcript,
+        );
+        assert!(
+            matches!(missing_result, Err(AkitaError::InvalidProof)),
+            "missing setup-prefix EOR must reject for extension claims"
+        );
+    }
+}

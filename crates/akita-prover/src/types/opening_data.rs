@@ -582,6 +582,42 @@ mod tests {
     }
 
     #[test]
+    fn recursive_suffix_eor_claims_keep_setup_prefix_and_witness_groups() {
+        const SETUP_PREFIX_VARS: usize = 12;
+        const WITNESS_VARS: usize = 20;
+        let shared_point = vec![F::zero(); WITNESS_VARS];
+        let setup_prefix_point_vars =
+            PointVariableSelection::prefix(SETUP_PREFIX_VARS, WITNESS_VARS)
+                .expect("setup-prefix point vars");
+
+        let claims =
+            ProverOpeningData::<F, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
+                shared_point,
+                Some(setup_prefix_point_vars),
+                WITNESS_VARS,
+            )
+            .expect("recursive setup-prefix EOR claims");
+        let layout = claims.layout().expect("recursive EOR layout");
+
+        assert_eq!(
+            layout.groups(),
+            &[
+                PolynomialGroupLayout::singleton(SETUP_PREFIX_VARS),
+                PolynomialGroupLayout::singleton(WITNESS_VARS),
+            ]
+        );
+        assert_eq!(layout.max_num_vars(), WITNESS_VARS);
+        assert_eq!(
+            claims.group_point(0).expect("setup-prefix point").len(),
+            SETUP_PREFIX_VARS
+        );
+        assert_eq!(
+            claims.group_point(1).expect("witness point").len(),
+            WITNESS_VARS
+        );
+    }
+
+    #[test]
     fn opening_layout_rejects_group_arity_mismatch() {
         let pre_poly = MockPoly { num_vars: 3 };
         let final_a = MockPoly { num_vars: 4 };
