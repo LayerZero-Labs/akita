@@ -4,11 +4,26 @@ use akita_algebra::{
     ring::scalar_powers,
 };
 
+struct GroupSetupIndexWeights<E> {
+    projection_scales: [Vec<E>; 3],
+    relation_lane_powers: [Vec<E>; 3],
+}
+
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Materialize the dense packed setup-position weight vector.
     pub fn materialize_setup_index_weights(&self, alpha: E) -> Result<Vec<E>, AkitaError> {
+        // Both power families depend only on the group. Hoist their allocation
+        // and exponentiation out of the potentially million-element setup loop.
+        let group_weights = self
+            .groups
+            .iter()
+            .map(|group| GroupSetupIndexWeights {
+                projection_scales: self.group_projection_scales(group, alpha),
+                relation_lane_powers: self.group_relation_lane_powers(group, alpha),
+            })
+            .collect::<Vec<_>>();
         (0..self.required())
-            .map(|setup_idx| self.setup_index_weight_at(setup_idx, alpha))
+            .map(|setup_idx| self.setup_index_weight_at(setup_idx, &group_weights))
             .collect()
     }
 
@@ -57,7 +72,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         ]
     }
 
-    fn setup_index_weight_at(&self, setup_idx: usize, alpha: E) -> Result<E, AkitaError> {
+    fn setup_index_weight_at(
+        &self,
+        setup_idx: usize,
+        group_weights: &[GroupSetupIndexWeights<E>],
+    ) -> Result<E, AkitaError> {
         let geometry = self.projection_geometry;
         if setup_idx >= geometry.required() {
             return Err(AkitaError::InvalidSize {
@@ -66,9 +85,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             });
         }
         let mut weight = E::zero();
-        for group in &self.groups {
-            let scales = self.group_projection_scales(group, alpha);
-            let lane_powers = self.group_relation_lane_powers(group, alpha);
+        for (group, weights) in self.groups.iter().zip(group_weights) {
+            let scales = &weights.projection_scales;
+            let lane_powers = &weights.relation_lane_powers;
             let d_idx = setup_idx / group.d_ratio;
             let d_footprint = self
                 .d_rows
