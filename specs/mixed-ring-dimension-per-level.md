@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Planner integration proposed; protocol/test-support implementation exists; planner work has not started |
+| Status | Direct scalar mixed-D planner search implemented offline; catalog/runtime and recursive-setup integration pending |
 | Review snapshot | 2026-07-28, planner reviewed on `main` at `af770e129` |
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
@@ -43,9 +43,11 @@ experiment:
   dimensions `d_a/d_b/d_d`, subject to the A-carrier constraints.
 
 The protocol, setup-contribution, quotient, direct verifier, recursive
-verifier, and multi-group paths all understand this geometry. The production
-planner does **not** yet search arbitrary per-matrix or per-group dimensions.
-The mixed schedules in this document are synthetic schedules built in
+verifier, and multi-group paths all understand this geometry. The offline
+planner now has an opt-in direct scalar search over explicit per-matrix
+dimension tuples. Shipped catalogs, generated-row replay, multi-group root
+search, and recursive setup offload do **not** yet use that search. The
+benchmark profiles in this document remain synthetic schedules built in
 `akita-pcs` test support.
 
 The proposed next step is to make dimension choice part of the offline planner.
@@ -57,8 +59,9 @@ The requested selection order is:
 3. deterministic canonical tie-break only.
 ```
 
-This policy is specified below. It is not implemented, and runtime resolution
-must remain catalog-only: prover and verifier must never run the planner.
+This policy is implemented by the offline direct scalar entry point. It is not
+yet catalog-bound or available in runtime resolution; prover and verifier
+remain catalog-only and never run the planner.
 
 The currently preferred measured design remains:
 
@@ -752,6 +755,61 @@ byte-identical.
 4. Remove synthetic profile adapters only after planner-selected schedules
    reproduce their coverage and benchmarks.
 
+### Implementation checkpoint and planner example
+
+Commit `8d7598fff` implements the first offline direct scalar cut while
+preserving `find_schedule` and all generated catalogs:
+
+- `RingDimensionSearchDomain` admits canonical explicit
+  `(d_a, d_b, d_d)` tuples;
+- `find_schedule_with_ring_dimension_domain` selects by physical setup field
+  elements, then exact modeled proof bytes;
+- root and recursive candidates derive role-local widths, SIS keys, and
+  matrices directly;
+- recursive splits are exhaustively enumerated;
+- suffix states retain a nondominated setup/proof frontier per exact
+  parent-visible first fold;
+- recursive setup policies are rejected by the mixed entry point and continue
+  to use the existing grouped planner.
+
+`crates/akita-planner/examples/mixed_dimension_search.rs` exercises both the
+implemented and preserved paths. With setup generation D256, `nv=18`, and:
+
+```text
+64/64/64
+128/64/64
+128/128/128
+256/128/128
+```
+
+the mixed search completed in 11.7 seconds and selected:
+
+```text
+L0:       256/128/128, input 262,144, output 263,168
+L1:       128/64/64,  input 263,168, output 155,648
+L2:       128/64/64,  input 155,648, output 121,856
+terminal: D64,         input 121,856
+```
+
+Its selected score was 65,536 physical setup field elements and 83,576
+modeled proof bytes. The root is allowed to increase field-element witness
+length slightly because contraction is checked in decomposed bits; the later
+mixed levels provide the useful contraction.
+
+The same full four-tuple search did not terminate within five minutes at
+`nv=36`; `nv=24` also exceeded one minute. Both were stopped without an error.
+This is a planner-generation performance issue: exact split enumeration plus
+edge-partitioned Pareto frontiers grow too quickly. Frontier-preserving lower
+bounds, dominance indexing, and state instrumentation are required before
+using this search for full catalog generation.
+
+For the PR recursive multi-group shape, the new entry point returns the
+expected unsupported-policy error because mixed recursive setup is a later
+cut. The preserved grouped D64 planner still produced a valid nine-level
+schedule with one setup-offload edge, a 524,288-ring-element D64 setup
+envelope, and a 102,780-byte modeled proof. This confirms behavior
+preservation, not planner-native recursive mixed-D support.
+
 ### Acceptance criteria
 
 The planner integration is complete only when all of these hold:
@@ -1255,6 +1313,58 @@ The two retained timing samples were:
 | F | 10.1663 s, 10.1765 s | 4.7063 s, 4.6053 s | 27.240 ms, 27.067 ms |
 | C | 13.7317 s, 13.8389 s | 3.1873 s, 3.1916 s | 35.359 ms, 35.374 ms |
 | D | 13.4459 s, 13.3866 s | 3.1818 s, 3.1368 s | 25.704 ms, 26.157 ms |
+
+#### Follow-up reproduction after planner-native mixed-D cut
+
+The full seven-profile matrix was rerun from `8d7598fff` on 2026-07-28 after
+adding the opt-in per-matrix planner search. The build, host, direct setup
+mode, thread counts, warmup count, and retained-run count matched the protocol
+above.
+
+Every deterministic result reproduced exactly:
+
+- proof bytes and fold/terminal decomposition;
+- setup vector, prover NTT cache, and verifier NTT cache;
+- root ranks and fold count;
+- successful prove/verify for both retained runs of every profile.
+
+The follow-up measurements were:
+
+| Metric | A: `D = 64` all | A′: `D = 128` root only | B: `D = 128` L0–L1 | E: `128/128/128 → 128/64/64 → 64` | F: `512/128/128 → 128/64/64 → 64` | C: root `128/64/64` | D: root `128/128/64` |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Commit | 23.410 s | 13.885 s | 13.790 s | 15.996 s | **11.241 s** | 14.782 s | 14.617 s |
+| Prove | 2.972 s | 3.335 s | **3.091 s** | 3.125 s | 4.894 s | 3.232 s | 3.241 s |
+| Verify | 0.0360 s | 0.0271 s | **0.0212 s** | 0.0223 s | 0.0281 s | 0.0368 s | 0.0273 s |
+| Proof bytes | **93,400** | 94,428 | 97,824 | 95,768 | 98,229 | 108,171 | 108,183 |
+| Fold / terminal bytes | 41,012 / 52,388 | 42,036 / 52,392 | 34,956 / 62,868 | 32,908 / 62,860 | 35,372 / 62,857 | 35,672 / 72,499 | 35,672 / 72,511 |
+| Setup vector / prover NTT cache | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.08 GB / 2.71 GB | 1.44 GB / 3.61 GB | 2.16 GB / 5.41 GB | 1.08 GB / 2.71 GB |
+| Verifier NTT cache | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB | 1.44 MB |
+| Peak RSS | 11.40 GiB | 10.46 GiB | 10.32 GiB | 10.32 GiB | 20.54 GiB | 16.51 GiB | 10.35 GiB |
+| Root ranks `n_a/n_b/n_d` | `6/2/1` | `3/1/1` | `3/1/1` | `3/1/1` | `1/1/1` | `3/2/1` | `3/1/1` |
+| Fold levels, including terminal | 9 | 9 | 7 | 7 | 7 | 6 | 6 |
+
+The retained samples were:
+
+| Profile | Commit samples | Prove samples | Verify samples |
+|---|---|---|---|
+| A | 23.5282 s, 23.2922 s | 3.0298 s, 2.9149 s | 36.189 ms, 35.838 ms |
+| A′ | 13.7643 s, 14.0052 s | 3.3601 s, 3.3094 s | 27.301 ms, 26.858 ms |
+| B | 13.7956 s, 13.7841 s | 3.0777 s, 3.1044 s | 21.368 ms, 21.040 ms |
+| E | 15.1230 s, 16.8683 s | 3.1357 s, 3.1144 s | 22.806 ms, 21.712 ms |
+| F | 11.3390 s, 11.1421 s | 4.8520 s, 4.9355 s | 27.898 ms, 28.230 ms |
+| C | 14.7149 s, 14.8497 s | 3.2271 s, 3.2359 s | 36.907 ms, 36.597 ms |
+| D | 14.5899 s, 14.6444 s | 3.2066 s, 3.2750 s | 26.843 ms, 27.731 ms |
+
+Relative to the earlier idle-machine table, prove changed by `+0.5%` to
+`+5.1%` and verify by `-3.4%` to `+5.2%`. Commit was more sensitive to host
+state: A/A′/B changed by only `+0.3%` to `+3.5%`, while the later E/F/C/D
+runs were `+7.2%` to `+18.3%`. E's two commit samples alone differed by
+11.5%, while its proof geometry and prove/verify times remained stable.
+An independent E repeat after the matrix measured 14.282 s commit, 3.092 s
+prove, and 22.649 ms verify, reducing its commit delta from `+18.3%` to
+`+5.7%` without any structural change. Therefore the follow-up confirms exact
+functional and sizing reproduction but does not supersede the earlier
+idle-machine timing table.
 
 Proof size, fold/tail decomposition, level count, setup footprint, and verifier
 cache footprint matched across both retained runs of every profile. The

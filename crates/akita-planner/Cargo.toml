@@ -31,5 +31,10 @@ name = "gen_schedule_tables"
 path = "src/bin/gen_schedule_tables.rs"
 required-features = ["catalog-gen"]
 
+[[example]]
+name = "mixed_dimension_search"
+path = "examples/mixed_dimension_search.rs"
+required-features = ["catalog-gen"]
+
 [lints]
 workspace = true

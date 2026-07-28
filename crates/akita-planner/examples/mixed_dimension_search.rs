@@ -1,0 +1,138 @@
+use akita_config::{
+    policy_of,
+    proof_optimized::fp128::{D256OneHot, D64OneHot},
+    CommitmentConfig, RecursiveCommitmentConfig,
+};
+use akita_planner::{
+    find_group_batch_schedule, find_schedule, find_schedule_with_ring_dimension_domain,
+    RingDimensionSearchDomain,
+};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentRingDims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+};
+
+fn dims(d_a: usize, d_b: usize, d_d: usize) -> CommitmentRingDims {
+    CommitmentRingDims {
+        inner: d_a,
+        outer: d_b,
+        opening: d_d,
+    }
+}
+
+fn print_schedule(
+    label: &str,
+    setup_generation_dimension: usize,
+    planned: &akita_types::PlannedFoldSchedule,
+) {
+    let schedule = &planned.schedule;
+    let physical_setup = akita_types::setup_matrix_field_elements_for_schedule(schedule)
+        .expect("physical setup envelope");
+    println!("{label}");
+    println!(
+        "  objective: setup={} generated D{} ring elements ({} physical field elements), proof={} bytes",
+        planned.estimate.estimated_setup_envelope_ring_elements,
+        setup_generation_dimension,
+        physical_setup,
+        planned
+            .estimate
+            .estimated_proof_payload_bytes()
+            .expect("proof estimate"),
+    );
+    println!(
+        "  L0: {:?}, input={}, output={}",
+        schedule.root.params.final_group.commitment.role_dims(),
+        schedule.root.input_witness_len,
+        schedule.root.output_witness_len,
+    );
+    for (index, fold) in schedule.recursive_folds.iter().enumerate() {
+        println!(
+            "  L{}: {:?}, input={}, output={}",
+            index + 1,
+            fold.params.witness.role_dims(),
+            fold.input_witness_len,
+            fold.output_witness_len,
+        );
+    }
+    println!(
+        "  L{} terminal: D{}, input={}",
+        schedule.recursive_folds.len() + 1,
+        schedule.terminal.params.witness.d_a(),
+        schedule.terminal.input_witness_len,
+    );
+}
+
+fn main() -> Result<(), akita_field::AkitaError> {
+    let num_vars = std::env::args()
+        .nth(1)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(36);
+    let direct_policy = policy_of::<D256OneHot>();
+    let domain = RingDimensionSearchDomain::new(
+        direct_policy.ring_dimension,
+        [
+            CommitmentRingDims::uniform(64),
+            dims(128, 64, 64),
+            CommitmentRingDims::uniform(128),
+            dims(256, 128, 128),
+        ],
+    )?;
+    let direct = find_schedule_with_ring_dimension_domain(
+        PolynomialGroupLayout::singleton(num_vars),
+        &direct_policy,
+        &domain,
+        D256OneHot::ring_challenge_config,
+        D256OneHot::fold_challenge_shape_at_level,
+    )?;
+    print_schedule(
+        &format!("direct scalar mixed-D search (nv={num_vars})"),
+        direct_policy.ring_dimension,
+        &direct,
+    );
+
+    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+    let recursive_policy = policy_of::<Recursive>();
+    let recursive_domain = RingDimensionSearchDomain::new(64, [CommitmentRingDims::uniform(64)])?;
+    let mixed_recursive = find_schedule_with_ring_dimension_domain(
+        PolynomialGroupLayout::new(32, 2),
+        &recursive_policy,
+        &recursive_domain,
+        Recursive::ring_challenge_config,
+        Recursive::fold_challenge_shape_at_level,
+    );
+    println!("recursive setup mixed-D entry point:");
+    println!(
+        "  {}",
+        mixed_recursive.expect_err("the first mixed-D cut rejects recursive setup planning")
+    );
+
+    let precommit_layout = PolynomialGroupLayout::singleton(16);
+    let precommit = find_schedule(
+        precommit_layout,
+        &policy_of::<D64OneHot>(),
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )?;
+    let descriptor = PrecommittedGroupDescriptor::from_params(
+        precommit_layout,
+        &precommit.schedule.root.params.final_group.commitment,
+    );
+    let recursive_key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        precommitteds: vec![descriptor, descriptor],
+    };
+    let preserved = find_group_batch_schedule(
+        &recursive_key,
+        &recursive_policy,
+        Recursive::ring_challenge_config,
+        Recursive::fold_challenge_shape_at_level,
+    )?;
+    println!("preserved recursive grouped planner:");
+    println!(
+        "  setup={} D64 ring elements, proof={} bytes, levels={}, offload_edges={}",
+        preserved.estimate.estimated_setup_envelope_ring_elements,
+        preserved.estimate.estimated_proof_payload_bytes()?,
+        preserved.schedule.recursive_folds.len() + 2,
+        preserved.estimate.selected_offload_edges,
+    );
+    Ok(())
+}
