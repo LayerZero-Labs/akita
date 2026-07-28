@@ -70,6 +70,41 @@ fn active_setup_field_len_matches_packed_role_maximum() {
 }
 
 #[test]
+fn active_setup_field_len_includes_mixed_role_subcolumns() {
+    let mut lp = sample_level_params();
+    let inner = &lp.inner_commit_matrix;
+    lp.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound(),
+        128,
+    );
+    let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
+    let a_slots =
+        lp.inner_commit_matrix.output_rank() * lp.num_positions_per_block * lp.num_digits_inner * 2;
+    let b_slots = lp.outer_commit_matrix.output_rank()
+        * opening_batch.num_total_polynomials()
+        * lp.inner_commit_matrix.output_rank()
+        * lp.num_live_blocks
+        * lp.num_digits_outer
+        * 2;
+    let d_slots = lp.open_commit_matrix.output_rank()
+        * opening_batch.num_total_polynomials()
+        * lp.num_live_blocks
+        * lp.num_digits_open
+        * 2;
+    let expected_field_len = a_slots.max(b_slots).max(d_slots) * 64;
+
+    assert_eq!(
+        active_setup_field_len(&lp, &opening_batch).expect("mixed-D field len"),
+        expected_field_len
+    );
+}
+
+#[test]
 fn select_setup_prefix_slot_uses_exact_registry_match() {
     use akita_field::Prime32Offset99 as F;
 

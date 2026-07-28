@@ -14,7 +14,7 @@ use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
     AkitaVerifierSetup, BatchedStage3Geometry, CommittedGroupParams, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -164,7 +164,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         F: FieldCore + CanonicalField,
         T: Transcript<F>,
     {
-        if ring_d == SETUP_OFFLOAD_D_SETUP {
+        if next_fold_level_params.setup_prefix.is_some() {
             let geometry = self.plan.projection_geometry();
             let natural_field_len = geometry.natural_field_len();
             ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;

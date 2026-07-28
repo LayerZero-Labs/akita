@@ -14,16 +14,17 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::{policy_of, CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_t_ring_count, decomposed_w_ring_count, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisTableKey,
+    compute_num_digits_field_width, decomposed_t_ring_count, decomposed_w_ring_count,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    intermediate_w_ring_element_count_with_counts_bits, AkitaScheduleInputs,
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId,
-    SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessPartition,
+    active_setup_field_len, padded_setup_prefix_len, setup_prefix_slot_id, AkitaScheduleInputs,
+    AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
+    RecursiveFoldParams, RecursiveFoldStep, RootFoldStep, RootSource, SetupMatrixEnvelope,
+    SisMatrixRole, SisModulusProfileId, SisTableDigest, TerminalFoldParams, TerminalFoldStep,
+    WitnessLayout, WitnessPartition,
 };
 use std::{
     any::TypeId,
@@ -36,9 +37,10 @@ enum SyntheticScheduleKind {
     MixedD,
     PerMatrixRingDimsRoot,
     RingDimensionTransition,
+    RecursiveRingDimensionTransition,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct SyntheticScheduleCacheKey {
     kind: SyntheticScheduleKind,
     root: TypeId,
@@ -47,6 +49,7 @@ struct SyntheticScheduleCacheKey {
     num_vars: usize,
     num_polynomials: usize,
     parameters: [usize; 4],
+    lookup_key: Option<AkitaScheduleLookupKey>,
 }
 
 /// Cache only the most recently used synthetic schedule.
@@ -66,7 +69,7 @@ fn cached_synthetic_schedule(
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("synthetic schedule cache is poisoned".into()))?
         .as_ref()
-        .filter(|(cached_key, _)| *cached_key == key)
+        .filter(|(cached_key, _)| cached_key == &key)
         .map(|(_, schedule)| schedule.clone())
     {
         return Ok(schedule);
@@ -271,6 +274,7 @@ where
             num_vars,
             num_polynomials,
             parameters: [switch_at_fold, 0, 0, 0],
+            lookup_key: None,
         },
         || {
             if num_polynomials != 1 || switch_at_fold == 0 {
@@ -488,6 +492,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
             num_vars,
             num_polynomials,
             parameters: [b_ring_dim, d_ring_dim, 0, 0],
+            lookup_key: None,
         },
         || {
             let mut root = akita_planner::find_schedule(
@@ -512,10 +517,11 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 .clone();
 
             let field_bits = Env::decomposition().field_bits();
+            let opening_layout = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
-                num_polynomials,
+                &opening_layout,
             )?;
             root.output_witness_len = root_out;
             let suffix = akita_planner::plan_optimal_suffix(
@@ -527,7 +533,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 root_out,
                 root.params.final_group.commitment.log_basis_open,
             )?;
-            finish_schedule(root, Vec::new(), suffix, num_vars, num_polynomials)
+            finish_schedule(root, Vec::new(), suffix, &opening_layout)
         },
     )
 }
@@ -590,7 +596,12 @@ fn retarget_commitment_matrices(
         num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".into()))?;
-    let open_width = projected_width("D", native_open_width, d_ring_dim)?;
+    let mut open_width = projected_width("D", native_open_width, d_ring_dim)?;
+    for group in &commitment.precommitted_groups {
+        open_width = open_width
+            .checked_add(group.d_segment_width(d_ring_dim)?)
+            .ok_or_else(|| AkitaError::InvalidSetup("shared D matrix width overflow".into()))?;
+    }
     let open_key = commitment.open_commit_matrix.sis_table_key();
     let open_norm = rounded_up_collision_inf_norm(
         open_key.policy,
@@ -618,10 +629,19 @@ fn retarget_commitment_matrices(
 fn outgoing_witness_field_len(
     field_bits: u32,
     commitment: &CommittedGroupParams,
-    num_polynomials: usize,
+    opening_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    intermediate_w_ring_element_count_with_counts_bits(field_bits, commitment, num_polynomials, 1)?
-        .checked_mul(commitment.d_a())
+    let relation_rows = commitment.relation_matrix_row_count(opening_layout.num_groups())?;
+    let layout = WitnessLayout::new(
+        commitment,
+        opening_layout,
+        commitment.witness_chunk.num_chunks,
+        relation_rows,
+        compute_num_digits_field_width(field_bits, commitment.log_basis_open),
+    )?;
+    layout
+        .total_len()
+        .checked_mul(commitment.relation_witness_carrier_ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("outgoing witness length overflow".into()))
 }
 
@@ -766,13 +786,20 @@ where
 /// Convert one planned suffix fold into its wire schedule representation
 /// (mirrors the `mixed_d_per_level_schedule` conversion).
 fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldStep {
+    let witness_partition = if fold.params.witness_chunk.num_chunks == 1 {
+        WitnessPartition::Single
+    } else {
+        WitnessPartition::Distributed {
+            num_chunks: fold.params.witness_chunk.num_chunks,
+        }
+    };
     RecursiveFoldStep {
         params: RecursiveFoldParams {
             open_commit_matrix: fold.params.open_commit_matrix.clone(),
             sparse_challenge_config: fold.params.fold_challenge_config,
             witness: fold.params.clone(),
             incoming_setup_prefix: None,
-            witness_partition: WitnessPartition::Single,
+            witness_partition,
         },
         input_witness_len: fold.input_witness_len,
         output_witness_len: fold.output_witness_len,
@@ -783,8 +810,7 @@ fn finish_schedule(
     root: RootFoldStep,
     mut recursive_folds: Vec<RecursiveFoldStep>,
     suffix: akita_planner::PlannedSuffix,
-    num_vars: usize,
-    num_polynomials: usize,
+    opening_layout: &OpeningClaimsLayout,
 ) -> Result<FoldSchedule, AkitaError> {
     recursive_folds.extend(suffix.folds.iter().map(planned_fold_step));
     let schedule = FoldSchedule {
@@ -800,13 +826,12 @@ fn finish_schedule(
         },
     };
     schedule.validate_structure()?;
-    let opening_batch = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
     schedule
         .root
         .params
         .final_group
         .commitment
-        .validate_opening_batch(&opening_batch)?;
+        .validate_opening_batch(opening_layout)?;
     Ok(schedule)
 }
 
@@ -853,6 +878,7 @@ where
                 middle_dims.d_b(),
                 middle_dims.d_d(),
             ],
+            lookup_key: None,
         },
         || {
             if num_polynomials != 1 {
@@ -977,7 +1003,7 @@ where
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
-                num_polynomials,
+                &OpeningClaimsLayout::new(num_vars, num_polynomials)?,
             )?;
             root.output_witness_len = root_out;
             let root_lb = root.params.final_group.commitment.log_basis_open;
@@ -1008,8 +1034,11 @@ where
                 middle_dims.d_d(),
             )?;
             l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix.clone();
-            let l1_out =
-                outgoing_witness_field_len(field_bits, &l1_step.params.witness, num_polynomials)?;
+            let l1_out = outgoing_witness_field_len(
+                field_bits,
+                &l1_step.params.witness,
+                &akita_planner::suffix_opening_layout(l1_step.input_witness_len, None)?,
+            )?;
             l1_step.output_witness_len = l1_out;
             let l1_lb = l1_step.params.witness.log_basis_open;
 
@@ -1023,11 +1052,16 @@ where
                 l1_out,
                 l1_lb,
             )?;
-            finish_schedule(root, vec![l1_step], suffix, num_vars, num_polynomials)
+            let opening_layout = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
+            finish_schedule(root, vec![l1_step], suffix, &opening_layout)
         },
     )
 }
 
+mod recursive_transition;
+pub use recursive_transition::{
+    recursive_ring_dimension_transition_schedule, RecursiveRingDimensionTransitionConfig,
+};
 /// Config adapter for [`ring_dimension_transition_schedule`].
 ///
 /// `Root`/`Mid`/`Suffix` set the A-matrix dimensions; `ROOT_BD_RING_DIM` and

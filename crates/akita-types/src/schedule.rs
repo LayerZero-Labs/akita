@@ -844,8 +844,7 @@ impl FoldSchedule {
                     .commitment_params
                     .outer_commit_matrix
                     .ring_dimension();
-                if prefix.d_setup != crate::SETUP_OFFLOAD_D_SETUP
-                    || prefix.d_setup != predecessor_setup_d
+                if prefix.d_setup != predecessor_setup_d
                     || prefix_inner_d != consumer_dims.d_a()
                     || prefix_outer_d != consumer_dims.d_b()
                 {

@@ -25,7 +25,6 @@ use akita_types::{
     PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
     RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
     TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
-    SETUP_OFFLOAD_D_SETUP,
 };
 
 use crate::PlannerPolicy;
@@ -56,6 +55,48 @@ pub(crate) struct CandidateTerminalResponse {
     pub(crate) estimated_direct_payload_bytes: usize,
     pub(crate) response_shape: TerminalResponseShape,
     pub(crate) estimated_payload_bytes: usize,
+}
+
+/// Plan the commitment geometry for one setup prefix consumed by a recursive
+/// fold.
+///
+/// The prefix source and A matrix use `policy.ring_dimension`; B may use an
+/// independently selected divisor. This is the same candidate derivation used
+/// by recursive schedule planning, exposed for exact synthetic schedules that
+/// establish a mixed-D boundary before the production planner can search it.
+///
+/// # Errors
+///
+/// Returns an error for malformed policy/dimensions or when no audited secure
+/// setup-prefix geometry exists.
+#[allow(clippy::too_many_arguments)]
+pub fn plan_setup_prefix_commitment(
+    policy: &PlannerPolicy,
+    ring_challenge_cfg: &SparseChallengeConfig,
+    requested_fold_shape: TensorChallengeShape,
+    log_basis_outer: u32,
+    log_basis_open: u32,
+    n_prefix: usize,
+    num_chunks: usize,
+    outer_ring_dimension: usize,
+) -> Result<PrecommittedLevelParams, AkitaError> {
+    validate_policy(policy)?;
+    candidate::derive_setup_prefix_group(
+        policy,
+        ring_challenge_cfg,
+        requested_fold_shape,
+        log_basis_outer,
+        log_basis_open,
+        n_prefix,
+        num_chunks,
+        outer_ring_dimension,
+    )?
+    .ok_or_else(|| {
+        AkitaError::UnsupportedSchedule(format!(
+            "no setup-prefix commitment at A{}/B{outer_ring_dimension} for n_prefix={n_prefix}",
+            policy.ring_dimension
+        ))
+    })
 }
 
 #[derive(Clone, Debug)]

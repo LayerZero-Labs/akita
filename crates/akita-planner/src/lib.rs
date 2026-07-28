@@ -35,6 +35,6 @@ pub use akita_schedules::{
 pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, EmitSpec};
 pub use group_batch::find_group_batch_schedule;
 pub use schedule_params::{
-    find_schedule, plan_optimal_suffix, suffix_opening_layout, PlannedSuffix, PlannedSuffixFold,
-    PlannedSuffixTerminal,
+    find_schedule, plan_optimal_suffix, plan_setup_prefix_commitment, suffix_opening_layout,
+    PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
 };

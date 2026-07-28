@@ -5,12 +5,21 @@ fn sis_key(
     role: akita_types::SisMatrixRole,
     coeff_linf_bound: u128,
 ) -> SisTableKey {
+    sis_key_at_dimension(policy, role, policy.ring_dimension, coeff_linf_bound)
+}
+
+fn sis_key_at_dimension(
+    policy: &PlannerPolicy,
+    role: akita_types::SisMatrixRole,
+    ring_dimension: usize,
+    coeff_linf_bound: u128,
+) -> SisTableKey {
     SisTableKey {
         policy: policy.sis_security_policy,
         table_digest: policy.sis_table_digest,
         modulus_profile: policy.sis_modulus_profile,
         role,
-        ring_dimension: policy.ring_dimension as u32,
+        ring_dimension: ring_dimension as u32,
         coeff_linf_bound,
     }
 }
@@ -297,7 +306,8 @@ fn grouped_setup_prefix_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 
-fn derive_setup_prefix_group(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
@@ -305,10 +315,15 @@ fn derive_setup_prefix_group(
     log_basis_open: u32,
     n_prefix: usize,
     num_chunks: usize,
+    outer_ring_dimension: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
-    if policy.ring_dimension != SETUP_OFFLOAD_D_SETUP {
+    if outer_ring_dimension == 0
+        || !outer_ring_dimension.is_power_of_two()
+        || !policy.ring_dimension.is_multiple_of(outer_ring_dimension)
+    {
         return Err(AkitaError::InvalidSetup(
-            "recursive setup planning requires D64".to_string(),
+            "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
+                .to_string(),
         ));
     }
     if n_prefix == 0 || !n_prefix.is_power_of_two() {
@@ -397,7 +412,7 @@ fn derive_setup_prefix_group(
             policy.sis_security_policy,
             family,
             akita_types::SisMatrixRole::Outer,
-            d,
+            outer_ring_dimension,
             log_basis_open,
         ) else {
             continue;
@@ -407,11 +422,17 @@ fn derive_setup_prefix_group(
             num_digits_outer,
             num_live_blocks,
             1,
-        ) else {
+        )
+        .and_then(|width| width.checked_mul(d / outer_ring_dimension)) else {
             continue;
         };
         let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
+            sis_key_at_dimension(
+                policy,
+                akita_types::SisMatrixRole::Outer,
+                outer_ring_dimension,
+                norm_t,
+            ),
             width_t,
         ) else {
             continue;
@@ -626,6 +647,11 @@ pub(crate) fn derive_candidate_level_params(
 
     let setup_prefix = match incoming_setup_prefix {
         Some(natural_len) => {
+            if policy.ring_dimension != akita_types::SETUP_OFFLOAD_D_SETUP {
+                return Err(AkitaError::InvalidSetup(
+                    "recursive setup planning requires D64".to_string(),
+                ));
+            }
             let n_prefix = padded_setup_prefix_len(natural_len);
             let Some(group) = derive_setup_prefix_group(
                 policy,
@@ -635,12 +661,13 @@ pub(crate) fn derive_candidate_level_params(
                 log_basis,
                 n_prefix,
                 num_chunks,
+                policy.ring_dimension,
             )?
             else {
                 return Ok(None);
             };
             Some(akita_types::setup_prefix_slot_id(
-                SETUP_OFFLOAD_D_SETUP,
+                policy.ring_dimension,
                 natural_len,
                 group,
             ))

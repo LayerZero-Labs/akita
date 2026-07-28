@@ -24,8 +24,7 @@ use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
     BatchedStage3Geometry, CommittedGroupParams, FpExtEncoding, RelationAddressGeometry,
     RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
-    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_OFFLOAD_D_SETUP,
-    SETUP_SUMCHECK_DEGREE,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -356,7 +355,7 @@ where
     let setup_len = expanded
         .shared_matrix()
         .total_ring_elements_at_dyn(ring_d)?;
-    let setup_eval_len = if ring_d == SETUP_OFFLOAD_D_SETUP {
+    let setup_eval_len = if next_fold_level_params.setup_prefix.is_some() {
         let setup_prefix_selection = select_setup_prefix_slot(
             setup_len,
             |slot_id| {
