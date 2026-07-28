@@ -12,10 +12,11 @@ use akita_field::{
 use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_TAU1};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget, validate_role_dispatch,
-    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
-    OpeningClaimsLayout, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
-    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+    dispatch_for_field, gadget_row_scalars, r_decomp_levels, shared_setup_fold_gadget,
+    validate_role_dispatch, AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams,
+    FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRole, SetupContributionGroupInputs, SetupContributionPlan,
+    WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
@@ -26,19 +27,20 @@ pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 mod mixed_relation;
 mod prepared_relation_point;
+mod structured;
 mod tensor_challenges;
 #[cfg(test)]
 mod tests;
+
+use structured::evaluate_group_et_from_eq_slices;
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
 pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    /// Number of upper variable bits.
-    pub col_bits: usize,
-    /// Number of lower variable bits.
-    pub ring_bits: usize,
+    /// Canonical flat relation-witness domain and coefficient/lane split.
+    pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for the stage-1 sumcheck.
@@ -53,8 +55,7 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    col_bits: usize,
-    ring_bits: usize,
+    relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
     tau1: Vec<E>,
@@ -67,8 +68,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
         let tau0 = self.tau0.ok_or(AkitaError::InvalidProof)?;
         Ok(RingSwitchVerifyOutput {
             relation_matrix_evaluator: self.relation_matrix_evaluator,
-            col_bits: self.col_bits,
-            ring_bits: self.ring_bits,
+            relation_address_geometry: self.relation_address_geometry,
             digit_range_equality_low_variable_count: self.digit_range_equality_low_variable_count,
             tau0,
             tau1: self.tau1,
@@ -87,6 +87,7 @@ impl<E: FieldCore> RingSwitchVerifyCoreOutput<E> {
 #[derive(Clone)]
 pub struct RelationMatrixEvaluator<F: FieldCore> {
     pub(crate) role_dims: CommitmentRingDims,
+    pub(crate) relation_address_geometry: RelationAddressGeometry,
     pub(crate) groups: Vec<RelationMatrixGroupEvaluator<F>>,
     /// Batch-wide basis used by the shared r-tail.
     pub(crate) log_basis: u32,
@@ -126,6 +127,32 @@ pub(crate) struct RelationMatrixGroupEvaluator<F: FieldCore> {
     pub(crate) n_a: usize,
     pub(crate) a_row_start: usize,
     pub(crate) b_row_start: usize,
+}
+
+impl<E: FieldCore> RelationMatrixGroupEvaluator<E> {
+    fn structured_block_challenges<F>(&self) -> Result<Vec<E>, AkitaError>
+    where
+        F: FieldCore + FromPrimitiveInt,
+        E: MulBase<F>,
+    {
+        let capacity = self
+            .num_claims
+            .checked_mul(self.num_live_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
+        let mut block_challenges = Vec::with_capacity(capacity);
+        for claim in 0..self.num_claims {
+            let factors = self
+                .c_alphas
+                .affine_factors::<F>(claim, self.num_live_blocks)?;
+            block_challenges.extend_from_slice(
+                factors
+                    .low
+                    .get(..self.num_live_blocks)
+                    .ok_or(AkitaError::InvalidProof)?,
+            );
+        }
+        Ok(block_challenges)
+    }
 }
 
 /// Fixed public relation inputs for verifier ring-switch replay.
@@ -186,58 +213,25 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
-    let opening_capacity = replay
-        .opening_source_len
-        .checked_mul(replay.opening_ring_dim)
-        .ok_or(AkitaError::InvalidProof)?;
+    let relation_address_geometry = lp.relation_address_geometry(
+        opening_batch,
+        replay.opening_ring_dim,
+        replay.opening_source_len,
+    )?;
     if w_len == 0
         || !w_len.is_multiple_of(D)
-        || replay.opening_ring_dim == 0
-        || !replay.opening_ring_dim.is_power_of_two()
-        || !w_len.is_multiple_of(replay.opening_ring_dim)
-        || w_len > opening_capacity
+        || w_len != relation_address_geometry.digit_witness_domain().live_len()
     {
         return Err(AkitaError::InvalidProof);
     }
     let num_ring_elems = w_len / D;
-    let opening_ring_dim = replay.opening_ring_dim;
-    let x_capacity = akita_types::opening_domain_len(replay.opening_source_len)?;
-    // Mirror the prover's ring-switch geometry (see `ring_switch_finalize`).
-    // Keep the PR #312 uniform split; mixed roles bind their shared low
-    // coefficient block before the remaining relation lanes.
-    let uniform = relation.role_dims() == CommitmentRingDims::uniform(opening_ring_dim);
-    let (col_bits, ring_bits) = if uniform {
-        (
-            x_capacity.trailing_zeros() as usize,
-            opening_ring_dim.trailing_zeros() as usize,
-        )
-    } else {
-        let coeff_count = relation
-            .role_dims()
-            .common_relation_witness_coeff_count(opening_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !opening_ring_dim.is_multiple_of(coeff_count)
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or(AkitaError::InvalidProof)?;
-        (
-            lane_capacity.trailing_zeros() as usize,
-            coeff_count.trailing_zeros() as usize,
-        )
-    };
-    // This is the Stage-1 transcript permutation boundary, not the Stage-2
-    // coefficient split. On mixed paths tau0 is already sampled in flat
-    // physical-address order, so zero means "no permutation," not "no low bits."
-    let digit_range_equality_low_variable_count = if uniform {
-        opening_ring_dim.trailing_zeros() as usize
-    } else {
-        0
-    };
-    let num_sc_vars = col_bits + ring_bits;
+    // Bind the shared low coefficient block as the digit-range check's ring
+    // phase on every path. On uniform schedules this equals the outgoing
+    // witness ring width (byte-identical replay); on non-uniform schedules it
+    // mirrors the prover's compact relation-lane split.
+    let digit_range_equality_low_variable_count =
+        relation_address_geometry.common_relation_witness_variable_count();
+    let num_sc_vars = relation_address_geometry.relation_point_variable_count();
     let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
     let (tau0, tau1) = {
@@ -264,8 +258,7 @@ where
         prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
-        col_bits,
-        ring_bits,
+        relation_address_geometry,
         digit_range_equality_low_variable_count,
         tau0,
         tau1,
@@ -298,15 +291,25 @@ where
 {
     let relation = replay.relation;
     let lp = replay.lp;
+    let opening_batch = relation.opening_batch();
+    let relation_address_geometry = lp.relation_address_geometry(
+        opening_batch,
+        replay.opening_ring_dim,
+        replay.opening_source_len,
+    )?;
     let layout = relation.segment_layout(lp, witness_ring_len)?;
     if layout.total_len() > replay.opening_source_len {
         return Err(AkitaError::InvalidProof);
     }
-    let opening_batch = relation.opening_batch();
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     if lp.has_precommitted_groups() {
         return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
-            replay, alpha, tau1, layout, rows,
+            replay,
+            alpha,
+            tau1,
+            layout,
+            rows,
+            relation_address_geometry,
         );
     }
     let challenges = relation
@@ -326,6 +329,7 @@ where
         replay.opening_source_len,
         replay.opening_ring_dim,
         rows,
+        relation_address_geometry,
     )
 }
 
@@ -336,6 +340,7 @@ fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
     tau1: &[E],
     layout: WitnessLayout,
     rows: usize,
+    relation_address_geometry: RelationAddressGeometry,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -345,7 +350,12 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     lp.validate_opening_batch(opening_batch)?;
-    validate_role_dispatch::<D>(relation.role_dims(), RingRole::Inner)?;
+    validate_ring_dispatch::<D>()?;
+    if relation_address_geometry.carrier_ring_dimension() != D {
+        return Err(AkitaError::InvalidSetup(
+            "multi-group relation carrier does not match verifier dispatch".into(),
+        ));
+    }
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
@@ -362,10 +372,13 @@ where
         ));
     }
 
-    let alpha_pows_a = scalar_powers(alpha, D);
+    // Reuse the carrier powers across every uniform group. Mixed-d groups
+    // derive their native powers in the dispatch below.
+    let carrier_alpha_pows = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_role_dims = lp.group_role_dims(opening_batch, group_index)?;
         let group_layout = opening_batch.group_layout(group_index)?;
         let k_g = group_layout.num_polynomials();
         let num_live_blocks = group_lp.num_live_blocks();
@@ -420,11 +433,43 @@ where
                 actual: challenges.logical_len(),
             });
         }
-        let c_alphas =
-            prepare_challenge_evals::<F, E, D>(challenges, &alpha_pows_a, k_g, num_live_blocks)?;
-        let opening_a_evals = (0..num_positions_per_block)
-            .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows_a))
-            .collect::<Result<Vec<_>, _>>()?;
+        let (c_alphas, opening_a_evals) = if group_role_dims.d_a() == D {
+            // The overwhelmingly common recursive path keeps every group at
+            // the carrier dimension. Preserve its monomorphized evaluator:
+            // routing it through the mixed-d runtime dispatch measurably
+            // increases verifier preparation at every recursive fold.
+            let c_alphas = prepare_challenge_evals::<F, E, D>(
+                challenges,
+                &carrier_alpha_pows,
+                k_g,
+                num_live_blocks,
+            )?;
+            let opening_a_evals = (0..num_positions_per_block)
+                .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &carrier_alpha_pows))
+                .collect::<Result<Vec<_>, _>>()?;
+            (c_alphas, opening_a_evals)
+        } else {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_role_dims.d_a(),
+                |D_GROUP| {
+                    let alpha_pows = scalar_powers(alpha, D_GROUP);
+                    let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
+                        challenges,
+                        &alpha_pows,
+                        k_g,
+                        num_live_blocks,
+                    )?;
+                    let opening_a_evals = (0..num_positions_per_block)
+                        .map(|idx| {
+                            ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok::<_, AkitaError>((c_alphas, opening_a_evals))
+                }
+            )?
+        };
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
@@ -457,6 +502,7 @@ where
 
     Ok(RelationMatrixEvaluator {
         role_dims: relation.role_dims(),
+        relation_address_geometry,
         groups,
         log_basis: lp.log_basis_open,
         eq_tau1,
@@ -531,6 +577,7 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     opening_source_len: usize,
     opening_ring_dim: usize,
     rows: usize,
+    relation_address_geometry: RelationAddressGeometry,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -600,6 +647,7 @@ where
 
     Ok(RelationMatrixEvaluator {
         role_dims: lp.role_dims(),
+        relation_address_geometry,
         groups,
         log_basis: log_basis_open,
         eq_tau1,
@@ -643,8 +691,26 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        if context.opening_ring_dim == D && self.role_dims == CommitmentRingDims::uniform(D) {
+        // Uniform-role fast path. This fires whenever all three roles share the
+        // dispatch dimension `D`, regardless of the outgoing witness ring
+        // (`opening_ring_dim`). When `opening_ring_dim < D` the relation carries
+        // `D / opening_ring_dim` lanes per ring element, but for uniform roles
+        // the point is laid out `[coeff][lane][column]` with coeff+lane
+        // occupying the low `log2(D)` bits (the address is
+        // `witness_column·lanes + lane`, coeff below), so the low `log2(D)` bits
+        // are exactly the `D`-ring coefficient block. Hence
+        // `coefficient_eval(D) = coeff_eval · lane_eval` and the column
+        // structure is identical to the `opening_ring_dim == D` case: the
+        // succinct evaluator returns the same value the lane-factored mixed scan
+        // would, without the explicit O(setup-columns) multiply. (Validated by
+        // `mixed_d_per_level_e2e`, whose level-1 fold is a uniform-role,
+        // `opening_ring_dim = D/2` step, plus tamper rejection.)
+        if self.role_dims == CommitmentRingDims::uniform(D)
+            && self
+                .relation_address_geometry
+                .common_relation_witness_coeff_count()
+                == D
+        {
             let coefficient_bits = D.trailing_zeros() as usize;
             if point.len() < coefficient_bits {
                 return Err(AkitaError::InvalidProof);
@@ -691,6 +757,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         &self,
         x_challenges: &[E],
         fold_gadget: Option<&[F]>,
+        alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -703,11 +770,11 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
             &setup_groups,
             x_challenges,
             fold_gadget,
-            self.role_dims,
+            self.relation_address_geometry,
+            alpha,
         )
     }
 
@@ -715,6 +782,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         &self,
         x_challenges: &[E],
         fold_gadget: Option<&[F]>,
+        alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -727,11 +795,11 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             &context.opening_batch,
             self.eq_tau1.clone(),
             &context.witness_layout,
-            context.opening_source_len,
             &setup_groups,
             x_challenges,
             fold_gadget,
-            self.role_dims,
+            self.relation_address_geometry,
+            alpha,
         )
     }
 
@@ -766,6 +834,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn setup_index_weight_evaluator<F>(
         &self,
         plan: &SetupContributionPlan<E>,
@@ -773,11 +842,21 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         x_challenges: &[E],
         fold_gadget: &[F],
         alpha: E,
-    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError>
+    ) -> Result<Option<akita_types::SetupIndexWeightEvaluator<E>>, AkitaError>
     where
         F: FieldCore,
         E: MulBase<F>,
     {
+        let geometry = plan.projection_geometry();
+        let base_ring_dim = geometry.base_ring_dim();
+        if geometry.role_dims() != CommitmentRingDims::uniform(base_ring_dim)
+            || self
+                .relation_address_geometry
+                .common_relation_witness_coeff_count()
+                != base_ring_dim
+        {
+            return Ok(None);
+        }
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
         let setup_groups = self.setup_contribution_inputs();
         akita_types::SetupIndexWeightEvaluator::new::<F>(
@@ -792,6 +871,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             fold_gadget,
             alpha,
         )
+        .map(Some)
     }
 
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
@@ -883,6 +963,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let mut e_structured_contribution = E::zero();
         let mut t_structured_contribution = E::zero();
         let mut z_structured_contribution = E::zero();
+        let mut span_structured_contribution = E::zero();
         let setup_groups = self.setup_contribution_inputs();
         let setup_fold_gadget = shared_setup_fold_gadget::<F>(
             &context.level_params,
@@ -936,17 +1017,24 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         // recursive claim.
         let fold_gadget = setup_fold_gadget.as_deref().unwrap_or(&[]);
         let deferred_setup = setup_claim.is_some();
+        let uniform_deferred_setup = self.role_dims == CommitmentRingDims::uniform(D)
+            && self
+                .relation_address_geometry
+                .common_relation_witness_coeff_count()
+                == D;
         let setup_plan = {
             let _span = tracing::info_span!("setup_contribution_plan").entered();
             if deferred_setup {
                 self.setup_contribution_plan_deferred::<F>(
                     x_challenges,
                     (!fold_gadget.is_empty()).then_some(fold_gadget),
+                    alpha,
                 )?
             } else {
                 self.setup_contribution_plan::<F>(
                     x_challenges,
                     (!fold_gadget.is_empty()).then_some(fold_gadget),
+                    alpha,
                 )?
             }
         };
@@ -1001,7 +1089,13 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     &g_witness_storage
                 };
 
-                let consistency_weight = self.eq_tau1[0];
+                let consistency_row = context
+                    .level_params
+                    .consistency_row_index(&context.opening_batch, group.group_id)?;
+                let consistency_weight = *self
+                    .eq_tau1
+                    .get(consistency_row)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let a_row_end = group
                     .a_row_start
                     .checked_add(group.n_a)
@@ -1011,28 +1105,44 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
                     .get(group.a_row_start..a_row_end)
                     .ok_or(AkitaError::InvalidProof)?;
                 if deferred_setup {
-                    let (e_contribution, t_contribution, z_contribution) = {
+                    if uniform_deferred_setup {
                         let _span =
-                            tracing::info_span!("structured_group_deferred", group_index).entered();
-                        evaluate_group_structured_from_eq_window::<F, E>(
-                            group,
-                            consistency_weight,
-                            a_row_weights,
-                            g_open_ext,
-                            g_t_commit_ext,
-                            g_witness,
-                            setup_plan.eq_window(),
-                            context.witness_layout.as_ref(),
-                            context.opening_source_len,
-                            fold_gadget,
-                        )?
-                    };
-                    e_structured_contribution += e_contribution;
-                    t_structured_contribution += t_contribution;
-                    z_structured_contribution += z_contribution;
+                            tracing::info_span!("structured_group_deferred_uniform", group_index)
+                                .entered();
+                        let (e_contribution, t_contribution, z_contribution) =
+                            evaluate_group_structured_from_eq_window::<F, E>(
+                                group,
+                                consistency_weight,
+                                a_row_weights,
+                                g_open_ext,
+                                g_t_commit_ext,
+                                g_witness,
+                                setup_plan.eq_window(),
+                                context.witness_layout.as_ref(),
+                                context.opening_source_len,
+                                fold_gadget,
+                            )?;
+                        e_structured_contribution += e_contribution;
+                        t_structured_contribution += t_contribution;
+                        z_structured_contribution += z_contribution;
+                    } else {
+                        let structured_contribution = {
+                            let _span =
+                                tracing::info_span!("structured_group_deferred", group_index)
+                                    .entered();
+                            let block_challenges = group.structured_block_challenges::<F>()?;
+                            setup_plan.evaluate_structured_group::<F>(
+                                group.group_id,
+                                &block_challenges,
+                                &group.opening_a_evals,
+                                alpha,
+                            )?
+                        };
+                        span_structured_contribution += structured_contribution;
+                    }
                 } else {
                     let (e_eq_slice, t_eq_slice, z_slice) = setup_plan
-                        .group_column_eq_slices(group_index)
+                        .group_column_eq_slices(group.group_id)
                         .ok_or(AkitaError::InvalidProof)?;
                     let (e_contribution, t_contribution) = {
                         let _span =
@@ -1099,6 +1209,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let relation_weight = e_structured_contribution
             + t_structured_contribution
             + z_structured_contribution
+            + span_structured_contribution
             + setup_contribution
             + r_contribution;
         self.cache_setup_contribution_plan(x_challenges, setup_plan)?;
@@ -1123,7 +1234,9 @@ where
     F: FieldCore + FromPrimitiveInt,
     E: FpExtEncoding<F> + MulBase<F>,
 {
-    if g_open_ext.len() != group.depth_open
+    if group.num_live_blocks == 0
+        || group.depth_witness == 0
+        || g_open_ext.len() != group.depth_open
         || g_t_commit_ext.len() != group.depth_commit
         || g_witness.len() != group.depth_witness
         || a_row_weights.len() != group.n_a
@@ -1240,7 +1353,11 @@ where
                 .ok_or(AkitaError::InvalidProof)?;
             let (unit_start, unit_blocks, e_range, t_range, _) = unit_ranges
                 .iter()
-                .find(|(start, len, _, _, _)| block >= *start && block < start + len)
+                .find(|(start, len, _, _, _)| {
+                    start
+                        .checked_add(*len)
+                        .is_some_and(|end| block >= *start && block < end)
+                })
                 .ok_or(AkitaError::InvalidProof)?;
             let local_block = block
                 .checked_sub(*unit_start)
@@ -1341,114 +1458,4 @@ where
     )?;
 
     Ok((e_acc, t_acc, z_acc))
-}
-
-#[allow(clippy::too_many_arguments)]
-fn evaluate_group_et_from_eq_slices<F, E>(
-    group: &RelationMatrixGroupEvaluator<E>,
-    consistency_weight: E,
-    a_row_weights: &[E],
-    g_open_ext: &[E],
-    g_t_commit_ext: &[E],
-    e_eq_slice: &[E],
-    t_eq_slice: &[E],
-) -> Result<(E, E), AkitaError>
-where
-    F: FieldCore + FromPrimitiveInt,
-    E: FieldCore + MulBase<F>,
-{
-    let e_stride = group.depth_open;
-    let t_stride = group
-        .n_a
-        .checked_mul(group.depth_commit)
-        .ok_or_else(|| AkitaError::InvalidSetup("T fold stride overflow".into()))?;
-    let block_claims = group
-        .num_claims
-        .checked_mul(group.num_live_blocks)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
-    let expected_e = block_claims
-        .checked_mul(e_stride)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
-    let expected_t = block_claims
-        .checked_mul(t_stride)
-        .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
-    if e_eq_slice.len() != expected_e
-        || t_eq_slice.len() != expected_t
-        || g_open_ext.len() != group.depth_open
-        || g_t_commit_ext.len() != group.depth_commit
-        || a_row_weights.len() != group.n_a
-    {
-        return Err(AkitaError::InvalidProof);
-    }
-    let challenge_factors = (0..group.num_claims)
-        .map(|claim| {
-            group
-                .c_alphas
-                .affine_factors::<F>(claim, group.num_live_blocks)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let t_weights = a_row_weights
-        .iter()
-        .flat_map(|&row_weight| {
-            g_t_commit_ext
-                .iter()
-                .map(move |&gadget| row_weight * gadget)
-        })
-        .collect::<Vec<_>>();
-    let _span = tracing::info_span!(
-        "structured_et_from_setup_slices",
-        block_claims,
-        e_columns = expected_e,
-        t_columns = expected_t
-    )
-    .entered();
-    cfg_fold_reduce!(
-        0..block_claims,
-        || Ok((E::zero(), E::zero())),
-        |acc: Result<(E, E), AkitaError>, block_claim| {
-            let (mut e_acc, mut t_acc) = acc?;
-            let claim = block_claim / group.num_live_blocks;
-            let block = block_claim % group.num_live_blocks;
-            let challenge = challenge_factors
-                .get(claim)
-                .and_then(|factors| factors.low.get(block))
-                .copied()
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_start = block_claim
-                .checked_mul(e_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_end = e_start
-                .checked_add(e_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let e_block = e_eq_slice
-                .get(e_start..e_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut e_weight = E::zero();
-            for (&eq, &gadget) in e_block.iter().zip(g_open_ext) {
-                e_weight += eq * gadget;
-            }
-            e_acc += challenge * consistency_weight * e_weight;
-
-            let t_start = block_claim
-                .checked_mul(t_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let t_end = t_start
-                .checked_add(t_stride)
-                .ok_or(AkitaError::InvalidProof)?;
-            let t_block = t_eq_slice
-                .get(t_start..t_end)
-                .ok_or(AkitaError::InvalidProof)?;
-            let mut t_weight = E::zero();
-            for (&eq, &weight) in t_block.iter().zip(&t_weights) {
-                t_weight += eq * weight;
-            }
-            t_acc += challenge * t_weight;
-            Ok((e_acc, t_acc))
-        },
-        |lhs: Result<(E, E), AkitaError>, rhs: Result<(E, E), AkitaError>| {
-            let (lhs_e, lhs_t) = lhs?;
-            let (rhs_e, rhs_t) = rhs?;
-            Ok((lhs_e + rhs_e, lhs_t + rhs_t))
-        }
-    )
 }

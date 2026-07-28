@@ -36,31 +36,32 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::dispatch_for_field;
 use akita_types::FpExtEncoding;
 use akita_types::{
-    append_claim_values_to_transcript, basis_weights, check_extension_opening_reduction_output,
+    append_claim_values_to_transcript, basis_weights, checked_table_len,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
     embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
     relation_claim_from_layout_extension, relation_rhs_layout_for,
     ring_subfield_packed_extension_opening_point, root_input_witness_len,
     root_tensor_projection_enabled, sample_public_row_coefficients,
-    scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
-    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
-    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
-    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
-    ExtensionOpeningReductionProof, FoldLevelProof, FoldSchedule, OpeningClaims,
-    OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
-    RingVec, RingView, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
-    TerminalCommittedGroupParams, TerminalFoldParams, TerminalLevelProof,
+    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
+    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
+    AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
+    CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
+    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams,
+    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 
 pub(in crate::protocol::core) struct ExtensionOpeningReduction<E: FieldCore> {
     pub(in crate::protocol::core) proof: ExtensionOpeningReductionProof<E>,
-    /// EOR final sumcheck claim and transparent-factor evaluation. Retained so
-    /// the prepare step can fail-fast cross-check the folded opening against
-    /// the reduction output; the verifier enforces the same relation.
+    /// EOR final sumcheck claim and one transparent-factor evaluation per
+    /// opening group. Retained so the prepare step can fail-fast cross-check
+    /// the folded openings against the reduction output; the verifier enforces
+    /// the same relation.
     pub(in crate::protocol::core) final_claim: E,
-    pub(in crate::protocol::core) final_factor: E,
+    pub(in crate::protocol::core) final_factors: Vec<E>,
 }
 
 mod extension_opening_reduction;

@@ -109,6 +109,8 @@ impl GeneratedSetupPrefixInput {
             num_live_blocks,
             log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
             log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            inner_ring_dimension: d,
+            outer_ring_dimension: d,
             n_a: 1,
             a_coeff_linf_bound: 1,
             n_b: 1,
@@ -138,7 +140,7 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        layout.validate_root_geometry(d)?;
+        layout.validate_root_geometry()?;
         if fold_shape != TensorChallengeShape::Flat {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix challenge shape mismatch".into(),
@@ -148,6 +150,7 @@ impl GeneratedSetupPrefixInput {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             d,
             inner_decomp,
@@ -238,6 +241,7 @@ impl GeneratedSetupPrefixInput {
             inner_commit_matrix,
             outer_commit_matrix,
             log_basis_open,
+            fold_challenge_config: *ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
@@ -377,6 +381,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -453,7 +458,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width())
+            .map(|prefix| prefix.commitment_params.d_segment_width(ring_d))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -633,6 +638,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -827,6 +833,7 @@ impl GeneratedTerminalFold {
         )?;
         let collision_bucket = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
+            policy.sis_table_digest,
             policy.sis_modulus_profile,
             ring_dimension,
             witness_decomposition,

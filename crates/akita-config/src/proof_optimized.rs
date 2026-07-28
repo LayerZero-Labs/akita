@@ -144,6 +144,33 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
     }
 
+    // Generated multi-group rows carry exact frozen precommit descriptors.
+    // Size those schedules from their canonical keys: synthesizing an opening
+    // layout at `max_num_vars` can miss a finite-catalog precommit arity.
+    if let Some(catalog) = Cfg::schedule_catalog() {
+        for entry in catalog.entries {
+            if entry.root.precommitted_groups.is_empty() {
+                continue;
+            }
+            let key = AkitaScheduleLookupKey {
+                final_group: entry.root.final_group.layout,
+                precommitteds: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.descriptor)
+                    .collect(),
+            };
+            if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
+                continue;
+            }
+            let schedule = Cfg::runtime_schedule(key)?;
+            let entry_envelope = setup_matrix_envelope_for_schedule(&schedule)?;
+            saw_supported_shape = true;
+            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        }
+    }
+
     // Prefix-slot materialization is driven by these bounded exact recursive
     // keys. Size their shared matrices from the same keys directly: converting
     // through `OpeningClaimsLayout` would discard frozen precommitted params
@@ -191,8 +218,6 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
     let mut layouts = Vec::new();
     let supports_multi_group_root = Cfg::decomposition().log_commit_bound == 1;
-    let precommitted_group = PolynomialGroupLayout::new(max_num_vars, 1);
-    let precommitted_groups = [precommitted_group; DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS];
 
     let mut push_layout = |layout| {
         if layouts.len() >= MAX_VERIFIER_SETUP_SCHEDULE_SCANS {
@@ -210,17 +235,30 @@ fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
             let main_group = PolynomialGroupLayout::new(main_num_vars, main_num_polys);
             push_layout(OpeningClaimsLayout::from_root_groups(&[], main_group)?)?;
             if supports_multi_group_root {
-                let num_precommitted = DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS;
-                let Some(total_polynomials) = main_num_polys.checked_add(num_precommitted) else {
-                    continue;
-                };
-                if total_polynomials > max_num_batched_polys {
-                    continue;
+                for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+                    for precommitted_num_polynomials in 1..=max_num_batched_polys {
+                        let Some(precommitted_polynomials) =
+                            num_precommitted.checked_mul(precommitted_num_polynomials)
+                        else {
+                            continue;
+                        };
+                        let Some(total_polynomials) =
+                            main_num_polys.checked_add(precommitted_polynomials)
+                        else {
+                            continue;
+                        };
+                        if total_polynomials > max_num_batched_polys {
+                            break;
+                        }
+                        let precommitted_group =
+                            PolynomialGroupLayout::new(max_num_vars, precommitted_num_polynomials);
+                        let precommitted_groups = vec![precommitted_group; num_precommitted];
+                        push_layout(OpeningClaimsLayout::from_root_groups(
+                            &precommitted_groups,
+                            main_group,
+                        )?)?;
+                    }
                 }
-                push_layout(OpeningClaimsLayout::from_root_groups(
-                    &precommitted_groups[..num_precommitted],
-                    main_group,
-                )?)?;
             }
         }
     }
@@ -298,48 +336,40 @@ fn root_runtime_matrix_len_for_opening_batch(
     lp: &CommittedGroupParams,
     layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let final_group_index = lp.validate_opening_batch(layout)?;
-    let final_group = layout.group_layout(final_group_index)?;
-    let (a_len, b_len, mut d_width) = group_setup_footprint(
+    lp.validate_opening_batch(layout)?;
+    let mut max_a_coeff_len = matrix_coefficient_len(
         lp.inner_commit_matrix.output_rank(),
         lp.inner_commit_matrix.input_width(),
-        lp.outer_commit_matrix.output_rank(),
-        final_group.num_polynomials(),
-        lp.num_live_blocks,
-        lp.num_digits_open,
+        lp.inner_commit_matrix.ring_dimension(),
+        "root A",
     )?;
-    let mut max_a_coeff_len = a_len
-        .checked_mul(lp.inner_commit_matrix.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("root A setup envelope overflow".into()))?;
-    let mut max_b_coeff_len = b_len
-        .checked_mul(lp.outer_commit_matrix.ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("root B setup envelope overflow".into()))?;
+    let mut max_b_coeff_len = matrix_coefficient_len(
+        lp.outer_commit_matrix.output_rank(),
+        lp.outer_commit_matrix.input_width(),
+        lp.outer_commit_matrix.ring_dimension(),
+        "root B",
+    )?;
 
     for group in &lp.precommitted_groups {
-        let (a_len, b_len, group_d_width) = group_setup_footprint(
+        let a_coeff_len = matrix_coefficient_len(
             group.inner_commit_matrix.output_rank(),
             group.inner_commit_matrix.input_width(),
-            group.outer_commit_matrix.output_rank(),
-            group.layout.group.num_polynomials(),
-            group.layout.num_live_blocks,
-            group.num_digits_open,
+            group.inner_commit_matrix.ring_dimension(),
+            "multi-group A",
         )?;
-        let a_coeff_len = a_len
-            .checked_mul(group.inner_commit_matrix.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group A setup overflow".into()))?;
-        let b_coeff_len = b_len
-            .checked_mul(group.outer_commit_matrix.ring_dimension())
-            .ok_or_else(|| AkitaError::InvalidSetup("multi-group B setup overflow".into()))?;
+        let b_coeff_len = matrix_coefficient_len(
+            group.outer_commit_matrix.output_rank(),
+            group.outer_commit_matrix.input_width(),
+            group.outer_commit_matrix.ring_dimension(),
+            "multi-group B",
+        )?;
         max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);
         max_b_coeff_len = max_b_coeff_len.max(b_coeff_len);
-        d_width = d_width.checked_add(group_d_width).ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
-        })?;
     }
 
     root_setup_len(
         lp.open_commit_matrix.output_rank(),
-        d_width,
+        lp.open_commit_matrix.input_width(),
         lp.open_commit_matrix.ring_dimension(),
         max_a_coeff_len,
         max_b_coeff_len,
@@ -347,36 +377,15 @@ fn root_runtime_matrix_len_for_opening_batch(
     )
 }
 
-fn group_setup_footprint(
-    a_rows: usize,
-    a_width: usize,
-    b_rows: usize,
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_digits_open: usize,
-) -> Result<(usize, usize, usize), AkitaError> {
-    let a_len = a_rows.checked_mul(a_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group A setup envelope overflow".to_string())
-    })?;
-    let d_width = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group D setup width overflow".to_string())
-        })?;
-    let t_vector_width = a_rows
-        .checked_mul(num_digits_open)
-        .and_then(|n| n.checked_mul(num_live_blocks))
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("multi-group B setup width overflow".to_string())
-        })?;
-    let b_width = num_polys.checked_mul(t_vector_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group B setup width overflow".to_string())
-    })?;
-    let b_len = b_rows.checked_mul(b_width).ok_or_else(|| {
-        AkitaError::InvalidSetup("multi-group B setup envelope overflow".to_string())
-    })?;
-    Ok((a_len, b_len, d_width))
+fn matrix_coefficient_len(
+    rows: usize,
+    columns: usize,
+    ring_dimension: usize,
+    label: &str,
+) -> Result<usize, AkitaError> {
+    rows.checked_mul(columns)
+        .and_then(|len| len.checked_mul(ring_dimension))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup envelope overflow")))
 }
 
 fn root_setup_len(

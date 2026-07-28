@@ -445,6 +445,7 @@ where
     (folded_ring * packed_inner.sigma_m1()).coefficients()[0]
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_prove<
     FF,
     const D: usize,
@@ -458,6 +459,13 @@ fn run_prove<
     pt: &[Cfg::ExtField],
     opening: Cfg::ExtField,
     plan: Option<&FoldSchedule>,
+    // When `false`, skip the planner proof-size upper-bound assertion. That
+    // guard validates shipped-catalog schedules against the offline planner
+    // estimate; it is meaningless for a synthetic schedule (e.g. the mixed
+    // ring-dimension-per-level experiment) that the planner cannot reproduce
+    // from its lookup key. The measured proof size and per-level breakdown are
+    // still reported in full.
+    validate_against_planner: bool,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -521,14 +529,16 @@ fn run_prove<
     );
     eprintln!("[{label}] ext_field: ext_degree={}", Cfg::EXT_DEGREE);
     if let Some(plan) = plan {
-        report_proof_size_against_planner(
-            label,
-            &proof,
-            planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::singleton(pt.len())),
-            "planned",
-            setup_contribution_mode,
-            plan,
-        );
+        if validate_against_planner {
+            report_proof_size_against_planner(
+                label,
+                &proof,
+                planned_payload_bytes::<Cfg>(plan, PolynomialGroupLayout::singleton(pt.len())),
+                "planned",
+                setup_contribution_mode,
+                plan,
+            );
+        }
         emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
@@ -540,14 +550,16 @@ fn run_prove<
         let opening_batch =
             OpeningClaimsLayout::new(pt.len(), 1).expect("same-point opening batch");
         let schedule = Cfg::get_params_for_prove(&opening_batch).expect("runtime schedule");
-        report_proof_size_against_planner(
-            label,
-            &proof,
-            planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::singleton(pt.len())),
-            "runtime schedule",
-            setup_contribution_mode,
-            &schedule,
-        );
+        if validate_against_planner {
+            report_proof_size_against_planner(
+                label,
+                &proof,
+                planned_payload_bytes::<Cfg>(&schedule, PolynomialGroupLayout::singleton(pt.len())),
+                "runtime schedule",
+                setup_contribution_mode,
+                &schedule,
+            );
+        }
         emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
@@ -598,6 +610,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     nv: usize,
     layout: &CommittedGroupParams,
     plan: Option<&FoldSchedule>,
+    validate_against_planner: bool,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -678,6 +691,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         &original_pt,
         opening,
         plan,
+        validate_against_planner,
     );
 }
 
@@ -686,6 +700,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     nv: usize,
     layout: &CommittedGroupParams,
     plan: Option<&FoldSchedule>,
+    validate_against_planner: bool,
 ) where
     FF: CanonicalField
         + CanonicalBytes
@@ -765,6 +780,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         &pt,
         opening,
         plan,
+        validate_against_planner,
     );
 }
 
@@ -1106,10 +1122,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
             let opening_batch = OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP)
                 .expect("precommit batch");
-            let layout = PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(
-                &opening_batch,
-            )
-            .expect("precommit layout");
+            let layout =
+                PrecommittedCommitmentConfig::<ProofCfg>::get_params_for_batched_commitment(
+                    &opening_batch,
+                )
+                .expect("precommit layout");
             let polys = vec![make_profile_onehot_poly::<FF, D>(
                 &layout,
                 0x0bee_fcaf_2100_0000 + group_idx as u64,
@@ -1119,7 +1136,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
                 .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, pre_point))
                 .collect::<Vec<_>>();
             let (commitment, hint) =
-                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<Cfg>>::batched_commit(
+                AkitaCommitmentScheme::<PrecommittedCommitmentConfig<ProofCfg>>::batched_commit(
                     &setup, &polys, &stack,
                 )
                 .expect("precommit");

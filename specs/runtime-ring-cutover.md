@@ -343,7 +343,7 @@ slices 0–4 (authority, per-role dispatch, verifier F2 teardown, planner
 `role_dims`, regression locks).
 
 **Deferred (follow-on, not merge blockers):** divergent per-role planner
-emission (`d_a ≠ d_b ≠ d_d` within one fold level), nested ring-switch views
+emission (`d_a ≠ d_b ≠ d_d` within one fold level), mixed ring-switch views
 when `d_d ≠ d_a`, and removing the last witness borrow `uniform_dim()` gate.
 
 ### Testing Strategy
@@ -365,9 +365,9 @@ New or updated tests:
   fold levels use different valid dimensions under one setup envelope.
 - **`akita-verifier` mixed-D rejection tests** mirroring `mixed_d_per_level_e2e`
   malformed matrix (not only PCS integration).
-- Per-role adapter test: `CommitmentRingDims { d_a:128, d_b:64, d_d:32 }` with
-  nesting `d_d | d_b | d_a`; each operation adapter dispatches on its role dim
-  (planner may still reject divergent dims until Slice 3).
+- Per-role adapter test: `CommitmentRingDims { d_a:128, d_b:32, d_d:64 }`;
+  each operation adapter dispatches on its role dim without imposing an order
+  between B and D (planner may still reject divergent dims until Slice 3).
 - A transcript equivalence test proving that flat commitment absorption matches
   the old canonical coefficient order for a uniform-D schedule.
 - Malformed proof/claim tests for commitment vector length, hint digit length,

@@ -485,8 +485,9 @@ impl RingRelationProver {
             let group_commitment = block_claims
                 .opening_claims()
                 .group_commitment(group_index)?;
+            let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
             let group_rows =
-                RingView::new(group_commitment.rows().coeffs(), dims.d_b())?.num_rings();
+                RingView::new(group_commitment.rows().coeffs(), group_dims.d_b())?.num_rings();
             let expected_rows = lp.group_commitment_rows(&opening_batch, group_index)?;
             if group_rows != expected_rows {
                 return Err(AkitaError::InvalidInput(
@@ -702,7 +703,7 @@ impl RingRelationProver {
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
         let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
         let relation_rhs =
-            assemble_relation_rhs::<F>(dims, &relation_rhs_layout, &v, &commitment_rows)
+            assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
                 .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(
@@ -730,6 +731,7 @@ impl RingRelationProver {
                 group_z.into_iter().enumerate()
             {
                 let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
+                let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
                 let group_hint_parts = hint_parts.drain(..k_g).collect::<Vec<_>>();
                 groups.push(RingRelationGroupWitness::from_parts(
                     z_folded_rings,
@@ -737,7 +739,7 @@ impl RingRelationProver {
                     group_e_hat[group_index].clone(),
                     group_e_folded[group_index].clone(),
                     AkitaCommitmentHint::new(group_hint_parts),
-                    dims,
+                    group_dims,
                 ));
             }
             RingRelationWitness::from_groups(fold_grind_nonce, groups)

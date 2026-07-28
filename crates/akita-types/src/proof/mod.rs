@@ -10,6 +10,7 @@
 pub mod batch;
 pub mod commitment;
 pub mod relation;
+pub mod relation_address;
 pub mod relation_range_image;
 pub mod ring_relation;
 pub mod scheme;
@@ -28,9 +29,8 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, should_reject_multi_group_root, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
@@ -57,6 +57,7 @@ pub use relation::{
     relation_claim_from_rows_extension, relation_rhs_coeff_len, relation_rhs_layout_for,
     relation_rhs_row_count, RelationGroupRows, RelationRhsLayout,
 };
+pub use relation_address::RelationAddressGeometry;
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
 pub use ring_relation::{
     ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,

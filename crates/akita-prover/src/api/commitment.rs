@@ -15,7 +15,7 @@ use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommittedGroupParams, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, MULTI_GROUP_ROOT_DENSE_UNSUPPORTED,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -656,19 +656,13 @@ where
     P: RootPolyMeta<F>,
 {
     let opening_batch = prepare_commit_inputs::<F, P>(polys, setup)?;
-    if polys.iter().any(|poly| poly.onehot_chunk_size().is_none()) {
-        return Err(AkitaError::InvalidInput(
-            MULTI_GROUP_ROOT_DENSE_UNSUPPORTED.to_string(),
-        ));
-    }
     Ok(PolynomialGroupLayout::new(
         opening_batch.max_num_vars(),
         opening_batch.num_total_polynomials(),
     ))
 }
 
-/// Commit one standalone one-hot commitment group with the exact fixed-root
-/// commitment layout.
+/// Commit one standalone commitment group with the exact fixed-root layout.
 ///
 /// Grouped proving is still guarded until the opening phase lands; this API only
 /// produces the precommit metadata and commitment object required by that later
@@ -676,8 +670,8 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the group is empty, dense, unsupported by the setup, or
-/// cannot be planned under the precommitment policy.
+/// Returns an error if the group is empty, unsupported by the setup, or cannot
+/// be planned under the precommitment policy.
 pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,

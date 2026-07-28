@@ -12,14 +12,23 @@ use akita_types::{
 };
 
 #[test]
-fn nested_role_dims_reject_non_nesting() {
-    let bad = CommitmentRingDims {
+fn role_dims_accept_either_b_d_order_below_a() {
+    let dims = CommitmentRingDims {
+        inner: 128,
+        outer: 32,
+        opening: 64,
+    };
+    validate_role_dims(dims).expect("D may be larger than B");
+}
+
+#[test]
+fn role_dims_reject_b_larger_than_a() {
+    let dims = CommitmentRingDims {
         inner: 64,
         outer: 128,
         opening: 32,
     };
-    assert!(!bad.nests());
-    validate_role_dims(bad).expect_err("non-nesting role dims rejected");
+    validate_role_dims(dims).expect_err("A remains the relation-witness carrier");
 }
 
 #[test]
@@ -110,7 +119,7 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
 }
 
 #[test]
-fn nested_role_dims_change_flat_row_count() {
+fn mixed_role_dims_change_flat_row_count() {
     let coeffs = vec![F::zero(); 128];
     assert_eq!(RingView::new(&coeffs, 64).expect("B view").num_rings(), 2);
     assert_eq!(RingView::new(&coeffs, 128).expect("A view").num_rings(), 1);

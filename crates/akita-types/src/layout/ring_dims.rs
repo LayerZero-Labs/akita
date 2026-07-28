@@ -15,26 +15,35 @@ pub const MAX_FOLD_LEVELS: usize = 16;
 pub const SUPPORTED_CHALLENGE_RING_DIMS: &[usize] =
     akita_challenges::PRODUCTION_FOLD_CHALLENGE_RING_DIMS;
 
-/// Ring dimensions valid for any commitment matrix role (B/D may use D=16 on fp128).
+/// Ring dimensions implemented by the shared ring and NTT layers.
+///
+/// Protocol field tiers may impose a higher role-specific floor.
 pub const SUPPORTED_RING_DIMS: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 2048];
 
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
 
-/// Which Ajtai / protocol matrix role a buffer belongs to at one fold level.
+/// Which commitment matrix owns a buffer or ring dimension at one fold level.
+///
+/// “Role” is the historical protocol name for the fixed job of one of the
+/// three Ajtai matrices. It does not mean that a matrix changes jobs between
+/// levels: A always carries the relation witness, B always commits the next
+/// witness, and D always commits the opening digits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingRole {
-    /// A-role (`d_a`): fold witness, row coefficients, ring-switch geometry.
+    /// A matrix (`d_a`): fold witness, row coefficients, ring-switch geometry.
     Inner,
-    /// B-role (`d_b`): sent commitment rows, COMMIT segment of `y`.
+    /// B matrix (`d_b`): sent commitment rows, COMMIT segment of `y`.
     Outer,
-    /// D-role (`d_d`): opening digits, D-block rows `v`.
+    /// D matrix (`d_d`): opening digits, D-block rows `v`.
     Opening,
 }
 
-/// Per-fold ring dimensions by protocol role.
+/// Per-fold ring dimensions of the A, B, and D commitment matrices.
 ///
-/// Invariant when nested: `opening | outer | inner` (`d_d | d_b | d_a`).
+/// A is the relation-witness carrier, so `inner >= outer` and
+/// `inner >= opening`. B and D are independent: neither is ordered relative to
+/// the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRingDims {
     /// Fold / ring-switch / inner-commitment ring (`d_a`).
@@ -55,9 +64,30 @@ impl CommitmentRingDims {
         }
     }
 
-    #[must_use]
-    pub fn nests(self) -> bool {
-        self.inner.is_multiple_of(self.outer) && self.outer.is_multiple_of(self.opening)
+    /// Validate the representation-level A-carrier geometry independently of
+    /// production dispatch and challenge catalogs.
+    ///
+    /// This permits small dimensions in arithmetic/layout tests while keeping
+    /// the same ordering contract used by [`validate_role_dims`].
+    pub fn validate_a_carrier(self) -> Result<(), AkitaError> {
+        for (role, d) in [
+            (RingRole::Inner, self.inner),
+            (RingRole::Outer, self.outer),
+            (RingRole::Opening, self.opening),
+        ] {
+            if d == 0 || !d.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{role:?} ring dimension must be a non-zero power of two, got {d}"
+                )));
+            }
+        }
+        if self.outer > self.inner || self.opening > self.inner {
+            return Err(AkitaError::InvalidSetup(format!(
+                "A-role ring dimension d_a={} must be at least d_b={} and d_d={}",
+                self.inner, self.outer, self.opening
+            )));
+        }
+        Ok(())
     }
 
     /// Ring dimension for A-role data: the folded witness `z`, A quotient
@@ -122,7 +152,7 @@ impl CommitmentRingDims {
         }
     }
 
-    /// The single dimension shared by all roles, or an error once per-role
+    /// The single dimension shared by all matrices, or an error once their
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {
         if self.inner == self.outer && self.outer == self.opening {
@@ -216,6 +246,47 @@ pub fn validate_schedule_ring_dims(
         Some(schedule.root.output_witness_len),
         Some(root_next_d),
     )?;
+    let root = &schedule.root.params;
+    let final_params = &root.final_group.commitment;
+    if root.open_commit_matrix != final_params.open_commit_matrix {
+        return Err(AkitaError::InvalidSetup(
+            "root shared D matrix disagrees with final-group commitment params".to_string(),
+        ));
+    }
+    let shared_d = root.open_commit_matrix.ring_dimension();
+    for (group_index, group) in root.precommitted_groups.iter().enumerate() {
+        if group.descriptor != group.commitment.layout {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} descriptor disagrees with its commitment params"
+            )));
+        }
+        group.descriptor.validate_frozen_precommit()?;
+        group.commitment.validate()?;
+        if group.commitment.log_basis_open != final_params.log_basis_open {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} opening basis disagrees with the batch-shared basis"
+            )));
+        }
+        if group.commitment.fold_challenge_config.weight() == 0 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "root precommitted group {group_index} has an empty fold challenge"
+            )));
+        }
+        let dims = group.commitment.role_dims(shared_d);
+        validate_role_dims(dims)?;
+        for (role, d) in [
+            (RingRole::Inner, dims.d_a()),
+            (RingRole::Outer, dims.d_b()),
+            (RingRole::Opening, dims.d_d()),
+        ] {
+            if !seed.gen_ring_dim.is_multiple_of(d) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "setup gen_ring_dim={} is not divisible by root precommitted group {group_index} {role:?} ring d={d}",
+                    seed.gen_ring_dim
+                )));
+            }
+        }
+    }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
             || schedule.terminal.params.witness.d_a(),
@@ -277,17 +348,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
 }
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
-    for (role, d) in [
-        (RingRole::Inner, dims.inner),
-        (RingRole::Outer, dims.outer),
-        (RingRole::Opening, dims.opening),
-    ] {
-        if d == 0 || !d.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role:?} ring dimension must be a non-zero power of two, got {d}"
-            )));
-        }
-    }
+    dims.validate_a_carrier()?;
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",
@@ -304,11 +365,6 @@ pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
                 role
             )));
         }
-    }
-    if !dims.nests() {
-        return Err(AkitaError::InvalidSetup(
-            "per-role ring dims must satisfy d_d | d_b | d_a".into(),
-        ));
     }
     Ok(())
 }

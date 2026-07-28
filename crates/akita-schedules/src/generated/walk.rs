@@ -11,11 +11,12 @@ use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, TerminalResponseShape,
+    PrecommittedLevelParams, RootSource, TerminalResponseShape,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
+    GeneratedRootSource,
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
@@ -38,6 +39,20 @@ pub(crate) fn walk_generated_schedule_entry(
     key.validate()?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
+    let stored_root_source = match entry.root.final_group.source {
+        GeneratedRootSource::Dense { coefficient_bits } => RootSource::Dense { coefficient_bits },
+        GeneratedRootSource::OneHot { chunk_size } => RootSource::OneHot {
+            chunk_size: chunk_size as usize,
+        },
+    };
+    let configured_root_source =
+        RootSource::from_config(policy.decomposition, policy.onehot_chunk_size);
+    if stored_root_source != configured_root_source {
+        return Err(AkitaError::InvalidSetup(format!(
+            "generated root source {stored_root_source:?} disagrees with catalog policy \
+             source {configured_root_source:?}"
+        )));
+    }
     let is_multi_group = !key.precommitteds.is_empty();
     let expected_root_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -50,8 +65,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 "generated schedule challenge field bit width overflow".to_string(),
             )
         })?;
-    let root_eor_key =
-        PolynomialGroupLayout::new(key.final_group.num_vars(), key.num_polynomials()?);
+    let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
     let stored_root_shape = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,
         GeneratedRootFinalChallenge::Tensor { fold_low_len } => TensorChallengeShape::Tensor {

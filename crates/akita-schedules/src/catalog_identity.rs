@@ -548,6 +548,8 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
     h.write_u64(key.num_live_blocks as u64);
     h.write_u64(u64::from(key.log_basis_inner));
     h.write_u64(u64::from(key.log_basis_outer));
+    h.write_u64(key.inner_ring_dimension as u64);
+    h.write_u64(key.outer_ring_dimension as u64);
     h.write_u64(key.n_a as u64);
     h.write_bytes(&key.a_coeff_linf_bound.to_le_bytes());
     h.write_u64(key.n_b as u64);

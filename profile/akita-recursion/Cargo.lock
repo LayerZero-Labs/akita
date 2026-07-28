@@ -164,6 +164,7 @@ name = "akita-recursion-glue"
 version = "0.1.0"
 dependencies = [
  "akita-algebra",
+ "akita-challenges",
  "akita-field",
  "akita-serialization",
  "akita-types",

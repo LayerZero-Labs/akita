@@ -37,7 +37,6 @@ pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
 }
 
 fn prepare_suffix_group_points<F, E>(
-    protocol_point: &[E],
     block_claims: &OpeningClaims<'_, E>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
@@ -72,16 +71,7 @@ where
                         point_vars.num_vars()
                     )));
                 }
-                let group_protocol_point = point_vars
-                    .indices()
-                    .iter()
-                    .map(|&idx| {
-                        protocol_point
-                            .get(idx)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
+                let group_protocol_point = block_claims.group_point(group_index)?;
                 prepared_points.push(prepare_opening_point::<F, E, D>(
                     &group_protocol_point,
                     BasisMode::Lagrange,
@@ -367,7 +357,7 @@ where
         prepared_points,
         final_relation,
         ..
-    } = verify_fold_eor_geometry::<F, E, T>(
+    } = verify_terminal_fold_eor::<F, E, T>(
         proof.extension_opening_reduction.as_ref(),
         &protocol_point,
         &[current_state.opening],
@@ -542,15 +532,17 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let requires_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && lp.setup_prefix.is_none();
+    let group_points = (0..opening_batch.num_groups())
+        .map(|group_index| block_claims.group_point(group_index))
+        .collect::<Result<Vec<_>, _>>()?;
+    let requires_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let FoldEorReplay {
         prepared_points,
         final_relation: eor_trace_final,
         ..
     } = verify_fold_eor::<F, E, T>(
         proof.extension_opening_reduction,
-        block_claims.point(),
+        &group_points,
         &openings,
         &row_coefficients,
         &opening_batch,
@@ -559,14 +551,10 @@ where
         requires_extension_reduction,
         transcript,
     )?;
-    if proof.extension_opening_reduction.is_some() && opening_batch.num_groups() != 1 {
-        return Err(AkitaError::InvalidProof);
-    }
     let prepared_points = if proof.extension_opening_reduction.is_some() {
         prepared_points
     } else {
         prepare_suffix_group_points::<F, E>(
-            block_claims.point(),
             &block_claims,
             lp,
             &opening_batch,
@@ -577,18 +565,16 @@ where
     absorb_prepared_opening_points(&prepared_points, transcript);
 
     let witness_len = output_witness_len;
-    let (trace_eval_target, claim_reduction_factor) = match eor_trace_final.as_ref() {
-        Some((final_claim, factors_by_point)) => (
+    let (trace_eval_target, trace_claim_coefficients) = match eor_trace_final.as_ref() {
+        Some((final_claim, factors_by_group)) => (
             *final_claim,
-            *factors_by_point.first().ok_or(AkitaError::InvalidProof)?,
+            opening_batch.scale_row_coefficients_by_group(&row_coefficients, factors_by_group)?,
         ),
         None => (
             opening_batch.batched_eval_target(&row_coefficients, &openings)?,
-            E::one(),
+            row_coefficients.clone(),
         ),
     };
-    let trace_claim_coefficients =
-        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
     let fold_grind_nonce = proof.fold_grind_nonce;
     let (v_storage, payload, next_opening_ring_dim) = match proof.kind {

@@ -46,6 +46,18 @@ pub const DEFAULT_NUM_POLYS: &[usize] = &[1, 2, 4];
 /// Maximum number of precommitted groups emitted for multi-group-root generated tables.
 pub const DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS: usize = 3;
 
+/// Precommit arities sampled by the stock generated multi-group catalogs.
+///
+/// This list controls finite catalog coverage only. The protocol accepts any
+/// independently supported precommit arity when an exact schedule row is
+/// available.
+pub const DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS: &[usize] = &[14];
+
+/// Polynomial counts per precommitted group sampled by stock generated catalogs.
+///
+/// Keep this explicit and small: it controls catalog size, not protocol capability.
+pub const DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_POLYNOMIALS: &[usize] = &[1, 2];
+
 /// One generated schedule-table family.
 ///
 /// Function-pointer fields (instead of generic `Fn` closures) keep the
@@ -244,26 +256,44 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     }
     let mut candidates = Vec::new();
     for main in mains {
-        let pre_num_vars = main.num_vars() / 2;
-        if pre_num_vars < min_precommitted_num_vars {
-            continue;
-        }
-        let pre_key = PolynomialGroupLayout::new(pre_num_vars, 1);
-        let Ok(params) = planner_precommitted_commit_params::<Cfg>(&pre_key) else {
-            continue;
-        };
-        let precommitted = PrecommittedGroupDescriptor::from_params(pre_key, &params);
-        for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-            let candidate = AkitaScheduleLookupKey {
-                final_group: main,
-                precommitteds: vec![precommitted; num_precommitted],
-            };
-            candidates.push(candidate);
+        for &pre_num_vars in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_VARS {
+            if pre_num_vars < min_precommitted_num_vars {
+                continue;
+            }
+            for &precommitted_num_polynomials in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_POLYNOMIALS {
+                let precommitted_group =
+                    PolynomialGroupLayout::new(pre_num_vars, precommitted_num_polynomials);
+                let Ok(params) = planner_precommitted_commit_params::<Cfg>(&precommitted_group)
+                else {
+                    continue;
+                };
+                let precommitted =
+                    PrecommittedGroupDescriptor::from_params(precommitted_group, &params);
+                for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
+                    let candidate = AkitaScheduleLookupKey {
+                        final_group: main,
+                        precommitteds: vec![precommitted; num_precommitted],
+                    };
+                    candidates.push(candidate);
+                }
+            }
         }
     }
+    candidates.extend(direct_profile_group_batch_keys_for_cfg::<Cfg>()?);
     let mut keys = supported_group_batch_keys::<Cfg>(candidates)?;
     keys.sort_by(runtime_schedule_key_cmp);
     Ok(keys)
+}
+
+fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
+) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHot>();
+    }
+    if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
+        return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
+    }
+    Ok(Vec::new())
 }
 
 fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(
@@ -315,20 +345,6 @@ fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
     Ok(planned.schedule.root.params.final_group.commitment)
 }
 
-fn key_within_setup_capacity(
-    key: &AkitaScheduleLookupKey,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> bool {
-    if key.precommitteds.is_empty() {
-        return false;
-    }
-    if key.final_group.num_vars() > max_num_vars {
-        return false;
-    }
-    key.final_group.num_polynomials() <= max_num_batched_polys
-}
-
 /// Selected multi-group recursive keys for setup-prefix capacity work.
 ///
 /// Returns the bounded supported set: generated-catalog multi-group rows under
@@ -366,7 +382,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
                     .map(|group| group.descriptor)
                     .collect(),
             };
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
+            if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }
@@ -378,7 +394,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     // the same profiling key shape; they differ only in the chunked witness
     // layout the policy prices.
     for candidate in recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()? {
-        if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
+        if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
             push_unique_schedule_key(&mut keys, candidate);
         }
     }

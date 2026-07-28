@@ -56,8 +56,13 @@ claims, and root polynomial storage (`DensePoly<F>`, `OneHotPoly<F, I>`,
 `SparseRingPoly<F>`) — is flat field-element vectors (`RingVec<F>`). Per-level
 `CommitmentRingDims` (`d_a` / `d_b` / `d_d` on `LevelParams::role_dims`) is
 the operation authority for how those vectors are interpreted; levels may
-differ. [`validate_schedule_ring_dims`] checks every level
-dimension against the setup's generation dimension.
+differ. Here, *role* is the historical protocol name for a commitment matrix's
+fixed job: A carries the relation witness, B commits the next witness, and D
+commits the opening digits. The matrices do not switch roles when their ring
+dimensions change. User-facing prose therefore calls a non-uniform tuple such
+as `128/64/32` **per-matrix ring dimensions** and a change between levels a
+**ring-dimension transition**. [`validate_schedule_ring_dims`] checks
+every level dimension against the setup's generation dimension.
 
 Every function on the prove/verify path has one of two roles:
 
@@ -71,11 +76,11 @@ The bridge is the *operation adapter*: a D-free function that extracts the
 ring dimension of the specific data one operation touches and enters the
 kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
-proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
+proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
-names the per-role dimensions; prove/verify hot paths dispatch on `d_a()`, `d_b()`,
-or `d_d()` per operation, not on a single fused dimension.
+names the per-matrix ring dimensions; prove/verify hot paths dispatch on
+`d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.
 
 The normative contract (discriminator rule, forbidden facade/level-
 monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.
@@ -90,7 +95,7 @@ Mixed-dimension execution is exercised end-to-end by
 | `AkitaCommitmentScheme<Cfg>` | Top-level PCS `commit` / `prove` / `verify` orchestration (`akita-pcs`) |
 | `AkitaProverSetup<F>` | Prover setup wrapper; `gen_ring_dim` is runtime shape metadata |
 | `Commitment<F>`, `RingVec<F>` | protocol commitment and field-vector storage |
-| `CommitmentRingDims`, `validate_schedule_ring_dims` | Per-role ring dimensions and schedule validation |
+| `CommitmentRingDims`, `validate_schedule_ring_dims` | A/B/D commitment-matrix ring dimensions and schedule validation |
 | `CommitmentConfig` | Single user-facing trait for every per-config policy hook (algebra, exact SIS profile, decomposition, layout, schedule, transcript bind, prove/commitment params). Verifier-reachable hooks return `Result<_, AkitaError>` |
 | `LevelParams` | Per-level recursion layout and config (fold shape, ring/ext degrees, decomposition depth, `role_dims`) |
 | `PlannerPolicy` | `Cfg`-free projection of a preset for `akita_planner::find_group_batch_schedule`; derive via `akita_config::policy_of::<Cfg>()` |

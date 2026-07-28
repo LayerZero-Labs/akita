@@ -29,9 +29,12 @@ where
         alpha_pows_b,
         alpha_pows_d,
     )?;
+    // `alpha_pows_a = [1, α, α², …]`, so the folding challenge is index 1.
+    let alpha = *alpha_pows_a.get(1).ok_or(AkitaError::InvalidProof)?;
     let plan = relation_matrix_evaluator.setup_contribution_plan::<F>(
         full_vec_randomness,
         (!fold_gadget.is_empty()).then_some(fold_gadget),
+        alpha,
     )?;
     plan.evaluate_direct::<F>(setup, alpha_pows_a, alpha_pows_b, alpha_pows_d)
 }

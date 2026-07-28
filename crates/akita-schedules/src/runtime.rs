@@ -308,15 +308,7 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: if root.params.onehot_chunk_size == 0 {
-                        RootSource::Dense {
-                            coefficient_bits: root.params.field_bits_for_cache(),
-                        }
-                    } else {
-                        RootSource::OneHot {
-                            chunk_size: root.params.onehot_chunk_size,
-                        }
-                    },
+                    source: RootSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -530,7 +522,7 @@ fn grouped_setup_prefix_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
 
     rings
-        .checked_mul(params.d_a())
+        .checked_mul(params.relation_witness_carrier_ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 

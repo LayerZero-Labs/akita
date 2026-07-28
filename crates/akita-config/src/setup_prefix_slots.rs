@@ -109,16 +109,6 @@ pub fn setup_prefix_slot_ids_for_capacity<Cfg: CommitmentConfig>(
     Ok(ids.into_iter().collect())
 }
 
-fn key_within_setup_capacity(
-    key: &AkitaScheduleLookupKey,
-    max_num_vars: usize,
-    max_num_batched_polys: usize,
-) -> bool {
-    !key.precommitteds.is_empty()
-        && key.final_group.num_vars() <= max_num_vars
-        && key.final_group.num_polynomials() <= max_num_batched_polys
-}
-
 fn push_unique_schedule_key(
     keys: &mut Vec<AkitaScheduleLookupKey>,
     candidate: AkitaScheduleLookupKey,
@@ -155,7 +145,7 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
                     .map(|group| group.descriptor)
                     .collect(),
             };
-            if key_within_setup_capacity(&candidate, max_num_vars, max_num_batched_polys) {
+            if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 push_unique_schedule_key(&mut keys, candidate);
             }
         }

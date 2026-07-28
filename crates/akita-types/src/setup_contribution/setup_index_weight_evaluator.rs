@@ -9,12 +9,11 @@ use crate::{
 
 use super::get_d_col_range;
 
-/// Succinct evaluator for the setup-index weight multilinear extension.
+/// Succinct uniform-geometry evaluator for the setup-index weight MLE.
 ///
-/// The evaluator contracts live D, B, and A setup spans with an exact sparse
-/// pair-carry recurrence. It does not materialize the packed setup-weight
-/// vector or a Cartesian equality domain. Witness addresses and setup columns
-/// are derived from the canonical setup inputs at evaluation time.
+/// The canonical plan remains authoritative for mixed role dimensions. This
+/// evaluator preserves the coarse semantic D/B/A spans used by uniform
+/// recursive setup edges, avoiding compilation into many weighted fragments.
 #[derive(Clone)]
 pub struct SetupIndexWeightEvaluator<E> {
     tau1: Vec<E>,
@@ -41,9 +40,7 @@ struct SetupRoleProjection<E> {
 }
 
 impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
-    /// Build a succinct evaluator for `setup_index_weight~`.
-    ///
-    /// `setup_ring_dim` is the base ring dimension used by the setup prefix.
+    /// Build the uniform recursive setup-index evaluator.
     #[allow(clippy::too_many_arguments)]
     pub fn new<F>(
         plan: &SetupContributionPlan<E>,
@@ -119,7 +116,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     }
 
     /// Evaluate `setup_index_weight~(rho_setup_idx)` exactly.
-    #[tracing::instrument(skip_all, name = "stage3_setup_index_weight")]
+    #[tracing::instrument(skip_all, name = "stage3_setup_index_weight_uniform")]
     pub fn evaluate(&self, rho_setup_idx: &[E]) -> Result<E, AkitaError> {
         let setup_idx_bits = self.setup_idx_bits()?;
         if rho_setup_idx.len() != setup_idx_bits {
@@ -129,12 +126,6 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
             });
         }
 
-        // Each role's inner sum contracts two affine equality-address streams:
-        // the setup-index address (strided by the role projection ratio) and the
-        // opening address (strided by 1 for D/B, by the fold depth for A). Use
-        // the exact compact-pair recurrence so the contraction is polylog in the
-        // span instead of scanning every setup column, which dominated the
-        // recursive-mode verifier (setup-product stage 3).
         let mut acc = E::zero();
         for group in &self.groups {
             acc += self.evaluate_d_role(group, rho_setup_idx)?;
@@ -204,7 +195,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     "witness D address overflow",
                 )?;
                 for row in 0..self.d_rows {
-                    let row_weight = eq_eval_at_index(&self.tau1, self.d_row_start + row);
+                    let row_weight = checked_eq_eval_at_row(&self.tau1, self.d_row_start, row)?;
                     for (lane, &scale) in self.d_projection.scales.iter().enumerate() {
                         let setup_index = projected_setup_offset(
                             &self.d_projection,
@@ -279,7 +270,7 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     "witness B address overflow",
                 )?;
                 for row in 0..n_b {
-                    let row_weight = eq_eval_at_index(&self.tau1, group.b_row_start + row);
+                    let row_weight = checked_eq_eval_at_row(&self.tau1, group.b_row_start, row)?;
                     for (lane, &scale) in self.b_projection.scales.iter().enumerate() {
                         let setup_index = projected_setup_offset(
                             &self.b_projection,
@@ -320,7 +311,6 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
         let z_cols = num_positions_per_block
             .checked_mul(depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
-        let setup_col = 0;
         let mut acc = E::zero();
         let units = self.witness_layout.units_for_group(group.group_id)?;
         for unit in &units {
@@ -341,15 +331,10 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
                     "witness A address overflow",
                 )?;
                 for row in 0..n_a {
-                    let row_weight = eq_eval_at_index(&self.tau1, group.a_row_start + row);
+                    let row_weight = checked_eq_eval_at_row(&self.tau1, group.a_row_start, row)?;
                     for (lane, &scale) in self.a_projection.scales.iter().enumerate() {
-                        let setup_index = projected_setup_offset(
-                            &self.a_projection,
-                            z_cols,
-                            row,
-                            setup_col,
-                            lane,
-                        )?;
+                        let setup_index =
+                            projected_setup_offset(&self.a_projection, z_cols, row, 0, lane)?;
                         let pair = eval_compact_pair_eq(
                             rho_setup_idx,
                             setup_index,
@@ -368,12 +353,6 @@ impl<E: FieldCore> SetupIndexWeightEvaluator<E> {
     }
 }
 
-/// Reject an affine opening span that leaves the live opening source.
-///
-/// The opening map is the identity within `[0, opening_source_len)` (see
-/// [`crate::checked_opening_source_index`]), and each role scans a monotone
-/// affine address sequence, so validating the maximum address is sufficient to
-/// keep the compact-pair contraction confined to live witness positions.
 fn validate_opening_span(
     opening_source_len: usize,
     base: usize,
@@ -399,26 +378,17 @@ fn projected_setup_offset<E: FieldCore>(
     column: usize,
     lane: usize,
 ) -> Result<usize, AkitaError> {
-    if column >= width {
+    if column >= width || lane >= projection.ratio {
         return Err(AkitaError::InvalidSetup(
-            "setup column exceeds role width".into(),
+            "setup projected address out of range".into(),
         ));
     }
-    if lane >= projection.ratio {
-        return Err(AkitaError::InvalidSetup(
-            "setup projection lane out of range".into(),
-        ));
-    }
-    let logical = width
+    width
         .checked_mul(row)
         .and_then(|base| base.checked_add(column))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup role index overflow".into()))?;
-    let base = projection
-        .ratio
-        .checked_mul(logical)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup base index overflow".into()))?;
-    base.checked_add(lane)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup lane index overflow".into()))
+        .and_then(|logical| projection.ratio.checked_mul(logical))
+        .and_then(|base| base.checked_add(lane))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup projected address overflow".into()))
 }
 
 fn setup_role_projection<E: FieldCore>(
@@ -439,13 +409,28 @@ fn setup_role_projection<E: FieldCore>(
     }
 
     let role_pows = scalar_powers(alpha, role_dim);
-    let base_pows = &role_pows[..geometry.base_ring_dim()];
+    let base_pows = role_pows
+        .get(..geometry.base_ring_dim())
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} base projection overflow")))?;
     let mut scales = Vec::with_capacity(ratio);
     for lane in 0..ratio {
-        let offset = lane * geometry.base_ring_dim();
-        let scale = role_pows[offset];
+        let offset = lane
+            .checked_mul(geometry.base_ring_dim())
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} lane offset overflow")))?;
+        let scale = *role_pows
+            .get(offset)
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} lane out of range")))?;
         for idx in 0..geometry.base_ring_dim() {
-            if role_pows[offset + idx] != scale * base_pows[idx] {
+            let role_power = *offset
+                .checked_add(idx)
+                .and_then(|index| role_pows.get(index))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(format!("{role} projection index overflow"))
+                })?;
+            let base_power = *base_pows.get(idx).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!("{role} base projection index overflow"))
+            })?;
+            if role_power != scale * base_power {
                 return Err(AkitaError::InvalidSetup(format!(
                     "{role} setup-index weight alpha powers do not decompose over base setup ring"
                 )));
@@ -464,6 +449,17 @@ fn validate_tau_domain<E: FieldCore>(tau1: &[E], rows: usize) -> Result<(), Akit
         });
     }
     Ok(())
+}
+
+fn checked_eq_eval_at_row<E: FieldCore>(
+    tau1: &[E],
+    row_start: usize,
+    row: usize,
+) -> Result<E, AkitaError> {
+    let row_index = row_start
+        .checked_add(row)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup row index overflow".into()))?;
+    Ok(eq_eval_at_index(tau1, row_index))
 }
 
 fn checked_mul3(a: usize, b: usize, c: usize, context: &'static str) -> Result<usize, AkitaError> {

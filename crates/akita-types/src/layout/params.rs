@@ -10,7 +10,7 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
-use crate::proof::SetupPrefixSlotId;
+use crate::proof::{RelationAddressGeometry, SetupPrefixSlotId};
 
 pub use crate::sis::{
     FoldWitnessLinfCapConfig, InnerCommitMatrixParams, OpenCommitMatrixParams,
@@ -304,7 +304,7 @@ impl CommittedGroupParams {
         let is_onehot = self.onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
             params.log_basis_inner(),
-            self.d_a(),
+            params.inner_commit_matrix_params().ring_dimension(),
             if is_onehot { self.onehot_chunk_size } else { 1 },
             is_onehot,
         )
@@ -360,16 +360,16 @@ impl CommittedGroupParams {
 
     /// Derive the shape-dependent fold-linf cap config for one root group.
     ///
-    /// The sparse family and ring dimension are root-wide protocol choices;
-    /// the challenge shape and A width belong to the selected group.
+    /// Sparse family, native A dimension, challenge shape, and A width all
+    /// belong to the selected group.
     pub fn fold_witness_linf_cap_config_for_params(
         &self,
         params: &(impl LevelParamsLike + ?Sized),
     ) -> Result<crate::sis::FoldWitnessLinfCapConfig, AkitaError> {
         crate::sis::FoldWitnessLinfCapConfig::for_fold_level(
-            &self.fold_challenge_config,
+            &params.fold_challenge_config(),
             params.fold_challenge_shape(),
-            self.d_a(),
+            params.inner_commit_matrix_params().ring_dimension(),
             params.a_col_len(),
         )
     }
@@ -480,7 +480,7 @@ impl CommittedGroupParams {
             let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
             let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
             let challenge = crate::sis::FoldChallengeNorms::new(
-                &self.fold_challenge_config,
+                &params.fold_challenge_config(),
                 params.fold_challenge_shape(),
             );
             let witness_norms = self.fold_witness_norms_for_params(params);
@@ -588,7 +588,7 @@ impl CommittedGroupParams {
             return Ok(params.num_digits_fold_one());
         }
         let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
+            &params.fold_challenge_config(),
             params.fold_challenge_shape(),
         );
         let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
@@ -613,7 +613,7 @@ impl CommittedGroupParams {
         field_bits: u32,
     ) -> Result<u128, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
+            &params.fold_challenge_config(),
             params.fold_challenge_shape(),
         );
         let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
@@ -854,7 +854,8 @@ impl CommittedGroupParams {
 
     // ---- Canonical relation-matrix row layout offsets (single source of truth) ----
     //
-    // Row layout: consistency (1) | A (n_a) | B (n_b · nc) | D (n_d_active).
+    // Scalar row layout: consistency (1) | A (n_a) | B (n_b · nc) | D.
+    // Multi-group row layout: [consistency_g | A_g | B_g]_g | D.
     // Public-output rows bind through the fused trace term, not the M-matrix.
     // Every row-offset site (prover quotient/`generate_relation_rhs`, setup-contribution
     // `prepare`, the relation claim, the verifier ring-switch row eval) must
@@ -919,6 +920,11 @@ impl CommittedGroupParams {
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group_params.validate()?;
+            if group_params.log_basis_open != self.log_basis_open {
+                return Err(AkitaError::InvalidSetup(
+                    "all opening groups must use the batch-shared opening basis".to_string(),
+                ));
+            }
             let group_layout = opening_batch.group_layout(group_index)?;
             if *group_layout != group_params.layout.group {
                 return Err(AkitaError::InvalidSetup(
@@ -927,6 +933,59 @@ impl CommittedGroupParams {
             }
         }
         opening_batch.root_final_group_index()
+    }
+
+    /// Resolve one opening group's A/B dimensions with this level's shared D.
+    ///
+    /// The final group owns the level-level A/B matrices. Precommitted groups
+    /// own their own A/B matrices; none owns a separate D matrix.
+    pub fn group_role_dims(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<CommitmentRingDims, AkitaError> {
+        let final_group_index = self.validate_opening_batch(opening_batch)?;
+        let dims = if group_index == final_group_index {
+            self.role_dims()
+        } else {
+            self.precommitted_group_params(group_index)
+                .ok_or(AkitaError::InvalidProof)?
+                .role_dims(self.open_commit_matrix.ring_dimension())
+        };
+        dims.validate_a_carrier()?;
+        Ok(dims)
+    }
+
+    /// Ring dimension of the batch-owned recursive-witness carrier.
+    ///
+    /// Every group keeps its native A dimension for fold and relation
+    /// arithmetic. The physical witness carrier uses the largest group A
+    /// dimension so support is independent of caller group order.
+    #[must_use]
+    pub fn relation_witness_carrier_ring_dimension(&self) -> usize {
+        self.precommitted_group_iter()
+            .map(|group| group.inner_commit_matrix.ring_dimension())
+            .fold(self.d_a(), usize::max)
+    }
+
+    /// Resolve flat relation-address geometry across every opening group's
+    /// native A/B dimensions and this level's shared D dimension.
+    pub fn relation_address_geometry(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        outgoing_witness_ring_dimension: usize,
+        outgoing_witness_source_len: usize,
+    ) -> Result<RelationAddressGeometry, AkitaError> {
+        self.validate_opening_batch(opening_batch)?;
+        let group_role_dims = (0..opening_batch.num_groups())
+            .map(|group_index| self.group_role_dims(opening_batch, group_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        RelationAddressGeometry::new_for_groups(
+            self.role_dims(),
+            &group_role_dims,
+            outgoing_witness_ring_dimension,
+            outgoing_witness_source_len,
+        )
     }
 
     /// Sent commitment row count for one opening group.
@@ -969,14 +1028,16 @@ impl CommittedGroupParams {
             ));
         }
 
-        let mut rows = self
-            .a_start()
+        let mut rows = 1usize
             .checked_add(self.inner_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         rows = rows
             .checked_add(self.outer_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
         for group in self.precommitted_group_iter() {
+            rows = rows
+                .checked_add(1)
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
                 .checked_add(group.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
@@ -989,7 +1050,8 @@ impl CommittedGroupParams {
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
-    /// (`consistency | A_final | B_final | A_pre* | B_pre* | D`).
+    /// (`consistency_final | A_final | B_final |
+    ///   [consistency_pre | A_pre | B_pre]* | D`).
     fn group_a_start(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -1015,13 +1077,29 @@ impl CommittedGroupParams {
                 .precommitted_group_params(prior_index)
                 .ok_or(AkitaError::InvalidProof)?;
             start = start
+                .checked_add(1)
+                .ok_or_else(Self::relation_matrix_row_overflow)?;
+            start = start
                 .checked_add(prior.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
                 .checked_add(prior.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
-        Ok(start)
+        start
+            .checked_add(1)
+            .ok_or_else(Self::relation_matrix_row_overflow)
+    }
+
+    /// M-row index of one opening group's native consistency equation.
+    pub fn consistency_row_index(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        group_index: usize,
+    ) -> Result<usize, AkitaError> {
+        self.group_a_start(opening_batch, group_index)?
+            .checked_sub(1)
+            .ok_or(AkitaError::InvalidProof)
     }
 
     fn group_a_rows(
@@ -1106,9 +1184,10 @@ impl CommittedGroupParams {
             relation_rows,
             crate::r_decomp_levels::<F>(self.log_basis_open),
         )?;
+        let carrier_ring_dimension = self.relation_witness_carrier_ring_dimension();
         witness_layout
             .total_len()
-            .checked_mul(self.d_a())
+            .checked_mul(carrier_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))
     }
 
@@ -1117,9 +1196,9 @@ impl CommittedGroupParams {
     /// Scalar layout: `consistency (1) | A (n_a) | B (n_b · num_commitments)
     /// | optional D (n_d)`.
     ///
-    /// Grouped-root layout: `consistency (1) | A_final | B_final | A_pre* |
-    /// B_pre* | optional D`. Public openings bind through the fused trace term,
-    /// not M rows.
+    /// Grouped-root layout: `[consistency_g | A_g | B_g]_g | optional D`,
+    /// in canonical root group order. Public openings bind through the fused
+    /// trace term, not M rows.
     ///
     /// Terminal folds use a separate direct-response protocol and therefore
     /// never construct this relation matrix.

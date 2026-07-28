@@ -1,4 +1,4 @@
-//! Exact one-hot precommitment config adapter.
+//! Exact precommitment config adapter.
 //!
 //! This adapter is for staggered workflows that need ordinary commit calls to
 //! freeze the A/source and B/outer commitment layout before the final multi-group
@@ -17,7 +17,7 @@ use akita_types::{
 use std::marker::PhantomData;
 
 /// Config adapter that routes ordinary commit selection through the exact
-/// one-hot precommit layout.
+/// precommit layout.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PrecommittedCommitmentConfig<Cfg>(PhantomData<Cfg>);
 
@@ -186,11 +186,6 @@ fn catalog_precommitted_commit_params<Cfg: CommitmentConfig>(
 pub(crate) fn precommitted_commit_schedule<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
 ) -> Result<FoldSchedule, AkitaError> {
-    if Cfg::decomposition().log_commit_bound != 1 {
-        return Err(AkitaError::InvalidSetup(
-            "precommitments require a one-hot config".to_string(),
-        ));
-    }
     key.validate()?;
 
     // Runtime config must remain planner-free. The generated catalog identity

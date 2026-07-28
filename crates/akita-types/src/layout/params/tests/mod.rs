@@ -82,12 +82,17 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
 
 fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
     use crate::schedule::PrecommittedGroupDescriptor;
-    let lp = sample_params_only()
+    let mut lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
+    lp.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(lp.d_a()).expect("test challenge");
     let mut precommit_lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
+    precommit_lp.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(precommit_lp.d_a())
+            .expect("precommit test challenge");
     certify_test_sis_bounds(&mut precommit_lp);
     let inner_commit_matrix = precommit_lp.inner_commit_matrix.clone();
     let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -111,6 +116,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         inner_commit_matrix,
         outer_commit_matrix,
         log_basis_open: precommit_lp.log_basis_open,
+        fold_challenge_config: precommit_lp.fold_challenge_config,
         num_digits_inner: precommit_lp.num_digits_inner,
         num_digits_outer: precommit_lp.num_digits_outer,
         num_digits_open: precommit_lp.num_digits_open,

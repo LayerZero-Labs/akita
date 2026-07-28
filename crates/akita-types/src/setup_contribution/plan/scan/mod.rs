@@ -1,7 +1,7 @@
 mod group;
 
 use super::*;
-use akita_algebra::ring::eval_ring_at_pows_fast;
+use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     pub fn evaluate_direct<F>(
@@ -36,38 +36,45 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             alpha_pows_d.len(),
         )?;
         let base_d = geometry.base_ring_dim();
-        let base_pows = alpha_pows_d.get(..base_d).ok_or(AkitaError::InvalidProof)?;
-        let a_projection = role_projection(alpha_pows_a, base_pows, geometry.a_ratio())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "A alpha powers do not decompose over base dimension".into(),
-                )
+        let alpha = *alpha_pows_a.get(1).ok_or(AkitaError::InvalidProof)?;
+        let base_pows = scalar_powers(alpha, base_d);
+        for (role, powers, ratio) in [
+            ("A", alpha_pows_a, geometry.a_ratio()),
+            ("B", alpha_pows_b, geometry.b_ratio()),
+            ("D", alpha_pows_d, geometry.d_ratio()),
+        ] {
+            role_projection(powers, &base_pows, ratio).ok_or_else(|| {
+                AkitaError::InvalidSetup(format!(
+                    "{role} alpha powers do not decompose over the shared setup base"
+                ))
             })?;
-        let b_projection = role_projection(alpha_pows_b, base_pows, geometry.b_ratio())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "B alpha powers do not decompose over base dimension".into(),
-                )
-            })?;
-        let d_projection = role_projection(alpha_pows_d, base_pows, geometry.d_ratio())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup(
-                    "D alpha powers do not decompose over base dimension".into(),
-                )
-            })?;
+        }
+        let projections = self
+            .groups
+            .iter()
+            .map(|group| {
+                let build = |role: &'static str, dimension: usize, ratio: usize| {
+                    let powers = scalar_powers(alpha, dimension);
+                    role_projection(&powers, &base_pows, ratio).ok_or_else(|| {
+                        AkitaError::InvalidSetup(format!(
+                            "{role} alpha powers do not decompose over the shared setup base"
+                        ))
+                    })
+                };
+                Ok([
+                    build("A", group.role_dims.d_a(), group.a_ratio)?,
+                    build("B", group.role_dims.d_b(), group.b_ratio)?,
+                    build("D", group.role_dims.d_d(), group.d_ratio)?,
+                ])
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
 
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
             base_d,
             |BASE_D| {
-                self.evaluate_role_dims_direct_typed::<F, BASE_D>(
-                    setup,
-                    base_pows,
-                    &a_projection,
-                    &b_projection,
-                    &d_projection,
-                )
+                self.evaluate_role_dims_direct_typed::<F, BASE_D>(setup, &base_pows, &projections)
             }
         )
     }
@@ -76,9 +83,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self,
         setup: &AkitaExpandedSetup<F>,
         base_pows: &[E],
-        a_projection: &RoleProjection<E>,
-        b_projection: &RoleProjection<E>,
-        d_projection: &RoleProjection<E>,
+        projections: &[[RoleProjection<E>; 3]],
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
@@ -113,9 +118,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             jobs,
             fused_groups,
             base_d = BASE_D,
-            a_ratio = self.projection_geometry.a_ratio(),
-            b_ratio = self.projection_geometry.b_ratio(),
-            d_ratio = self.projection_geometry.d_ratio()
+            final_a_ratio = self.projection_geometry.a_ratio(),
+            final_b_ratio = self.projection_geometry.b_ratio(),
+            final_d_ratio = self.projection_geometry.d_ratio()
         )
         .entered();
         if base_pows.len() != BASE_D {
@@ -133,23 +138,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let setup_view = setup.shared_matrix().ring_view::<BASE_D>(1, setup_len)?;
         if fused_groups {
-            return self.evaluate_groups_fused::<F, BASE_D>(
-                &setup_view,
-                base_pows,
-                a_projection,
-                b_projection,
-                d_projection,
-            );
+            return self.evaluate_groups_fused::<F, BASE_D>(&setup_view, base_pows, projections);
         }
         let mut acc = E::zero();
-        for group in &self.groups {
+        for (group, projection) in self.groups.iter().zip(projections) {
             acc += group.evaluate_base_ring_direct::<F, BASE_D>(
                 &setup_view,
                 base_pows,
                 &self.d_weights,
-                a_projection,
-                b_projection,
-                d_projection,
+                &projection[0],
+                &projection[1],
+                &projection[2],
                 self.d_rows,
                 self.d_physical_cols,
             )?;
@@ -161,9 +160,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self,
         setup_view: &RingMatrixView<'_, F, BASE_D>,
         base_pows: &[E],
-        a_projection: &RoleProjection<E>,
-        b_projection: &RoleProjection<E>,
-        d_projection: &RoleProjection<E>,
+        projections: &[[RoleProjection<E>; 3]],
     ) -> Result<E, AkitaError>
     where
         F: FieldCore,
@@ -186,7 +183,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let hi = lo.saturating_add(job_rings).min(required);
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
-                for group in &self.groups {
+                for (group, projection) in self.groups.iter().zip(projections) {
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);
                     for segment in group.segments.iter().skip(first) {
                         if segment.lo >= hi {
@@ -204,9 +201,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                 &group.e_eq_slice,
                                 &group.t_eq_slice,
                                 &group.z_eq_slice,
-                                d_projection,
-                                b_projection,
-                                a_projection,
+                                &projection[2],
+                                &projection[1],
+                                &projection[0],
                                 |offset, weight| {
                                     let slot = weight_start
                                         .checked_add(offset)

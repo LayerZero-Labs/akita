@@ -26,6 +26,20 @@ pub struct D64OneHotK16;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
+/// Binary onehot `D=256` tableless preset for mixed-ring experiments.
+/// fp128 certifies all three commitment roles at this dimension.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D256OneHot;
+
+/// Tableless policy marker for a `D = 512` inner (A-role) root.
+///
+/// fp128 certifies the A role at `D = 512` for the Q128 profile, but not B/D.
+/// Consequently this preset is used only as the envelope type for the
+/// three-band mixed-role builder, which keeps B/D within their audited
+/// dimensions; it cannot produce a standalone uniform-D512 schedule.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct D512OneHot;
+
 /// Multi-chunk (distributed-prover) companion of [`D64OneHot`]. Shares every
 /// layout parameter with its sibling but prices the chunked witness layout.
 #[derive(Clone, Copy, Debug, Default)]
@@ -109,6 +123,26 @@ impl_proof_optimized_preset!(
     128,
     1,
     16
+);
+impl_proof_optimized_preset!(
+    D256OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    256
+);
+impl_proof_optimized_preset!(
+    D512OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    512,
+    128,
+    1,
+    256
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

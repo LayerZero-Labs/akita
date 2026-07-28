@@ -5,9 +5,9 @@ use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
     basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
-    ring_opening_point_from_field, BasisMode, DigitRangePlan, EvaluationTraceInputs,
-    FlatBooleanDomain, FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint,
-    RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
+    ring_opening_point_from_field, BasisMode, DigitRangePlan, EvaluationTraceInputs, FpExtEncoding,
+    OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
+    RingMultiplierOpeningPoint, WitnessLayout,
 };
 
 type Cfg = fp128::D128Dense;
@@ -83,20 +83,16 @@ where
     )
     .unwrap();
     let live_len = witness_layout.total_len() * D;
-    let digit_witness_domain = FlatBooleanDomain::new(
-        live_len,
-        live_len.next_power_of_two().trailing_zeros() as usize,
-    )
-    .unwrap();
+    let relation_address_geometry =
+        RelationAddressGeometry::new(level_params.role_dims(), D, live_len / D).unwrap();
     let plan = RelationRangeImagePlan::new(
-        digit_witness_domain,
+        relation_address_geometry,
         DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
         witness_layout,
         &opening_batch,
-        level_params.role_dims(),
-        D,
     )
     .unwrap();
+    let digit_witness_domain = plan.digit_witness_domain();
     let group_params = level_params.group_params(&opening_batch, 0).unwrap();
     let alpha_variables = D.trailing_zeros() as usize;
     let base_outer_point = vec![F::zero(); NUM_VARIABLES - alpha_variables];
@@ -119,7 +115,7 @@ where
     let semantic_trace = build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
         digit_witness_domain: plan.digit_witness_domain(),
         witness_layout: plan.witness_layout(),
-        role_dims: plan.role_dims(),
+        carrier_ring_dimension: plan.relation_address_geometry().carrier_ring_dimension(),
         level_params: &level_params,
         opening_batch: &opening_batch,
         prepared_points: &prepared_points,

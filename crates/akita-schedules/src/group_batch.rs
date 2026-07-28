@@ -28,9 +28,10 @@ fn freeze_precommitted_group_layout(
     layout: &PrecommittedGroupDescriptor,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
-    layout.validate_frozen_precommit(policy.ring_dimension)?;
+    layout.validate_frozen_precommit()?;
 
-    let d = policy.ring_dimension;
+    let d_a = layout.inner_ring_dimension;
+    let d_b = layout.outer_ring_dimension;
     let family = policy.sis_modulus_profile;
     let witness_decomp = DecompositionParams {
         log_basis: layout.log_basis_inner,
@@ -52,14 +53,14 @@ fn freeze_precommitted_group_layout(
         layout.n_a,
         width_s,
         layout.a_coeff_linf_bound,
-        d,
+        d_a,
     )?;
 
     let norm_t = rounded_up_collision_inf_norm(
         policy.sis_security_policy,
         family,
         SisMatrixRole::Outer,
-        d,
+        d_b,
         layout.log_basis_outer,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no multi-group B-role norm".to_string()))?;
@@ -69,6 +70,7 @@ fn freeze_precommitted_group_layout(
         layout.num_live_blocks,
         layout.group.num_polynomials(),
     )
+    .and_then(|width| width.checked_mul(d_a / d_b))
     .ok_or_else(|| AkitaError::InvalidSetup("setup B width overflow".to_string()))?;
     if layout.b_coeff_linf_bound < norm_t {
         return Err(AkitaError::InvalidSetup(
@@ -82,7 +84,7 @@ fn freeze_precommitted_group_layout(
         layout.n_b,
         width_t,
         layout.b_coeff_linf_bound,
-        d,
+        d_b,
     )?;
 
     Ok(PrecommittedGroupSeed {
@@ -124,7 +126,7 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let witness = FoldWitnessNorms::new(
         group.layout.log_basis_inner,
-        policy.ring_dimension,
+        group.layout.inner_ring_dimension,
         if onehot_chunk_size == 0 {
             1
         } else {
@@ -135,7 +137,7 @@ fn materialize_precommitted_group_for_open_basis(
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         ring_challenge_cfg,
         challenge_shape,
-        policy.ring_dimension,
+        group.layout.inner_ring_dimension,
         group.inner_commit_matrix.input_width(),
     )?;
     let (num_digits_fold_one, _) = fold_witness_digit_plan(
@@ -153,8 +155,9 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
-        policy.ring_dimension,
+        group.layout.inner_ring_dimension,
         witness_decomposition,
         log_basis_open,
         ring_challenge_cfg,
@@ -176,7 +179,7 @@ fn materialize_precommitted_group_for_open_basis(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         SisMatrixRole::Outer,
-        policy.ring_dimension,
+        group.layout.outer_ring_dimension,
         log_basis_open,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted B-role norm".to_string()))?;
@@ -190,6 +193,7 @@ fn materialize_precommitted_group_for_open_basis(
         inner_commit_matrix: group.inner_commit_matrix.clone(),
         outer_commit_matrix: group.outer_commit_matrix.clone(),
         log_basis_open,
+        fold_challenge_config: *ring_challenge_cfg,
         num_digits_inner: group.num_digits_inner,
         num_digits_outer: group.num_digits_outer,
         num_digits_open,
@@ -219,11 +223,11 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     log_basis_open: u32,
 ) -> Result<(Vec<PrecommittedLevelParams>, usize), AkitaError> {
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let seeds = multi_group_root_precommitted_group_seeds(key, policy)?;
     let groups = seeds
         .iter()
         .map(|group| {
+            let ring_challenge_cfg = ring_challenge_config(group.layout.inner_ring_dimension)?;
             materialize_precommitted_group_for_open_basis(
                 group,
                 policy,
@@ -235,7 +239,7 @@ pub(crate) fn multi_group_root_precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width()?)
+            .checked_add(group.d_segment_width(policy.ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
     Ok((groups, d_width))

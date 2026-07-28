@@ -291,7 +291,11 @@ where
             )
         )?;
         (
-            proved.protocol_point,
+            proved
+                .protocol_points
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?,
             Some(proved.reduction),
             Some(proved.row_coefficients),
         )
@@ -472,9 +476,7 @@ where
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    let alpha = role_dims.d_a().trailing_zeros() as usize;
-    let needs_extension_reduction =
-        <E as ExtField<F>>::EXT_DEGREE != 1 && level_params.setup_prefix.is_none();
+    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
@@ -521,7 +523,6 @@ where
         protocol_point,
         || Ok(()),
         level_params,
-        alpha,
         BasisMode::Lagrange,
     )
     .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
@@ -533,26 +534,12 @@ mod tests {
     use crate::protocol::core::fold_kernels::prepare_evaluation_trace_claim;
     use akita_field::Fp32;
     use akita_transcript::AkitaTranscript;
-    use akita_types::RingOpeningPoint;
 
     type TestF = Fp32<251>;
-    const D: usize = 4;
 
     #[test]
     fn non_zk_eor_mismatch_is_rejected() {
-        let prepared_point = PreparedOpeningPoint::from_parts::<D>(
-            Vec::new(),
-            RingOpeningPoint {
-                position_weights: vec![TestF::one()],
-                live_block_weights: vec![TestF::one()],
-            },
-            RingMultiplierOpeningPoint::from_base(&RingOpeningPoint {
-                position_weights: vec![TestF::one()],
-                live_block_weights: vec![TestF::one()],
-            }),
-            CyclotomicRing::<TestF, D>::zero(),
-        );
-        let folded_rings = [CyclotomicRing::<TestF, D>::zero()];
+        let openings = [TestF::zero()];
         let reduction = Some(ExtensionOpeningReduction {
             proof: ExtensionOpeningReductionProof {
                 partials: Vec::new(),
@@ -561,18 +548,14 @@ mod tests {
                 },
             },
             final_claim: TestF::one(),
-            final_factor: TestF::one(),
+            final_factors: vec![TestF::one()],
         });
 
         let opening_batch = OpeningClaimsLayout::new(0, 1).expect("singleton opening batch");
         let mut transcript = AkitaTranscript::<TestF>::new(b"test/suffix-shared-trace-target");
-        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _, D>(
+        let err = match prepare_evaluation_trace_claim::<TestF, TestF, _>(
             &reduction,
-            &folded_rings,
-            std::slice::from_ref(&prepared_point),
-            &[],
-            0,
-            BasisMode::Lagrange,
+            &openings,
             &opening_batch,
             Some(vec![TestF::one()]),
             &mut transcript,

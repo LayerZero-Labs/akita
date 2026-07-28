@@ -14,7 +14,9 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 mod geometry;
 mod plan;
 mod setup_index_weight_evaluator;
-mod weights;
+#[allow(dead_code)]
+#[cfg(test)]
+mod test_oracle_weights;
 
 #[cfg(test)]
 mod tests;

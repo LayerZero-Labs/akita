@@ -185,8 +185,8 @@ mod tests {
     use akita_config::CommitmentConfig;
     use akita_types::{
         basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
-        ring_opening_point_from_field, BasisMode, DigitRangePlan, FlatBooleanDomain,
-        OpeningClaimsLayout, PreparedOpeningPoint, RelationRangeImagePlan,
+        ring_opening_point_from_field, BasisMode, DigitRangePlan, OpeningClaimsLayout,
+        PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
         RingMultiplierOpeningPoint, WitnessLayout,
     };
 
@@ -213,20 +213,17 @@ mod tests {
         )
         .expect("two-chunk witness layout");
         let live_len = witness_layout.total_len() * D;
-        let digit_witness_domain = FlatBooleanDomain::new(
-            live_len,
-            live_len.next_power_of_two().trailing_zeros() as usize,
-        )
-        .expect("flat trace domain");
+        let relation_address_geometry =
+            RelationAddressGeometry::new(level_params.role_dims(), D, live_len / D)
+                .expect("flat trace domain");
         let plan = RelationRangeImagePlan::new(
-            digit_witness_domain,
+            relation_address_geometry,
             DigitRangePlan::new(1usize << level_params.log_basis_open).expect("range basis"),
             witness_layout,
             &opening_batch,
-            level_params.role_dims(),
-            D,
         )
         .expect("relation/range-image plan");
+        let digit_witness_domain = plan.digit_witness_domain();
 
         let group_params = level_params
             .group_params(&opening_batch, 0)
@@ -253,7 +250,7 @@ mod tests {
         let inputs = || EvaluationTraceInputs {
             digit_witness_domain: plan.digit_witness_domain(),
             witness_layout: plan.witness_layout(),
-            role_dims: plan.role_dims(),
+            carrier_ring_dimension: plan.relation_address_geometry().carrier_ring_dimension(),
             level_params: &level_params,
             opening_batch: &opening_batch,
             prepared_points: &prepared_points,

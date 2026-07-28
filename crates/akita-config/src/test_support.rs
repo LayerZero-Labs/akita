@@ -8,6 +8,14 @@
 //! absent from every shipped artifact. Production callers size their
 //! per-poly inputs through [`CommitmentConfig::get_params_for_batched_commitment`]
 //! directly and never need this module.
+//!
+//! The mixed ring-dimension schedule builders (`mixed_d_per_level_schedule`,
+//! `ring_dimension_transition_schedule`, `per_matrix_ring_dims_root_schedule`,
+//! and their
+//! config adapters) live in
+//! [`akita_pcs::test_support`]: they call the offline planner
+//! (`akita_planner::plan_optimal_suffix`), which cannot be a dependency of
+//! `akita-config` without a cycle (`akita-planner` depends on `akita-config`).
 
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
@@ -55,6 +63,7 @@ where
     );
     Ok(layout)
 }
+
 /// Minimal setup seed for schedule ring-dimension integration tests.
 #[must_use]
 pub fn ring_plan_test_seed(gen_ring_dim: usize) -> akita_types::AkitaSetupSeed {

@@ -5,6 +5,11 @@
 //! and a two-polynomial final group at `nv=32`. That generated schedule carries
 //! setup-prefix metadata, so a successful recursive proof exercises the
 //! offloaded setup-contribution path rather than the inline direct setup scan.
+//!
+//! The fixture is production-sized and must be run explicitly in an optimized
+//! profile:
+//!
+//! `cargo test --release -p akita-pcs --test recursive_setup_e2e --features profile-ci -- --ignored`
 
 #![cfg(feature = "profile-ci")]
 #![allow(missing_docs)]
@@ -16,6 +21,7 @@ use common::*;
 const TRANSCRIPT_DOMAIN: &[u8] = b"recursive_setup_e2e/generated_onehot";
 
 #[test]
+#[ignore = "production-sized profile E2E; run explicitly with --release"]
 fn generated_recursive_onehot_profile_proves_with_setup_offload() {
     // Single-chunk base: the shared round-trip already asserts the setup-prefix
     // metadata and stage-3 setup sumcheck, so no profile-specific schedule check

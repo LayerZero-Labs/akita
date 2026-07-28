@@ -23,21 +23,22 @@ mod prepare;
 mod scan;
 mod segments;
 mod setup_index_weight;
+mod structured;
 #[cfg(test)]
 mod test_oracle;
 mod types;
 
-pub(crate) use types::SetupContributionGroupPlan;
-pub(crate) use types::{get_d_col_range, get_total_d, validate_setup_inputs};
+pub(crate) use types::get_d_col_range;
+pub(crate) use types::validate_setup_inputs;
 pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
+pub(crate) use types::{SetupContributionGroupPlan, SetupContributionSpan};
 
 use super::geometry::SetupProjectionGroupGeometry;
-use super::weights::{setup_e_col_weights, setup_t_col_weights, setup_z_col_weights};
 use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
-use crate::layout::{CommitmentRingDims, CommittedGroupParams, RingMatrixView};
+use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
-use crate::{OpeningClaimsLayout, WitnessLayout};
+use crate::{OpeningClaimsLayout, RelationAddressGeometry, RingRole, WitnessLayout};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 

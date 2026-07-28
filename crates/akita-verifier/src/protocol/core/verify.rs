@@ -208,21 +208,6 @@ use akita_types::{
     BasisMode, Commitment, FoldSchedule, FpExtEncoding, OpeningClaims,
 };
 
-fn validate_schedule_onehot_chunk_size<Cfg: CommitmentConfig>(
-    schedule: &FoldSchedule,
-) -> Result<(), AkitaError> {
-    let expected = Cfg::onehot_chunk_size();
-    if Cfg::decomposition().log_commit_bound != 1 || expected <= 1 {
-        return Ok(());
-    }
-    let root = schedule.root_fold();
-    let root_params = &root.params.final_group.commitment;
-    if root_params.onehot_chunk_size != expected {
-        return Err(AkitaError::InvalidProof);
-    }
-    Ok(())
-}
-
 /// Verify a batched proof under config `Cfg`.
 ///
 /// This is the verifier crate's top-level orchestration entrypoint. It owns
@@ -256,14 +241,19 @@ where
         .validate(setup.expanded.seed())
         .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, claims.point())
+    let final_group_index = opening_batch
+        .root_final_group_index()
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let final_group_point = claims
+        .group_point(final_group_index)
+        .map_err(|_| AkitaError::InvalidProof)?;
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, &final_group_point)
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), &schedule, &opening_batch)?;
     schedule
         .validate_structure()
         .map_err(|_| AkitaError::InvalidProof)?;
-    validate_schedule_onehot_chunk_size::<Cfg>(&schedule)?;
     validate_proof_against_schedule(proof, &schedule)?;
 
     // Schedule resolution is the earliest point at which the terminal ring

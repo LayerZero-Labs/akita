@@ -68,7 +68,8 @@ pub struct TerminalResponseGroupParts<'a, F: FieldCore> {
     pub num_t_vectors: usize,
     pub num_z_segments: usize,
     pub e_folded: &'a RingVec<F>,
-    pub recomposed_inner_rows: &'a [RingVec<F>],
+    /// Block-major native-A rows: `[block][A row][coefficient]`.
+    pub recomposed_inner_rows: &'a RingVec<F>,
     pub z_folded_centered_flat: &'a [i32],
 }
 
@@ -1020,20 +1021,17 @@ where
             ));
         }
         e_coeffs.extend_from_slice(e_fields.coeffs());
-        let before_t = t_coeffs.len();
-        for block in group.recomposed_inner_rows {
-            if !block.can_decode_vec(ring_d) {
-                return Err(AkitaError::InvalidInput(
-                    "terminal t segment ring layout mismatch".to_string(),
-                ));
-            }
-            t_coeffs.extend_from_slice(block.coeffs());
+        if !group.recomposed_inner_rows.can_decode_vec(ring_d) {
+            return Err(AkitaError::InvalidInput(
+                "terminal t segment ring layout mismatch".to_string(),
+            ));
         }
-        if t_coeffs.len() - before_t != group_layout.t_field_elems {
+        if group.recomposed_inner_rows.coeff_len() != group_layout.t_field_elems {
             return Err(AkitaError::InvalidInput(
                 "terminal t segment length mismatch".to_string(),
             ));
         }
+        t_coeffs.extend_from_slice(group.recomposed_inner_rows.coeffs());
     }
     let e_fields = RingVec::from_coeffs(e_coeffs);
     let t_fields = RingVec::from_coeffs(t_coeffs);
@@ -1183,14 +1181,14 @@ pub fn emit_witness_e_planes<const D: usize>(
 
 /// Emit one group's T planes at canonical witness addresses.
 #[allow(clippy::too_many_arguments)]
-pub fn emit_witness_t_planes<const D: usize>(
+pub fn emit_witness_t_planes<const D_CARRIER: usize, const D_SOURCE: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
     num_claims: usize,
     n_a: usize,
     depth_open: usize,
-    flat: &[[i8; D]],
+    flat: &[[i8; D_SOURCE]],
     source_num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
     let expected = num_claims
@@ -1216,7 +1214,7 @@ pub fn emit_witness_t_planes<const D: usize>(
                             * planes_per_block
                             + a_row * depth_open
                             + digit;
-                        write_witness_plane(
+                        write_witness_plane_padded::<D_CARRIER>(
                             out,
                             unit.t_index(
                                 num_claims,
@@ -1238,13 +1236,13 @@ pub fn emit_witness_t_planes<const D: usize>(
 }
 
 /// Emit one ownership unit's replicated Z planes at canonical addresses.
-pub fn emit_witness_z_planes<const D: usize>(
+pub fn emit_witness_z_planes<const D_CARRIER: usize, const D_SOURCE: usize>(
     out: &mut [i8],
     unit: &WitnessUnitLayout,
     num_positions_per_block: usize,
     depth_commit: usize,
     depth_fold: usize,
-    all_planes: &[[i8; D]],
+    all_planes: &[[i8; D_SOURCE]],
 ) -> Result<(), AkitaError> {
     let expected = num_positions_per_block
         .checked_mul(depth_commit)
@@ -1260,7 +1258,7 @@ pub fn emit_witness_z_planes<const D: usize>(
         for commit_digit in 0..depth_commit {
             for fold_digit in 0..depth_fold {
                 let source = (position * depth_commit + commit_digit) * depth_fold + fold_digit;
-                write_witness_plane(
+                write_witness_plane_padded::<D_CARRIER>(
                     out,
                     unit.z_index(
                         num_positions_per_block,
@@ -1322,6 +1320,29 @@ fn write_witness_plane<const D: usize>(
         .ok_or_else(|| AkitaError::InvalidSetup("witness plane end overflow".into()))?;
     let dst = out.get_mut(start..end).ok_or(AkitaError::InvalidProof)?;
     dst.copy_from_slice(plane);
+    Ok(())
+}
+
+fn write_witness_plane_padded<const D_CARRIER: usize>(
+    out: &mut [i8],
+    ring_index: usize,
+    plane: &[i8],
+) -> Result<(), AkitaError> {
+    if plane.len() > D_CARRIER {
+        return Err(AkitaError::InvalidSize {
+            expected: D_CARRIER,
+            actual: plane.len(),
+        });
+    }
+    let start = ring_index
+        .checked_mul(D_CARRIER)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness plane offset overflow".into()))?;
+    let end = start
+        .checked_add(D_CARRIER)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness plane end overflow".into()))?;
+    let dst = out.get_mut(start..end).ok_or(AkitaError::InvalidProof)?;
+    dst.fill(0);
+    dst[..plane.len()].copy_from_slice(plane);
     Ok(())
 }
 

@@ -60,6 +60,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
         policy.ring_dimension,
         decomp,
@@ -292,7 +293,7 @@ fn grouped_setup_prefix_next_witness_len(
         .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
 
     rings
-        .checked_mul(params.d_a())
+        .checked_mul(params.relation_witness_carrier_ring_dimension())
         .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
 }
 
@@ -370,6 +371,7 @@ fn derive_setup_prefix_group(
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
+            policy.sis_table_digest,
             family,
             d,
             inner_decomp,
@@ -436,6 +438,8 @@ fn derive_setup_prefix_group(
             num_live_blocks,
             log_basis_inner,
             log_basis_outer,
+            inner_ring_dimension: inner_commit_matrix.ring_dimension(),
+            outer_ring_dimension: outer_commit_matrix.ring_dimension(),
             n_a: inner_commit_matrix.output_rank(),
             a_coeff_linf_bound: inner_commit_matrix.coeff_linf_bound(),
             n_b: outer_commit_matrix.output_rank(),
@@ -446,6 +450,7 @@ fn derive_setup_prefix_group(
             inner_commit_matrix,
             outer_commit_matrix,
             log_basis_open,
+            fold_challenge_config: *ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
@@ -704,7 +709,9 @@ pub(crate) fn derive_candidate_level_params(
         let mut candidate_params = candidate_params;
         candidate_params.setup_prefix = setup_prefix.clone();
         if let Some(prefix) = &candidate_params.setup_prefix {
-            let prefix_d_width = prefix.commitment_params.d_segment_width()?;
+            let prefix_d_width = prefix
+                .commitment_params
+                .d_segment_width(candidate_params.role_dims().d_d())?;
             let total_d_width = candidate_params
                 .open_commit_matrix
                 .input_width()
@@ -801,6 +808,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
+        policy.sis_table_digest,
         policy.sis_modulus_profile,
         policy.ring_dimension,
         witness_decomp,
@@ -936,6 +944,7 @@ mod tests {
             inner_commit_matrix: precommitted.inner_commit_matrix.clone(),
             outer_commit_matrix: precommitted.outer_commit_matrix.clone(),
             log_basis_open: precommitted.log_basis_open,
+            fold_challenge_config: precommitted.fold_challenge_config,
             num_digits_inner: precommitted.num_digits_inner,
             num_digits_outer: precommitted.num_digits_outer,
             num_digits_open: precommitted.num_digits_open,

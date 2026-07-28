@@ -8,7 +8,7 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitive
 
 use crate::field_reduction::trace_open_ring_row;
 use crate::{
-    gadget_row_scalars, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatBooleanDomain,
+    dispatch_for_field, gadget_row_scalars, BasisMode, CommittedGroupParams, FlatBooleanDomain,
     FpExtEncoding, OpeningClaimsLayout, PreparedOpeningPoint, WitnessLayout,
 };
 
@@ -149,7 +149,7 @@ pub fn scale_evaluation_trace_claim_coefficients<E: FieldCore>(
 pub struct EvaluationTraceInputs<'a, F: FieldCore, E: FieldCore> {
     pub digit_witness_domain: FlatBooleanDomain,
     pub witness_layout: &'a WitnessLayout,
-    pub role_dims: CommitmentRingDims,
+    pub carrier_ring_dimension: usize,
     pub level_params: &'a CommittedGroupParams,
     pub opening_batch: &'a OpeningClaimsLayout,
     pub prepared_points: &'a [PreparedOpeningPoint<F, E>],
@@ -166,7 +166,7 @@ where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    if inputs.role_dims.d_a() != D
+    if inputs.carrier_ring_dimension != D
         || inputs.prepared_points.len() != inputs.opening_batch.num_groups()
         || inputs.claim_coefficients.len() != inputs.opening_batch.num_total_polynomials()
     {
@@ -183,7 +183,6 @@ where
             actual: inputs.digit_witness_domain.live_len(),
         });
     }
-    let alpha_bits = D.trailing_zeros() as usize;
     inputs
         .opening_batch
         .root_group_order()?
@@ -192,6 +191,15 @@ where
             let group_params = inputs
                 .level_params
                 .group_params(inputs.opening_batch, group_index)?;
+            let group_dims = inputs
+                .level_params
+                .group_role_dims(inputs.opening_batch, group_index)?;
+            if group_dims.d_a() > D {
+                return Err(AkitaError::InvalidSetup(
+                    "trace group A dimension exceeds the outgoing witness carrier".into(),
+                ));
+            }
+            let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
             let units = inputs.witness_layout.units_for_group(group_index)?;
             let covered_blocks = units.iter().enumerate().try_fold(
                 0usize,
@@ -218,31 +226,37 @@ where
                 .prepared_points
                 .get(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            prepared.ensure_ring_dim::<D>()?;
             let block_opening_point: Arc<[E]> = evaluation_trace_block_point(
                 &prepared.padded_point,
                 group_params.num_positions_per_block(),
                 group_params.num_live_blocks(),
-                alpha_bits,
+                group_alpha_bits,
             )?
             .into();
-            let packed_inner = prepared.packed_inner_trusted::<D>()?;
-            let inner_trace: Arc<[E]> = if E::EXT_DEGREE == 1 {
-                packed_inner
-                    .coefficients()
-                    .iter()
-                    .copied()
-                    .map(E::lift_base)
-                    .collect::<Vec<_>>()
-                    .into()
-            } else {
-                trace_open_ring_row::<F, E, D>(
-                    &CyclotomicRing::<F, D>::one(),
-                    packed_inner,
-                    alpha_bits,
-                )?
-                .into()
-            };
+            let inner_trace: Arc<[E]> = dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_dims.d_a(),
+                |D_G| {
+                    let packed_inner = prepared.packed_inner_trusted::<D_G>()?;
+                    let mut trace = if E::EXT_DEGREE == 1 {
+                        packed_inner
+                            .coefficients()
+                            .iter()
+                            .copied()
+                            .map(E::lift_base)
+                            .collect::<Vec<_>>()
+                    } else {
+                        trace_open_ring_row::<F, E, D_G>(
+                            &CyclotomicRing::<F, D_G>::one(),
+                            packed_inner,
+                            group_alpha_bits,
+                        )?
+                    };
+                    trace.resize(D, E::zero());
+                    Ok::<Arc<[E]>, AkitaError>(trace.into())
+                }
+            )?;
             if inner_trace.len() != D {
                 return Err(AkitaError::InvalidProof);
             }
