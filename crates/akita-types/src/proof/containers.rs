@@ -95,6 +95,14 @@ impl<F: FieldCore> RingVec<F> {
         }
     }
 
+    /// Consume typed coefficient rows without copying their elements.
+    pub fn from_coefficient_rows<const D: usize>(coeffs: Vec<[F; D]>) -> Self {
+        Self {
+            coeffs: coeffs.into_flattened(),
+            ring_dim: D,
+        }
+    }
+
     /// Construct from raw field coefficients in compact mode (`ring_dim = 0`).
     pub fn from_coeffs(coeffs: Vec<F>) -> Self {
         Self {
