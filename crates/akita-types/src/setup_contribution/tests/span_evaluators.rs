@@ -74,6 +74,31 @@ fn assert_span_mle_matches_dense(plan: &SetupContributionPlan<F>, rho: &[F], alp
     );
 }
 
+fn assert_uniform_evaluator_matches_canonical_plan(ownership_widths: &[usize]) {
+    let alpha = test_scalar(3);
+    let (inputs, groups, layout, plan, tau1, address_point, fold_gadget) =
+        structured_weight_fixture(8, ownership_widths, CommitmentRingDims::uniform(TEST_D));
+    let evaluator = SetupIndexWeightEvaluator::new::<F>(
+        &plan,
+        &inputs.level_params,
+        &inputs.opening_batch,
+        &layout,
+        layout.total_len(),
+        &groups,
+        &tau1,
+        &address_point,
+        &fold_gadget,
+        alpha,
+    )
+    .unwrap();
+    let rho = rho_for_required(plan.required());
+    assert_eq!(evaluator.required(), plan.required());
+    assert_eq!(
+        evaluator.evaluate(&rho).unwrap(),
+        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
+    );
+}
+
 fn structured_slice_reference(
     plan: &SetupContributionPlan<F>,
     group: &SetupContributionGroupPlan<F>,
@@ -249,6 +274,17 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
     let rho = rho_for_required(plan.required());
     assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
+
+#[test]
+fn uniform_setup_index_evaluator_matches_single_chunk_plan() {
+    assert_uniform_evaluator_matches_canonical_plan(&[8]);
+}
+
+#[test]
+fn uniform_setup_index_evaluator_matches_multi_chunk_plan() {
+    assert_uniform_evaluator_matches_canonical_plan(&[2, 2, 2, 2]);
+}
+
 #[test]
 fn span_setup_index_mle_supports_non_power_of_two_ownership_widths() {
     let (_, _, _, plan, _, _, _) =

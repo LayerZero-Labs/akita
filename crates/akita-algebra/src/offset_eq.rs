@@ -9,6 +9,9 @@ use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
 use std::collections::{BTreeMap, HashMap};
 
+mod compact_pair;
+pub use compact_pair::eval_compact_pair_eq;
+
 /// Verifier work cap for one compact-stride equality contraction.
 pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
 

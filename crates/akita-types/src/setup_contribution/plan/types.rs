@@ -58,7 +58,6 @@ pub(crate) fn validate_setup_inputs(
     validate_setup_group_ids(groups, witness_layout.num_groups())
 }
 
-#[cfg(test)]
 pub(crate) fn get_d_col_range(
     level_params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
