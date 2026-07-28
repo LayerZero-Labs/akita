@@ -10,7 +10,8 @@
 //! directly and never need this module.
 //!
 //! The mixed ring-dimension schedule builders (`mixed_d_per_level_schedule`,
-//! `matrix_ring_transition_schedule`, `mixed_matrix_root_schedule`, and their
+//! `ring_dimension_transition_schedule`, `per_matrix_ring_dims_root_schedule`,
+//! and their
 //! config adapters) live in
 //! [`akita_pcs::test_support`]: they call the offline planner
 //! (`akita_planner::plan_optimal_suffix`), which cannot be a dependency of

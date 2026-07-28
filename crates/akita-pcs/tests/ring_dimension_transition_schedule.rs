@@ -1,11 +1,11 @@
-//! Schedule-level coverage for mixed commitment-matrix ring dimensions.
+//! Schedule-level coverage for per-matrix ring dimensions and transitions.
 
 #![allow(missing_docs)]
 
 use akita_config::{policy_of, proof_optimized::fp128, CommitmentConfig};
 use akita_pcs::test_support::{
-    matrix_ring_transition_schedule, mixed_matrix_root_schedule, MixedMatrixRootConfig,
-    ThreeBandMatrixRingConfig,
+    per_matrix_ring_dims_root_schedule, ring_dimension_transition_schedule,
+    PerMatrixRingDimsRootConfig, ThreeBandRingDimensionTransitionConfig,
 };
 use akita_types::sis::{decomposed_t_ring_count, decomposed_w_ring_count};
 use akita_types::{
@@ -75,11 +75,11 @@ fn assert_suffix_matches_plan<Cfg: CommitmentConfig>(
     );
 }
 
-fn three_band_matrix_schedule<Root>(expected_root_d: usize) -> FoldSchedule
+fn three_band_ring_dimension_schedule<Root>(expected_root_d: usize) -> FoldSchedule
 where
     Root: akita_config::CommitmentConfig<Field = fp128::Field, ExtField = fp128::Field>,
 {
-    let schedule = matrix_ring_transition_schedule::<Root, fp128::D128OneHot, fp128::D64OneHot>(
+    let schedule = ring_dimension_transition_schedule::<Root, fp128::D128OneHot, fp128::D64OneHot>(
         NUM_VARS,
         1,
         CommitmentRingDims {
@@ -93,7 +93,7 @@ where
             opening: 64,
         },
     )
-    .expect("tableless three-band matrix-ring schedule");
+    .expect("tableless three-band ring-dimension schedule");
 
     assert_eq!(
         schedule.root.params.final_group.commitment.role_dims(),
@@ -130,12 +130,12 @@ where
 
 #[test]
 fn tableless_d256_root_uses_offline_planner() {
-    let _schedule = three_band_matrix_schedule::<fp128::D256OneHot>(256);
+    let _schedule = three_band_ring_dimension_schedule::<fp128::D256OneHot>(256);
 }
 
 #[test]
-fn d512_root_uses_additive_a_role_sis_table() {
-    let schedule = three_band_matrix_schedule::<fp128::D512OneHot>(512);
+fn d512_root_uses_additive_a_matrix_sis_table() {
+    let schedule = three_band_ring_dimension_schedule::<fp128::D512OneHot>(512);
 
     assert_eq!(
         schedule
@@ -154,7 +154,7 @@ fn d512_root_uses_additive_a_role_sis_table() {
         1usize << NUM_VARS
     );
     let required = setup_matrix_envelope_for_schedule(&schedule).expect("schedule envelope");
-    let configured = <ThreeBandMatrixRingConfig<
+    let configured = <ThreeBandRingDimensionTransitionConfig<
         fp128::D512OneHot,
         fp128::D128OneHot,
         fp128::D64OneHot,
@@ -166,9 +166,9 @@ fn d512_root_uses_additive_a_role_sis_table() {
 }
 
 #[test]
-fn mixed_matrix_root_replans_its_complete_suffix() {
-    let schedule = mixed_matrix_root_schedule::<fp128::D128OneHot>(NUM_VARS, 1, 32, 64)
-        .expect("mixed-matrix root schedule");
+fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
+    let schedule = per_matrix_ring_dims_root_schedule::<fp128::D128OneHot>(NUM_VARS, 1, 32, 64)
+        .expect("per-matrix ring-dimension root schedule");
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(
         root.role_dims(),
@@ -189,7 +189,7 @@ fn mixed_matrix_root_replans_its_complete_suffix() {
 
     let required = setup_matrix_envelope_for_schedule(&schedule).expect("schedule envelope");
     let configured =
-        <MixedMatrixRootConfig<fp128::D128OneHot, 32, 64> as CommitmentConfig>::
+        <PerMatrixRingDimsRootConfig<fp128::D128OneHot, 32, 64> as CommitmentConfig>::
             max_setup_matrix_size(NUM_VARS, 1)
             .expect("configured envelope");
     assert_eq!(configured, required);

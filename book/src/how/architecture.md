@@ -60,8 +60,8 @@ differ. Here, *role* is the historical protocol name for a commitment matrix's
 fixed job: A carries the relation witness, B commits the next witness, and D
 commits the opening digits. The matrices do not switch roles when their ring
 dimensions change. User-facing prose therefore calls a non-uniform tuple such
-as `128/64/32` **mixed commitment-matrix ring dimensions** and a change between
-levels a **matrix-ring transition**. [`validate_schedule_ring_dims`] checks
+as `128/64/32` **per-matrix ring dimensions** and a change between levels a
+**ring-dimension transition**. [`validate_schedule_ring_dims`] checks
 every level dimension against the setup's generation dimension.
 
 Every function on the prove/verify path has one of two roles:
@@ -76,11 +76,11 @@ The bridge is the *operation adapter*: a D-free function that extracts the
 ring dimension of the specific data one operation touches and enters the
 kernel through `akita_types::dispatch_for_field!` exactly once,
 returning D-free storage. Dispatch is per operation — never per level or per
-proof — so that per-role ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
+proof — so that per-matrix ring dimensions inside one fold (`d_a`/`d_b`/`d_d`,
 see `specs/mixed-row-ring-dimensions.md`) reduce to feeding different
 dimensions to different adapters. `CommitmentRingDims` on `LevelParams::role_dims`
-names the per-role dimensions; prove/verify hot paths dispatch on `d_a()`, `d_b()`,
-or `d_d()` per operation, not on a single fused dimension.
+names the per-matrix ring dimensions; prove/verify hot paths dispatch on
+`d_a()`, `d_b()`, or `d_d()` per operation, not on a single fused dimension.
 
 The normative contract (discriminator rule, forbidden facade/level-
 monomorphization patterns) lives in `specs/runtime-ring-cutover.md`.

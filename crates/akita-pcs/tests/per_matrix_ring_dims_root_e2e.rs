@@ -1,11 +1,16 @@
-//! Multi-level commitment-matrix ring-transition E2E acceptance test.
+//! Per-matrix ring-dimension E2E acceptance test.
 //!
-//! - L0 (root): `d_a/d_b/d_d = 128/128/64`.
-//! - L1: `128/64/64`.
-//! - L2+: uniform `64`.
+//! The root fold uses distinct per-matrix ring dimensions
+//! `d_a/d_b/d_d = 128/32/64` (A at the envelope dimension, with B/D in
+//! deliberately non-monotone order);
+//! later folds retain the shipped `D128Dense` schedule. The proof is produced
+//! and checked exclusively through the public PCS API
+//! (`AkitaCommitmentScheme::{commit, batched_prove, batched_verify}`).
 //!
-//! Exercises mixed A/B/D ring dimensions at both the root and a recursive fold,
-//! through the public PCS API, with tamper rejection.
+//! This is the correctness oracle for the verifier's per-matrix ring-dimension relation
+//! evaluation: verifying the honest proof exercises whichever relation path the
+//! verifier selects for `role_dims = {128, 32, 64}` (mixed scan or the succinct
+//! fast path), and the tamper cases confirm soundness.
 
 #![allow(missing_docs)]
 
@@ -13,22 +18,27 @@ mod common;
 
 use akita_config::proof_optimized::fp128;
 use akita_field::AkitaError;
-use akita_pcs::test_support::MatrixRingTransitionConfig;
+use akita_pcs::test_support::PerMatrixRingDimsRootConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
 use akita_types::{validate_schedule_ring_dims, CommitmentRingDims, OpeningClaimsLayout, RingVec};
 use common::*;
 
+/// Envelope preset: uniform `D = 128`, generation ring dimension 128.
 type Envelope = fp128::D128Dense;
-type Suffix = fp128::D64Dense;
-/// Root D compressed to 64 (L0 = 128/128/64), L1 = 128/64/64, then 64.
-type Cfg = MatrixRingTransitionConfig<Envelope, Suffix, 64, 64>;
+/// Root commits at A=128 while B=32 and D=64 exercise D > B.
+type Cfg = PerMatrixRingDimsRootConfig<Envelope, 32, 64>;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 const NUM_VARS: usize = 16;
 const ENVELOPE_D: usize = 128;
-const LABEL: &[u8] = b"test/matrix_ring_transition_e2e";
+const ROOT_MATRIX_DIMS: CommitmentRingDims = CommitmentRingDims {
+    inner: 128,
+    outer: 32,
+    opening: 64,
+};
+const LABEL: &[u8] = b"test/per_matrix_ring_dims_root_e2e";
 
 fn dense_poly(seed: u64) -> DensePoly<F> {
     DensePoly::<F>::from_field_evals(NUM_VARS, ENVELOPE_D, &dense_field_evals(NUM_VARS, seed))
@@ -53,7 +63,7 @@ fn verify_with(
 }
 
 #[test]
-fn matrix_ring_transition_proves_verifies_and_rejects_tamper() {
+fn per_matrix_ring_dims_root_proves_verifies_and_rejects_tamper() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let opening_batch = OpeningClaimsLayout::new(NUM_VARS, 1).expect("opening batch");
@@ -62,46 +72,23 @@ fn matrix_ring_transition_proves_verifies_and_rejects_tamper() {
         )
         .expect("commit layout");
 
+        // The root's three commitment matrices use distinct ring dimensions.
         let schedule =
             <Cfg as akita_config::CommitmentConfig>::get_params_for_prove(&opening_batch)
                 .expect("schedule");
-        // L0 root: A=B=128, D=64.
         assert_eq!(
             schedule.root.params.final_group.commitment.role_dims(),
-            CommitmentRingDims {
-                inner: 128,
-                outer: 128,
-                opening: 64
-            },
-            "L0 must be 128/128/64"
-        );
-        // L1: A=128, B=D=64.
-        assert_eq!(
-            schedule.recursive_folds[0].params.witness.role_dims(),
-            CommitmentRingDims {
-                inner: 128,
-                outer: 64,
-                opening: 64
-            },
-            "L1 must be 128/64/64"
-        );
-        // L2: uniform 64.
-        assert_eq!(
-            schedule.recursive_folds[1].params.witness.role_dims(),
-            CommitmentRingDims {
-                inner: 64,
-                outer: 64,
-                opening: 64
-            },
-            "L2 must be 64/64/64"
+            ROOT_MATRIX_DIMS,
+            "root must commit at d_a=128, d_b=32, d_d=64"
         );
 
-        let poly = dense_poly(0x5717_c401);
-        let point = random_point(NUM_VARS, 0x5717_c402);
+        let poly = dense_poly(0xc0de_5501);
+        let point = random_point(NUM_VARS, 0xc0de_5502);
         let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
         let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
-        validate_schedule_ring_dims(&schedule, setup.expanded.seed()).expect("valid role dims");
+        validate_schedule_ring_dims(&schedule, setup.expanded.seed())
+            .expect("valid commitment-matrix dimensions");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -122,11 +109,14 @@ fn matrix_ring_transition_proves_verifies_and_rejects_tamper() {
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
-        .expect("matrix-ring transition prove");
+        .expect("per-matrix ring-dimension prove");
 
+        // Completeness: the honest proof must verify (this exercises the
+        // verifier's per-matrix ring-dimension relation evaluation).
         verify_with(&verifier_setup, &proof, &point, &[opening], &commitment)
-            .expect("honest matrix-ring transition proof must verify");
+            .expect("honest per-matrix ring-dimension proof must verify");
 
+        // Soundness (claimed value): a wrong opening must be rejected.
         verify_with(
             &verifier_setup,
             &proof,
@@ -136,6 +126,7 @@ fn matrix_ring_transition_proves_verifies_and_rejects_tamper() {
         )
         .expect_err("tampered opening must be rejected");
 
+        // Soundness (commitment): a tampered commitment row must be rejected.
         let mut tampered_commitment = commitment.clone();
         let mut coeffs = tampered_commitment.0.coeffs().to_vec();
         coeffs[0] += F::one();

@@ -25,10 +25,11 @@ schedule switches down to `D = 64` for the recursive tail. It records:
    `switch = 1`, and `root D = 128` `switch = 2`,
 5. a temporary three-band variant whose root is `512/128/128`, followed by
    `128/64/64`, then uniform `64`; its historical run motivated native
-   mixed-matrix planning, but its old measurements predate exact physical
+   per-matrix ring-dimension planning, but its old measurements predate exact physical
    subcolumn reconstruction and are not current benchmark results, and
-6. a mixed commitment-matrix variant (`d_a = 128`, `d_b = d_d = 64`): it runs
-   and verifies, but is **dominated** by the per-level `switch = 2` schedule.
+6. a per-matrix ring-dimension variant (`d_a = 128`, `d_b = d_d = 64`): it
+   runs and verifies, but is **dominated** by the per-level `switch = 2`
+   schedule.
 
 **Headline (nv = 36, one-hot, fp128):** committing the first two folds at
 `D = 128` and the tail at `D = 64` (`switch = 2`) matches the `D = 64`
@@ -39,7 +40,7 @@ and roughly halves verify time**.
 at its source: the digit range check binds the witness's real shared low ring
 block (`ring_bits = log2(coeff_count)`) on every path instead of collapsing
 non-uniform steps to a flat sweep. This is **byte-identical on uniform/shipped
-schedules** and makes `switch = 1` (root-only `D = 128`) and mixed-matrix
+schedules** and makes `switch = 1` (root-only `D = 128`) and per-matrix
 compression prove *fast* too (prove ≈3.4 s, down from ≈12 s / ≈7.5 s).
 Follow-on verifier changes (**Fixes C–F**) then made non-uniform-root **verify**
 fast: C/D/E parallelize the relation setup scan, constraint term, and
@@ -301,10 +302,11 @@ Effect: non-uniform-**root** verify drops **0.047 s → 0.026 s** (`switch = 1`)
 now on par with `switch = 2` (0.023 s) and below the uniform `D = 64` baseline
 (≈0.043 s) — a **12× reduction** from the original 0.317 s.
 
-The remaining non-uniform case has genuinely mixed commitment-matrix
-dimensions (`d_b`/`d_d ≠ d_a`, e.g. A=128/B=D=64). The low `log2(d_a)` bits are
-then not a single clean coefficient block. The generalized lane/subcolumn path
-described below handles this case without a verifier-only alternate evaluator.
+The remaining non-uniform case has genuinely distinct per-matrix ring
+dimensions (`d_b`/`d_d ≠ d_a`, e.g. A=128/B=D=64). The low `log2(d_a)` bits
+are then not a single clean coefficient block. The generalized
+lane/subcolumn path described below handles this case without a verifier-only
+alternate evaluator.
 
 ## Results
 
@@ -348,7 +350,7 @@ table covers all roles at `D = 256`, while the additive
 `Q128_INNER_D512` table covers **only the A role at `D = 512`**. B and D remain
 capped at `256`, so a uniform `D = 512` root is neither planned nor certified.
 
-Column F therefore uses a genuinely mixed-matrix root:
+Column F therefore uses genuinely distinct per-matrix ring dimensions at the root:
 `d_a/d_b/d_d = 512/128/128`. Its A matrix is repriced with the additive D512
 digest and the production D512 sparse challenge; B/D are rebuilt against the
 audited D128 tables at the exact four-subcolumn width. Setup-envelope dispatch
@@ -361,14 +363,14 @@ planned from the preceding level's recomputed outgoing witness length.
 
 > **Temporary experiment — immediate follow-up required.** D512 is retained to
 > preserve the useful design point and regression coverage, but it is not a
-> planner-native mixed-matrix schedule. It borrows D256 root geometry and then
+> planner-native per-matrix ring-dimension schedule. It borrows D256 root geometry and then
 > promotes and re-prices it. Treat its measurements as exploratory, not as a
 > production preset or catalog candidate. Before this path leaves
 > `test_support`, root planning must search explicit A/B/D dimensions (including
 > multiple physical B/D subcolumns), and the D128 and D64 continuations must be
 > selected from the exact promoted output.
 
-## Variant: mixed commitment-matrix dimensions (`d_a = 128`, `d_b = d_d = 64`)
+## Variant: per-matrix ring dimensions (`d_a = 128`, `d_b = d_d = 64`)
 
 A different question is whether a **single level** can commit at `d_a = 128`
 (A matrix) while its B and D matrices run at `64` — mixing ring dimensions
@@ -392,8 +394,8 @@ the relation witness, B commits the next witness, and D commits the opening
 digits. It entered the runtime API as `RingRole` and `role_dims` during the
 runtime ring-dimension cutover. A matrix never changes roles between levels;
 only its dimension changes. This spec therefore retains `role_dims` when
-referring to the API, but uses **mixed commitment-matrix ring dimensions** for
-the design and **matrix-ring transition** for a change between levels.
+referring to the API, but uses **per-matrix ring dimensions** for the design
+and **ring-dimension transition** for a change between levels.
 
 A pre-existing E2E fixture (`crates/akita-pcs/tests/mixed_role_e2e.rs`) that
 exercised `d_a/d_b/d_d = 128/64/32` is currently **disabled**
@@ -405,14 +407,14 @@ prover has a per-role `ensure_role_dim` path alongside the uniform
 
 ### Construction and feasibility on the live API
 
-`akita_pcs::test_support::mixed_matrix_root_schedule::<Env>` starts from the
-uniform `D = 128` one-hot root, rebuilds its **outer (B)** matrix at `outer_d`
-and **opening (D)** matrix at `open_d`, recomputes the root's outgoing witness,
+`akita_pcs::test_support::per_matrix_ring_dims_root_schedule::<Env>` starts from the
+uniform `D = 128` one-hot root, rebuilds its **outer (B)** matrix at
+`b_ring_dim` and **opening (D)** matrix at `d_ring_dim`, recomputes the root's outgoing witness,
 and replans the complete suffix from that exact boundary. Halving a matrix's
 ring dimension doubles its number of physical subcolumns. The builder derives
 the exact final width from the A-carrier geometry and re-derives the SIS output
 rank from the audited table at the new dimension. The
-`MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>` adapter drives it through the
+`PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>` adapter drives it through the
 public PCS API.
 
 This **proves and verifies** end-to-end (confirmed at `nv ≤ 24`). When the B
@@ -448,7 +450,8 @@ the earlier D256-derived B/D widths, which undercounted the D512 carrier's
 physical D128 subcolumns. The corrected fixture now rebuilds B and D with
 `d_a/d_b = d_a/d_d = 4`, verifies the exact setup envelope, and replans both
 continuations. Do not compare the old F numbers with current columns or quote
-them as results; remeasure only after native mixed-matrix root planning lands.
+them as results; remeasure only after native per-matrix ring-dimension root
+planning lands.
 
 ### `switch = 1` (root only) vs `switch = 2`
 
@@ -471,13 +474,13 @@ fewer levels and slightly lower prover/verifier latency. The `switch = 2`
 recommendation elsewhere in this spec optimizes for prove/verify latency and
 level count; pick `switch = 1` when minimizing proof size matters more.
 
-### `E`: fold-1 A-band (matrix-ring transition, root = 128)
+### `E`: fold-1 A-band (ring-dimension transition, root = 128)
 
 Column E keeps the whole root uniform at `D = 128` (like `switch = 2`) but at
 **fold 1** compresses only the B/D roles to `64` while the A role stays at `128`
 (`d_a/d_b/d_d = 128/64/64`); every deeper level is uniform `D = 64`. It is the
-`MatrixRingTransitionConfig<D128OneHot, D64OneHot, 64, 128>` adapter
-(`AKITA_MATRIX_RING_TRANSITION=1 AKITA_TRANSITION_ROOT_OPEN_D=128`). The measured
+`RingDimensionTransitionConfig<D128OneHot, D64OneHot, 64, 128>` adapter
+(`AKITA_RING_DIMENSION_TRANSITION=1 AKITA_TRANSITION_ROOT_D_RING_DIM=128`). The measured
 per-level geometry is:
 
 | Level | `d_a/d_b/d_d` | `n_a/n_b/n_d` |
@@ -544,12 +547,13 @@ production decision. Historically, F appeared to make this commitment trade:
   many setup ring elements (176,128 vs 528,384).
 
 The current conclusion is narrower: D512 is a promising search point, while E
-remains the measured balanced choice. Native mixed-matrix planning and a fresh
+remains the measured balanced choice. Native per-matrix ring-dimension planning and a fresh
 benchmark are required before claiming a D512 latency or memory win.
 
 ### Why it is (still) dominated
 
-After Fix B the prove penalty is gone (≈3.3 s), so mixed-matrix dimensions are no
+After Fix B the prove penalty is gone (≈3.3 s), so distinct per-matrix ring
+dimensions are no
 longer catastrophic — but it is still **dominated by `switch = 2`** on the
 remaining axes:
 
@@ -566,7 +570,8 @@ remaining axes:
    the `D = 64` footprint); compressing only `d_d` keeps it at 1.08 GB (D vs C).
    Either way the proof grows to ~108 KB (vs 97.8 KB for `switch = 2`).
 
-So mixed-matrix dimensions buy nothing here even after Fix B: this point ties the D128
+So distinct per-matrix ring dimensions buy nothing here even after Fix B: this
+point ties the D128
 commit, still costs the verifier's non-uniform relation scan, grows the proof,
 and (if B is compressed) loses the setup saving. The per-level **uniform
 bands** with a late switch (`switch = 2`) strictly dominate it. Compression's
@@ -589,29 +594,30 @@ AKITA_MIXED_SWITCH=2 AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
 
-# Mixed-matrix root: A = 128, B = AKITA_MIXED_OUTER_D,
-# D = AKITA_MIXED_OPEN_D (both default 64). E.g. d_b = 128, d_d = 64:
-AKITA_MIXED_MATRIX_ROOT=1 AKITA_MIXED_OUTER_D=128 AKITA_MIXED_OPEN_D=64 \
+# Per-matrix ring dimensions at the root: A = 128,
+# B = AKITA_ROOT_B_RING_DIM, D = AKITA_ROOT_D_RING_DIM (both default 64).
+# E.g. d_b = 128, d_d = 64:
+AKITA_PER_MATRIX_RING_DIMS_ROOT=1 AKITA_ROOT_B_RING_DIM=128 AKITA_ROOT_D_RING_DIM=64 \
   AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
 
 # Column E: fold-1 A-band (root 128/128/128, fold 1 128/64/64, then 64).
-# AKITA_TRANSITION_ROOT_OPEN_D=128 keeps the root fully uniform.
-AKITA_MATRIX_RING_TRANSITION=1 AKITA_TRANSITION_ROOT_OPEN_D=128 \
+# AKITA_TRANSITION_ROOT_D_RING_DIM=128 keeps the root fully uniform.
+AKITA_RING_DIMENSION_TRANSITION=1 AKITA_TRANSITION_ROOT_D_RING_DIM=128 \
   AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
 
 # Column F: temporary D512 experiment (512/128/128, then 128/64/64, then 64).
 # This is not planner-native; see the warning above.
-AKITA_THREE_BAND_RING_TRANSITION=1 AKITA_THREE_BAND_ROOT_A_D=512 \
+AKITA_THREE_BAND_RING_DIMENSION_TRANSITION=1 AKITA_THREE_BAND_ROOT_A_RING_DIM=512 \
   AKITA_NUM_VARS=36 AKITA_MODE=onehot_fp128_d64_root_d128 \
   AKITA_PROFILE_TRACE=0 AKITA_PROFILE_LOG=info \
   cargo run --release -p akita-pcs --example profile
 
 # D256 three-band regression companion:
-AKITA_THREE_BAND_RING_TRANSITION=1 AKITA_THREE_BAND_ROOT_A_D=256 \
+AKITA_THREE_BAND_RING_DIMENSION_TRANSITION=1 AKITA_THREE_BAND_ROOT_A_RING_DIM=256 \
   AKITA_NUM_VARS=36 \
   AKITA_MODE=onehot_fp128_d64_root_d128 \
   cargo run --release -p akita-pcs --example profile
@@ -630,12 +636,12 @@ rg '\] (setup|commit|prove|verify OK|proof: total)' <log>
 | Public suffix planner `plan_optimal_suffix` + `PlannedSuffix{,Fold,Terminal}` | `crates/akita-planner/src/schedule_params.rs`, re-exported from `crates/akita-planner/src/lib.rs` |
 | Mixed-schedule builders/adapters (plans optimal suffixes) | `crates/akita-pcs/src/test_support.rs` |
 | `mixed_d_per_level_e2e` refactored onto the shared builder | `crates/akita-pcs/tests/mixed_d_per_level_e2e.rs` (deleted the duplicated `tests/mixed_d_per_level/fixture.rs`) |
-| Mixed-matrix root builder `mixed_matrix_root_schedule` + `MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>` | `crates/akita-pcs/src/test_support.rs` |
-| Mixed-matrix E2E oracle (prove/verify + wrong-opening + tampered-commitment rejection) for a `128/32/64` root | `crates/akita-pcs/tests/mixed_matrix_root_e2e.rs` |
-| Profile mode `onehot_fp128_d64_root_d128` with mixed-band and mixed-matrix environment controls | `crates/akita-pcs/examples/profile/modes.rs` |
+| Per-matrix ring-dimension root builder `per_matrix_ring_dims_root_schedule` + `PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>` | `crates/akita-pcs/src/test_support.rs` |
+| Per-matrix ring-dimension E2E oracle (prove/verify + wrong-opening + tampered-commitment rejection) for a `128/32/64` root | `crates/akita-pcs/tests/per_matrix_ring_dims_root_e2e.rs` |
+| Profile mode `onehot_fp128_d64_root_d128` with mixed-band and per-matrix ring-dimension environment controls | `crates/akita-pcs/examples/profile/modes.rs` |
 | `validate_against_planner` flag so the synthetic-schedule mode skips the shipped-catalog proof-size assertion | `crates/akita-pcs/examples/profile/workload.rs` |
 | Tableless `fp128::{D256OneHot,D512OneHot}` experiment presets | `crates/akita-config/src/proof_optimized/fp128.rs` |
-| Temporary D512 A-only three-band experiment, exact matrix rebuilding, independently replanned suffixes, and schedule regression | `crates/akita-pcs/src/test_support.rs`, `crates/akita-pcs/tests/matrix_ring_schedule.rs` |
+| Temporary D512 A-only three-band experiment, exact matrix rebuilding, independently replanned suffixes, and schedule regression | `crates/akita-pcs/src/test_support.rs`, `crates/akita-pcs/tests/ring_dimension_transition_schedule.rs` |
 | Thread SIS table digest through canonical A-role norm pricing | `crates/akita-types/src/sis/norm_bound.rs` and planner/schedule callers |
 | fp128 D512 setup-envelope dispatch and D512 relation-quotient digit decomposition | `crates/akita-types/src/dispatch/policy.rs`, `crates/akita-prover/src/protocol/ring_switch/coeffs.rs` |
 | **Fix B**: `digit_range_equality_low_variable_count = ring_bits` (bind the shared low block on every path) | prover `crates/akita-prover/src/protocol/ring_switch/finalize.rs` + verifier `crates/akita-verifier/src/protocol/ring_switch.rs` |
@@ -643,9 +649,9 @@ rg '\] (setup|commit|prove|verify OK|proof: total)' <log>
 | **Fix D**: parallelize the Z-consistency term in `evaluate_group_constraints` over positions (parallel; identical sum) | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
 | **Fix E**: build the A/B/D per-column weight vectors via a parallel map over the native-column index (bijective inversion; identical vector) | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
 | **Fix F**: uniform-role fast path for `opening_ring_dim < d_a` (relax the `eval_flat_at_point` gate to `role_dims == uniform(D)`) | verifier `crates/akita-verifier/src/protocol/ring_switch.rs` |
-| **Mixed-matrix succinct path**: `RoleLaneSpec` + canonical lane-summed / subcolumn-expanded eq-slices; `prepare` takes `alpha`; subcolumn-scaled column geometry | `crates/akita-types/src/setup_contribution/{weights.rs,plan/prepare.rs}` |
-| Route mixed-matrix relation setup contribution to `evaluate_direct` when `coeff_count == base_ring_dim` | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
-| `SetupIndexWeightEvaluator` mixed-matrix fallback to the plan's materialized weights (recursive/offloaded verifier) | `crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs` |
+| **Per-matrix ring-dimension succinct path**: `RoleLaneSpec` + canonical lane-summed / subcolumn-expanded eq-slices; `prepare` takes `alpha`; subcolumn-scaled column geometry | `crates/akita-types/src/setup_contribution/{weights.rs,plan/prepare.rs}` |
+| Route per-matrix ring-dimension relation setup contribution to `evaluate_direct` when `coeff_count == base_ring_dim` | verifier `crates/akita-verifier/src/protocol/ring_switch/mixed_relation.rs` |
+| `SetupIndexWeightEvaluator` per-matrix ring-dimension fallback to the plan's materialized weights (recursive/offloaded verifier) | `crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs` |
 | Thread `alpha` through `setup_contribution_plan` / `prepare` callers (prover stage3, verifier stages, benches, tests) | prover/verifier/bench/test call sites |
 
 All prover/verifier protocol changes here are gated so **uniform/shipped
@@ -658,18 +664,19 @@ succinct path (`RoleLaneSpec`, subcolumn expansion, α-lane sum, the
 (`a_ratio = 1`) keep the pre-existing fill-interval / compact-pair fast paths
 unchanged. Threading `alpha` into `prepare` is inert for uniform roles.
 Validated: the `D = 64` baseline proof is unchanged at 93,400 B; the
-`single_poly_e2e`, `akita_e2e`, recursive/offloaded, and mixed-matrix suites
+`single_poly_e2e`, `akita_e2e`, recursive/offloaded, and per-matrix
+ring-dimension suites
 pass; `mixed_d_per_level_e2e` prove/verify + tamper-rejection is unchanged; and
-`mixed_matrix_root_e2e` (`128/32/64`) verifies and rejects tampers.
+`per_matrix_ring_dims_root_e2e` (`128/32/64`) verifies and rejects tampers.
 Everything else rides the shipped `specs/runtime-ring-cutover.md` machinery.
 
-## Mixed-matrix succinct setup fast path (implemented)
+## Per-matrix ring-dimension succinct setup fast path (implemented)
 
 Fix F closed the uniform-role case (the `switch = 1` root); the remaining
-non-uniform verify cost was mixed A/B/D dimensions (A=128/B=D=64 etc.), which used
-the dense mixed scan. That is now routed through the succinct
+non-uniform verify cost was distinct per-matrix ring dimensions
+(A=128/B=D=64 etc.), which used the dense mixed scan. That is now routed through the succinct
 `SetupContributionPlan::evaluate_direct` as well, after the plan's column model
-was generalized to mixed-matrix commitments.
+was generalized to per-matrix ring-dimension commitments.
 
 **Correctness derivation (validated by a file-backed differential harness).**
 For the `128/64/64` root (`coeff_count = base = 64`, `opening_ring = 128`) the
@@ -706,11 +713,12 @@ byte-identical, keeping the fast fill-interval path):
   consistent with the prover's `materialize_setup_index_weights` (single source
   of truth).
 
-**Result.** On the same build, `nv = 36` onehot mixed-matrix root (A=128/B=D=64)
+**Result.** On the same build, the `nv = 36` onehot root with per-matrix ring
+dimensions A=128/B=D=64
 verify drops from **≈0.056 s (dense) to ≈0.045 s (succinct)** — the setup scan
 folds B/D into one base-ring pass instead of three per-role dense multiplies. The
 residual is the A-matrix setup read (`required ≈ 2.1M` base rings), which both
-paths must perform. Validated by `mixed_matrix_root_e2e` (honest verify + two
+paths must perform. Validated by `per_matrix_ring_dims_root_e2e` (honest verify + two
 tamper rejections), the recursive/offloaded e2e suites, and the
 full `akita-types`/`akita-verifier`/`akita-prover` unit suites.
 
@@ -795,7 +803,7 @@ dynamically.
 - **Generalize setup-prefix dispatch.** Select `d_setup` from the producer
   batch's common relation dimension instead of the fixed D64 registry once
   setup generation and verifier dispatch support the same set.
-- **Plan the D512 mixed-matrix root natively (immediate).** Column F currently
+- **Plan the D512 per-matrix ring-dimension root natively (immediate).** Column F currently
   promotes the D256 planner's root geometry and rederives its exact matrix and
   security fields. Add a planner entry point that searches explicit A/B/D
   dimensions and prices multiple physical B/D subcolumns before treating its

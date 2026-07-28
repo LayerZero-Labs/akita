@@ -34,8 +34,8 @@ use std::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SyntheticScheduleKind {
     MixedD,
-    MixedMatrixRoot,
-    MatrixRingTransition,
+    PerMatrixRingDimsRoot,
+    RingDimensionTransition,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -459,35 +459,35 @@ where
 }
 
 // -------------------------------------------------------------------------
-// Mixed commitment-matrix ring dimensions. The A, B, and D labels identify
+// Per-matrix ring dimensions. The A, B, and D labels identify
 // the inner/fold-carrier, outer-commitment, and opening-commitment matrices.
 // Their protocol jobs never switch; only their ring dimensions vary.
 // -------------------------------------------------------------------------
 
 /// Build a root whose A, B, and D commitment matrices use
-/// `Env::D`/`outer_d`/`open_d`, then replan the complete uniform-`Env` suffix
-/// from the root's exact outgoing witness.
+/// `Env::D`/`b_ring_dim`/`d_ring_dim`, then replan the complete uniform-`Env`
+/// suffix from the root's exact outgoing witness.
 ///
 /// # Errors
 ///
 /// Returns an error when the matrix dimensions do not fit the A carrier, an
 /// exact matrix width falls outside the audited SIS table, or no terminating
 /// suffix can be planned.
-pub fn mixed_matrix_root_schedule<Env: CommitmentConfig>(
+pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
     num_vars: usize,
     num_polynomials: usize,
-    outer_d: usize,
-    open_d: usize,
+    b_ring_dim: usize,
+    d_ring_dim: usize,
 ) -> Result<FoldSchedule, AkitaError> {
     cached_synthetic_schedule(
         SyntheticScheduleCacheKey {
-            kind: SyntheticScheduleKind::MixedMatrixRoot,
+            kind: SyntheticScheduleKind::PerMatrixRingDimsRoot,
             root: TypeId::of::<Env>(),
             middle: TypeId::of::<Env>(),
             suffix: TypeId::of::<Env>(),
             num_vars,
             num_polynomials,
-            parameters: [outer_d, open_d, 0, 0],
+            parameters: [b_ring_dim, d_ring_dim, 0, 0],
         },
         || {
             let mut root = akita_planner::find_schedule(
@@ -501,8 +501,8 @@ pub fn mixed_matrix_root_schedule<Env: CommitmentConfig>(
             retarget_commitment_matrices(
                 &mut root.params.final_group.commitment,
                 num_polynomials,
-                outer_d,
-                open_d,
+                b_ring_dim,
+                d_ring_dim,
             )?;
             root.params.open_commit_matrix = root
                 .params
@@ -541,13 +541,13 @@ pub fn mixed_matrix_root_schedule<Env: CommitmentConfig>(
 fn retarget_commitment_matrices(
     commitment: &mut CommittedGroupParams,
     num_polynomials: usize,
-    outer_d: usize,
-    open_d: usize,
+    b_ring_dim: usize,
+    d_ring_dim: usize,
 ) -> Result<(), AkitaError> {
     let dims = CommitmentRingDims {
         inner: commitment.d_a(),
-        outer: outer_d,
-        opening: open_d,
+        outer: b_ring_dim,
+        opening: d_ring_dim,
     };
     dims.validate_a_carrier()?;
     let projected_width = |label: &str, native_width: usize, target_d: usize| {
@@ -563,13 +563,13 @@ fn retarget_commitment_matrices(
         num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("B matrix width overflow".into()))?;
-    let outer_width = projected_width("B", native_outer_width, outer_d)?;
+    let outer_width = projected_width("B", native_outer_width, b_ring_dim)?;
     let outer_key = commitment.outer_commit_matrix.sis_table_key();
     let outer_norm = rounded_up_collision_inf_norm(
         outer_key.policy,
         outer_key.modulus_profile,
         SisMatrixRole::Outer,
-        outer_d,
+        b_ring_dim,
         commitment.log_basis_outer,
     )
     .ok_or_else(|| {
@@ -577,7 +577,7 @@ fn retarget_commitment_matrices(
     })?;
     commitment.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
-            ring_dimension: outer_d as u32,
+            ring_dimension: b_ring_dim as u32,
             coeff_linf_bound: outer_norm,
             ..outer_key
         },
@@ -590,13 +590,13 @@ fn retarget_commitment_matrices(
         num_polynomials,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("D matrix width overflow".into()))?;
-    let open_width = projected_width("D", native_open_width, open_d)?;
+    let open_width = projected_width("D", native_open_width, d_ring_dim)?;
     let open_key = commitment.open_commit_matrix.sis_table_key();
     let open_norm = rounded_up_collision_inf_norm(
         open_key.policy,
         open_key.modulus_profile,
         SisMatrixRole::Open,
-        open_d,
+        d_ring_dim,
         commitment.log_basis_open,
     )
     .ok_or_else(|| {
@@ -604,7 +604,7 @@ fn retarget_commitment_matrices(
     })?;
     commitment.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
         SisTableKey {
-            ring_dimension: open_d as u32,
+            ring_dimension: d_ring_dim as u32,
             coeff_linf_bound: open_norm,
             ..open_key
         },
@@ -625,37 +625,40 @@ fn outgoing_witness_field_len(
         .ok_or_else(|| AkitaError::InvalidSetup("outgoing witness length overflow".into()))
 }
 
-/// Config adapter for a three-level matrix-ring transition: L0
-/// `A/B/D = Env::D/Env::D/ROOT_OPEN_D`, L1
-/// `A/B/D = Env::D/MID_D/MID_D`, then uniform `Suffix::D`.
+/// Config adapter for a three-level ring-dimension transition: L0
+/// `A/B/D = Env::D/Env::D/ROOT_D_RING_DIM`, L1
+/// `A/B/D = Env::D/MID_BD_RING_DIM/MID_BD_RING_DIM`, then uniform `Suffix::D`.
 #[derive(Debug)]
-pub struct MatrixRingTransitionConfig<Env, Suffix, const MID_D: usize, const ROOT_OPEN_D: usize>(
-    PhantomData<fn() -> (Env, Suffix)>,
-);
+pub struct RingDimensionTransitionConfig<
+    Env,
+    Suffix,
+    const MID_BD_RING_DIM: usize,
+    const ROOT_D_RING_DIM: usize,
+>(PhantomData<fn() -> (Env, Suffix)>);
 
-impl<Env, Suffix, const MID_D: usize, const ROOT_OPEN_D: usize> Clone
-    for MatrixRingTransitionConfig<Env, Suffix, MID_D, ROOT_OPEN_D>
+impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> Clone
+    for RingDimensionTransitionConfig<Env, Suffix, MID_BD_RING_DIM, ROOT_D_RING_DIM>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<Env, Suffix, const MID_D: usize, const ROOT_OPEN_D: usize> Copy
-    for MatrixRingTransitionConfig<Env, Suffix, MID_D, ROOT_OPEN_D>
+impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> Copy
+    for RingDimensionTransitionConfig<Env, Suffix, MID_BD_RING_DIM, ROOT_D_RING_DIM>
 {
 }
 
-impl<Env, Suffix, const MID_D: usize, const ROOT_OPEN_D: usize> Default
-    for MatrixRingTransitionConfig<Env, Suffix, MID_D, ROOT_OPEN_D>
+impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> Default
+    for RingDimensionTransitionConfig<Env, Suffix, MID_BD_RING_DIM, ROOT_D_RING_DIM>
 {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<Env, Suffix, const MID_D: usize, const ROOT_OPEN_D: usize> CommitmentConfig
-    for MatrixRingTransitionConfig<Env, Suffix, MID_D, ROOT_OPEN_D>
+impl<Env, Suffix, const MID_BD_RING_DIM: usize, const ROOT_D_RING_DIM: usize> CommitmentConfig
+    for RingDimensionTransitionConfig<Env, Suffix, MID_BD_RING_DIM, ROOT_D_RING_DIM>
 where
     Env: CommitmentConfig,
     Suffix: CommitmentConfig<Field = Env::Field, ExtField = Env::ExtField>,
@@ -691,21 +694,21 @@ where
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
         if max_num_batched_polys > 1 {
             return Err(AkitaError::InvalidSetup(
-                "matrix-ring transition requires a singleton batch".into(),
+                "ring-dimension transition requires a singleton batch".into(),
             ));
         }
-        let schedule = matrix_ring_transition_schedule::<Env, Env, Suffix>(
+        let schedule = ring_dimension_transition_schedule::<Env, Env, Suffix>(
             max_num_vars,
             1,
             CommitmentRingDims {
                 inner: Env::D,
                 outer: Env::D,
-                opening: ROOT_OPEN_D,
+                opening: ROOT_D_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Env::D,
-                outer: MID_D,
-                opening: MID_D,
+                outer: MID_BD_RING_DIM,
+                opening: MID_BD_RING_DIM,
             },
         )?;
         akita_types::setup_matrix_envelope_for_schedule(&schedule)
@@ -724,18 +727,18 @@ where
     }
 
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        matrix_ring_transition_schedule::<Env, Env, Suffix>(
+        ring_dimension_transition_schedule::<Env, Env, Suffix>(
             key.final_group.num_vars(),
             key.final_group.num_polynomials(),
             CommitmentRingDims {
                 inner: Env::D,
                 outer: Env::D,
-                opening: ROOT_OPEN_D,
+                opening: ROOT_D_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Env::D,
-                outer: MID_D,
-                opening: MID_D,
+                outer: MID_BD_RING_DIM,
+                opening: MID_BD_RING_DIM,
             },
         )
     }
@@ -743,18 +746,18 @@ where
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        matrix_ring_transition_schedule::<Env, Env, Suffix>(
+        ring_dimension_transition_schedule::<Env, Env, Suffix>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
             CommitmentRingDims {
                 inner: Env::D,
                 outer: Env::D,
-                opening: ROOT_OPEN_D,
+                opening: ROOT_D_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Env::D,
-                outer: MID_D,
-                opening: MID_D,
+                outer: MID_BD_RING_DIM,
+                opening: MID_BD_RING_DIM,
             },
         )
     }
@@ -807,7 +810,7 @@ fn finish_schedule(
     Ok(schedule)
 }
 
-/// Three-band commitment-matrix ring-dimension transition:
+/// Three-band ring-dimension transition:
 ///
 /// - L0 uses `root_dims`, with A fixed to `Root::D`.
 /// - L1 uses `middle_dims`, with A fixed to `Mid::D`.
@@ -817,15 +820,15 @@ fn finish_schedule(
 /// dimensions, SIS ranks, and outgoing witness length are known. The D512 root
 /// remains a temporary test-only promotion from D256 planner geometry; all
 /// promoted A/B/D matrices are nevertheless rebuilt and priced from their
-/// final dimensions. Native mixed-matrix root planning is required before this
-/// D512 experiment can leave `test-support`.
+/// final dimensions. Native per-matrix ring-dimension root planning is
+/// required before this D512 experiment can leave `test-support`.
 ///
 /// # Errors
 ///
 /// Returns an error when the batch is not a singleton, either planner pass
 /// fails, a matrix width leaves the audited SIS table, or the schedule
 /// fails structural validation.
-pub fn matrix_ring_transition_schedule<Root, Mid, Suffix>(
+pub fn ring_dimension_transition_schedule<Root, Mid, Suffix>(
     num_vars: usize,
     num_polynomials: usize,
     root_dims: CommitmentRingDims,
@@ -838,7 +841,7 @@ where
 {
     cached_synthetic_schedule(
         SyntheticScheduleCacheKey {
-            kind: SyntheticScheduleKind::MatrixRingTransition,
+            kind: SyntheticScheduleKind::RingDimensionTransition,
             root: TypeId::of::<Root>(),
             middle: TypeId::of::<Mid>(),
             suffix: TypeId::of::<Suffix>(),
@@ -854,14 +857,14 @@ where
         || {
             if num_polynomials != 1 {
                 return Err(AkitaError::InvalidSetup(
-                    "matrix-ring transition requires a singleton batch".into(),
+                    "ring-dimension transition requires a singleton batch".into(),
                 ));
             }
             root_dims.validate_a_carrier()?;
             middle_dims.validate_a_carrier()?;
             if root_dims.d_a() != Root::D || middle_dims.d_a() != Mid::D {
                 return Err(AkitaError::InvalidSetup(
-                    "matrix-ring transition A dimensions must match the Root and Mid policies"
+                    "ring-dimension transition A dimensions must match the Root and Mid policies"
                         .into(),
                 ));
             }
@@ -870,7 +873,8 @@ where
             Suffix::validate_sis_modulus_profile()?;
             let field_bits = Root::decomposition().field_bits();
             // L0: tableless experiment presets use the offline planner directly.
-            // Q128 D512 has audited A-matrix rows but no native mixed-matrix planner
+            // Q128 D512 has audited A-matrix rows but no native per-matrix
+            // ring-dimension planner
             // candidate, so temporarily start from D256 root geometry and promote A.
             let mut root_policy = policy_of::<Root>();
             let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
@@ -889,7 +893,7 @@ where
                     || Root::sis_modulus_profile() != SisModulusProfileId::Q128OffsetA7F7
                 {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "matrix-ring A promotion from D={planned_root_d} to D={} is unsupported",
+                        "ring-dimension transition A promotion from D={planned_root_d} to D={} is unsupported",
                         Root::D
                     )));
                 }
@@ -990,7 +994,9 @@ where
                 root_lb,
             )?;
             let l1 = mid.folds.first().ok_or_else(|| {
-                AkitaError::InvalidSetup("matrix-ring transition Mid band produced no fold".into())
+                AkitaError::InvalidSetup(
+                    "ring-dimension transition Mid band produced no fold".into(),
+                )
             })?;
 
             let mut l1_step = planned_fold_step(l1);
@@ -1022,39 +1028,44 @@ where
     )
 }
 
-/// Config adapter for [`matrix_ring_transition_schedule`].
+/// Config adapter for [`ring_dimension_transition_schedule`].
 ///
-/// `Root`/`Mid`/`Suffix` set the A-matrix dimensions; `ROOT_BD` and `L1_BD`
-/// set both B and D at L0/L1. `Root::D` sets the setup generation dimension.
+/// `Root`/`Mid`/`Suffix` set the A-matrix dimensions; `ROOT_BD_RING_DIM` and
+/// `L1_BD_RING_DIM` set both B and D at L0/L1. `Root::D` sets the setup
+/// generation dimension.
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
-pub struct ThreeBandMatrixRingConfig<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize>(
-    PhantomData<fn() -> (Root, Mid, Suffix)>,
-);
+pub struct ThreeBandRingDimensionTransitionConfig<
+    Root,
+    Mid,
+    Suffix,
+    const ROOT_BD_RING_DIM: usize,
+    const L1_BD_RING_DIM: usize,
+>(PhantomData<fn() -> (Root, Mid, Suffix)>);
 
-impl<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize> Clone
-    for ThreeBandMatrixRingConfig<Root, Mid, Suffix, ROOT_BD, L1_BD>
+impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usize> Clone
+    for ThreeBandRingDimensionTransitionConfig<Root, Mid, Suffix, ROOT_BD_RING_DIM, L1_BD_RING_DIM>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize> Copy
-    for ThreeBandMatrixRingConfig<Root, Mid, Suffix, ROOT_BD, L1_BD>
+impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usize> Copy
+    for ThreeBandRingDimensionTransitionConfig<Root, Mid, Suffix, ROOT_BD_RING_DIM, L1_BD_RING_DIM>
 {
 }
 
-impl<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize> Default
-    for ThreeBandMatrixRingConfig<Root, Mid, Suffix, ROOT_BD, L1_BD>
+impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usize> Default
+    for ThreeBandRingDimensionTransitionConfig<Root, Mid, Suffix, ROOT_BD_RING_DIM, L1_BD_RING_DIM>
 {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<Root, Mid, Suffix, const ROOT_BD: usize, const L1_BD: usize> CommitmentConfig
-    for ThreeBandMatrixRingConfig<Root, Mid, Suffix, ROOT_BD, L1_BD>
+impl<Root, Mid, Suffix, const ROOT_BD_RING_DIM: usize, const L1_BD_RING_DIM: usize> CommitmentConfig
+    for ThreeBandRingDimensionTransitionConfig<Root, Mid, Suffix, ROOT_BD_RING_DIM, L1_BD_RING_DIM>
 where
     Root: CommitmentConfig,
     Mid: CommitmentConfig<Field = Root::Field, ExtField = Root::ExtField>,
@@ -1091,21 +1102,21 @@ where
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
         if max_num_batched_polys > 1 {
             return Err(AkitaError::InvalidSetup(
-                "three-band matrix-ring transition requires a singleton batch".into(),
+                "three-band ring-dimension transition requires a singleton batch".into(),
             ));
         }
-        let schedule = matrix_ring_transition_schedule::<Root, Mid, Suffix>(
+        let schedule = ring_dimension_transition_schedule::<Root, Mid, Suffix>(
             max_num_vars,
             1,
             CommitmentRingDims {
                 inner: Root::D,
-                outer: ROOT_BD,
-                opening: ROOT_BD,
+                outer: ROOT_BD_RING_DIM,
+                opening: ROOT_BD_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Mid::D,
-                outer: L1_BD,
-                opening: L1_BD,
+                outer: L1_BD_RING_DIM,
+                opening: L1_BD_RING_DIM,
             },
         )?;
         akita_types::setup_matrix_envelope_for_schedule(&schedule)
@@ -1124,18 +1135,18 @@ where
     }
 
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        matrix_ring_transition_schedule::<Root, Mid, Suffix>(
+        ring_dimension_transition_schedule::<Root, Mid, Suffix>(
             key.final_group.num_vars(),
             key.final_group.num_polynomials(),
             CommitmentRingDims {
                 inner: Root::D,
-                outer: ROOT_BD,
-                opening: ROOT_BD,
+                outer: ROOT_BD_RING_DIM,
+                opening: ROOT_BD_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Mid::D,
-                outer: L1_BD,
-                opening: L1_BD,
+                outer: L1_BD_RING_DIM,
+                opening: L1_BD_RING_DIM,
             },
         )
     }
@@ -1143,53 +1154,54 @@ where
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        matrix_ring_transition_schedule::<Root, Mid, Suffix>(
+        ring_dimension_transition_schedule::<Root, Mid, Suffix>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
             CommitmentRingDims {
                 inner: Root::D,
-                outer: ROOT_BD,
-                opening: ROOT_BD,
+                outer: ROOT_BD_RING_DIM,
+                opening: ROOT_BD_RING_DIM,
             },
             CommitmentRingDims {
                 inner: Mid::D,
-                outer: L1_BD,
-                opening: L1_BD,
+                outer: L1_BD_RING_DIM,
+                opening: L1_BD_RING_DIM,
             },
         )
     }
 }
 
 /// Config adapter whose root commitment matrices use
-/// `A/B/D = Env::D/OUTER_D/OPEN_D`. The replanned suffix is uniform `Env::D`.
+/// `A/B/D = Env::D/B_RING_DIM/D_RING_DIM`. The replanned suffix is uniform
+/// `Env::D`.
 #[derive(Debug)]
-pub struct MixedMatrixRootConfig<Env, const OUTER_D: usize, const OPEN_D: usize>(
+pub struct PerMatrixRingDimsRootConfig<Env, const B_RING_DIM: usize, const D_RING_DIM: usize>(
     PhantomData<fn() -> Env>,
 );
 
-impl<Env, const OUTER_D: usize, const OPEN_D: usize> Clone
-    for MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>
+impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> Clone
+    for PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 {
     fn clone(&self) -> Self {
         *self
     }
 }
 
-impl<Env, const OUTER_D: usize, const OPEN_D: usize> Copy
-    for MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>
+impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> Copy
+    for PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 {
 }
 
-impl<Env, const OUTER_D: usize, const OPEN_D: usize> Default
-    for MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>
+impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> Default
+    for PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 {
     fn default() -> Self {
         Self(PhantomData)
     }
 }
 
-impl<Env, const OUTER_D: usize, const OPEN_D: usize> CommitmentConfig
-    for MixedMatrixRootConfig<Env, OUTER_D, OPEN_D>
+impl<Env, const B_RING_DIM: usize, const D_RING_DIM: usize> CommitmentConfig
+    for PerMatrixRingDimsRootConfig<Env, B_RING_DIM, D_RING_DIM>
 where
     Env: CommitmentConfig,
 {
@@ -1223,11 +1235,16 @@ where
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
         // Smaller B/D rings widen those matrices, so size the setup from the
-        // actual mixed-matrix schedule rather than the uniform envelope.
+        // actual per-matrix ring-dimension schedule rather than the uniform
+        // envelope.
         let mut max_setup_len = 1usize;
         for num_polys in 1..=max_num_batched_polys.max(1) {
-            let schedule =
-                mixed_matrix_root_schedule::<Env>(max_num_vars, num_polys, OUTER_D, OPEN_D)?;
+            let schedule = per_matrix_ring_dims_root_schedule::<Env>(
+                max_num_vars,
+                num_polys,
+                B_RING_DIM,
+                D_RING_DIM,
+            )?;
             let required = akita_types::setup_matrix_envelope_for_schedule(&schedule)?;
             max_setup_len = max_setup_len.max(required.max_setup_len);
         }
@@ -1247,22 +1264,22 @@ where
     }
 
     fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        mixed_matrix_root_schedule::<Env>(
+        per_matrix_ring_dims_root_schedule::<Env>(
             key.final_group.num_vars(),
             key.final_group.num_polynomials(),
-            OUTER_D,
-            OPEN_D,
+            B_RING_DIM,
+            D_RING_DIM,
         )
     }
 
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
-        mixed_matrix_root_schedule::<Env>(
+        per_matrix_ring_dims_root_schedule::<Env>(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
-            OUTER_D,
-            OPEN_D,
+            B_RING_DIM,
+            D_RING_DIM,
         )
     }
 }
