@@ -32,6 +32,21 @@ impl<E: FieldCore> PreparedRelationLanes<E> {
                 "setup relation lane base must be nonzero".into(),
             ));
         }
+        if role_dims == CommitmentRingDims::uniform(common_coeff_count)
+            && carrier_ring_dimension == common_coeff_count
+        {
+            return Ok(Self {
+                carrier_lane_count: 1,
+                inner_lane_count: 1,
+                outer_lane_count: 1,
+                opening_lane_count: 1,
+                d_subcolumns: 1,
+                b_subcolumns: 1,
+                inner_alpha: vec![E::one()],
+                outer_alpha: vec![E::one()],
+                opening_alpha: vec![E::one()],
+            });
+        }
         let lane_count = |role: RingRole| {
             role_dims
                 .dim_for(role)
@@ -365,13 +380,29 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         };
                         let z_eq_slice = {
                             let _span = tracing::info_span!("setup_prepare_z_weights").entered();
-                            materialize_span_weights::<F, E>(
-                                z_cols,
-                                &a_spans,
-                                &eq_window,
-                                &lanes.inner_alpha,
-                                Some(group_fold_gadget),
-                            )?
+                            if lanes.carrier_lane_count == 1
+                                && lanes.inner_lane_count == 1
+                                && lanes.d_subcolumns == 1
+                            {
+                                materialize_uniform_inner_weights(
+                                    witness_layout,
+                                    group.group_id,
+                                    num_positions_per_block,
+                                    depth_witness,
+                                    group.depth_fold,
+                                    relation_address_geometry.relation_lane_capacity(),
+                                    &eq_window,
+                                    group_fold_gadget,
+                                )?
+                            } else {
+                                materialize_span_weights::<F, E>(
+                                    z_cols,
+                                    &a_spans,
+                                    &eq_window,
+                                    &lanes.inner_alpha,
+                                    Some(group_fold_gadget),
+                                )?
+                            }
                         };
                         (e_eq_slice, t_eq_slice, z_eq_slice)
                     } else {
@@ -662,6 +693,7 @@ fn build_setup_contribution_spans<E: FieldCore>(
 /// physical setup column maps to exactly one witness column, so filling whole
 /// unit intervals avoids compiling one span job per column.
 #[allow(clippy::too_many_arguments)]
+#[inline]
 fn materialize_uniform_role_weights<E: FieldCore>(
     witness_layout: &WitnessLayout,
     group_id: usize,
@@ -734,6 +766,64 @@ fn materialize_uniform_role_weights<E: FieldCore>(
             eq_window.fill_interval(source_start, destination)?;
         }
     }
+    Ok(weights)
+}
+
+/// Materialize A-role weights directly when one physical setup column maps to
+/// one relation lane. This keeps the established uniform recursive kernel
+/// while mixed dimensions continue through the span evaluator below.
+#[allow(clippy::too_many_arguments)]
+fn materialize_uniform_inner_weights<F, E>(
+    witness_layout: &WitnessLayout,
+    group_id: usize,
+    num_positions_per_block: usize,
+    depth_witness: usize,
+    depth_fold: usize,
+    relation_lane_capacity: usize,
+    eq_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
+    fold_gadget: &[F],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore + MulBase<F>,
+{
+    if fold_gadget.len() < depth_fold {
+        return Err(AkitaError::InvalidSetup(
+            "setup A weights have malformed fold geometry".into(),
+        ));
+    }
+    let z_cols = num_positions_per_block
+        .checked_mul(depth_witness)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup A width overflow".into()))?;
+    let units = witness_layout.units_for_group(group_id)?;
+    let mut weights = vec![E::zero(); z_cols];
+    cfg_iter_mut!(weights)
+        .enumerate()
+        .try_for_each(|(column, destination)| {
+            let position = column / depth_witness;
+            let witness_digit = column % depth_witness;
+            let mut weight = E::zero();
+            for unit in &units {
+                for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
+                    let witness_index = unit.z_index(
+                        num_positions_per_block,
+                        depth_witness,
+                        depth_fold,
+                        position,
+                        witness_digit,
+                        fold_digit,
+                    )?;
+                    if witness_index >= relation_lane_capacity {
+                        return Err(AkitaError::InvalidInput(
+                            "setup A relation address is out of range".into(),
+                        ));
+                    }
+                    weight -= eq_window.eval(witness_index).mul_base(fold);
+                }
+            }
+            *destination = weight;
+            Ok(())
+        })?;
     Ok(weights)
 }
 

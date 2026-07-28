@@ -372,6 +372,9 @@ where
         ));
     }
 
+    // Reuse the carrier powers across every uniform group. Mixed-d groups
+    // derive their native powers in the dispatch below.
+    let carrier_alpha_pows = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -430,24 +433,43 @@ where
                 actual: challenges.logical_len(),
             });
         }
-        let (c_alphas, opening_a_evals) = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            group_role_dims.d_a(),
-            |D_GROUP| {
-                let alpha_pows = scalar_powers(alpha, D_GROUP);
-                let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
-                    challenges,
-                    &alpha_pows,
-                    k_g,
-                    num_live_blocks,
-                )?;
-                let opening_a_evals = (0..num_positions_per_block)
-                    .map(|idx| ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows))
-                    .collect::<Result<Vec<_>, _>>()?;
-                Ok::<_, AkitaError>((c_alphas, opening_a_evals))
-            }
-        )?;
+        let (c_alphas, opening_a_evals) = if group_role_dims.d_a() == D {
+            // The overwhelmingly common recursive path keeps every group at
+            // the carrier dimension. Preserve its monomorphized evaluator:
+            // routing it through the mixed-d runtime dispatch measurably
+            // increases verifier preparation at every recursive fold.
+            let c_alphas = prepare_challenge_evals::<F, E, D>(
+                challenges,
+                &carrier_alpha_pows,
+                k_g,
+                num_live_blocks,
+            )?;
+            let opening_a_evals = (0..num_positions_per_block)
+                .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &carrier_alpha_pows))
+                .collect::<Result<Vec<_>, _>>()?;
+            (c_alphas, opening_a_evals)
+        } else {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_role_dims.d_a(),
+                |D_GROUP| {
+                    let alpha_pows = scalar_powers(alpha, D_GROUP);
+                    let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
+                        challenges,
+                        &alpha_pows,
+                        k_g,
+                        num_live_blocks,
+                    )?;
+                    let opening_a_evals = (0..num_positions_per_block)
+                        .map(|idx| {
+                            ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    Ok::<_, AkitaError>((c_alphas, opening_a_evals))
+                }
+            )?
+        };
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
