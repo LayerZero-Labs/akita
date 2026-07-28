@@ -23,18 +23,23 @@ pub const SUPPORTED_RING_DIMS: [usize; 8] = [16, 32, 64, 128, 256, 512, 1024, 20
 /// Minimum `d_a` for sparse fold ring challenges (no sampler below this).
 pub const MIN_A_ROLE_FOLD_CHALLENGE_RING_D: usize = 64;
 
-/// Which Ajtai / protocol matrix role a buffer belongs to at one fold level.
+/// Which commitment matrix owns a buffer or ring dimension at one fold level.
+///
+/// “Role” is the historical protocol name for the fixed job of one of the
+/// three Ajtai matrices. It does not mean that a matrix changes jobs between
+/// levels: A always carries the relation witness, B always commits the next
+/// witness, and D always commits the opening digits.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RingRole {
-    /// A-role (`d_a`): fold witness, row coefficients, ring-switch geometry.
+    /// A matrix (`d_a`): fold witness, row coefficients, ring-switch geometry.
     Inner,
-    /// B-role (`d_b`): sent commitment rows, COMMIT segment of `y`.
+    /// B matrix (`d_b`): sent commitment rows, COMMIT segment of `y`.
     Outer,
-    /// D-role (`d_d`): opening digits, D-block rows `v`.
+    /// D matrix (`d_d`): opening digits, D-block rows `v`.
     Opening,
 }
 
-/// Per-fold ring dimensions by protocol role.
+/// Per-fold ring dimensions of the A, B, and D commitment matrices.
 ///
 /// A is the relation-witness carrier, so `inner >= outer` and
 /// `inner >= opening`. B and D are independent: neither is ordered relative to
@@ -147,7 +152,7 @@ impl CommitmentRingDims {
         }
     }
 
-    /// The single dimension shared by all roles, or an error once per-role
+    /// The single dimension shared by all matrices, or an error once their
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {
         if self.inner == self.outer && self.outer == self.opening {

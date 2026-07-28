@@ -550,26 +550,24 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
         .and_then(|value| value.parse().ok())
         .unwrap_or(128);
     assert_singleton_mode("onehot_fp128_d64_root_d128", num_polys);
-    // Three-band role-switch: L0 = <root>/128/128, L1 = 128/64/64, then uniform
-    // 64. Root A-band dim from AKITA_MIXED_THREEBAND_ROOT_D (256 or 512).
-    if std::env::var("AKITA_MIXED_THREEBAND").as_deref() == Ok("1") {
-        run_three_band(nv);
+    // Three-band matrix-ring transition: L0 = <root>/128/128, L1 =
+    // 128/64/64, then uniform 64. The root A dimension is 256 or 512.
+    if std::env::var("AKITA_THREE_BAND_RING_TRANSITION").as_deref() == Ok("1") {
+        run_three_band_ring_transition(nv);
         return;
     }
-    // Multi-level role-switch variant: L0 = 128/128/64, L1 = 128/64/64, then
-    // uniform 64.
-    if std::env::var("AKITA_MIXED_ROLESWITCH").as_deref() == Ok("1") {
+    // Multi-level matrix-ring transition: L0 = 128/128/64, L1 = 128/64/64,
+    // then uniform 64.
+    if std::env::var("AKITA_MATRIX_RING_TRANSITION").as_deref() == Ok("1") {
         tracing::info!(
-            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, role-switch L0=128/128/64 L1=128/64/64 then 64, 1-of-{onehot_k}) ==="
+            "=== onehot_fp128_d64_root_d128 (fp128, {prime}, matrix-ring transition L0=128/128/64 L1=128/64/64 then 64, 1-of-{onehot_k}) ==="
         );
-        run_role_switch(nv);
+        run_matrix_ring_transition(nv);
         return;
     }
-    // Per-role compression variant: A = 128, B = D = 64 at the root (a single
-    // non-uniform level), rest of the schedule unchanged.
-    if std::env::var("AKITA_MIXED_ROLE").as_deref() == Ok("1") {
-        // Per-role root dims: A = 128, B = AKITA_MIXED_OUTER_D (default 64),
-        // D = AKITA_MIXED_OPEN_D (default 64).
+    // Mixed-matrix root: A = 128, with independently selected B/D dimensions.
+    // The complete D128 suffix is replanned from the resulting root witness.
+    if std::env::var("AKITA_MIXED_MATRIX_ROOT").as_deref() == Ok("1") {
         let outer_d: usize = std::env::var("AKITA_MIXED_OUTER_D")
             .ok()
             .and_then(|value| value.parse().ok())
@@ -582,9 +580,9 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
             "=== onehot_fp128_d64_root_d128 (fp128, {prime}, root d_a=128 / d_b={outer_d} / d_d={open_d}, 1-of-{onehot_k}) ==="
         );
         match (outer_d, open_d) {
-            (64, 64) => run_compressed_role_root::<64, 64>(nv),
-            (128, 64) => run_compressed_role_root::<128, 64>(nv),
-            (64, 128) => run_compressed_role_root::<64, 128>(nv),
+            (64, 64) => run_mixed_matrix_root::<64, 64>(nv),
+            (128, 64) => run_mixed_matrix_root::<128, 64>(nv),
+            (64, 128) => run_mixed_matrix_root::<64, 128>(nv),
             (o, p) => panic!(
                 "AKITA_MIXED_OUTER_D={o} / AKITA_MIXED_OPEN_D={p} unsupported (use 64 or 128, must divide 128)"
             ),
@@ -608,33 +606,31 @@ fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
     }
 }
 
-/// Three-band descending role-switch: L0 = A/B/D `<root>`/128/128, L1 =
-/// 128/64/64, then uniform 64. Skips the synthetic-schedule planner assertion.
+/// Three-band matrix-ring transition: L0 = A/B/D `<root>`/128/128, L1 =
+/// 128/64/64, then uniform 64.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_three_band(nv: usize) {
-    // Root A-band ring dim: 256 (L0 = 256/128/128) or 512 (L0 = 512/128/128).
-    let root_d: usize = std::env::var("AKITA_MIXED_THREEBAND_ROOT_D")
+fn run_three_band_ring_transition(nv: usize) {
+    let root_d: usize = std::env::var("AKITA_THREE_BAND_ROOT_A_D")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(256);
     match root_d {
-        256 => run_three_band_impl::<fp128::D256OneHot, 256>(nv),
-        512 => run_three_band_impl::<fp128::D512OneHot, 512>(nv),
-        d => panic!("AKITA_MIXED_THREEBAND_ROOT_D={d} unsupported (use 256 or 512)"),
+        256 => run_three_band_ring_transition_impl::<fp128::D256OneHot, 256>(nv),
+        512 => run_three_band_ring_transition_impl::<fp128::D512OneHot, 512>(nv),
+        d => panic!("AKITA_THREE_BAND_ROOT_A_D={d} unsupported (use 256 or 512)"),
     }
 }
 
-/// Three-band descending role-switch: L0 = `ROOT_D`/128/128, L1 = 128/64/64,
-/// then uniform 64. `Root` is the A-band root envelope (`D256OneHot` or
-/// `D512OneHot`). Requires the corresponding fp128 inner-role D support. Skips
-/// the synthetic-schedule planner assertion.
+/// Three-band matrix-ring transition: L0 = `ROOT_D`/128/128, L1 = 128/64/64,
+/// then uniform 64. D512 is a temporary promotion experiment pending native
+/// mixed-matrix planning.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_three_band_impl<Root, const ROOT_D: usize>(nv: usize)
+fn run_three_band_ring_transition_impl<Root, const ROOT_D: usize>(nv: usize)
 where
     Root: CommitmentConfig<Field = F, ExtField = F>,
 {
-    use akita_pcs::test_support::ThreeBandRoleSwitchConfig;
-    type Cfg<Root> = ThreeBandRoleSwitchConfig<Root, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
+    use akita_pcs::test_support::ThreeBandMatrixRingConfig;
+    type Cfg<Root> = ThreeBandMatrixRingConfig<Root, fp128::D128OneHot, fp128::D64OneHot, 128, 64>;
     tracing::info!(
         "=== onehot_fp128_d64_root_d128 (fp128, {}, three-band L0={ROOT_D}/128/128 L1=128/64/64 then 64, 1-of-{}) ===",
         fp128_prime_label(),
@@ -663,37 +659,37 @@ where
 }
 
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_role_switch(nv: usize) {
-    // Root D-role dim: 64 compresses the root D (L0 = 128/128/64); 128 leaves the
-    // root fully uniform (L0 = 128/128/128). L1 is always 128/64/64.
-    let root_open_d: usize = std::env::var("AKITA_MIXED_ROLESWITCH_ROOT_D")
+fn run_matrix_ring_transition(nv: usize) {
+    // Root opening-matrix ring dimension. L1 is always 128/64/64.
+    let root_open_d: usize = std::env::var("AKITA_TRANSITION_ROOT_OPEN_D")
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(64);
     match root_open_d {
-        64 => run_role_switch_impl::<64>(nv),
-        128 => run_role_switch_impl::<128>(nv),
-        d => panic!("AKITA_MIXED_ROLESWITCH_ROOT_D={d} unsupported (use 64 or 128)"),
+        64 => run_matrix_ring_transition_impl::<64>(nv),
+        128 => run_matrix_ring_transition_impl::<128>(nv),
+        d => panic!("AKITA_TRANSITION_ROOT_OPEN_D={d} unsupported (use 64 or 128)"),
     }
 }
 
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_role_switch_impl<const ROOT_OPEN_D: usize>(nv: usize) {
-    use akita_pcs::test_support::RoleSwitchConfig;
-    type Cfg<const R: usize> = RoleSwitchConfig<fp128::D128OneHot, fp128::D64OneHot, 64, R>;
+fn run_matrix_ring_transition_impl<const ROOT_OPEN_D: usize>(nv: usize) {
+    use akita_pcs::test_support::MatrixRingTransitionConfig;
+    type Cfg<const R: usize> =
+        MatrixRingTransitionConfig<fp128::D128OneHot, fp128::D64OneHot, 64, R>;
     let layout = resolve_layout::<F, Cfg<ROOT_OPEN_D>>(nv);
     let required_vars = layout.position_index_bits()
         + layout.block_index_bits()
         + 128usize.trailing_zeros() as usize;
     if required_vars > nv {
         panic!(
-            "[onehot_fp128_d64_root_d128] role-switch requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
+            "[onehot_fp128_d64_root_d128] matrix-ring transition requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
         );
     }
     let plan = Cfg::<ROOT_OPEN_D>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("role-switch schedule plan");
+    .expect("matrix-ring transition schedule");
     print_layout(&layout, 1, Cfg::<ROOT_OPEN_D>::decomposition().field_bits());
     run_onehot::<F, 128, Cfg<ROOT_OPEN_D>>(
         "onehot_fp128_d64_root_d128",
@@ -704,26 +700,25 @@ fn run_role_switch_impl<const ROOT_OPEN_D: usize>(nv: usize) {
     );
 }
 
-/// Run the per-role compression experiment: the root commits at `D = 128`
-/// (A-role) while B/D are compressed to `COMPRESSED_D`; the rest of the D128
-/// schedule is unchanged. Skips the synthetic-schedule planner assertion.
+/// Run the mixed-matrix root experiment at A/B/D =
+/// `128`/`OUTER_D`/`OPEN_D`, followed by a freshly planned D128 suffix.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-fn run_compressed_role_root<const OUTER_D: usize, const OPEN_D: usize>(nv: usize) {
-    use akita_pcs::test_support::CompressedRoleRootConfig;
-    type Cfg<const O: usize, const P: usize> = CompressedRoleRootConfig<fp128::D128OneHot, O, P>;
+fn run_mixed_matrix_root<const OUTER_D: usize, const OPEN_D: usize>(nv: usize) {
+    use akita_pcs::test_support::MixedMatrixRootConfig;
+    type Cfg<const O: usize, const P: usize> = MixedMatrixRootConfig<fp128::D128OneHot, O, P>;
     let layout = resolve_layout::<F, Cfg<OUTER_D, OPEN_D>>(nv);
     let required_vars = layout.position_index_bits()
         + layout.block_index_bits()
         + 128usize.trailing_zeros() as usize;
     if required_vars > nv {
         panic!(
-            "[onehot_fp128_d64_root_d128] compressed-role root requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
+            "[onehot_fp128_d64_root_d128] mixed-matrix root requires {required_vars} variables, but AKITA_NUM_VARS={nv}"
         );
     }
     let plan = Cfg::<OUTER_D, OPEN_D>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
-    .expect("compressed-role schedule plan");
+    .expect("mixed-matrix root schedule");
     print_layout(
         &layout,
         1,
