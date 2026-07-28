@@ -20,6 +20,18 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
         }
     }
 
+    /// Returns the wide coefficients in ring order.
+    #[inline]
+    pub fn coeffs(&self) -> &[W; D] {
+        &self.coeffs
+    }
+
+    /// Returns the mutable wide coefficients in ring order.
+    #[inline]
+    pub fn coeffs_mut(&mut self) -> &mut [W; D] {
+        &mut self.coeffs
+    }
+
     /// Convert a reduced `CyclotomicRing<F, D>` into wide form.
     #[inline]
     pub fn from_ring<F: FieldCore>(ring: &CyclotomicRing<F, D>) -> Self
