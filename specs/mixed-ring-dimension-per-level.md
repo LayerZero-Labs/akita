@@ -163,6 +163,11 @@ from the selected dimensions, plan the complete continuation from the exact
 outgoing witness, and retain enough alternatives to optimize the non-additive
 setup objective correctly.
 
+The approved search policy limits dimension choice to L0 and L1. Dimensions
+are component-wise non-increasing, L2 and later are uniform D64, and a matrix
+dimension is not increased beyond the first comparable candidate where that
+matrix reaches rank one.
+
 The proposed direct-schedule score is:
 
 ```text
@@ -503,28 +508,36 @@ The descriptor may be represented by the existing full first
 `CommittedGroupParams` or its canonical descriptor bytes. It must not be a new
 partial geometry model that can drift from `level_proof_bytes`.
 
-At a state:
+The approved mixed search is deliberately bounded:
 
-1. enumerate every feasible basis, dimension tuple, and block split;
-2. enumerate direct-terminal, direct-child, and permitted offloaded-child
-   edges;
-3. price edges with the existing exact proof-size functions;
-4. combine physical setup cost by `max`;
-5. retain the frontier per first-step descriptor;
-6. at the root, choose the global minimum by the requested score.
+1. L0 and L1 enumerate every feasible basis, admitted dimension tuple, and
+   block split.
+2. A child tuple is admitted only when each of `d_a`, `d_b`, and `d_d` is no
+   larger than the corresponding parent dimension.
+3. From L2 onward, dimensions are fixed to `64/64/64` and candidate split
+   derivation reuses the existing uniform-D64 planner path.
+4. A mixed domain must contain `64/64/64`, and every admitted component must
+   be at least 64 so the transition back to D64 cannot increase a dimension.
+5. Within the same physical fold geometry and digit basis, once a role reaches
+   matrix rank one at dimension `d`, candidates using a larger dimension for
+   that role are removed. Comparable geometry means the same live-block count
+   and the same physical coefficients per block; ranks from unrelated block
+   splits must not cap one another.
+6. Enumerate direct-terminal and direct-child edges, price them with the
+   existing exact proof-size functions, combine physical setup cost by `max`,
+   and retain the required frontier per first-step descriptor.
+7. Do not terminate before L2: the terminal and every fold from L2 onward use
+   D64.
+8. At the root, choose the global minimum by the requested score.
 
-The current `derive_candidate_level_params` returns one locally best split per
-basis. That is not exact for the new objective. It should return all feasible
-candidates needed by the frontier. The current split lower bound may be kept
-only when it proves that a candidate cannot enter the frontier; otherwise the
-offline planner must enumerate the split. Search time is an offline generation
-cost and cannot justify silently changing the semantic optimum.
+`derive_candidate_level_params_all_splits` is required only at the two mixed
+levels. Once the schedule returns to D64, `derive_candidate_level_params`
+restores the existing uniform planner's exact split policy instead of carrying
+the mixed-D exhaustive-split expansion through the complete suffix.
 
-The unrestricted mixed-D state does not need the previous dimension: candidate
-admission follows from current witness alignment and policy. If a later policy
-intentionally requires non-increasing dimensions, that transition rule must be
-an explicit catalog-bound policy field and part of the memo key; it must not be
-an undocumented heuristic. This proposal does not impose monotonicity.
+The L1 mixed-D memo state includes the complete parent A/B/D tuple. L2 and
+later states canonicalize that ceiling to `64/64/64`, allowing suffix memo
+reuse across different roots without weakening the monotonic transition.
 
 The suffix context must resolve the A-role ring challenge per candidate
 `d_a`; it cannot cache one policy-wide challenge. If setup-prefix dimensions
@@ -555,8 +568,13 @@ The current benchmark makes the requested policy's result concrete:
 | C | 135,266,304 | 108,171 | 35.367 ms |
 | D | **67,633,152** | 108,183 | 25.931 ms |
 
-Under `(setup field elements, proof bytes)`, A′ is the expected `nv=36`
-selection. It ties B/E/D on setup and has the smallest proof among them.
+Under an unrestricted choice among only these seven predefined schedules,
+`(setup field elements, proof bytes)` selects A′: it ties B/E/D on setup and
+has the smallest proof among them. That historical comparison is not an oracle
+for the approved planner domain. The planner additionally enforces
+component-wise descent, returns to D64 at L2, and removes dimensions above the
+first comparable rank-one matrix. It also searches block splits that do not
+necessarily reproduce any predefined profile.
 
 This also proves that setup footprint alone is not a complete verifier-time
 model: B and E verify about 21% faster than A′ despite the same setup
@@ -732,10 +750,15 @@ byte-identical.
 1. Extend existing root/recursive candidate construction to accept explicit
    `CommitmentRingDims`.
 2. Derive role-local physical widths, norms, and ranks directly.
-3. Enumerate all admitted tuples and required block splits.
-4. Replace one-best suffix maps with edge-safe Pareto frontiers.
-5. Select by setup field elements, then proof bytes.
-6. Keep recursive setup families on singleton D64.
+3. Enumerate all admitted tuples and block splits at L0 and L1.
+4. Enforce component-wise non-increasing transitions and a uniform-D64 L2+
+   suffix.
+5. Stop increasing a role dimension after rank one within comparable fold
+   geometry.
+6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
+   reuse the existing uniform-D64 split search.
+7. Select by setup field elements, then proof bytes.
+8. Keep recursive setup families on singleton D64.
 
 #### Cut 2: catalog replay and shipped adaptive family
 
@@ -757,7 +780,7 @@ byte-identical.
 
 ### Implementation checkpoint and planner example
 
-Commit `8d7598fff` implements the first offline direct scalar cut while
+The current branch implements the first offline direct scalar cut while
 preserving `find_schedule` and all generated catalogs:
 
 - `RingDimensionSearchDomain` admits canonical explicit
@@ -766,8 +789,14 @@ preserving `find_schedule` and all generated catalogs:
   elements, then exact modeled proof bytes;
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly;
-- recursive splits are exhaustively enumerated;
-- suffix states retain a nondominated setup/proof frontier per exact
+- L0 and L1 exhaustively enumerate splits over admissible, component-wise
+  descending tuples;
+- dimensions are uniform D64 from L2 through the terminal;
+- rank-one pruning compares only equal physical fold geometries, so an
+  unrelated block split cannot suppress a larger dimension;
+- L1 memo identity includes the parent dimension ceiling, while L2+ states
+  canonicalize to D64 and reuse the fixed planner's split search;
+- mixed-boundary states retain the required setup/proof alternatives per exact
   parent-visible first fold;
 - recursive setup policies are rejected by the mixed entry point and continue
   to use the existing grouped planner.
@@ -782,26 +811,36 @@ implemented and preserved paths. With setup generation D256, `nv=18`, and:
 256/128/128
 ```
 
-the mixed search completed in 11.7 seconds and selected:
+the constrained mixed search now selects:
 
 ```text
-L0:       256/128/128, input 262,144, output 263,168
-L1:       128/64/64,  input 263,168, output 155,648
-L2:       128/64/64,  input 155,648, output 121,856
-terminal: D64,         input 121,856
+L0:       128/64/64, ranks 2/1/1, input 262,144, output 225,152
+L1:       128/64/64, ranks 2/1/1, input 225,152, output 138,752
+L2:       64/64/64,  ranks 4/1/1, input 138,752, output 105,984
+terminal: D64, rank 4, input 105,984
 ```
 
-Its selected score was 65,536 physical setup field elements and 83,576
-modeled proof bytes. The root is allowed to increase field-element witness
-length slightly because contraction is checked in decomposed bits; the later
-mixed levels provide the useful contraction.
+Its selected score is 88,064 physical setup field elements and 77,320 modeled
+proof bytes.
 
-The same full four-tuple search did not terminate within five minutes at
-`nv=36`; `nv=24` also exceeded one minute. Both were stopped without an error.
-This is a planner-generation performance issue: exact split enumeration plus
-edge-partitioned Pareto frontiers grow too quickly. Frontier-preserving lower
-bounds, dominance indexing, and state instrumentation are required before
-using this search for full catalog generation.
+Release-process measurements after the bounded-search change were:
+
+| `nv` | Observed wall time | L0 | L1 | L2+ | Physical setup fields | Proof bytes |
+|---:|---:|---|---|---|---:|---:|
+| 18 | 0.52 s | `128/64/64` | `128/64/64` | D64 | 88,064 | 77,320 |
+| 24 | 0.23 s | `128/64/64` | `128/64/64` | D64 | 704,512 | 89,840 |
+| 36 | 0.46 s | `128/64/64` | `64/64/64` | D64 | 100,663,296 | 97,704 |
+
+These are planner smoke-test wall times, not a controlled benchmark; the
+process and filesystem caches were warm after the first run. The material
+result is that `nv=24` and `nv=36` now complete normally. Before the bounded
+policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
+
+The speedup comes from policy, not approximate pruning: mixed dimensions and
+exhaustive split enumeration stop after L1, monotonicity removes upward
+transitions, rank-one caps remove dimensions that cannot lower a comparable
+matrix rank, and the complete D64 suffix reuses the existing fixed planner
+split derivation.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -814,11 +853,13 @@ preservation, not planner-native recursive mixed-D support.
 
 The planner integration is complete only when all of these hold:
 
-1. A singleton dimension domain reproduces existing uniform schedules,
-   estimates, and generated/runtime descriptor bytes.
-2. An exhaustive small-domain oracle agrees with the planner's full Pareto
-   frontier and selected score.
-3. Root, recursive, and terminal candidates can select different A dimensions.
+1. Existing `find_schedule` reproduces uniform schedules, estimates, and
+   generated/runtime descriptor bytes; the opt-in mixed entry point requires
+   uniform D64 in its domain.
+2. An exhaustive small-domain oracle agrees with the constrained L0/L1 search
+   and selected score.
+3. L0 and L1 can select different A/B/D dimensions; every later fold and the
+   terminal use D64.
 4. B and D can be selected independently and their widths include exact
    A-carrier projection ratios.
 5. Every selected role key is covered by the canonical SIS table at its exact
@@ -836,39 +877,39 @@ The planner integration is complete only when all of these hold:
 11. Mixed-D E2Es cover honest verification, wrong openings, proof/commitment
     tampering, malformed dimensions, unsupported SIS cells, and setup
     under-capacity.
-12. The `nv=36` selected profile matches the approved policy outcome and the
-    complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
+12. The `nv=36` constrained search completes, obeys all transition/rank caps,
+    and the complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
 
 ### Required planner tests
 
 | Test | Required assertion |
 |---|---|
-| Candidate-domain validation | Sorted unique powers of two; setup D divisible by every role candidate |
+| Candidate-domain validation | Sorted unique powers of two; setup D divisible by every role candidate; uniform D64 present; no component below D64 |
 | Role-width unit tests | B/D widths equal native width times exact carrier/role ratio |
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
-| Small exhaustive oracle | Exact frontier and selected schedule match brute-force enumeration |
+| Small exhaustive oracle | Constrained L0/L1 frontier and selected schedule match brute-force enumeration |
 | Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
-| Transition tests | Output witness aligns with independently selected next A dimension |
-| Terminal tests | Terminal A dimension is searched and replayed independently |
+| Transition tests | A/B/D are component-wise non-increasing; L2+ is exactly D64 |
+| Rank-one tests | A role never exceeds the first rank-one dimension for equal physical fold geometry and basis |
+| Terminal tests | Mixed search does not terminate before the D64 suffix boundary |
 | Generated parity | Planner schedule equals emitted/expanded schedule and estimate |
 | Identity drift | Every candidate-domain or objective change invalidates the old table |
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
-| Benchmark policy | The selected `nv=36` row is A′ under the proposed two-component score |
+| Benchmark policy | The constrained `nv=36` search completes and reports `128/64/64 → D64` |
 
-### Decision required before implementation
+### Resolved search policy
 
-Confirm which statement is the product requirement:
+The approved first planner cut uses the deterministic
+`(physical setup fields, proof bytes)` comparator subject to three
+catalog-bound constraints:
 
-1. **Requested deterministic proxy:** minimize physical setup field elements,
-   then proof bytes. This selects A′ at `nv=36`.
-2. **Measured verifier latency:** introduce and validate a deterministic
-   verifier-work model before proof bytes. The existing data suggests E/B can
-   beat A′ despite an equal setup envelope.
+1. only L0 and L1 search mixed dimensions;
+2. dimensions never increase and L2+ is uniform D64;
+3. comparable candidates stop increasing a role dimension after rank one.
 
-Everything else in this proposal is compatible with either comparator. The
-cost-model and selection-policy identity must make the chosen semantics
-explicit before catalogs are regenerated.
+Measured verifier latency remains a possible later objective. It requires a
+versioned deterministic work model; host timings are not planner inputs.
 
 ## Supported synthetic profiles
 

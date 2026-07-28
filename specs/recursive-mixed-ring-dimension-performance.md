@@ -292,11 +292,14 @@ Implemented:
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` carrier
   subcolumns; candidates are built directly rather than retargeted afterward.
-- The mixed search enumerates every admitted tuple and every valid scalar root
-  and recursive block split.
-- Mixed suffix states retain a nondominated `(setup, proof)` frontier per exact
-  first `CommittedGroupParams`, because the parent proof formula sees that
-  first step. Setup composes by `max`; proof bytes compose by addition.
+- The mixed search enumerates every admitted tuple and valid block split only
+  at L0 and L1. Tuples are component-wise non-increasing, L2 through the
+  terminal are uniform D64, and dimensions above the first comparable
+  rank-one matrix are pruned.
+- Mixed-boundary suffix states retain the required `(setup, proof)`
+  alternatives per exact first `CommittedGroupParams`, because the parent
+  proof formula sees that first step. Once dimensions freeze at L2, candidate
+  split derivation reuses the existing uniform-D64 planner path.
 - Setup scoring uses exact physical base-field elements and converts once to
   ring elements at the setup-generation dimension. A canonical
   `akita-types` schedule helper now exposes the physical envelope.

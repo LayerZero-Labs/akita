@@ -13,10 +13,12 @@ use akita_types::{
 use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, derive_candidate_level_params_all_splits,
-    level_setup_envelope_at_generation, stage3_payload_bytes_for_successor, suffix_opening_layout,
+    componentwise_dimensions_at_most, derive_candidate_level_params,
+    derive_candidate_level_params_all_splits, level_setup_envelope_at_generation,
+    prune_dimensions_above_rank_one, stage3_payload_bytes_for_successor, suffix_opening_layout,
     terminal_setup_envelope_at_generation, CandidateFoldStep, CandidateTerminalResponse,
-    ScheduleSelectionObjective, MAX_RECURSION_DEPTH,
+    ScheduleSelectionObjective, MAX_RECURSION_DEPTH, MIXED_SEARCH_FOLD_LEVELS,
+    MIXED_SEARCH_SUFFIX_RING_DIMENSION,
 };
 
 /// A fold-first suffix schedule.
@@ -135,7 +137,8 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, terminal_bytes))
 }
 
-pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), Arc<SuffixResult>>;
+pub(crate) type ScheduleMemo =
+    HashMap<(usize, usize, u32, usize, usize, usize, usize), Arc<SuffixResult>>;
 
 #[derive(Clone)]
 struct CandidateSuffixChoice {
@@ -373,15 +376,24 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_lb: u32,
     pub(crate) incoming_setup_prefix: Option<usize>,
+    pub(crate) dimension_ceiling: Option<CommitmentRingDims>,
 }
 
 impl SuffixState {
-    fn memo_key(self) -> (usize, usize, u32, usize) {
+    fn memo_key(self) -> (usize, usize, u32, usize, usize, usize, usize) {
+        let ceiling = self.dimension_ceiling.unwrap_or(CommitmentRingDims {
+            inner: 0,
+            outer: 0,
+            opening: 0,
+        });
         (
             self.level,
             self.current_witness_len,
             self.current_lb,
             self.incoming_setup_prefix.unwrap_or(0),
+            ceiling.d_a(),
+            ceiling.d_b(),
+            ceiling.d_d(),
         )
     }
 }
@@ -406,7 +418,14 @@ fn price_level_candidate_with_children(
     // There is no alternative terminal-shaped predecessor output: the
     // predecessor produces one canonical witness, and the terminal inner
     // commitment consumes that exact witness.
-    if state.incoming_setup_prefix.is_none() && !candidate_params.has_precommitted_groups() {
+    let terminal_uses_suffix_dimension = !matches!(
+        ctx.objective,
+        ScheduleSelectionObjective::SetupThenProofPayload
+    ) || state.level >= MIXED_SEARCH_FOLD_LEVELS;
+    if terminal_uses_suffix_dimension
+        && state.incoming_setup_prefix.is_none()
+        && !candidate_params.has_precommitted_groups()
+    {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
             state.current_witness_len,
@@ -563,6 +582,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         current_witness_len,
         current_lb,
         incoming_setup_prefix,
+        dimension_ceiling,
     } = state;
     let memo_key = state.memo_key();
     if depth <= MAX_RECURSION_DEPTH {
@@ -622,6 +642,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
         input_witness_len: current_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
+    let searches_mixed_dimensions =
+        matches!(objective, ScheduleSelectionObjective::SetupThenProofPayload)
+            && level < MIXED_SEARCH_FOLD_LEVELS;
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
@@ -648,39 +671,52 @@ pub(crate) fn derive_optimal_suffix_schedule(
         } else {
             let mut candidates = Vec::new();
             for dimensions in dimension_candidates {
+                if matches!(objective, ScheduleSelectionObjective::SetupThenProofPayload) {
+                    let suffix_dimensions =
+                        CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
+                    if level >= MIXED_SEARCH_FOLD_LEVELS {
+                        if *dimensions != suffix_dimensions {
+                            continue;
+                        }
+                    } else if dimension_ceiling.is_some_and(|ceiling| {
+                        !componentwise_dimensions_at_most(*dimensions, ceiling)
+                    }) {
+                        continue;
+                    }
+                }
                 let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                     continue;
                 };
-                match objective {
-                    ScheduleSelectionObjective::ProofPayload => {
-                        let Some(candidate) = derive_candidate_level_params(
-                            policy,
-                            &ring_challenge_cfg,
-                            *dimensions,
-                            current_witness_len,
-                            lb,
-                            level,
-                            incoming_setup_prefix,
-                            requested_fold_shape,
-                        )?
-                        else {
-                            continue;
-                        };
-                        candidates.push(candidate);
-                    }
-                    ScheduleSelectionObjective::SetupThenProofPayload => {
-                        candidates.extend(derive_candidate_level_params_all_splits(
-                            policy,
-                            &ring_challenge_cfg,
-                            *dimensions,
-                            current_witness_len,
-                            lb,
-                            level,
-                            incoming_setup_prefix,
-                            requested_fold_shape,
-                        )?);
-                    }
+                if searches_mixed_dimensions {
+                    candidates.extend(derive_candidate_level_params_all_splits(
+                        policy,
+                        &ring_challenge_cfg,
+                        *dimensions,
+                        current_witness_len,
+                        lb,
+                        level,
+                        incoming_setup_prefix,
+                        requested_fold_shape,
+                    )?);
+                } else {
+                    let Some(candidate) = derive_candidate_level_params(
+                        policy,
+                        &ring_challenge_cfg,
+                        *dimensions,
+                        current_witness_len,
+                        lb,
+                        level,
+                        incoming_setup_prefix,
+                        requested_fold_shape,
+                    )?
+                    else {
+                        continue;
+                    };
+                    candidates.push(candidate);
                 }
+            }
+            if searches_mixed_dimensions {
+                prune_dimensions_above_rank_one(&mut candidates)?;
             }
             if candidates.is_empty() {
                 continue;
@@ -710,6 +746,18 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 }
             }
             let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
+            let child_dimension_ceiling = match objective {
+                ScheduleSelectionObjective::ProofPayload => None,
+                ScheduleSelectionObjective::SetupThenProofPayload => {
+                    if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
+                        Some(CommitmentRingDims::uniform(
+                            MIXED_SEARCH_SUFFIX_RING_DIMENSION,
+                        ))
+                    } else {
+                        Some(candidate_params.role_dims())
+                    }
+                }
+            };
             let direct_child = derive_optimal_suffix_schedule(
                 ctx,
                 memo,
@@ -718,6 +766,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     current_witness_len: next_witness_len,
                     current_lb: lb,
                     incoming_setup_prefix: None,
+                    dimension_ceiling: child_dimension_ceiling,
                 },
                 depth + 1,
             )?;
@@ -730,6 +779,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         current_witness_len: next_witness_len,
                         current_lb: lb,
                         incoming_setup_prefix: Some(natural_len),
+                        dimension_ceiling: child_dimension_ceiling,
                     },
                     depth + 1,
                 )?)
@@ -821,7 +871,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
 #[cfg(test)]
 mod tests {
-    use super::offloaded_witness_contracts;
+    use super::{offloaded_witness_contracts, SuffixState};
+    use akita_types::CommitmentRingDims;
 
     #[test]
     fn offloaded_contraction_accepts_exact_threefold_boundary() {
@@ -840,5 +891,21 @@ mod tests {
     fn offloaded_contraction_includes_full_field_setup_prefix() {
         assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
         assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
+    }
+
+    #[test]
+    fn mixed_dimension_ceiling_is_part_of_the_suffix_memo_key() {
+        let state = SuffixState {
+            level: 1,
+            current_witness_len: 1024,
+            current_lb: 4,
+            incoming_setup_prefix: None,
+            dimension_ceiling: Some(CommitmentRingDims::uniform(128)),
+        };
+        let lower_ceiling = SuffixState {
+            dimension_ceiling: Some(CommitmentRingDims::uniform(64)),
+            ..state
+        };
+        assert_ne!(state.memo_key(), lower_ceiling.memo_key());
     }
 }

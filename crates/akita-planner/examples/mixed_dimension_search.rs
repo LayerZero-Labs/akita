@@ -39,24 +39,54 @@ fn print_schedule(
             .expect("proof estimate"),
     );
     println!(
-        "  L0: {:?}, input={}, output={}",
+        "  L0: {:?}, ranks={}/{}/{}, input={}, output={}",
         schedule.root.params.final_group.commitment.role_dims(),
+        schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .inner_commit_matrix
+            .output_rank(),
+        schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .outer_commit_matrix
+            .output_rank(),
+        schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .open_commit_matrix
+            .output_rank(),
         schedule.root.input_witness_len,
         schedule.root.output_witness_len,
     );
     for (index, fold) in schedule.recursive_folds.iter().enumerate() {
         println!(
-            "  L{}: {:?}, input={}, output={}",
+            "  L{}: {:?}, ranks={}/{}/{}, input={}, output={}",
             index + 1,
             fold.params.witness.role_dims(),
+            fold.params.witness.inner_commit_matrix.output_rank(),
+            fold.params.witness.outer_commit_matrix.output_rank(),
+            fold.params.witness.open_commit_matrix.output_rank(),
             fold.input_witness_len,
             fold.output_witness_len,
         );
     }
     println!(
-        "  L{} terminal: D{}, input={}",
+        "  L{} terminal: D{}, rank={}, input={}",
         schedule.recursive_folds.len() + 1,
         schedule.terminal.params.witness.d_a(),
+        schedule
+            .terminal
+            .params
+            .witness
+            .inner_commit_matrix
+            .output_rank(),
         schedule.terminal.input_witness_len,
     );
 }

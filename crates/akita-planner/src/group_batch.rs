@@ -622,6 +622,7 @@ fn find_group_batch_schedule_inner(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
+            dimension_ceiling: None,
         },
         0,
     )?;
