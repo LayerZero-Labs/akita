@@ -30,6 +30,114 @@ pub fn setup_matrix_envelope_for_schedule(
     Ok(envelope)
 }
 
+/// Compute the largest physical base-field footprint of any setup matrix or
+/// padded setup prefix used by `schedule`.
+///
+/// Unlike [`setup_matrix_envelope_for_schedule`], this quantity is independent
+/// of a level-local A dimension and is therefore comparable across mixed-ring
+/// levels. Setup generation converts it to ring elements exactly once with
+/// `field_elements.div_ceil(generation_ring_dimension)`.
+pub fn setup_matrix_field_elements_for_schedule(
+    schedule: &FoldSchedule,
+) -> Result<usize, AkitaError> {
+    let mut max_field_elements = 1;
+    accumulate_matrix_field_elements_for_level(
+        &schedule.root.params.final_group.commitment,
+        &mut max_field_elements,
+    )?;
+    for fold in &schedule.recursive_folds {
+        accumulate_matrix_field_elements_for_level(&fold.params.witness, &mut max_field_elements)?;
+    }
+    accumulate_terminal_matrix_field_elements(
+        &schedule.terminal.params.witness,
+        &mut max_field_elements,
+    )?;
+    Ok(max_field_elements)
+}
+
+/// Extend a physical setup footprint with one non-terminal level.
+pub fn accumulate_matrix_field_elements_for_level(
+    params: &CommittedGroupParams,
+    max_field_elements: &mut usize,
+) -> Result<(), AkitaError> {
+    include_matrix_field_elements(
+        max_field_elements,
+        params.inner_commit_matrix.output_rank(),
+        params.inner_width(),
+        params.inner_commit_matrix.ring_dimension(),
+        "inner setup",
+    )?;
+    include_matrix_field_elements(
+        max_field_elements,
+        params.outer_commit_matrix.output_rank(),
+        params.outer_width(),
+        params.outer_commit_matrix.ring_dimension(),
+        "outer setup",
+    )?;
+    include_matrix_field_elements(
+        max_field_elements,
+        params.open_commit_matrix.output_rank(),
+        params.d_matrix_width(),
+        params.open_commit_matrix.ring_dimension(),
+        "opening setup",
+    )?;
+    for group in &params.precommitted_groups {
+        include_matrix_field_elements(
+            max_field_elements,
+            group.inner_commit_matrix.output_rank(),
+            group.inner_width(),
+            group.inner_commit_matrix.ring_dimension(),
+            "precommitted inner setup",
+        )?;
+        include_matrix_field_elements(
+            max_field_elements,
+            group.outer_commit_matrix.output_rank(),
+            group.outer_width(),
+            group.outer_commit_matrix.ring_dimension(),
+            "precommitted outer setup",
+        )?;
+    }
+    if let Some(slot) = &params.setup_prefix {
+        let n_prefix = slot.n_prefix()?;
+        if slot.d_setup == 0 || !n_prefix.is_multiple_of(slot.d_setup) {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix slot has invalid setup dimension".to_string(),
+            ));
+        }
+        *max_field_elements = (*max_field_elements).max(n_prefix);
+        let prefix = &slot.commitment_params;
+        include_matrix_field_elements(
+            max_field_elements,
+            prefix.inner_commit_matrix.output_rank(),
+            prefix.inner_width(),
+            prefix.inner_commit_matrix.ring_dimension(),
+            "setup-prefix inner setup",
+        )?;
+        include_matrix_field_elements(
+            max_field_elements,
+            prefix.outer_commit_matrix.output_rank(),
+            prefix.outer_width(),
+            prefix.outer_commit_matrix.ring_dimension(),
+            "setup-prefix outer setup",
+        )?;
+    }
+    Ok(())
+}
+
+/// Extend a physical setup footprint with the terminal inner matrix.
+pub fn accumulate_terminal_matrix_field_elements(
+    params: &TerminalCommittedGroupParams,
+    max_field_elements: &mut usize,
+) -> Result<(), AkitaError> {
+    include_matrix_field_elements(
+        max_field_elements,
+        params.inner_commit_matrix.output_rank(),
+        params.inner_width(),
+        params.inner_commit_matrix.ring_dimension(),
+        "terminal inner setup",
+    )
+}
+
 /// Extend `max_setup_len` with one non-terminal level's complete setup footprint.
 pub fn accumulate_matrix_envelope_for_level(
     params: &CommittedGroupParams,
@@ -159,5 +267,20 @@ fn include_matrix_len(
         .and_then(|len| len.checked_mul(matrix_ring_dim))
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} envelope overflow")))?;
     *max_setup_len = (*max_setup_len).max(coeff_len.div_ceil(envelope_ring_dim));
+    Ok(())
+}
+
+fn include_matrix_field_elements(
+    max_field_elements: &mut usize,
+    rows: usize,
+    columns: usize,
+    matrix_ring_dim: usize,
+    role: &'static str,
+) -> Result<(), AkitaError> {
+    let field_elements = rows
+        .checked_mul(columns)
+        .and_then(|len| len.checked_mul(matrix_ring_dim))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} envelope overflow")))?;
+    *max_field_elements = (*max_field_elements).max(field_elements);
     Ok(())
 }

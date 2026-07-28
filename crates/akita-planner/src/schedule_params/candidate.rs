@@ -1,13 +1,5 @@
 use super::*;
 
-fn sis_key(
-    policy: &PlannerPolicy,
-    role: akita_types::SisMatrixRole,
-    coeff_linf_bound: u128,
-) -> SisTableKey {
-    sis_key_at_dimension(policy, role, policy.ring_dimension, coeff_linf_bound)
-}
-
 fn sis_key_at_dimension(
     policy: &PlannerPolicy,
     role: akita_types::SisMatrixRole,
@@ -32,6 +24,7 @@ fn sis_key_at_dimension(
 pub(crate) fn recursive_fold_level_params_candidate(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
     num_ring_elems: usize,
     reduced_vars: usize,
     log_basis: u32,
@@ -71,7 +64,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
-        policy.ring_dimension,
+        dimensions.d_a(),
         decomp,
         decomp.log_basis,
         ring_challenge_cfg,
@@ -86,7 +79,12 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Inner,
+            dimensions.d_a(),
+            norm_s,
+        ),
         width_s,
     ) else {
         return Ok(None);
@@ -95,7 +93,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         akita_types::SisMatrixRole::Outer,
-        policy.ring_dimension,
+        dimensions.d_b(),
         log_basis,
     ) else {
         return Ok(None);
@@ -105,11 +103,17 @@ pub(crate) fn recursive_fold_level_params_candidate(
         delta_open,
         num_live_blocks,
         1,
-    ) else {
+    )
+    .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_b())) else {
         return Ok(None);
     };
     let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Outer,
+            dimensions.d_b(),
+            norm_t,
+        ),
         width_t,
     ) else {
         return Ok(None);
@@ -118,16 +122,23 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         akita_types::SisMatrixRole::Open,
-        policy.ring_dimension,
+        dimensions.d_d(),
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
+    let Some(width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1)
+        .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_d()))
+    else {
         return Ok(None);
     };
     let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Open,
+            dimensions.d_d(),
+            norm_w,
+        ),
         width_w,
     ) else {
         return Ok(None);
@@ -403,7 +414,12 @@ pub(super) fn derive_setup_prefix_group(
             continue;
         };
         let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-            sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
+            sis_key_at_dimension(
+                policy,
+                akita_types::SisMatrixRole::Inner,
+                policy.ring_dimension,
+                norm_s,
+            ),
             width_s,
         ) else {
             continue;
@@ -615,23 +631,30 @@ fn recursive_candidate_order_key(
     (score, std::cmp::Reverse(block_index_bits))
 }
 
-pub(crate) fn derive_candidate_level_params(
+struct RecursiveLevelSearch {
+    num_chunks: usize,
+    num_ring_elems: usize,
+    reduced_vars: usize,
+    setup_prefix: Option<akita_types::SetupPrefixSlotId>,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_recursive_level_search(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
     current_witness_len: usize,
     log_basis: u32,
     fold_level: usize,
     incoming_setup_prefix: Option<usize>,
     requested_fold_shape: TensorChallengeShape,
-) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
-    // Chunk count of the witness this level commits/produces (sized below as
-    // `next_witness_len`). Equal for the metadata field and the width pricing so
-    // a future verifier recomputing the size from `witness_chunk` agrees.
+) -> Result<Option<RecursiveLevelSearch>, AkitaError> {
     let num_chunks = policy.chunks_at_level(fold_level);
-    if !current_witness_len.is_multiple_of(policy.ring_dimension) {
+    dimensions.validate_a_carrier()?;
+    if !current_witness_len.is_multiple_of(dimensions.d_a()) {
         return Ok(None);
     }
-    let num_ring_elems = current_witness_len / policy.ring_dimension;
+    let num_ring_elems = current_witness_len / dimensions.d_a();
     let reduced_vars = num_ring_elems
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness capacity overflow".to_string()))?
@@ -647,9 +670,9 @@ pub(crate) fn derive_candidate_level_params(
 
     let setup_prefix = match incoming_setup_prefix {
         Some(natural_len) => {
-            if policy.ring_dimension != akita_types::SETUP_OFFLOAD_D_SETUP {
+            if dimensions != CommitmentRingDims::uniform(akita_types::SETUP_OFFLOAD_D_SETUP) {
                 return Err(AkitaError::InvalidSetup(
-                    "recursive setup planning requires D64".to_string(),
+                    "recursive setup planning requires uniform D64".to_string(),
                 ));
             }
             let n_prefix = padded_setup_prefix_len(natural_len);
@@ -661,18 +684,107 @@ pub(crate) fn derive_candidate_level_params(
                 log_basis,
                 n_prefix,
                 num_chunks,
-                policy.ring_dimension,
+                dimensions.d_b(),
             )?
             else {
                 return Ok(None);
             };
             Some(akita_types::setup_prefix_slot_id(
-                policy.ring_dimension,
+                dimensions.d_a(),
                 natural_len,
                 group,
             ))
         }
         None => None,
+    };
+    Ok(Some(RecursiveLevelSearch {
+        num_chunks,
+        num_ring_elems,
+        reduced_vars,
+        setup_prefix,
+    }))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn recursive_level_candidate_for_split(
+    policy: &PlannerPolicy,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    search: &RecursiveLevelSearch,
+    log_basis: u32,
+    fold_level: usize,
+    block_index_bits: usize,
+    requested_fold_shape: TensorChallengeShape,
+) -> Result<Option<(LayoutCandidateScore, CommittedGroupParams, usize)>, AkitaError> {
+    let Some(mut candidate_params) = recursive_fold_level_params_candidate(
+        policy,
+        ring_challenge_cfg,
+        dimensions,
+        search.num_ring_elems,
+        search.reduced_vars,
+        log_basis,
+        fold_level,
+        block_index_bits,
+        requested_fold_shape,
+    )?
+    else {
+        return Ok(None);
+    };
+    candidate_params.setup_prefix = search.setup_prefix.clone();
+    if let Some(prefix) = &candidate_params.setup_prefix {
+        let prefix_d_width = prefix
+            .commitment_params
+            .d_segment_width(candidate_params.role_dims().d_d())?;
+        let total_d_width = candidate_params
+            .open_commit_matrix
+            .input_width()
+            .checked_add(prefix_d_width)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
+            })?;
+        candidate_params.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
+            candidate_params.open_commit_matrix.sis_table_key(),
+            total_d_width,
+        )?;
+    }
+    let next_witness_len = planned_next_witness_len(
+        policy.decomposition.field_bits(),
+        &candidate_params,
+        1,
+        search.num_chunks,
+    )?;
+    let score = layout_candidate_score(
+        next_witness_len,
+        candidate_params.num_live_blocks,
+        search.num_chunks,
+        candidate_params.fold_challenge_shape,
+    )?;
+    Ok(Some((score, candidate_params, next_witness_len)))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_candidate_level_params(
+    policy: &PlannerPolicy,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    log_basis: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+    requested_fold_shape: TensorChallengeShape,
+) -> Result<Option<(CommittedGroupParams, usize)>, AkitaError> {
+    let Some(search) = prepare_recursive_level_search(
+        policy,
+        ring_challenge_cfg,
+        dimensions,
+        current_witness_len,
+        log_basis,
+        fold_level,
+        incoming_setup_prefix,
+        requested_fold_shape,
+    )?
+    else {
+        return Ok(None);
     };
 
     // The exhaustive scan visited larger `r` first and retained the first
@@ -687,13 +799,13 @@ pub(crate) fn derive_candidate_level_params(
     let delta_open = num_digits_open(decomp);
     let mut evaluated = Vec::new();
     let mut candidates = seed_recursive_split_candidates(
-        num_ring_elems,
-        reduced_vars,
+        search.num_ring_elems,
+        search.reduced_vars,
         delta_commit,
         delta_open,
-        num_chunks,
+        search.num_chunks,
     );
-    candidates.extend((1..reduced_vars).rev());
+    candidates.extend((1..search.reduced_vars).rev());
 
     // Evaluate a square-root-model seed window first, then finish the exact
     // search with a cheap lower-bound filter. The filter may evaluate extra
@@ -706,13 +818,13 @@ pub(crate) fn derive_candidate_level_params(
         evaluated.push(r);
         if let Some((best_score, _, _, _)) = &best {
             if let Some(lower_bound) = recursive_split_lower_bound(RecursiveSplitLowerBoundInput {
-                num_ring_elems,
-                ring_dimension: policy.ring_dimension,
-                reduced_vars,
+                num_ring_elems: search.num_ring_elems,
+                ring_dimension: dimensions.d_a(),
+                reduced_vars: search.reduced_vars,
                 r,
                 delta_commit,
                 delta_open,
-                num_chunks,
+                num_chunks: search.num_chunks,
                 requested_fold_shape,
             }) {
                 if lower_bound > best_score.0 {
@@ -720,49 +832,20 @@ pub(crate) fn derive_candidate_level_params(
                 }
             }
         }
-        let Some(candidate_params) = recursive_fold_level_params_candidate(
-            policy,
-            ring_challenge_cfg,
-            num_ring_elems,
-            reduced_vars,
-            log_basis,
-            fold_level,
-            r,
-            requested_fold_shape,
-        )?
+        let Some((score, candidate_params, next_witness_len)) =
+            recursive_level_candidate_for_split(
+                policy,
+                ring_challenge_cfg,
+                dimensions,
+                &search,
+                log_basis,
+                fold_level,
+                r,
+                requested_fold_shape,
+            )?
         else {
             continue;
         };
-        let mut candidate_params = candidate_params;
-        candidate_params.setup_prefix = setup_prefix.clone();
-        if let Some(prefix) = &candidate_params.setup_prefix {
-            let prefix_d_width = prefix
-                .commitment_params
-                .d_segment_width(candidate_params.role_dims().d_d())?;
-            let total_d_width = candidate_params
-                .open_commit_matrix
-                .input_width()
-                .checked_add(prefix_d_width)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup-prefix shared D width overflow".to_string())
-                })?;
-            candidate_params.open_commit_matrix = OpenCommitMatrixParams::try_new_with_min_rank(
-                candidate_params.open_commit_matrix.sis_table_key(),
-                total_d_width,
-            )?;
-        }
-        let next_witness_len = planned_next_witness_len(
-            policy.decomposition.field_bits(),
-            &candidate_params,
-            1,
-            num_chunks,
-        )?;
-        let score = layout_candidate_score(
-            next_witness_len,
-            candidate_params.num_live_blocks,
-            num_chunks,
-            candidate_params.fold_challenge_shape,
-        )?;
         if best.as_ref().is_none_or(|(best_score, best_r, _, _)| {
             recursive_candidate_order_key(score, r)
                 < recursive_candidate_order_key(*best_score, *best_r)
@@ -782,20 +865,69 @@ pub(crate) fn derive_candidate_level_params(
     Ok(Some((candidate_params, next_witness_len)))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn derive_candidate_level_params_all_splits(
+    policy: &PlannerPolicy,
+    ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
+    current_witness_len: usize,
+    log_basis: u32,
+    fold_level: usize,
+    incoming_setup_prefix: Option<usize>,
+    requested_fold_shape: TensorChallengeShape,
+) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
+    let Some(search) = prepare_recursive_level_search(
+        policy,
+        ring_challenge_cfg,
+        dimensions,
+        current_witness_len,
+        log_basis,
+        fold_level,
+        incoming_setup_prefix,
+        requested_fold_shape,
+    )?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut candidates = Vec::new();
+    for block_index_bits in (1..search.reduced_vars).rev() {
+        let Some((_, params, next_witness_len)) = recursive_level_candidate_for_split(
+            policy,
+            ring_challenge_cfg,
+            dimensions,
+            &search,
+            log_basis,
+            fold_level,
+            block_index_bits,
+            requested_fold_shape,
+        )?
+        else {
+            continue;
+        };
+        if next_witness_len < current_witness_len {
+            candidates.push((params, next_witness_len));
+        }
+    }
+    Ok(candidates)
+}
+
 /// Build one scalar root-fold candidate for an explicit basis and split.
 ///
 /// `Ok(None)` is the canonical candidate-infeasibility signal used by both
 /// schedule optimization and setup-capacity certification.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn scalar_root_fold_level_params_candidate(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
+    dimensions: CommitmentRingDims,
     num_vars: usize,
     num_claims: usize,
     log_basis: u32,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
-    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
+    dimensions.validate_a_carrier()?;
+    let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
     if reduced_vars == 0 || block_index_bits >= reduced_vars {
         return Ok(None);
@@ -837,7 +969,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
-        policy.ring_dimension,
+        dimensions.d_a(),
         witness_decomp,
         log_basis,
         ring_challenge_cfg,
@@ -852,7 +984,12 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Inner, norm_s),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Inner,
+            dimensions.d_a(),
+            norm_s,
+        ),
         width_s,
     ) else {
         return Ok(None);
@@ -861,7 +998,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         akita_types::SisMatrixRole::Outer,
-        policy.ring_dimension,
+        dimensions.d_b(),
         log_basis,
     ) else {
         return Ok(None);
@@ -871,11 +1008,17 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_open,
         num_live_blocks,
         num_claims,
-    ) else {
+    )
+    .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_b())) else {
         return Ok(None);
     };
     let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Outer, norm_t),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Outer,
+            dimensions.d_b(),
+            norm_t,
+        ),
         width_t,
     ) else {
         return Ok(None);
@@ -884,17 +1027,23 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         policy.sis_security_policy,
         policy.sis_modulus_profile,
         akita_types::SisMatrixRole::Open,
-        policy.ring_dimension,
+        dimensions.d_d(),
         log_basis,
     ) else {
         return Ok(None);
     };
     let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_live_blocks, num_claims)
+        .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_d()))
     else {
         return Ok(None);
     };
     let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
-        sis_key(policy, akita_types::SisMatrixRole::Open, norm_w),
+        sis_key_at_dimension(
+            policy,
+            akita_types::SisMatrixRole::Open,
+            dimensions.d_d(),
+            norm_w,
+        ),
         width_w,
     ) else {
         return Ok(None);

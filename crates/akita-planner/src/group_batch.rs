@@ -598,9 +598,14 @@ fn find_group_batch_schedule_inner(
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let dimensions = [akita_types::CommitmentRingDims::uniform(
+        policy.ring_dimension,
+    )];
     let suffix_ctx = SuffixCtx {
         policy,
-        ring_challenge_cfg: &ring_challenge_cfg,
+        dimension_candidates: &dimensions,
+        objective: crate::schedule_params::ScheduleSelectionObjective::ProofPayload,
+        default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars: key.final_group.num_vars(),
@@ -645,6 +650,7 @@ fn find_group_batch_schedule_inner(
     materialize_candidate_schedule(
         best.total_bytes,
         best.setup_envelope_ring_elements,
+        policy.ring_dimension,
         policy
             .recursive_setup_planning
             .then_some(best.first_direct_setup_field_len),

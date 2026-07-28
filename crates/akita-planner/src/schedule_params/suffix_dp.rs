@@ -6,15 +6,17 @@ use std::{
 use akita_field::AkitaError;
 use akita_types::{
     active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    terminal_response_bytes, AkitaScheduleLookupKey, CommittedGroupParams, OpeningClaimsLayout,
-    PolynomialGroupLayout, TerminalResponseShape,
+    terminal_response_bytes, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
+    OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
 use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    derive_candidate_level_params, stage3_payload_bytes_for_successor, suffix_opening_layout,
-    CandidateFoldStep, CandidateTerminalResponse, MAX_RECURSION_DEPTH,
+    derive_candidate_level_params, derive_candidate_level_params_all_splits,
+    level_setup_envelope_at_generation, stage3_payload_bytes_for_successor, suffix_opening_layout,
+    terminal_setup_envelope_at_generation, CandidateFoldStep, CandidateTerminalResponse,
+    ScheduleSelectionObjective, MAX_RECURSION_DEPTH,
 };
 
 /// A fold-first suffix schedule.
@@ -48,6 +50,7 @@ pub(crate) struct FoldSuffix {
 pub(crate) struct SuffixResult {
     pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix>,
     pub(crate) best_by_payload_per_lb: BTreeMap<u32, FoldSuffix>,
+    pub(crate) mixed_frontier: Vec<FoldSuffix>,
 }
 
 impl SuffixResult {
@@ -143,20 +146,6 @@ struct CandidateSuffixChoice {
     terminal: CandidateTerminalResponse,
 }
 
-fn level_setup_envelope(params: &CommittedGroupParams) -> Result<usize, AkitaError> {
-    let mut envelope = akita_types::SetupMatrixEnvelope::minimum();
-    akita_types::accumulate_matrix_envelope_for_level(params, &mut envelope.max_setup_len)?;
-    Ok(envelope.max_setup_len)
-}
-
-fn terminal_setup_envelope(
-    params: &akita_types::TerminalCommittedGroupParams,
-) -> Result<usize, AkitaError> {
-    let mut envelope = akita_types::SetupMatrixEnvelope::minimum();
-    akita_types::accumulate_terminal_matrix_envelope(params, &mut envelope.max_setup_len)?;
-    Ok(envelope.max_setup_len)
-}
-
 fn offloaded_witness_contracts(
     input_witness_len: usize,
     input_log_basis: u32,
@@ -194,6 +183,7 @@ struct ChildEdge<'a> {
     offloaded: bool,
     require_child_fold: bool,
     setup_envelope_budget: Option<usize>,
+    objective: ScheduleSelectionObjective,
 }
 
 #[derive(Clone, Copy)]
@@ -210,90 +200,33 @@ fn consider_child_suffixes(
     best_by_payload: &mut Option<CandidateSuffixChoice>,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates.values() {
-        let child_is_terminal = suffix.folds.is_empty();
-        if edge.require_child_fold && child_is_terminal {
+        let Some(candidate) = child_choice(edge, suffix)? else {
             continue;
-        }
-        if edge.offloaded {
-            if child_is_terminal || suffix.folds.len() == 1 {
-                continue;
-            }
-            if suffix.first_direct_setup_field_len >= edge.natural_setup_field_len {
-                continue;
-            }
-        }
-
-        let direct_payload_bytes = level_proof_bytes(
-            edge.policy.decomposition.field_bits(),
-            edge.policy.decomposition.field_bits() * edge.policy.chal_ext_degree as u32,
-            edge.candidate_params,
-            suffix.first_fold_params.as_ref(),
-            edge.next_witness_len,
-            Some(if child_is_terminal {
-                akita_types::NextWitnessBindingPolicy::TerminalInnerState
-            } else {
-                akita_types::NextWitnessBindingPolicy::OuterCommitment
-            }),
-        )?
-        .checked_add(edge.eor_bytes)
-        .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
-        let stage3_payload_bytes = stage3_payload_bytes_for_successor(
-            edge.policy,
-            suffix.first_fold_params.as_ref(),
-            edge.next_witness_len,
-        )?;
-        if edge.offloaded != (stage3_payload_bytes != 0) {
-            return Err(AkitaError::InvalidSetup(
-                "setup edge topology disagrees with Stage-3 accounting".to_string(),
-            ));
-        }
-        let total_bytes = direct_payload_bytes
-            .checked_add(stage3_payload_bytes)
-            .and_then(|value| value.checked_add(suffix.total_bytes))
-            .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
-        let setup_envelope_ring_elements = edge
-            .level_setup_envelope_ring_elements
-            .max(suffix.setup_envelope_ring_elements);
-        if edge
-            .setup_envelope_budget
-            .is_some_and(|budget| setup_envelope_ring_elements > budget)
-        {
-            continue;
-        }
-        let first_direct_setup_field_len = if edge.offloaded {
-            suffix.first_direct_setup_field_len
-        } else {
-            edge.natural_setup_field_len
         };
         let improves_setup = objectives.first_direct_setup_then_payload
             && best_by_setup.as_ref().is_none_or(|best| {
-                (first_direct_setup_field_len, total_bytes)
-                    < (best.first_direct_setup_field_len, best.total_bytes)
+                (
+                    candidate.first_direct_setup_field_len,
+                    candidate.total_bytes,
+                ) < (best.first_direct_setup_field_len, best.total_bytes)
             });
         let improves_payload = objectives.payload
             && best_by_payload
                 .as_ref()
-                .is_none_or(|best| total_bytes < best.total_bytes);
+                .is_none_or(|best| match edge.objective {
+                    ScheduleSelectionObjective::ProofPayload => {
+                        candidate.total_bytes < best.total_bytes
+                    }
+                    ScheduleSelectionObjective::SetupThenProofPayload => {
+                        (
+                            candidate.setup_envelope_ring_elements,
+                            candidate.total_bytes,
+                        ) < (best.setup_envelope_ring_elements, best.total_bytes)
+                    }
+                });
         if !improves_setup && !improves_payload {
             continue;
         }
-
-        let mut folds = Vec::with_capacity(1 + suffix.folds.len());
-        folds.push(CandidateFoldStep {
-            params: edge.candidate_params.clone(),
-            input_witness_len: edge.current_witness_len,
-            output_witness_len: edge.next_witness_len,
-            estimated_direct_payload_bytes: direct_payload_bytes,
-            estimated_stage3_payload_bytes: stage3_payload_bytes,
-        });
-        folds.extend(suffix.folds.iter().cloned());
-        let candidate = CandidateSuffixChoice {
-            first_direct_setup_field_len,
-            total_bytes,
-            setup_envelope_ring_elements,
-            folds,
-            terminal: suffix.terminal.clone(),
-        };
 
         if improves_setup {
             *best_by_setup = Some(candidate.clone());
@@ -305,11 +238,112 @@ fn consider_child_suffixes(
     Ok(())
 }
 
+fn child_choice(
+    edge: &ChildEdge<'_>,
+    suffix: &FoldSuffix,
+) -> Result<Option<CandidateSuffixChoice>, AkitaError> {
+    let child_is_terminal = suffix.folds.is_empty();
+    if edge.require_child_fold && child_is_terminal {
+        return Ok(None);
+    }
+    if edge.offloaded {
+        if child_is_terminal || suffix.folds.len() == 1 {
+            return Ok(None);
+        }
+        if suffix.first_direct_setup_field_len >= edge.natural_setup_field_len {
+            return Ok(None);
+        }
+    }
+
+    let direct_payload_bytes = level_proof_bytes(
+        edge.policy.decomposition.field_bits(),
+        edge.policy.decomposition.field_bits() * edge.policy.chal_ext_degree as u32,
+        edge.candidate_params,
+        suffix.first_fold_params.as_ref(),
+        edge.next_witness_len,
+        Some(if child_is_terminal {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        } else {
+            akita_types::NextWitnessBindingPolicy::OuterCommitment
+        }),
+    )?
+    .checked_add(edge.eor_bytes)
+    .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
+    let stage3_payload_bytes = stage3_payload_bytes_for_successor(
+        edge.policy,
+        suffix.first_fold_params.as_ref(),
+        edge.next_witness_len,
+    )?;
+    if edge.offloaded != (stage3_payload_bytes != 0) {
+        return Err(AkitaError::InvalidSetup(
+            "setup edge topology disagrees with Stage-3 accounting".to_string(),
+        ));
+    }
+    let total_bytes = direct_payload_bytes
+        .checked_add(stage3_payload_bytes)
+        .and_then(|value| value.checked_add(suffix.total_bytes))
+        .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
+    let setup_envelope_ring_elements = edge
+        .level_setup_envelope_ring_elements
+        .max(suffix.setup_envelope_ring_elements);
+    if edge
+        .setup_envelope_budget
+        .is_some_and(|budget| setup_envelope_ring_elements > budget)
+    {
+        return Ok(None);
+    }
+    let first_direct_setup_field_len = if edge.offloaded {
+        suffix.first_direct_setup_field_len
+    } else {
+        edge.natural_setup_field_len
+    };
+    let mut folds = Vec::with_capacity(1 + suffix.folds.len());
+    folds.push(CandidateFoldStep {
+        params: edge.candidate_params.clone(),
+        input_witness_len: edge.current_witness_len,
+        output_witness_len: edge.next_witness_len,
+        estimated_direct_payload_bytes: direct_payload_bytes,
+        estimated_stage3_payload_bytes: stage3_payload_bytes,
+    });
+    folds.extend(suffix.folds.iter().cloned());
+    Ok(Some(CandidateSuffixChoice {
+        first_direct_setup_field_len,
+        total_bytes,
+        setup_envelope_ring_elements,
+        folds,
+        terminal: suffix.terminal.clone(),
+    }))
+}
+
 fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb: BTreeMap::new(),
         best_by_payload_per_lb: BTreeMap::new(),
+        mixed_frontier: Vec::new(),
     })
+}
+
+fn insert_mixed_frontier(
+    frontier: &mut Vec<CandidateSuffixChoice>,
+    candidate: CandidateSuffixChoice,
+) {
+    let same_first_step = |other: &CandidateSuffixChoice| {
+        other.folds.first().map(|fold| &fold.params)
+            == candidate.folds.first().map(|fold| &fold.params)
+    };
+    if frontier.iter().any(|other| {
+        same_first_step(other)
+            && other.setup_envelope_ring_elements <= candidate.setup_envelope_ring_elements
+            && other.total_bytes <= candidate.total_bytes
+    }) {
+        return;
+    }
+    frontier.retain(|other| {
+        !same_first_step(other)
+            || candidate.setup_envelope_ring_elements > other.setup_envelope_ring_elements
+            || candidate.total_bytes > other.total_bytes
+    });
+    frontier.push(candidate);
 }
 
 /// DP-invariant inputs for the suffix search.
@@ -320,7 +354,9 @@ fn empty_suffix_result() -> Arc<SuffixResult> {
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
+    pub(crate) dimension_candidates: &'a [CommitmentRingDims],
+    pub(crate) objective: ScheduleSelectionObjective,
+    pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     pub(crate) fold_challenge_shape_at_level:
@@ -363,6 +399,7 @@ fn price_level_candidate_with_children(
     require_child_fold: bool,
     best_for_this_lb: &mut Option<CandidateSuffixChoice>,
     best_payload_for_this_lb: &mut Option<CandidateSuffixChoice>,
+    mixed_frontier: &mut Vec<CandidateSuffixChoice>,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Branch A: terminate directly on the witness entering this state.
@@ -389,7 +426,10 @@ fn price_level_candidate_with_children(
             let candidate = CandidateSuffixChoice {
                 first_direct_setup_field_len: natural_len,
                 total_bytes: total,
-                setup_envelope_ring_elements: terminal_setup_envelope(&direct_step.params)?,
+                setup_envelope_ring_elements: terminal_setup_envelope_at_generation(
+                    &direct_step.params,
+                    policy.ring_dimension,
+                )?,
                 folds: Vec::new(),
                 terminal: direct_step,
             };
@@ -402,17 +442,29 @@ fn price_level_candidate_with_children(
             {
                 *best_for_this_lb = Some(candidate.clone());
             }
+            if matches!(
+                ctx.objective,
+                ScheduleSelectionObjective::SetupThenProofPayload
+            ) {
+                insert_mixed_frontier(mixed_frontier, candidate.clone());
+            }
             if best_payload_for_this_lb
                 .as_ref()
-                .map(|best| total < best.total_bytes)
-                .unwrap_or(true)
+                .is_none_or(|best| match ctx.objective {
+                    ScheduleSelectionObjective::ProofPayload => total < best.total_bytes,
+                    ScheduleSelectionObjective::SetupThenProofPayload => {
+                        (candidate.setup_envelope_ring_elements, total)
+                            < (best.setup_envelope_ring_elements, best.total_bytes)
+                    }
+                })
             {
                 *best_payload_for_this_lb = Some(candidate);
             }
         }
     }
 
-    let level_setup_envelope_ring_elements = level_setup_envelope(candidate_params)?;
+    let level_setup_envelope_ring_elements =
+        level_setup_envelope_at_generation(candidate_params, policy.ring_dimension)?;
     let direct_edge = ChildEdge {
         policy,
         candidate_params,
@@ -424,6 +476,7 @@ fn price_level_candidate_with_children(
         offloaded: false,
         require_child_fold,
         setup_envelope_budget: ctx.setup_envelope_budget,
+        objective: ctx.objective,
     };
     consider_child_suffixes(
         &direct_edge,
@@ -435,6 +488,16 @@ fn price_level_candidate_with_children(
         best_for_this_lb,
         best_payload_for_this_lb,
     )?;
+    if matches!(
+        ctx.objective,
+        ScheduleSelectionObjective::SetupThenProofPayload
+    ) {
+        for suffix in &direct_child.mixed_frontier {
+            if let Some(candidate) = child_choice(&direct_edge, suffix)? {
+                insert_mixed_frontier(mixed_frontier, candidate);
+            }
+        }
+    }
 
     if let Some(offloaded_child) = offloaded_child {
         let offloaded_edge = ChildEdge {
@@ -485,7 +548,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
 ) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
-        ring_challenge_cfg,
+        dimension_candidates,
+        objective,
+        default_ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars,
@@ -514,6 +579,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
     let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
     let mut best_by_payload_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
+    let mut mixed_frontier = Vec::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
@@ -572,7 +638,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             let candidates = multi_group_root_level_candidates_for_basis(
                 root_key,
                 policy,
-                ring_challenge_cfg,
+                default_ring_challenge_cfg,
                 ring_challenge_config,
                 requested_fold_shape,
                 current_witness_len,
@@ -580,23 +646,50 @@ pub(crate) fn derive_optimal_suffix_schedule(
             )?;
             (current_opening_layout, candidates, true)
         } else {
-            let Some((candidate_params, next_witness_len)) = derive_candidate_level_params(
-                policy,
-                ring_challenge_cfg,
-                current_witness_len,
-                lb,
-                level,
-                incoming_setup_prefix,
-                requested_fold_shape,
-            )?
-            else {
+            let mut candidates = Vec::new();
+            for dimensions in dimension_candidates {
+                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                    continue;
+                };
+                match objective {
+                    ScheduleSelectionObjective::ProofPayload => {
+                        let Some(candidate) = derive_candidate_level_params(
+                            policy,
+                            &ring_challenge_cfg,
+                            *dimensions,
+                            current_witness_len,
+                            lb,
+                            level,
+                            incoming_setup_prefix,
+                            requested_fold_shape,
+                        )?
+                        else {
+                            continue;
+                        };
+                        candidates.push(candidate);
+                    }
+                    ScheduleSelectionObjective::SetupThenProofPayload => {
+                        candidates.extend(derive_candidate_level_params_all_splits(
+                            policy,
+                            &ring_challenge_cfg,
+                            *dimensions,
+                            current_witness_len,
+                            lb,
+                            level,
+                            incoming_setup_prefix,
+                            requested_fold_shape,
+                        )?);
+                    }
+                }
+            }
+            if candidates.is_empty() {
                 continue;
-            };
+            }
             (
                 scalar_opening_layout.as_ref().ok_or_else(|| {
                     AkitaError::InvalidSetup("scalar suffix opening layout is missing".to_string())
                 })?,
-                vec![(candidate_params, next_witness_len)],
+                candidates,
                 false,
             )
         };
@@ -655,6 +748,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 require_child_fold,
                 &mut best_for_this_lb,
                 &mut best_payload_for_this_lb,
+                &mut mixed_frontier,
             )?;
         }
 
@@ -702,9 +796,24 @@ pub(crate) fn derive_optimal_suffix_schedule(
         }
     }
 
+    let mixed_frontier = mixed_frontier
+        .into_iter()
+        .map(|choice| {
+            let first_fold_params = choice.folds.first().map(|fold| fold.params.clone());
+            FoldSuffix {
+                total_bytes: choice.total_bytes,
+                setup_envelope_ring_elements: choice.setup_envelope_ring_elements,
+                first_direct_setup_field_len: choice.first_direct_setup_field_len,
+                first_fold_params,
+                folds: choice.folds,
+                terminal: choice.terminal,
+            }
+        })
+        .collect();
     let result = Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
+        mixed_frontier,
     });
     memo.insert(memo_key, Arc::clone(&result));
     Ok(result)
