@@ -98,6 +98,24 @@ fn wide_shift_accumulate_matches_narrow_fp64() {
 }
 
 #[test]
+fn wide_shift_array_accumulate_matches_repeated_shifts_fp64() {
+    let mut rng = StdRng::seed_from_u64(0x2345);
+    let src = CyclotomicRing::<F64, D>::random(&mut rng);
+    let initial = CyclotomicRing::<F64, D>::random(&mut rng);
+    let shifts = [2, 19, 37, 61];
+
+    let wide_src = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&src);
+    let mut repeated = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
+    for &shift in &shifts {
+        wide_src.shift_accumulate_into(&mut repeated, shift);
+    }
+    let mut fused = WideCyclotomicRing::<Fp64x4i32, D>::from_ring(&initial);
+    wide_src.shift_accumulate_array_into(&mut fused, &shifts);
+
+    assert_eq!(fused, repeated);
+}
+
+#[test]
 fn wide_shift_sub_matches_narrow_fp64() {
     let mut rng = StdRng::seed_from_u64(0x5678);
     let src = CyclotomicRing::<F64, D>::random(&mut rng);

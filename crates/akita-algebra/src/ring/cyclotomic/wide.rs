@@ -65,6 +65,31 @@ impl<W: AdditiveGroup, const D: usize> WideCyclotomicRing<W, D> {
         }
     }
 
+    /// Fused negacyclic shifts + accumulate: `dst += Σ_i self * X^shifts[i]`.
+    ///
+    /// Requires every shift to be smaller than `D`. The fixed-size shift array
+    /// lets callers fuse several contributions to the same destination into
+    /// one coefficient pass.
+    #[inline]
+    pub fn shift_accumulate_array_into<const N: usize>(&self, dst: &mut Self, shifts: &[usize; N]) {
+        debug_assert!(
+            shifts.iter().all(|&shift| shift < D),
+            "fused method shift_accumulate_array_into requires every shift to be below D={D}"
+        );
+
+        for (coefficient, dst) in dst.coeffs.iter_mut().enumerate() {
+            let mut sum = W::zero();
+            for &shift in shifts {
+                if coefficient >= shift {
+                    sum += self.coeffs[coefficient - shift];
+                } else {
+                    sum -= self.coeffs[D + coefficient - shift];
+                }
+            }
+            *dst += sum;
+        }
+    }
+
     /// Fused negacyclic shift + subtract: `dst -= self * X^k`.
     ///
     /// Requires `k < D`.
