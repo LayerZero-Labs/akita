@@ -332,6 +332,17 @@ fn empty_suffix_result() -> Arc<SuffixResult> {
     })
 }
 
+fn strictly_dominates_setup_and_payload(
+    lhs_setup: usize,
+    lhs_payload: usize,
+    rhs_setup: usize,
+    rhs_payload: usize,
+) -> bool {
+    lhs_setup <= rhs_setup
+        && lhs_payload <= rhs_payload
+        && (lhs_setup < rhs_setup || lhs_payload < rhs_payload)
+}
+
 fn insert_mixed_frontier(
     mode: MixedFrontierMode,
     frontier: &mut Vec<CandidateSuffixChoice>,
@@ -347,19 +358,23 @@ fn insert_mixed_frontier(
     };
     if frontier.iter().any(|other| {
         same_first_step(other)
-            && other.setup_envelope_ring_elements <= candidate.setup_envelope_ring_elements
-            && other.total_bytes <= candidate.total_bytes
-            && (other.setup_envelope_ring_elements < candidate.setup_envelope_ring_elements
-                || other.total_bytes < candidate.total_bytes)
+            && strictly_dominates_setup_and_payload(
+                other.setup_envelope_ring_elements,
+                other.total_bytes,
+                candidate.setup_envelope_ring_elements,
+                candidate.total_bytes,
+            )
     }) {
         return;
     }
     frontier.retain(|other| {
         !same_first_step(other)
-            || candidate.setup_envelope_ring_elements > other.setup_envelope_ring_elements
-            || candidate.total_bytes > other.total_bytes
-            || (candidate.setup_envelope_ring_elements == other.setup_envelope_ring_elements
-                && candidate.total_bytes == other.total_bytes)
+            || !strictly_dominates_setup_and_payload(
+                candidate.setup_envelope_ring_elements,
+                candidate.total_bytes,
+                other.setup_envelope_ring_elements,
+                other.total_bytes,
+            )
     });
     frontier.push(candidate);
 }
@@ -885,7 +900,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
 #[cfg(test)]
 mod tests {
-    use super::{offloaded_witness_contracts, SuffixState};
+    use super::{offloaded_witness_contracts, strictly_dominates_setup_and_payload, SuffixState};
     use akita_types::CommitmentRingDims;
 
     #[test]
@@ -921,5 +936,34 @@ mod tests {
             ..state
         };
         assert_ne!(state.memo_key(), lower_ceiling.memo_key());
+    }
+
+    #[test]
+    fn mixed_frontier_retains_lower_payload_child_when_parent_masks_setup() {
+        let lower_setup_child = (10usize, 20usize);
+        let lower_payload_child = (15usize, 10usize);
+        assert!(!strictly_dominates_setup_and_payload(
+            lower_setup_child.0,
+            lower_setup_child.1,
+            lower_payload_child.0,
+            lower_payload_child.1,
+        ));
+        assert!(!strictly_dominates_setup_and_payload(
+            lower_payload_child.0,
+            lower_payload_child.1,
+            lower_setup_child.0,
+            lower_setup_child.1,
+        ));
+
+        let parent_setup = 20usize;
+        let lower_setup_after_parent = (parent_setup.max(lower_setup_child.0), lower_setup_child.1);
+        let lower_payload_after_parent = (
+            parent_setup.max(lower_payload_child.0),
+            lower_payload_child.1,
+        );
+        assert!(
+            lower_payload_after_parent < lower_setup_after_parent,
+            "the lower-payload child must survive until the parent masks setup differences"
+        );
     }
 }

@@ -21,13 +21,19 @@ use akita_pcs::test_support::{
     materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly, ProverOpeningData};
+use akita_prover::{
+    commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, OneHotIndex,
+    OneHotPoly, ProverOpeningData,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
-use akita_transcript::AkitaTranscript;
+use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
-    lagrange_weights, AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
-    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupDescriptor, WitnessPartition,
+    active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
+    AkitaBatchedProof, AkitaScheduleLookupKey, AkitaVerifierSetup, BasisMode, CommitmentRingDims,
+    FoldSchedule, NttCacheKey, OpeningClaims, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, RingVec, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -137,9 +143,29 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     );
 }
 
+fn verifier_setup_with_dynamic_slot_mutation(
+    setup: &AkitaProverSetup<F>,
+    mut mutate: impl FnMut(&mut SetupPrefixVerifierSlot<F>),
+) -> AkitaVerifierSetup<F> {
+    let verifier_setup = setup.verifier_setup().expect("verifier setup");
+    let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+    let mut found = false;
+    for (_, slot) in verifier_setup.prefix_slots.iter() {
+        let mut slot = slot.clone();
+        if slot.id.d_setup == 128 {
+            mutate(&mut slot);
+            found = true;
+        }
+        prefix_slots.insert(slot).expect("mutated prefix slot");
+    }
+    assert!(found, "fixture must contain a dynamic D128 prefix slot");
+    AkitaVerifierSetup::from_parts(verifier_setup.expanded, prefix_slots)
+}
+
 fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
     transcript_domain: &'static [u8],
     on_schedule: fn(&FoldSchedule),
+    run_negative_matrix: bool,
 ) where
     ProofCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
@@ -160,6 +186,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             precommitteds: vec![pre_frozen, pre_frozen],
         };
         let pre_keys = vec![pre_key; PRE_GROUPS];
+        let opening_layout = schedule_key.opening_layout().expect("opening layout");
 
         let schedule =
             ProofCfg::runtime_schedule(schedule_key).expect("mixed recursive schedule resolves");
@@ -176,9 +203,27 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
         materialize_schedule_setup_prefix_slots(&mut setup, &CpuBackend, &prepared, &schedule)
             .expect("materialize mixed setup-prefix slots");
+        let prefix_id = schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .expect("L1 setup prefix");
+        let natural_len = active_setup_field_len(root_params, &opening_layout)
+            .expect("canonical Stage 3 setup projection");
+        assert_eq!(prefix_id.natural_len, natural_len);
+        assert_eq!(
+            prefix_id.n_prefix().expect("planned padded prefix"),
+            padded_setup_prefix_len(natural_len)
+        );
+        let prefix_slot = setup
+            .prefix_slots
+            .get(prefix_id)
+            .expect("exact planned prefix slot");
+        assert_eq!(prefix_slot.natural_len, natural_len);
+        assert_eq!(prefix_slot.padded_len, padded_setup_prefix_len(natural_len));
         assert!(
-            !setup.prefix_slots.is_empty(),
-            "mixed recursive setup must materialize at least one setup-prefix slot"
+            setup.expanded.shared_matrix().as_field_slice().len() >= natural_len,
+            "prepared setup must cover the canonical natural prefix"
         );
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
@@ -327,8 +372,13 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             BasisMode::Lagrange,
         )
         .expect("mixed recursive verify");
+        assert_eq!(
+            prover_transcript.challenge_bytes(b"test/transcript-agreement", 32),
+            verifier_transcript.challenge_bytes(b"test/transcript-agreement", 32),
+            "prover and verifier transcripts must agree after the recursive mixed-D proof"
+        );
 
-        let mut tampered = final_openings;
+        let mut tampered = final_openings.clone();
         tampered[0] += F::from_canonical_u128_reduced(1);
         let mut tampered_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let tampered_result = Scheme::<ProofCfg>::batched_verify(
@@ -342,6 +392,150 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             tampered_result.is_err(),
             "mixed recursive verify must reject a tampered final opening"
         );
+
+        if run_negative_matrix {
+            let verify_with =
+                |proof: &AkitaBatchedProof<F, F>, verifier_setup: &AkitaVerifierSetup<F>| {
+                    let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
+                    Scheme::<ProofCfg>::batched_verify(
+                        proof,
+                        verifier_setup,
+                        &mut transcript,
+                        verify_claims(final_openings.clone()),
+                        BasisMode::Lagrange,
+                    )
+                };
+
+            let mut tampered_proof = proof.clone();
+            let stage3 = std::iter::once(&mut tampered_proof.root)
+                .chain(tampered_proof.recursive_folds.iter_mut())
+                .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
+                .expect("recursive mixed-D proof must contain stage-3 evidence");
+            stage3.claim += F::from_canonical_u128_reduced(1);
+            assert!(
+                verify_with(&tampered_proof, &verifier_setup).is_err(),
+                "tampered recursive setup-prefix proof must reject"
+            );
+
+            let tampered_commitment_setup =
+                verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
+                    let row = &mut slot.commitment.rows[0];
+                    let mut coeffs = row.coeffs().to_vec();
+                    coeffs[0] += F::from_canonical_u128_reduced(1);
+                    *row = RingVec::from_coeffs(coeffs);
+                });
+            assert!(
+                verify_with(&proof, &tampered_commitment_setup).is_err(),
+                "tampered D128 prefix commitment must reject"
+            );
+
+            let wrong_source_dimension_setup =
+                verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
+                    slot.id.d_setup = 64;
+                    for row in &mut slot.commitment.rows {
+                        let mut coeffs = row.coeffs().to_vec();
+                        coeffs.truncate(64);
+                        *row = RingVec::from_coeffs(coeffs);
+                    }
+                });
+            assert!(
+                verify_with(&proof, &wrong_source_dimension_setup).is_err(),
+                "a D64 slot cannot substitute for the required D128 source slot"
+            );
+
+            let malformed_b_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
+                let outer = &slot.id.commitment_params.outer_commit_matrix;
+                slot.id.commitment_params.outer_commit_matrix =
+                    OuterCommitMatrixParams::new_unchecked(
+                        outer.security_policy(),
+                        outer.sis_table_key().table_digest,
+                        outer.sis_modulus_profile(),
+                        outer.output_rank(),
+                        outer.input_width() * 2,
+                        outer.coeff_linf_bound(),
+                        128,
+                    );
+                slot.id.commitment_params.layout.outer_ring_dimension = 128;
+            });
+            assert!(
+                verify_with(&proof, &malformed_b_setup).is_err(),
+                "malformed prefix B geometry must reject"
+            );
+
+            let truncated_rows_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
+                let row = &mut slot.commitment.rows[0];
+                let mut coeffs = row.coeffs().to_vec();
+                coeffs.pop();
+                *row = RingVec::from_coeffs(coeffs);
+            });
+            assert!(
+                verify_with(&proof, &truncated_rows_setup).is_err(),
+                "truncated prefix commitment rows must reject"
+            );
+
+            let extra_rows_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
+                slot.commitment.rows.push(slot.commitment.rows[0].clone());
+            });
+            assert!(
+                verify_with(&proof, &extra_rows_setup).is_err(),
+                "extra prefix commitment rows must reject"
+            );
+        }
+    });
+}
+
+#[test]
+fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
+    init_rayon_pool();
+    run_on_large_stack(|| {
+        let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
+        let pre_layout =
+            PrecommittedCommitmentConfig::<PlainCfg>::get_params_for_batched_commitment(
+                &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
+            )
+            .expect("precommit params");
+        let descriptor = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
+            precommitteds: vec![descriptor, descriptor],
+        })
+        .expect("mixed recursive schedule");
+        let prefix = schedule.recursive_folds[0]
+            .params
+            .incoming_setup_prefix
+            .as_ref()
+            .expect("dynamic setup prefix");
+
+        let setup = AkitaCommitmentScheme::<PlainCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
+            .expect("setup");
+        let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
+        let source_ntt =
+            NttCacheKey::from_envelope(&setup.expanded, prefix.d_setup).expect("source NTT key");
+        CpuBackend
+            .ensure_ntt_slot(&prepared, source_ntt)
+            .expect("warm only source NTT slot");
+
+        let n_prefix = prefix.n_prefix().expect("padded prefix length");
+        let error = dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+            F,
+            prefix.d_setup,
+            |D_SETUP| {
+                commit_setup_prefix::<F, D_SETUP, _>(
+                    &setup.expanded,
+                    &CpuBackend,
+                    &prepared,
+                    &prefix.commitment_params,
+                    n_prefix,
+                    prefix.natural_len,
+                )
+            }
+        )
+        .expect_err("missing D64 outer NTT slot must reject");
+        assert!(
+            error.to_string().contains("NTT slot not warmed"),
+            "unexpected missing-slot error: {error}"
+        );
     });
 }
 
@@ -350,6 +544,7 @@ fn recursive_mixed_d_plain_multi_group_honest_round_trip() {
     recursive_mixed_d_multi_group_round_trip::<PlainCfg>(
         b"test/recursive_ring_dimension_transition_e2e/plain",
         |_schedule| {},
+        true,
     );
 }
 
@@ -364,5 +559,6 @@ fn recursive_mixed_d_w8r2_multi_group_honest_round_trip() {
                 "W8R2 middle partition must remain distributed with 8 chunks"
             );
         },
+        false,
     );
 }

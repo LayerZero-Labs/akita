@@ -283,6 +283,23 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         |candidate| {
             registry
                 .get(candidate)
+                .map(|slot| (slot, slot.natural_len, slot.padded_len / 2))
+        },
+        &level_params,
+        natural_len,
+        d_setup,
+        "slot does not cover request",
+    )
+    .expect_err("insufficient padded slot capacity must fail");
+    assert!(err.to_string().contains(
+        "slot does not cover request: slot natural/padded lengths are 129/128, active lengths are 129/256"
+    ));
+
+    let err = select_setup_prefix_slot(
+        3,
+        |candidate| {
+            registry
+                .get(candidate)
                 .map(|slot| (slot, slot.natural_len, slot.padded_len))
         },
         &level_params,

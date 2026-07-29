@@ -135,6 +135,7 @@ impl RingDimensionSearchDomain {
 /// Returns an error for malformed policy/dimensions or when no audited secure
 /// setup-prefix geometry exists.
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "test-support")]
 pub fn plan_setup_prefix_commitment(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
@@ -1176,6 +1177,111 @@ mod geometry_tests {
         assert_eq!(
             selected_descriptor,
             repeated.schedule.canonical_descriptor_bytes()
+        );
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_search_parallel_generation_is_descriptor_deterministic() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let handles = (0..8)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let policy = policy_of::<D256OneHot>();
+                    let domain = RingDimensionSearchDomain::new(
+                        policy.ring_dimension,
+                        [
+                            CommitmentRingDims {
+                                inner: 128,
+                                outer: 64,
+                                opening: 64,
+                            },
+                            CommitmentRingDims::uniform(64),
+                        ],
+                    )
+                    .expect("mixed dimension domain");
+                    find_schedule_with_ring_dimension_domain(
+                        PolynomialGroupLayout::singleton(16),
+                        &policy,
+                        &domain,
+                        D256OneHot::ring_challenge_config,
+                        D256OneHot::fold_challenge_shape_at_level,
+                    )
+                    .expect("parallel mixed planner run")
+                    .schedule
+                    .canonical_descriptor_bytes()
+                })
+            })
+            .collect::<Vec<_>>();
+        let descriptors = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("planner thread"))
+            .collect::<Vec<_>>();
+        assert!(descriptors.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let policy = policy_of::<D256OneHot>();
+        let domain = RingDimensionSearchDomain::new(
+            policy.ring_dimension,
+            [
+                CommitmentRingDims::uniform(64),
+                CommitmentRingDims {
+                    inner: 128,
+                    outer: 64,
+                    opening: 64,
+                },
+                CommitmentRingDims::uniform(128),
+                CommitmentRingDims {
+                    inner: 256,
+                    outer: 128,
+                    opening: 128,
+                },
+            ],
+        )
+        .expect("benchmark dimension domain");
+        let selected = find_schedule_with_ring_dimension_domain(
+            PolynomialGroupLayout::singleton(36),
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("nv36 mixed planner");
+
+        assert_eq!(
+            selected
+                .schedule
+                .root
+                .params
+                .final_group
+                .commitment
+                .role_dims(),
+            CommitmentRingDims {
+                inner: 256,
+                outer: 128,
+                opening: 128,
+            }
+        );
+        assert_eq!(
+            selected.schedule.recursive_folds[0]
+                .params
+                .witness
+                .role_dims(),
+            CommitmentRingDims::uniform(64)
+        );
+        assert_eq!(
+            selected.estimate.estimated_setup_envelope_ring_elements,
+            262_144
+        );
+        assert_eq!(
+            selected.estimate.estimated_proof_payload_bytes().unwrap(),
+            99_368
         );
     }
 

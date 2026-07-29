@@ -150,7 +150,7 @@ where
             let natural_prefix_len = active_setup_field_len(root_commitment, &opening_layout)?;
             let n_prefix = padded_setup_prefix_len(natural_prefix_len);
             let ring_challenge = Mid::ring_challenge_config(setup_prefix_d)?;
-            let prefix_params = akita_planner::plan_setup_prefix_commitment(
+            let prefix_params = akita_planner::test_support::plan_setup_prefix_commitment(
                 &mid_policy,
                 &ring_challenge,
                 l1_step.params.witness.fold_challenge_shape,

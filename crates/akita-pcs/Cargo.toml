@@ -72,7 +72,11 @@ logging-transcript = [
 # Test/example-only mixed ring-dimension schedule builders (relocated from
 # akita-config, which cannot depend on the offline planner without a cycle).
 # Enabled for this crate's own tests/examples via the self dev-dependency below.
-test-support = ["dep:akita-planner", "akita-config/test-support"]
+test-support = [
+  "dep:akita-planner",
+  "akita-config/test-support",
+  "akita-planner/test-support",
+]
 
 [dependencies]
 akita-algebra = { version = "0.1.0", path = "../akita-algebra" }

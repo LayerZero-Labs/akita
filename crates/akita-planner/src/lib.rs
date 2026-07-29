@@ -36,6 +36,12 @@ pub use emit::{refresh_generated_wiring, run_regen_fmt, write_family_module, Emi
 pub use group_batch::find_group_batch_schedule;
 pub use schedule_params::{
     find_schedule, find_schedule_with_ring_dimension_domain, plan_optimal_suffix,
-    plan_setup_prefix_commitment, suffix_opening_layout, PlannedSuffix, PlannedSuffixFold,
-    PlannedSuffixTerminal, RingDimensionSearchDomain,
+    suffix_opening_layout, PlannedSuffix, PlannedSuffixFold, PlannedSuffixTerminal,
+    RingDimensionSearchDomain,
 };
+
+/// Helpers available only to synthetic schedule fixtures and profile experiments.
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    pub use crate::schedule_params::plan_setup_prefix_commitment;
+}

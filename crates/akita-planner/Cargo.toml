@@ -25,6 +25,7 @@ akita-types = { version = "0.1.0", path = "../akita-types" }
 [features]
 default = []
 catalog-gen = ["dep:akita-config"]
+test-support = []
 
 [[bin]]
 name = "gen_schedule_tables"

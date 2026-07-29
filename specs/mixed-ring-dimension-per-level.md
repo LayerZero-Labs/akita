@@ -828,9 +828,14 @@ Release-process measurements after the bounded-search change were:
 
 | `nv` | Observed wall time | L0 | L1 | L2+ | Physical setup fields | Proof bytes |
 |---:|---:|---|---|---|---:|---:|
-| 18 | 0.52 s | `128/64/64` | `128/64/64` | D64 | 88,064 | 77,320 |
-| 24 | 0.23 s | `128/64/64` | `128/64/64` | D64 | 704,512 | 89,840 |
-| 36 | 0.46 s | `128/64/64` | `64/64/64` | D64 | 100,663,296 | 97,704 |
+| 18 | 0.16 s | `128/64/64` | `128/64/64` | D64 | 88,064 | 77,320 |
+| 24 | 0.22 s | `256/128/128` | `128/64/64` | D64 | 524,288 | 90,976 |
+| 36 | 0.46 s | `256/128/128` | `64/64/64` | D64 | 67,108,864 | 99,368 |
+
+The `nv=24` and `nv=36` rows supersede the earlier rank-one-pruned
+checkpoint. Exhaustive L0/L1 enumeration admits the D256 root and selects it
+because setup fields are the primary objective, even though the `nv=36` proof
+is larger than the former pruned result.
 
 These are planner smoke-test wall times, not a controlled benchmark; the
 process and filesystem caches were warm after the first run. The material
@@ -897,7 +902,7 @@ The planner integration is complete only when all of these hold:
 | Identity drift | Every candidate-domain or objective change invalidates the old table |
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
-| Benchmark policy | The constrained `nv=36` search completes and reports `128/64/64 → D64` |
+| Benchmark policy | The constrained `nv=36` search completes and reports `256/128/128 → D64` with 67,108,864 physical setup fields |
 
 ### Resolved search policy
 
@@ -1305,7 +1310,7 @@ transition.”
 | `per_matrix_ring_dims_root_e2e.rs` | Active `128/32/64` root through public PCS API; wrong opening and commitment tamper rejection |
 | `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
 | `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
-| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 honest prove/verify, serialize round-trip, and wrong-opening rejection |
+| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify, serialize round-trip, transcript agreement, wrong-opening and Stage 3 proof tampering, prefix commitment/identity/B-geometry/row-shape rejection, and missing D64 outer-NTT rejection |
 | profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Benchmark-only `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads; excluded from active `profile-ci` |
 
 The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active
@@ -1313,6 +1318,9 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 
 ### Lower-level coverage
 
+- planner tests compare the mixed Pareto frontier with exhaustive enumeration,
+  preserve a lower-proof child when a larger parent setup masks child setup
+  differences, and require descriptor-identical concurrent generation.
 - `akita-types` setup-contribution span tests compare dense, materialized,
   direct, deferred, single-chunk, multi-chunk, and mixed-role projections.
 - verifier ring-switch tests check prepared relation geometry and deferred
@@ -1321,6 +1329,9 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
   carrier independence from group order, and descending group A dimensions.
 - recursive and distributed setup-offload E2Es cover the deferred verifier
   path under their production feature guards.
+- setup-prefix selection tests reject insufficient natural and padded capacity,
+  while the recursive mixed-D E2E checks the exact dynamic D128 slot identity
+  against canonical Stage 3 sizing and prepared setup capacity.
 
 ## Benchmark status
 
