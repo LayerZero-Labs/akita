@@ -141,7 +141,7 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 - [ ] `prepare_single_field_fold` / `prepare_extension_claim_fold` share existing `FinishFoldArgs` / `finish_prepared_fold`.
 - [ ] Matching verifier prefix split; shared `prove_fold` / `verify_fold` after prep.
 - [ ] `const { E::EXT_DEGREE == 1 }` dispatch at `prove_root` / batched prove and verify entry (not preset-family or bit-width checks).
-- [ ] CI grep: single-field fold module has no EOR / root-tensor-projection symbols.
+- [ ] Compiler enforces: single-field fold module has no EOR / root-tensor-projection imports.
 - [ ] Existing fp128 and fp32/fp64 e2e round-trips green, including multi-group root.
 
 **Phase C — wire harden + docs**
@@ -489,15 +489,8 @@ Alternatively keep a single extension-claim prep that takes `run_eor: bool` **on
 
 **Reuse** existing `FinishFoldArgs` / `finish_prepared_fold` (`fold.rs` ~218+). Do not invent a second finish path.
 
-**CI:** add a script or `rg` check:
-
-```bash
-# single_field.rs must not mention these symbols
-rg -n 'extension_opening_reduction|tensor_root_projection|RootTensorProjectionPoly' \
-  crates/akita-prover/src/protocol/core/fold/single_field.rs \
-  crates/akita-verifier/src/protocol/core/fold/single_field.rs \
-  && exit 1 || exit 0
-```
+**Import isolation:** `fold/single_field.rs` must not import EOR / root-tensor-projection symbols.
+The compiler is the gate; no separate `rg` CI script.
 #### Diff 9 — wire fail-closed (Phase C)
 
 **File:** `crates/akita-types/src/proof/wire.rs` (deserialize helpers for `extension_opening_reduction`)

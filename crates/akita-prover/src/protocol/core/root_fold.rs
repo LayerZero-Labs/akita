@@ -77,11 +77,8 @@ where
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
-    let needs_extension_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Root,
-        root_ring_d,
-        opening_num_vars,
-    );
+    let needs_extension_reduction =
+        eor_required_at_level::<F, E>(FoldOpeningKind::Root, root_ring_d, opening_num_vars);
 
     if claims.point().len() > opening_num_vars {
         return Err(AkitaError::InvalidPointDimension {

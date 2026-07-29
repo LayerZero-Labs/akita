@@ -274,11 +274,8 @@ where
             sumcheck_challenges.len(),
         )?;
     let polys = [&logical_source];
-    let needs_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Suffix,
-        params.d_a(),
-        recursive_num_vars,
-    );
+    let needs_reduction =
+        eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, params.d_a(), recursive_num_vars);
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let proved = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),

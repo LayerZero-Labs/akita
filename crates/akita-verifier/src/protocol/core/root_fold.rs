@@ -128,7 +128,8 @@ where
 /// Root-fold replay orchestrator (D-free).
 ///
 /// Reached from [`verify_root`]; per-role typed kernels dispatch inside
-/// [`verify_fold`] and [`verify_fold_eor`].
+/// [`verify_fold`] and [`verify_fold_eor`]. Geometry forks only the prefix
+/// (single-field vs extension-claim); [`PreparedFoldReplay`] assembly is shared.
 #[allow(clippy::too_many_arguments)]
 fn verify_root_inner<F, E, T>(
     proof: &FoldLevelProof<F, E>,
@@ -160,7 +161,9 @@ where
     let d_a = role_dims.d_a();
     let v_storage = proof.v.clone();
 
-    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let (prepared_points, row_coefficients, trace_eval_target, trace_claim_coefficients) = if const {
+        <E as ExtField<F>>::EXT_DEGREE == 1
+    } {
         if extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -173,117 +176,93 @@ where
             d_a,
             transcript,
         )?;
-        let prepared_point = prefix
-            .prepared_points
-            .first()
-            .ok_or(AkitaError::InvalidProof)?;
-        let witness_len = akita_types::intermediate_w_ring_element_count_for_chunks(
-            F::modulus_bits(),
-            root_lp,
-            opening_batch.num_total_polynomials(),
-            root_lp.witness_chunk.num_chunks,
-        )?
-        .checked_mul(d_a)
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))?;
-        let fold_grind_nonce = proof.fold_grind_nonce;
-        let commitment_rows = RingVec::from_coeffs(commitment.coeffs().to_vec());
-        if !witness_len.is_multiple_of(next_witness_ring_dim) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let prepared = PreparedFoldReplay {
-            lp: root_lp,
-            fold_grind_nonce,
-            v: v_storage,
-            opening_shape: opening_batch.clone(),
-            commitment_rows,
-            row_coefficients: prefix.row_coefficients,
-            group_ring_opening_points: vec![prepared_point.ring_opening_point.clone()],
-            group_ring_multiplier_points: vec![prepared_point.ring_multiplier_point.clone()],
-            w_len: witness_len,
-            payload: PreparedFoldPayload::Recursive {
-                stage1: &proof.stage1,
-                stage2: &proof.stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len: witness_len / next_witness_ring_dim,
-                stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
-            },
-            evaluation_trace_points: vec![prepared_point.clone()],
-            evaluation_trace_claim: prefix.trace_eval_target,
-            evaluation_trace_claim_coefficients: prefix.trace_claim_coefficients,
-            evaluation_trace_basis: basis,
+        (
+            prefix.prepared_points,
+            prefix.row_coefficients,
+            prefix.trace_eval_target,
+            prefix.trace_claim_coefficients,
+        )
+    } else {
+        let prepared_without_eor = if extension_opening_reduction.is_none() {
+            let prepared_point =
+                dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+                    prepare_opening_point::<F, E, D>(
+                        shared_opening_point,
+                        basis,
+                        root_lp.num_positions_per_block,
+                        root_lp.num_live_blocks,
+                        d_a.trailing_zeros() as usize,
+                    )
+                })?;
+            for pt in &prepared_point.padded_point {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+            }
+            Some(prepared_point)
+        } else {
+            None
         };
-        return verify_fold::<F, E, T>(setup, transcript, prepared);
-    }
-
-    let prepared_without_eor = if extension_opening_reduction.is_none() {
-        let prepared_point =
-            dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-                prepare_opening_point::<F, E, D>(
-                    shared_opening_point,
-                    basis,
-                    root_lp.num_positions_per_block,
-                    root_lp.num_live_blocks,
-                    d_a.trailing_zeros() as usize,
-                )
-            })?;
-        for pt in &prepared_point.padded_point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+        append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+        let row_coefficients =
+            sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+        let group_points = [shared_opening_point.to_vec()];
+        let requires_reduction = eor_required_at_level::<F, E>(
+            FoldOpeningKind::Root,
+            root_lp.role_dims().d_a(),
+            opening_batch.max_num_vars(),
+        );
+        let root_eor = verify_fold_eor::<F, E, T>(
+            extension_opening_reduction,
+            &group_points,
+            openings,
+            &row_coefficients,
+            opening_batch,
+            basis,
+            root_lp,
+            requires_reduction,
+            transcript,
+        )?;
+        let prepared_point = if let Some(prepared) = prepared_without_eor {
+            prepared
+        } else {
+            root_eor
+                .prepared_points
+                .into_iter()
+                .next()
+                .ok_or(AkitaError::InvalidProof)?
+        };
+        if extension_opening_reduction.is_some() {
+            for pt in &prepared_point.padded_point {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+            }
         }
-        Some(prepared_point)
-    } else {
-        None
+        let ordinary_trace_eval_target =
+            opening_batch.batched_eval_target(&row_coefficients, openings)?;
+        let eor_trace_final = root_eor.final_relation;
+        let trace_eval_target = eor_trace_final
+            .as_ref()
+            .map(|(final_claim, _)| *final_claim)
+            .unwrap_or(ordinary_trace_eval_target);
+        let claim_reduction_factor = eor_trace_final
+            .as_ref()
+            .map(|(_, factors_by_point)| {
+                factors_by_point
+                    .first()
+                    .copied()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .transpose()?
+            .unwrap_or_else(E::one);
+        let trace_claim_coefficients =
+            scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
+        (
+            vec![prepared_point],
+            row_coefficients,
+            trace_eval_target,
+            trace_claim_coefficients,
+        )
     };
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
-    let group_points = [shared_opening_point.to_vec()];
-    let requires_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Root,
-        root_lp.role_dims().d_a(),
-        opening_batch.max_num_vars(),
-    );
-    let root_eor = verify_fold_eor::<F, E, T>(
-        extension_opening_reduction,
-        &group_points,
-        openings,
-        &row_coefficients,
-        opening_batch,
-        basis,
-        root_lp,
-        requires_reduction,
-        transcript,
-    )?;
-    let prepared_points = root_eor.prepared_points;
-    let eor_trace_final = root_eor.final_relation;
-    let prepared_point = if let Some(prepared) = prepared_without_eor.as_ref() {
-        prepared
-    } else {
-        prepared_points.first().ok_or(AkitaError::InvalidProof)?
-    };
-    if extension_opening_reduction.is_some() {
-        for pt in &prepared_point.padded_point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-        }
-    }
-    let ordinary_trace_eval_target =
-        opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    let trace_eval_target = eor_trace_final
-        .as_ref()
-        .map(|(final_claim, _)| *final_claim)
-        .unwrap_or(ordinary_trace_eval_target);
-    let claim_reduction_factor = eor_trace_final
-        .as_ref()
-        .map(|(_, factors_by_point)| {
-            factors_by_point
-                .first()
-                .copied()
-                .ok_or(AkitaError::InvalidProof)
-        })
-        .transpose()?
-        .unwrap_or_else(E::one);
-    let trace_claim_coefficients =
-        scale_evaluation_trace_claim_coefficients(&row_coefficients, claim_reduction_factor)?;
 
+    let prepared_point = prepared_points.first().ok_or(AkitaError::InvalidProof)?;
     // Chunked levels commit a wider (replicated-ẑ) next witness; size it
     // with the per-level chunk count (`num_chunks = 1` is unchanged).
     let witness_len = akita_types::intermediate_w_ring_element_count_for_chunks(
@@ -319,7 +298,7 @@ where
             next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        evaluation_trace_points: vec![prepared_point.clone()],
+        evaluation_trace_points: prepared_points,
         evaluation_trace_claim: trace_eval_target,
         evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: basis,
@@ -368,154 +347,121 @@ where
         + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
-        if extension_opening_reduction.is_some() {
-            return Err(AkitaError::InvalidProof);
-        }
-        let prefix = verify_single_field_multi_group_root_prefix::<F, E, T>(
-            claims,
-            openings,
-            opening_batch,
-            basis,
-            root_lp,
-            transcript,
-        )?;
-        let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
-        let fold_grind_nonce = proof.fold_grind_nonce;
-        let v_storage = proof.v.clone();
-        let order = opening_batch.root_group_order()?;
-        let mut commitment_coeffs = Vec::new();
-        for &group_index in &order {
-            let commitment = claims.group_commitment(group_index)?;
-            commitment_coeffs.extend_from_slice(commitment.rows().coeffs());
-        }
-        let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
-        let group_ring_opening_points = prefix
-            .prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_opening_point.clone())
-            .collect::<Vec<_>>();
-        let group_ring_multiplier_points = prefix
-            .prepared_points
-            .iter()
-            .map(|prepared| prepared.ring_multiplier_point.clone())
-            .collect::<Vec<_>>();
-        if !witness_len.is_multiple_of(next_witness_ring_dim) {
-            return Err(AkitaError::InvalidProof);
-        }
-        let prepared = PreparedFoldReplay {
-            lp: root_lp,
-            fold_grind_nonce,
-            v: v_storage,
-            opening_shape: opening_batch.clone(),
-            commitment_rows,
-            row_coefficients: prefix.row_coefficients,
-            group_ring_opening_points,
-            group_ring_multiplier_points,
-            w_len: witness_len,
-            payload: PreparedFoldPayload::Recursive {
-                stage1: &proof.stage1,
-                stage2: &proof.stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len: witness_len / next_witness_ring_dim,
-                stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
-            },
-            evaluation_trace_points: prefix.prepared_points,
-            evaluation_trace_claim: prefix.trace_eval_target,
-            evaluation_trace_claim_coefficients: prefix.trace_claim_coefficients,
-            evaluation_trace_basis: basis,
-        };
-        return verify_fold::<F, E, T>(setup, transcript, prepared);
-    }
-
-    let mut group_points = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
-        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
-        let group_lp = root_lp.group_params(opening_batch, group_index)?;
-        let target_len = group_alpha_bits
-            .checked_add(group_lp.position_index_bits())
-            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("group opening point length overflow".to_string())
-            })?;
-        let point_vars = claims.group_point_vars(group_index)?;
-        if point_vars.num_vars() != target_len {
-            return Err(AkitaError::InvalidProof);
-        }
-        group_points.push(claims.group_point(group_index)?);
-    }
-    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-    if extension_opening_reduction.is_none() {
-        for (group_index, group_point) in group_points.iter().enumerate() {
-            let group_lp = root_lp.group_params(opening_batch, group_index)?;
-            let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
-            let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
-            let prepared = dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                group_dims.d_a(),
-                |D| {
-                    prepare_opening_point::<F, E, D>(
-                        group_point,
-                        basis,
-                        group_lp.num_positions_per_block(),
-                        group_lp.num_live_blocks(),
-                        group_alpha_bits,
-                    )
-                }
+    let (prepared_points, row_coefficients, trace_eval_target, trace_claim_coefficients) =
+        if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+            if extension_opening_reduction.is_some() {
+                return Err(AkitaError::InvalidProof);
+            }
+            let prefix = verify_single_field_multi_group_root_prefix::<F, E, T>(
+                claims,
+                openings,
+                opening_batch,
+                basis,
+                root_lp,
+                transcript,
             )?;
-            for pt in &prepared.padded_point {
-                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+            (
+                prefix.prepared_points,
+                prefix.row_coefficients,
+                prefix.trace_eval_target,
+                prefix.trace_claim_coefficients,
+            )
+        } else {
+            let mut group_points = Vec::with_capacity(opening_batch.num_groups());
+            for group_index in 0..opening_batch.num_groups() {
+                let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
+                let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+                let group_lp = root_lp.group_params(opening_batch, group_index)?;
+                let target_len = group_alpha_bits
+                    .checked_add(group_lp.position_index_bits())
+                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
+                    })?;
+                let point_vars = claims.group_point_vars(group_index)?;
+                if point_vars.num_vars() != target_len {
+                    return Err(AkitaError::InvalidProof);
+                }
+                group_points.push(claims.group_point(group_index)?);
             }
-            prepared_points.push(prepared);
-        }
-    }
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
-    let requires_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Root,
-        root_lp.role_dims().d_a(),
-        opening_batch.max_num_vars(),
-    );
-    let eor_replay = if extension_opening_reduction.is_some() || requires_reduction {
-        let replay = verify_fold_eor::<F, E, T>(
-            extension_opening_reduction,
-            &group_points,
-            openings,
-            &row_coefficients,
-            opening_batch,
-            basis,
-            root_lp,
-            requires_reduction,
-            transcript,
-        )?;
-        if extension_opening_reduction.is_some() {
-            prepared_points = replay.prepared_points;
-            for prepared in &prepared_points {
-                for pt in &prepared.padded_point {
-                    append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+            if extension_opening_reduction.is_none() {
+                for (group_index, group_point) in group_points.iter().enumerate() {
+                    let group_lp = root_lp.group_params(opening_batch, group_index)?;
+                    let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
+                    let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+                    let prepared = dispatch_for_field!(
+                        ProtocolDispatchSlot::Role(RingRole::Inner),
+                        F,
+                        group_dims.d_a(),
+                        |D| {
+                            prepare_opening_point::<F, E, D>(
+                                group_point,
+                                basis,
+                                group_lp.num_positions_per_block(),
+                                group_lp.num_live_blocks(),
+                                group_alpha_bits,
+                            )
+                        }
+                    )?;
+                    for pt in &prepared.padded_point {
+                        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+                    }
+                    prepared_points.push(prepared);
                 }
             }
-        }
-        replay.final_relation
-    } else {
-        None
-    };
-    if prepared_points.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidProof);
-    }
-    let trace_claim_coefficients = if let Some((_, final_factors)) = &eor_replay {
-        opening_batch.scale_row_coefficients_by_group(&row_coefficients, final_factors)?
-    } else {
-        row_coefficients.clone()
-    };
-    let trace_eval_target = if let Some((final_claim, _)) = eor_replay {
-        final_claim
-    } else {
-        opening_batch.batched_eval_target(&row_coefficients, openings)?
-    };
+            append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+            let row_coefficients =
+                sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+            let requires_reduction = eor_required_at_level::<F, E>(
+                FoldOpeningKind::Root,
+                root_lp.role_dims().d_a(),
+                opening_batch.max_num_vars(),
+            );
+            let eor_replay = if extension_opening_reduction.is_some() || requires_reduction {
+                let replay = verify_fold_eor::<F, E, T>(
+                    extension_opening_reduction,
+                    &group_points,
+                    openings,
+                    &row_coefficients,
+                    opening_batch,
+                    basis,
+                    root_lp,
+                    requires_reduction,
+                    transcript,
+                )?;
+                if extension_opening_reduction.is_some() {
+                    prepared_points = replay.prepared_points;
+                    for prepared in &prepared_points {
+                        for pt in &prepared.padded_point {
+                            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+                        }
+                    }
+                }
+                replay.final_relation
+            } else {
+                None
+            };
+            if prepared_points.len() != opening_batch.num_groups() {
+                return Err(AkitaError::InvalidProof);
+            }
+            let trace_claim_coefficients = if let Some((_, final_factors)) = &eor_replay {
+                opening_batch.scale_row_coefficients_by_group(&row_coefficients, final_factors)?
+            } else {
+                row_coefficients.clone()
+            };
+            let trace_eval_target = if let Some((final_claim, _)) = eor_replay {
+                final_claim
+            } else {
+                opening_batch.batched_eval_target(&row_coefficients, openings)?
+            };
+            (
+                prepared_points,
+                row_coefficients,
+                trace_eval_target,
+                trace_claim_coefficients,
+            )
+        };
 
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and

@@ -35,13 +35,15 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
 
 /// Shared non-EOR opening preparation used by single-field and extension-claim
 /// skip-EOR paths.
+type NonEorOpeningPrep<E> = (Vec<Vec<E>>, Option<Vec<E>>);
+
 pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
     block_claims: &ProverOpeningData<'a, E, P, F>,
     opening_batch: &OpeningClaimsLayout,
     pad_base_evals: bool,
     non_eor_protocol_point: &[E],
     validate_non_eor: V,
-) -> Result<(Vec<Vec<E>>, Option<Vec<E>>), AkitaError>
+) -> Result<NonEorOpeningPrep<E>, AkitaError>
 where
     F: FieldCore,
     E: ExtField<F>,

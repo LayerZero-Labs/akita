@@ -1,5 +1,5 @@
-use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use super::super::*;
+use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
@@ -100,68 +100,50 @@ where
         (protocol_points, row_coefficients, None)
     };
 
-    if run_eor {
-        if pad_base_evals {
-            finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-                stack,
-                block_claims,
-                protocol_points: &protocol_points,
-                reduction,
-                row_coefficients,
-                trace_opening_batch: &opening_batch,
-                level_params,
-                basis,
-                pad_base_evals,
-                transcript,
-            })
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}"))
-            })
-        } else {
-            let transformed: Vec<RootTensorProjectionPoly<F>> = {
-                let _span =
-                    tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                        .entered();
-                let mut transformed = Vec::with_capacity(fold_polys.len());
-                for group_index in 0..opening_batch.num_groups() {
-                    let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                    let group_polys = block_claims.group_polys(group_index)?;
-                    transformed.extend(dispatch_for_field!(
-                        ProtocolDispatchSlot::Role(RingRole::Inner),
-                        F,
-                        group_dims.d_a(),
-                        |D| {
-                            cfg_iter!(group_polys)
-                                .map(|poly| {
-                                    tensor_root_projection::<F, P, E, TS, D>(
-                                        tensor.backend(),
-                                        Some(tensor.prepared()),
-                                        *poly,
-                                    )
-                                })
-                                .collect::<Result<Vec<_>, _>>()
-                        }
-                    )?);
-                }
-                transformed
-            };
-            let fold_refs = transformed.iter().collect::<Vec<_>>();
-            let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
-            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R>(
-                FinishFoldArgs {
-                    stack,
-                    block_claims: transformed_block_claims,
-                    protocol_points: &protocol_points,
-                    reduction,
-                    row_coefficients,
-                    trace_opening_batch: &opening_batch,
-                    level_params,
-                    basis,
-                    pad_base_evals,
-                    transcript,
-                },
-            )
-        }
+    // Tensor-project only when EOR ran without base-eval padding (root geometry).
+    // All other arms share one finish path.
+    if run_eor && !pad_base_evals {
+        let transformed: Vec<RootTensorProjectionPoly<F>> = {
+            let _span =
+                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
+                    .entered();
+            let mut transformed = Vec::with_capacity(fold_polys.len());
+            for group_index in 0..opening_batch.num_groups() {
+                let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
+                let group_polys = block_claims.group_polys(group_index)?;
+                transformed.extend(dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    F,
+                    group_dims.d_a(),
+                    |D| {
+                        cfg_iter!(group_polys)
+                            .map(|poly| {
+                                tensor_root_projection::<F, P, E, TS, D>(
+                                    tensor.backend(),
+                                    Some(tensor.prepared()),
+                                    *poly,
+                                )
+                            })
+                            .collect::<Result<Vec<_>, _>>()
+                    }
+                )?);
+            }
+            transformed
+        };
+        let fold_refs = transformed.iter().collect::<Vec<_>>();
+        let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
+        finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R>(FinishFoldArgs {
+            stack,
+            block_claims: transformed_block_claims,
+            protocol_points: &protocol_points,
+            reduction,
+            row_coefficients,
+            trace_opening_batch: &opening_batch,
+            level_params,
+            basis,
+            pad_base_evals,
+            transcript,
+        })
     } else {
         finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
             stack,

@@ -11,7 +11,6 @@ pub(in crate::protocol::core) use extension_claim::{
 };
 pub(in crate::protocol::core) use single_field::{
     verify_single_field_multi_group_root_prefix, verify_single_field_scalar_root_prefix,
-    verify_single_field_suffix_prefix, verify_single_field_terminal_suffix_prefix,
 };
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {

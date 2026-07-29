@@ -357,20 +357,25 @@ where
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        let prefix = verify_single_field_terminal_suffix_prefix::<F, E>(
-            &protocol_point,
-            current_state.opening,
-            &opening_batch,
-            current_state.basis,
-            params,
-            alpha_bits,
+        let prepared_point = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            params.d_a(),
+            |D| prepare_opening_point::<F, E, D>(
+                &protocol_point,
+                current_state.basis,
+                params.num_positions_per_block,
+                params.num_live_blocks,
+                alpha_bits,
+            )
         )?;
-        absorb_prepared_opening_points(&prefix.prepared_points, transcript);
+        let prepared_points = vec![prepared_point];
+        absorb_prepared_opening_points(&prepared_points, transcript);
         append_claim_values_to_transcript::<F, E, T>(
             std::slice::from_ref(&current_state.opening),
             transcript,
         );
-        (prefix.prepared_points, None)
+        (prepared_points, None)
     } else {
         let FoldEorReplay {
             prepared_points,
@@ -557,78 +562,71 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let (prepared_points, trace_eval_target, trace_claim_coefficients) =
-        if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
-            if proof.extension_opening_reduction.is_some() {
-                return Err(AkitaError::InvalidProof);
-            }
-            let prefix = verify_single_field_suffix_prefix::<F, E>(
+    let (prepared_points, trace_eval_target, trace_claim_coefficients) = if const {
+        <E as ExtField<F>>::EXT_DEGREE == 1
+    } {
+        if proof.extension_opening_reduction.is_some() {
+            return Err(AkitaError::InvalidProof);
+        }
+        let prepared_points = prepare_suffix_group_points::<F, E>(
+            &block_claims,
+            lp,
+            &opening_batch,
+            role_dims.d_a(),
+            alpha_bits,
+        )?;
+        absorb_prepared_opening_points(&prepared_points, transcript);
+        let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
+        (prepared_points, trace_eval_target, row_coefficients.clone())
+    } else {
+        let group_points = (0..opening_batch.num_groups())
+            .map(|group_index| block_claims.group_point(group_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        let requires_extension_reduction = eor_required_at_level::<F, E>(
+            FoldOpeningKind::Suffix,
+            lp.role_dims().d_a(),
+            opening_batch.max_num_vars(),
+        );
+        let FoldEorReplay {
+            prepared_points,
+            final_relation: eor_trace_final,
+            ..
+        } = verify_fold_eor::<F, E, T>(
+            proof.extension_opening_reduction,
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            current_state.basis,
+            lp,
+            requires_extension_reduction,
+            transcript,
+        )?;
+        let prepared_points = if proof.extension_opening_reduction.is_some() {
+            prepared_points
+        } else {
+            prepare_suffix_group_points::<F, E>(
                 &block_claims,
-                &openings,
-                &opening_batch,
                 lp,
+                &opening_batch,
                 role_dims.d_a(),
                 alpha_bits,
-            )?;
-            absorb_prepared_opening_points(&prefix.prepared_points, transcript);
-            (
-                prefix.prepared_points,
-                prefix.trace_eval_target,
-                prefix.trace_claim_coefficients,
-            )
-        } else {
-            let group_points = (0..opening_batch.num_groups())
-                .map(|group_index| block_claims.group_point(group_index))
-                .collect::<Result<Vec<_>, _>>()?;
-            let requires_extension_reduction = eor_required_at_level::<F, E>(
-                FoldOpeningKind::Suffix,
-                lp.role_dims().d_a(),
-                opening_batch.max_num_vars(),
-            );
-            let FoldEorReplay {
-                prepared_points,
-                final_relation: eor_trace_final,
-                ..
-            } = verify_fold_eor::<F, E, T>(
-                proof.extension_opening_reduction,
-                &group_points,
-                &openings,
-                &row_coefficients,
-                &opening_batch,
-                current_state.basis,
-                lp,
-                requires_extension_reduction,
-                transcript,
-            )?;
-            let prepared_points = if proof.extension_opening_reduction.is_some() {
-                prepared_points
-            } else {
-                prepare_suffix_group_points::<F, E>(
-                    &block_claims,
-                    lp,
-                    &opening_batch,
-                    role_dims.d_a(),
-                    alpha_bits,
-                )?
-            };
-            absorb_prepared_opening_points(&prepared_points, transcript);
-            let (trace_eval_target, trace_claim_coefficients) = match eor_trace_final.as_ref() {
-                Some((final_claim, factors_by_group)) => (
-                    *final_claim,
-                    opening_batch
-                        .scale_row_coefficients_by_group(&row_coefficients, factors_by_group)?,
-                ),
-                None => (
-                    opening_batch.batched_eval_target(&row_coefficients, &openings)?,
-                    row_coefficients.clone(),
-                ),
-            };
-            (
-                prepared_points,
-                trace_eval_target,
-                trace_claim_coefficients,
-            )
+            )?
         };
+        absorb_prepared_opening_points(&prepared_points, transcript);
+        let (trace_eval_target, trace_claim_coefficients) = match eor_trace_final.as_ref() {
+            Some((final_claim, factors_by_group)) => (
+                *final_claim,
+                opening_batch
+                    .scale_row_coefficients_by_group(&row_coefficients, factors_by_group)?,
+            ),
+            None => (
+                opening_batch.batched_eval_target(&row_coefficients, &openings)?,
+                row_coefficients.clone(),
+            ),
+        };
+        (prepared_points, trace_eval_target, trace_claim_coefficients)
+    };
 
     let witness_len = output_witness_len;
     let fold_grind_nonce = proof.fold_grind_nonce;

@@ -892,16 +892,10 @@ where
     true
 }
 
-/// Return whether root tensor projection can represent this field/ring shape.
-///
-/// `ring_d` is the schedule-derived root ring dimension (plain usize math —
-/// no typed ring work happens here).
-pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    let width = E::EXT_DEGREE;
+/// Return whether root tensor projection can represent this extension width /
+/// ring shape. Shared by the typed gate and the planner-facing width twin.
+#[inline]
+fn root_tensor_projection_enabled_for_width(width: usize, ring_d: usize, num_vars: usize) -> bool {
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
@@ -911,6 +905,18 @@ where
         && ring_d >= double_width
         && ring_d.is_multiple_of(width)
         && num_vars >= ring_d.trailing_zeros() as usize
+}
+
+/// Return whether root tensor projection can represent this field/ring shape.
+///
+/// `ring_d` is the schedule-derived root ring dimension (plain usize math —
+/// no typed ring work happens here).
+pub fn root_tensor_projection_enabled<F, E>(ring_d: usize, num_vars: usize) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    root_tensor_projection_enabled_for_width(E::EXT_DEGREE, ring_d, num_vars)
 }
 
 /// Fold level kind for extension-opening reduction presence.
@@ -953,18 +959,11 @@ pub fn eor_required_for_width(
     opening_num_vars: usize,
 ) -> bool {
     match kind {
-        FoldOpeningKind::Root => {
-            let width = extension_opening_width;
-            let Some(double_width) = width.checked_mul(2) else {
-                return false;
-            };
-            width > 1
-                && width.is_power_of_two()
-                && ring_d.is_power_of_two()
-                && ring_d >= double_width
-                && ring_d.is_multiple_of(width)
-                && opening_num_vars >= ring_d.trailing_zeros() as usize
-        }
+        FoldOpeningKind::Root => root_tensor_projection_enabled_for_width(
+            extension_opening_width,
+            ring_d,
+            opening_num_vars,
+        ),
         FoldOpeningKind::Suffix => extension_opening_width > 1,
     }
 }
@@ -1065,7 +1064,11 @@ mod tests {
     #[test]
     fn eor_required_at_level_matches_geometry_table() {
         // Claim field coincides with coefficient field: never.
-        assert!(!eor_required_at_level::<F, F>(FoldOpeningKind::Root, 64, 10));
+        assert!(!eor_required_at_level::<F, F>(
+            FoldOpeningKind::Root,
+            64,
+            10
+        ));
         assert!(!eor_required_at_level::<F, F>(
             FoldOpeningKind::Suffix,
             64,

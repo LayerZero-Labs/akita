@@ -1,5 +1,5 @@
-use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use super::super::*;
+use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
