@@ -476,6 +476,12 @@ where
         _ => return Err(AkitaError::InvalidProof),
     }
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut padded_witness_point = current_state.opening_point.clone();
+    padded_witness_point.resize(recursive_num_vars, E::zero());
+
     let block_claims = match (
         &current_state.setup_prefix_opening,
         lp.setup_prefix.as_ref(),
@@ -488,7 +494,7 @@ where
                     (),
                 )?,
                 PolynomialGroupClaims::new(
-                    current_state.opening_point.clone(),
+                    padded_witness_point.clone(),
                     vec![current_state.opening],
                     (),
                 )?,
@@ -496,9 +502,8 @@ where
             OpeningClaims::from_groups(groups)?
         }
         (None, None) => {
-            let mut padded_point = current_state.opening_point.clone();
-            padded_point.resize(recursive_num_vars, E::zero());
-            let claims = PolynomialGroupClaims::new(padded_point, vec![current_state.opening], ())?;
+            let claims =
+                PolynomialGroupClaims::new(padded_witness_point, vec![current_state.opening], ())?;
             OpeningClaims::from_groups(vec![claims])?
         }
         _ => return Err(AkitaError::InvalidProof),

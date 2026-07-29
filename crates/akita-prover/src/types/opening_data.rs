@@ -327,6 +327,15 @@ where
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
         witness_commitment: CommitmentWithHint<CommitF>,
     ) -> Result<(Self, OpeningClaims<'a, PointF>, Vec<PointF>), AkitaError> {
+        if opening_point.len() > recursive_num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: recursive_num_vars,
+                actual: opening_point.len(),
+            });
+        }
+        let mut padded_witness_point = opening_point.to_vec();
+        padded_witness_point.resize(recursive_num_vars, PointF::zero());
+
         match (setup_prefix_opening, setup_slot, setup_polys) {
             (
                 Some((setup_prefix_point, setup_prefix_eval)),
@@ -335,7 +344,7 @@ where
             ) => {
                 let block_claims = Self::new_recursive_suffix_with_setup_prefix(
                     setup_prefix_point.clone(),
-                    opening_point.to_vec(),
+                    padded_witness_point.clone(),
                     setup_prefix_eval,
                     witness_eval,
                     setup_slot,
@@ -349,17 +358,17 @@ where
                     Some(setup_prefix_point),
                     opening_point.to_vec(),
                 )?;
-                Ok((block_claims, eor_claims, opening_point.to_vec()))
+                Ok((block_claims, eor_claims, padded_witness_point))
             }
             (None, None, None) => {
                 let block_claims = Self::new_recursive_suffix_source(
-                    opening_point,
+                    &padded_witness_point,
                     recursive_num_vars,
                     witness_polys,
                     witness_commitment,
                 )?;
                 let eor_claims = Self::recursive_suffix_eor_claims(None, opening_point.to_vec())?;
-                Ok((block_claims, eor_claims, opening_point.to_vec()))
+                Ok((block_claims, eor_claims, padded_witness_point))
             }
             _ => Err(AkitaError::InvalidInput(
                 "setup-prefix suffix inputs are incomplete".to_string(),
