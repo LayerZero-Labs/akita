@@ -123,6 +123,14 @@ pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
+    /// Current byte footprint of backend-owned compression caches, when exposed.
+    ///
+    /// This is diagnostic metadata only and does not participate in protocol
+    /// sizing or setup validation.
+    fn compression_cache_bytes(&self, _prepared: &Self::PreparedSetup) -> Option<usize> {
+        None
+    }
+
     /// Negacyclic single-input digit mat-vec rows.
     fn digit_rows<const D: usize>(
         &self,

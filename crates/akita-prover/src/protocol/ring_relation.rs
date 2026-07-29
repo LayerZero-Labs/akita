@@ -685,10 +685,20 @@ impl RingRelationProver {
                     ))
                 },
             )?;
+            let cache_bytes_added = report
+                .cache_bytes_before
+                .zip(report.cache_bytes_after)
+                .map(|(before, after)| after.saturating_sub(before));
             tracing::info!(
                 sources = report.sources,
                 maps = report.maps,
+                batches = report.groups.len(),
+                source_bytes = report.source_bytes,
                 terminal_bytes = report.terminal_bytes,
+                cache_bytes_before = report.cache_bytes_before,
+                cache_bytes_after = report.cache_bytes_after,
+                cache_bytes_added,
+                elapsed_micros = u64::try_from(report.elapsed.as_micros()).unwrap_or(u64::MAX),
                 "computed and discarded shadow compressed commitments"
             );
         }

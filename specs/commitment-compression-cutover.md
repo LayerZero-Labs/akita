@@ -187,6 +187,13 @@ During proving:
 6. Retain timing and size metrics, then discard all terminal images.
 7. Continue the existing prover unchanged.
 
+The aggregate diagnostic report records source and terminal bytes, map and
+equal-shape batch counts, total elapsed time, and compression-cache bytes before
+and after the shadow computation when the backend exposes them. Each batch
+also records its map index, matrix shape, batch size, input/output bytes,
+negative-binary digitization time, and kernel time. Kernel time includes a cold
+cache build when that exact matrix shape has not been prepared before.
+
 The diagnostic must not:
 
 - replace a commitment carried by the proof;

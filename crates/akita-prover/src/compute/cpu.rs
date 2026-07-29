@@ -647,6 +647,10 @@ impl<F> DigitRowsComputeBackend<F> for CpuBackend
 where
     F: FieldCore + CanonicalField,
 {
+    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+        Some(prepared.compression_ntt_cache_bytes())
+    }
+
     fn digit_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,

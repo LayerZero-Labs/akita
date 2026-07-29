@@ -10,6 +10,7 @@ use akita_types::{
     dispatch_for_field, field_modulus, protocol_dispatch_tier, ProtocolRingDispatchTierId, RingVec,
 };
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
 /// Origin of one live B/D image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,11 +26,30 @@ pub(crate) struct CompressionDiagnosticSource<'a, F> {
 }
 
 /// Aggregate facts emitted after shadow compression.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CompressionDiagnosticReport {
     pub(crate) sources: usize,
     pub(crate) maps: usize,
+    pub(crate) source_bytes: usize,
     pub(crate) terminal_bytes: usize,
+    pub(crate) cache_bytes_before: Option<usize>,
+    pub(crate) cache_bytes_after: Option<usize>,
+    pub(crate) elapsed: Duration,
+    pub(crate) groups: Vec<CompressionDiagnosticGroupReport>,
+}
+
+/// One equal-shape compression batch measured by the diagnostic.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompressionDiagnosticGroupReport {
+    pub(crate) map_index: usize,
+    pub(crate) ring_dimension: usize,
+    pub(crate) input_width: usize,
+    pub(crate) output_rank: usize,
+    pub(crate) batch_size: usize,
+    pub(crate) input_bytes: usize,
+    pub(crate) output_bytes: usize,
+    pub(crate) digitization_elapsed: Duration,
+    pub(crate) kernel_elapsed: Duration,
 }
 
 struct WorkItem<F> {
@@ -94,7 +114,7 @@ fn execute_group<F, B, const D: usize>(
     items: &mut [WorkItem<F>],
     item_indices: &[usize],
     map_index: usize,
-) -> Result<(), AkitaError>
+) -> Result<CompressionDiagnosticGroupReport, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -106,6 +126,20 @@ where
         .and_then(|item| item.maps.get(map_index))
         .copied()
         .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+    let input_bytes = item_indices.iter().try_fold(0usize, |total, &item_index| {
+        let item = items
+            .get(item_index)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression item index is invalid".into()))?;
+        let bytes = item
+            .coefficients
+            .len()
+            .checked_mul(item.field_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression input bytes overflow".into()))?;
+        total
+            .checked_add(bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression input byte total overflow".into()))
+    })?;
+    let digitization_started = Instant::now();
     let digit_vectors = item_indices
         .iter()
         .map(|&item_index| {
@@ -115,7 +149,9 @@ where
             negative_binary_digits::<F, D>(&item.coefficients, first_map.input_width)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let digitization_elapsed = digitization_started.elapsed();
     let digit_views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
+    let kernel_started = Instant::now();
     let outputs = ctx.backend().compression_rows(
         ctx.prepared(),
         CompressionRowsPlan {
@@ -123,6 +159,7 @@ where
             digit_vectors: &digit_views,
         },
     )?;
+    let kernel_elapsed = kernel_started.elapsed();
     if outputs.len() != item_indices.len() {
         return Err(AkitaError::InvalidSetup(
             "compression backend returned the wrong batch length".into(),
@@ -137,14 +174,37 @@ where
         }
         items[item_index].coefficients = coefficients;
     }
-    Ok(())
+    let output_bytes = item_indices.iter().try_fold(0usize, |total, &item_index| {
+        let item = items
+            .get(item_index)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression item index is invalid".into()))?;
+        let bytes = item
+            .coefficients
+            .len()
+            .checked_mul(item.field_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression output bytes overflow".into()))?;
+        total.checked_add(bytes).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression output byte total overflow".into())
+        })
+    })?;
+    Ok(CompressionDiagnosticGroupReport {
+        map_index,
+        ring_dimension: D,
+        input_width: first_map.input_width,
+        output_rank: first_map.output_rank,
+        batch_size: item_indices.len(),
+        input_bytes,
+        output_bytes,
+        digitization_elapsed,
+        kernel_elapsed,
+    })
 }
 
 fn execute_stage<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     items: &mut [WorkItem<F>],
     map_index: usize,
-) -> Result<(), AkitaError>
+) -> Result<Vec<CompressionDiagnosticGroupReport>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -158,15 +218,17 @@ where
                 .push(item_index);
         }
     }
-    for ((ring_dimension, _, _), item_indices) in groups {
-        dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Compression,
-            F,
-            ring_dimension,
-            |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
-        )?;
-    }
-    Ok(())
+    groups
+        .into_iter()
+        .map(|((ring_dimension, _, _), item_indices)| {
+            dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Compression,
+                F,
+                ring_dimension,
+                |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
+            )
+        })
+        .collect()
 }
 
 /// Compute compressed commitments for live B/D images and retain only metrics.
@@ -178,6 +240,8 @@ where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
+    let diagnostic_started = Instant::now();
+    let cache_bytes_before = ctx.backend().compression_cache_bytes(ctx.prepared());
     let profile = modulus_profile::<F>()?;
     let mut items = Vec::new();
     for source in sources {
@@ -192,10 +256,21 @@ where
             coefficients: source.coefficients.to_vec(),
         });
     }
+    let source_bytes = items.iter().try_fold(0usize, |total, item| {
+        let bytes = item
+            .coefficients
+            .len()
+            .checked_mul(item.field_bytes)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression source bytes overflow".into()))?;
+        total.checked_add(bytes).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression source byte total overflow".into())
+        })
+    })?;
     let map_count = items.iter().map(|item| item.maps.len()).sum();
     let max_maps = items.iter().map(|item| item.maps.len()).max().unwrap_or(0);
+    let mut groups = Vec::new();
     for map_index in 0..max_maps {
-        execute_stage(ctx, &mut items, map_index)?;
+        groups.extend(execute_stage(ctx, &mut items, map_index)?);
     }
     let terminal_bytes = items.iter().try_fold(0usize, |total, item| {
         let bytes = item
@@ -213,11 +288,36 @@ where
             .checked_add(bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal byte total overflow".into()))
     })?;
+    let cache_bytes_after = ctx.backend().compression_cache_bytes(ctx.prepared());
+    let elapsed = diagnostic_started.elapsed();
+    for group in &groups {
+        tracing::info!(
+            map_index = group.map_index,
+            ring_dimension = group.ring_dimension,
+            input_width = group.input_width,
+            output_rank = group.output_rank,
+            batch_size = group.batch_size,
+            input_bytes = group.input_bytes,
+            output_bytes = group.output_bytes,
+            digitization_micros = duration_micros(group.digitization_elapsed),
+            kernel_micros = duration_micros(group.kernel_elapsed),
+            "shadow compressed-commitment batch"
+        );
+    }
     Ok(CompressionDiagnosticReport {
         sources: items.len(),
         maps: map_count,
+        source_bytes,
         terminal_bytes,
+        cache_bytes_before,
+        cache_bytes_after,
+        elapsed,
+        groups,
     })
+}
+
+fn duration_micros(duration: Duration) -> u64 {
+    u64::try_from(duration.as_micros()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]

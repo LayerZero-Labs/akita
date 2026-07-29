@@ -78,6 +78,10 @@ macro_rules! delegate_digit_rows {
         where
             F: FieldCore + CanonicalField,
         {
+            fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+                CpuBackend.compression_cache_bytes(prepared)
+            }
+
             fn digit_rows<const D: usize>(
                 &self,
                 prepared: &Self::PreparedSetup,
