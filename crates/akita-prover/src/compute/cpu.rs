@@ -5,12 +5,12 @@ use crate::compute::backend::{
     DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
-    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
-    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
-    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    CompressionRowsPlan, DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks,
+    OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use crate::kernels::linear::{
-    digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
+    compression_rows, digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
     mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
@@ -20,8 +20,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
-    PreparedNttCache,
+    compression_ring_dim_supported_for_tier, dispatch_for_field, prepare_ntt_cache,
+    protocol_dispatch_tier, AkitaExpandedSetup, NttCacheKey, NttCacheMode, PreparedNttCache,
 };
 use std::any::Any;
 use std::array::from_fn;
@@ -170,21 +170,34 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
     }
 }
 
+fn build_ntt_slot_at<F: FieldCore + CanonicalField, const D: usize>(
+    expanded: &AkitaExpandedSetup<F>,
+    key: NttCacheKey,
+) -> Result<ErasedCpuNttCache, AkitaError> {
+    let view = expanded
+        .shared_matrix()
+        .ring_view::<D>(1, key.num_ring_elements)?;
+    let cache = Arc::new(prepare_ntt_cache(view, NttCacheMode::BothTransforms)?);
+    Ok(ErasedCpuNttCache {
+        ring_d: D,
+        cache_bytes: cache.cache_bytes(),
+        cache,
+    })
+}
+
 fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
     expanded: &AkitaExpandedSetup<F>,
     key: NttCacheKey,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
-    dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
-        let view = expanded
-            .shared_matrix()
-            .ring_view::<RING_D>(1, key.num_ring_elements)?;
-        let cache = Arc::new(prepare_ntt_cache(view, NttCacheMode::BothTransforms)?);
-        Ok(ErasedCpuNttCache {
-            ring_d: RING_D,
-            cache_bytes: cache.cache_bytes(),
-            cache,
+    if compression_ring_dim_supported_for_tier(protocol_dispatch_tier::<F>(), key.ring_d) {
+        dispatch_for_field!(ProtocolDispatchSlot::Compression, F, key.ring_d, |RING_D| {
+            build_ntt_slot_at::<F, RING_D>(expanded, key)
         })
-    })
+    } else {
+        dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
+            build_ntt_slot_at::<F, RING_D>(expanded, key)
+        })
+    }
 }
 
 fn record_ntt_profile_on_prepared<F: FieldCore>(
@@ -205,9 +218,16 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
-        selected_crt_i8_capacity_profile::<F, RING_D>()
-    })?;
+    let profile =
+        if compression_ring_dim_supported_for_tier(protocol_dispatch_tier::<F>(), key.ring_d) {
+            dispatch_for_field!(ProtocolDispatchSlot::Compression, F, key.ring_d, |RING_D| {
+                selected_crt_i8_capacity_profile::<F, RING_D>()
+            })
+        } else {
+            dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
+                selected_crt_i8_capacity_profile::<F, RING_D>()
+            })
+        }?;
     let entry = {
         let mut cache = prepared
             .shared_ntt
@@ -560,6 +580,23 @@ where
         )?;
         prepared.with_shared_ntt::<D, _>(|ntt| {
             mat_vec_mul_ntt_single_i8(ntt, row_len, digits.len(), digits, log_basis)
+        })
+    }
+
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plan: CompressionRowsPlan<'_, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+        let total_ring_elements = prepared
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<D>()?;
+        for digits in plan.digit_vectors {
+            validate_digit_row_request(plan.output_rank, digits.len(), total_ring_elements)?;
+        }
+        prepared.with_shared_ntt::<D, _>(|ntt| {
+            compression_rows(ntt, plan.output_rank, plan.digit_vectors)
         })
     }
 }

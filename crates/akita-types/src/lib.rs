@@ -8,10 +8,11 @@ pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
-    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
+    ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
+    outer_opening_min_ring_d, protocol_dispatch_tier, validate_ring_dispatch,
+    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
+    ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;

@@ -1,5 +1,5 @@
 use crate::compute::plans::{
-    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
@@ -130,6 +130,20 @@ where
         digits: &[[i8; D]],
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+
+    /// Exact-shape negative-binary compression products over one matrix prefix.
+    ///
+    /// Backends may override this to reuse matrix reads across right-hand sides.
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        plan: CompressionRowsPlan<'_, D>,
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+        plan.digit_vectors
+            .iter()
+            .map(|digits| self.digit_rows(prepared, plan.output_rank, digits, 1))
+            .collect()
+    }
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

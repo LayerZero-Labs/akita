@@ -1,0 +1,93 @@
+use super::*;
+
+/// Batched negative-binary compression mat-vec over one shared matrix prefix.
+#[tracing::instrument(skip_all, name = "compression_rows")]
+pub(crate) fn compression_rows<F: FieldCore + CanonicalField, const D: usize>(
+    slot: &PreparedNttCache<D>,
+    output_rank: usize,
+    digit_vectors: &[&[[i8; D]]],
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let column_count = digit_vectors.first().map_or(0, |digits| digits.len());
+    if digit_vectors.is_empty() || column_count == 0 {
+        return Err(AkitaError::InvalidInput(
+            "compression batch must contain nonempty digit vectors".to_string(),
+        ));
+    }
+    if digit_vectors
+        .iter()
+        .any(|digits| digits.len() != column_count)
+    {
+        return Err(AkitaError::InvalidInput(
+            "compression batch digit vectors must have one exact shape".to_string(),
+        ));
+    }
+    if digit_vectors
+        .iter()
+        .any(|digits| !digit_rows_within_digit_bound(digits, column_count, 1))
+    {
+        return Err(AkitaError::InvalidInput(
+            "compression batch contains a digit outside {-1,0}".to_string(),
+        ));
+    }
+
+    Ok(match slot {
+        PreparedNttCache::Q32 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+        PreparedNttCache::Q64 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+        PreparedNttCache::Q128 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+    })
+}
+
+fn compression_rows_with_params<
+    F: FieldCore + CanonicalField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    matrix: &[CyclotomicCrtNtt<W, K, D>],
+    output_rank: usize,
+    column_count: usize,
+    digit_vectors: &[&[[i8; D]]],
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<Vec<CyclotomicRing<F, D>>> {
+    let rows = (0..output_rank)
+        .map(|row| &matrix[row * column_count..(row + 1) * column_count])
+        .collect::<Vec<_>>();
+    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, column_count, 1)
+        .expect("one signed compression digit must fit the CRT profile");
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, 1);
+
+    drive_block_chunked_matvec(
+        digit_vectors.len(),
+        output_rank,
+        column_count,
+        safe_width,
+        base_tile_width::<W, K, D>(),
+        safe_width,
+        params,
+        |accumulators, start, end| {
+            for column in start..end {
+                for (vector_accumulators, digits) in accumulators.iter_mut().zip(digit_vectors) {
+                    let digit = &digits[column];
+                    if is_zero_plane(digit) {
+                        continue;
+                    }
+                    let digit_ntt = CyclotomicCrtNtt::from_i8_with_lut(digit, params, &lut);
+                    for (accumulator, row) in vector_accumulators.iter_mut().zip(&rows) {
+                        accumulate_pointwise_product_into(
+                            accumulator,
+                            &row[column],
+                            &digit_ntt,
+                            params,
+                        );
+                    }
+                }
+            }
+        },
+    )
+}

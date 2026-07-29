@@ -17,6 +17,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
     proof::AkitaExpandedSetup, protocol_dispatch_tier, RingMatrixView,
@@ -64,10 +65,12 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 /// Select the canonical CRT+NTT parameter set for protocol field `F` and degree `D`.
 pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
-    if !ntt_ring_degree_supported_for_field::<F>(D) {
-        let tier = protocol_dispatch_tier::<F>();
+    let tier = protocol_dispatch_tier::<F>();
+    if !ntt_ring_degree_supported_for_field::<F>(D)
+        && !compression_ring_dim_supported_for_tier(tier, D)
+    {
         return Err(AkitaError::InvalidSetup(format!(
-            "CRT+NTT ring degree {D} outside tier band [{}, {}] for this field",
+            "CRT+NTT ring degree {D} outside tier band [{}, {}] and compression surface for this field",
             ntt_min_ring_d(tier),
             ntt_max_ring_d(tier),
         )));
