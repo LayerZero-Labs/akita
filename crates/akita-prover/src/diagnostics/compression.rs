@@ -317,7 +317,11 @@ fn duration_micros(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernels::linear::compression_rows;
+    use akita_algebra::CyclotomicRing;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use akita_types::layout::FlatMatrix;
+    use akita_types::{prepare_ntt_cache, NttCacheMode};
     use std::hint::black_box;
 
     fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
@@ -361,6 +365,123 @@ mod tests {
         assert_negative_binary_digits::<Prime128OffsetA7F7, 16>();
         assert_negative_binary_digits::<Prime64Offset59, 16>();
         assert_negative_binary_digits::<Prime32Offset99, 32>();
+    }
+
+    fn deterministic_matrix_row<F: FieldCore + CanonicalField, const D: usize>(
+        column_count: usize,
+        salt: usize,
+    ) -> Vec<CyclotomicRing<F, D>> {
+        (0..column_count)
+            .map(|column| {
+                CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
+                    F::from_i64(((salt * 17 + column * 7 + coefficient * 3) % 19) as i64 - 9)
+                }))
+            })
+            .collect()
+    }
+
+    fn schoolbook_rank_one_digit_mat_vec<F: FieldCore + CanonicalField, const D: usize>(
+        matrix_row: &[CyclotomicRing<F, D>],
+        digits: &[[i8; D]],
+    ) -> CyclotomicRing<F, D> {
+        matrix_row
+            .iter()
+            .zip(digits.iter())
+            .fold(CyclotomicRing::<F, D>::zero(), |mut acc, (lhs, digit)| {
+                let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
+                    F::from_i64(i64::from(digit[k]))
+                }));
+                acc += *lhs * rhs;
+                acc
+            })
+    }
+
+    fn compress_map_stage_against_schoolbook<F: FieldCore + CanonicalField, const D: usize>(
+        coefficients: &[F],
+        map: CompressionDiagnosticMap,
+        salt: usize,
+    ) -> Vec<F> {
+        assert_eq!(map.ring_dimension, D);
+        assert_eq!(map.output_rank, 1);
+        let digits =
+            negative_binary_digits::<F, D>(coefficients, map.input_width).expect("digitization");
+        let matrix_row = deterministic_matrix_row::<F, D>(map.input_width, salt);
+        let flat = FlatMatrix::from_ring_slice(&matrix_row);
+        let slot = prepare_ntt_cache(
+            flat.ring_view::<D>(1, map.input_width)
+                .expect("compression matrix view"),
+            NttCacheMode::ExactNegacyclic {
+                width: map.input_width,
+                log_basis: 1,
+            },
+        )
+        .expect("exact-prefix compression cache");
+        assert!(!slot.has_cyclic());
+        let actual = compression_rows::<F, D>(&slot, 1, &[digits.as_slice()]).expect("kernel");
+        assert_eq!(actual.len(), 1);
+        assert_eq!(actual[0].len(), 1);
+        let expected = schoolbook_rank_one_digit_mat_vec(&matrix_row, &digits);
+        assert_eq!(actual[0][0], expected);
+        RingVec::from_ring_elems(&actual[0]).coeffs().to_vec()
+    }
+
+    fn run_ladder_against_schoolbook<F: FieldCore + CanonicalField>(
+        profile: SisModulusProfileId,
+        source_bytes: usize,
+    ) {
+        let field_bytes = (F::modulus_bits() as usize).div_ceil(8);
+        let source_coefficients = source_bytes / field_bytes;
+        let plan = plan_compression_diagnostic(profile, source_coefficients).expect("plan");
+        let mut coefficients = (0..source_coefficients)
+            .map(|index| F::from_u64((index as u64).wrapping_mul(0x9e37).wrapping_add(0x1234)))
+            .collect::<Vec<_>>();
+        for (map_index, map) in plan.maps.iter().copied().enumerate() {
+            coefficients = match map.ring_dimension {
+                8 => compress_map_stage_against_schoolbook::<F, 8>(&coefficients, map, map_index),
+                16 => compress_map_stage_against_schoolbook::<F, 16>(&coefficients, map, map_index),
+                32 => compress_map_stage_against_schoolbook::<F, 32>(&coefficients, map, map_index),
+                64 => compress_map_stage_against_schoolbook::<F, 64>(&coefficients, map, map_index),
+                128 => {
+                    compress_map_stage_against_schoolbook::<F, 128>(&coefficients, map, map_index)
+                }
+                other => panic!("unexpected compression ring dimension {other}"),
+            };
+            assert_eq!(coefficients.len(), map.output_coefficients);
+            assert_eq!(coefficients.len() * field_bytes, match map_index + 1 == plan.maps.len() {
+                true => 128,
+                false if plan.maps.len() == 2 => 256,
+                false if plan.maps.len() == 3 && map_index == 0 => 512,
+                false if plan.maps.len() == 3 && map_index == 1 => 256,
+                false => panic!("unexpected intermediate size"),
+            });
+        }
+        assert_eq!(coefficients.len() * field_bytes, 128);
+    }
+
+    #[test]
+    fn one_kib_ladders_match_schoolbook_on_exact_prefix_cache() {
+        run_ladder_against_schoolbook::<Prime128OffsetA7F7>(
+            SisModulusProfileId::Q128OffsetA7F7,
+            1024,
+        );
+        run_ladder_against_schoolbook::<Prime64Offset59>(SisModulusProfileId::Q64Offset59, 1024);
+        run_ladder_against_schoolbook::<Prime32Offset99>(SisModulusProfileId::Q32Offset99, 1024);
+    }
+
+    #[test]
+    fn sixteen_kib_ladders_match_schoolbook_on_exact_prefix_cache() {
+        run_ladder_against_schoolbook::<Prime128OffsetA7F7>(
+            SisModulusProfileId::Q128OffsetA7F7,
+            16 * 1024,
+        );
+        run_ladder_against_schoolbook::<Prime64Offset59>(
+            SisModulusProfileId::Q64Offset59,
+            16 * 1024,
+        );
+        run_ladder_against_schoolbook::<Prime32Offset99>(
+            SisModulusProfileId::Q32Offset99,
+            16 * 1024,
+        );
     }
 
     /// Run with:
