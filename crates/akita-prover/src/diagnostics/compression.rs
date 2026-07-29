@@ -1,6 +1,7 @@
 //! Opt-in execution of compressed commitments without protocol effects.
 
 use crate::compute::{CompressionRowsPlan, DigitRowsComputeBackend, OperationCtx};
+use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_planner::compression_diagnostic::{
     plan_compression_diagnostic, CompressionDiagnosticMap,
@@ -92,20 +93,13 @@ fn negative_binary_digits<F: CanonicalField, const D: usize>(
             "compression map input width is undersized".into(),
         ));
     }
-    let modulus = field_modulus::<F>();
     let mut digits = vec![[0i8; D]; input_width];
-    for bit in 0..field_bits {
-        for (coefficient_index, coefficient) in coefficients.iter().enumerate() {
-            let canonical = coefficient.to_canonical_u128();
-            let magnitude = if canonical == 0 {
-                0
-            } else {
-                modulus - canonical
-            };
-            let linear = bit * coefficients.len() + coefficient_index;
-            digits[linear / D][linear % D] = -(((magnitude >> bit) & 1) as i8);
-        }
-    }
+    balanced_decompose_coefficients_pow2_i8_into(
+        coefficients,
+        &mut digits.as_flattened_mut()[..digit_coefficients],
+        field_bits,
+        1,
+    );
     Ok(digits)
 }
 
@@ -323,24 +317,74 @@ fn duration_micros(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::Prime128OffsetA7F7;
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+    use std::hint::black_box;
 
-    #[test]
-    fn negative_binary_digits_reconstruct_the_input() {
-        type F = Prime128OffsetA7F7;
+    fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
         let values = [F::zero(), F::one(), F::from_u64(17), -F::from_u64(9)];
-        let digits = negative_binary_digits::<F, 8>(&values, 64).expect("digits");
+        let field_bits = F::modulus_bits() as usize;
+        let input_width = values.len() * field_bits / D;
+        let digits =
+            negative_binary_digits::<F, D>(&values, input_width).expect("negative-binary digits");
+        let mut reference = vec![[0i8; D]; input_width];
+        let modulus = field_modulus::<F>();
+        for bit in 0..field_bits {
+            for (coefficient_index, coefficient) in values.iter().enumerate() {
+                let canonical = coefficient.to_canonical_u128();
+                let magnitude = if canonical == 0 {
+                    0
+                } else {
+                    modulus - canonical
+                };
+                let linear = bit * values.len() + coefficient_index;
+                reference[linear / D][linear % D] = -(((magnitude >> bit) & 1) as i8);
+            }
+        }
+        assert_eq!(digits, reference);
+
         for (coefficient_index, expected) in values.iter().copied().enumerate() {
             let mut actual = F::zero();
             let mut power = F::one();
-            for bit in 0..F::modulus_bits() as usize {
+            for bit in 0..field_bits {
                 actual += F::from_i8(
-                    digits[(bit * values.len() + coefficient_index) / 8]
-                        [(bit * values.len() + coefficient_index) % 8],
+                    digits[(bit * values.len() + coefficient_index) / D]
+                        [(bit * values.len() + coefficient_index) % D],
                 ) * power;
                 power += power;
             }
             assert_eq!(actual, expected);
         }
+    }
+
+    #[test]
+    fn negative_binary_digits_preserve_the_compression_layout() {
+        assert_negative_binary_digits::<Prime128OffsetA7F7, 16>();
+        assert_negative_binary_digits::<Prime64Offset59, 16>();
+        assert_negative_binary_digits::<Prime32Offset99, 32>();
+    }
+
+    /// Run with:
+    /// `cargo test -p akita-prover --release --features compression-diagnostics negative_binary_digitization_bench -- --ignored --nocapture`
+    #[test]
+    #[ignore = "release-only compression digitization microbenchmark"]
+    fn negative_binary_digitization_bench() {
+        type F = Prime128OffsetA7F7;
+        const D: usize = 16;
+        const ITERATIONS: usize = 10_000;
+        let values = (0..64)
+            .map(|index| F::from_u64((index * 0x9e37 + 0x1234) as u64))
+            .collect::<Vec<_>>();
+
+        let started = Instant::now();
+        for _ in 0..ITERATIONS {
+            black_box(
+                negative_binary_digits::<F, D>(black_box(&values), 512).expect("digitization"),
+            );
+        }
+        let elapsed = started.elapsed();
+        println!(
+            "negative-binary 1 KiB source: {} ns/iteration",
+            elapsed.as_nanos() / ITERATIONS as u128
+        );
     }
 }
