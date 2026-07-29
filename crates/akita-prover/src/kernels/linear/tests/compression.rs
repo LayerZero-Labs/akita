@@ -62,4 +62,5 @@ fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
 
     let outside_binary = [[2i8; D]; 4];
     assert!(compression_rows::<F, D>(&slot, 1, &[&outside_binary]).is_err());
+    assert!(compression_rows::<F, D>(&slot, 2, &[&full]).is_err());
 }

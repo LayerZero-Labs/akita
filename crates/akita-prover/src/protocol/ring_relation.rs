@@ -7,6 +7,11 @@ use crate::compute::{
     OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
     RuntimeOpeningProveBackendFor,
 };
+#[cfg(feature = "compression-diagnostics")]
+use crate::diagnostics::compression::{
+    compute_shadow_compressed_commitments, CompressionDiagnosticSource,
+    CompressionDiagnosticSourceKind,
+};
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -476,6 +481,8 @@ impl RingRelationProver {
         // Sent-commitment rows are B-role data; keep them as flat coefficients
         // and validate the ring count under `d_b` (no-panic length gate).
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
+        #[cfg(feature = "compression-diagnostics")]
+        let mut commitment_group_ranges = Vec::with_capacity(num_groups);
         let commit_group_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -494,7 +501,11 @@ impl RingRelationProver {
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
+            #[cfg(feature = "compression-diagnostics")]
+            let group_start = commitment_row_coeffs.len();
             commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
+            #[cfg(feature = "compression-diagnostics")]
+            commitment_group_ranges.push((group_index, group_start..commitment_row_coeffs.len()));
         }
         for group_index in 0..num_groups {
             let group_hint = block_claims.group_hint(group_index)?;
@@ -642,6 +653,46 @@ impl RingRelationProver {
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
+        #[cfg(feature = "compression-diagnostics")]
+        {
+            let mut sources = commitment_group_ranges
+                .iter()
+                .map(|(group_index, range)| {
+                    Ok(CompressionDiagnosticSource {
+                        kind: CompressionDiagnosticSourceKind::Outer {
+                            group_index: *group_index,
+                        },
+                        coefficients: commitment_rows.coeffs().get(range.clone()).ok_or_else(
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "compression B source range exceeds commitment rows".into(),
+                                )
+                            },
+                        )?,
+                    })
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            if !v.coeffs().is_empty() {
+                sources.push(CompressionDiagnosticSource {
+                    kind: CompressionDiagnosticSourceKind::Opening,
+                    coefficients: v.coeffs(),
+                });
+            }
+            let report = compute_shadow_compressed_commitments(ring_switch_ctx, &sources).map_err(
+                |err| {
+                    AkitaError::InvalidInput(format!(
+                        "compressed-commitment diagnostic failed: {err:?}"
+                    ))
+                },
+            )?;
+            tracing::info!(
+                sources = report.sources,
+                slices = report.slices,
+                maps = report.maps,
+                terminal_bytes = report.terminal_bytes,
+                "computed and discarded shadow compressed commitments"
+            );
+        }
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 

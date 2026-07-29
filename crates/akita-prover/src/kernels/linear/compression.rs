@@ -30,7 +30,7 @@ pub(crate) fn compression_rows<F: FieldCore + CanonicalField, const D: usize>(
         ));
     }
 
-    Ok(match slot {
+    match slot {
         PreparedNttCache::Q32 { neg, params, .. } => {
             compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
         }
@@ -40,7 +40,7 @@ pub(crate) fn compression_rows<F: FieldCore + CanonicalField, const D: usize>(
         PreparedNttCache::Q128 { neg, params, .. } => {
             compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
         }
-    })
+    }
 }
 
 fn compression_rows_with_params<
@@ -54,15 +54,25 @@ fn compression_rows_with_params<
     column_count: usize,
     digit_vectors: &[&[[i8; D]]],
     params: &CrtNttParamSet<W, K, D>,
-) -> Vec<Vec<CyclotomicRing<F, D>>> {
-    let rows = (0..output_rank)
-        .map(|row| &matrix[row * column_count..(row + 1) * column_count])
+) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let required_matrix_len = output_rank.checked_mul(column_count).ok_or_else(|| {
+        AkitaError::InvalidInput("compression matrix prefix length overflow".to_string())
+    })?;
+    let matrix = matrix.get(..required_matrix_len).ok_or_else(|| {
+        AkitaError::InvalidSetup(format!(
+            "compression matrix requires {required_matrix_len} ring elements, but setup has {}",
+            matrix.len()
+        ))
+    })?;
+    let rows = matrix
+        .chunks_exact(column_count)
+        .take(output_rank)
         .collect::<Vec<_>>();
     let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, column_count, 1)
         .expect("one signed compression digit must fit the CRT profile");
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, 1);
 
-    drive_block_chunked_matvec(
+    Ok(drive_block_chunked_matvec(
         digit_vectors.len(),
         output_rank,
         column_count,
@@ -89,5 +99,5 @@ fn compression_rows_with_params<
                 }
             }
         },
-    )
+    ))
 }
