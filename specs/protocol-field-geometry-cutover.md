@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-24 |
 | Status        | implemented |
-| PR            | |
+| PR            | [#336](https://github.com/LayerZero-Labs/akita/pull/336) |
 | Depends-on    | [`specs/runtime-ring-cutover.md`](runtime-ring-cutover.md) (**satisfied**: implemented, PR #249) |
 | Coordinates-with | [`specs/protocol-core-eor-consolidation.md`](protocol-core-eor-consolidation.md) (implemented #194; module-layout reference); [`specs/extension-field-opening-batching.md`](extension-field-opening-batching.md) (EOR math / wire baseline); [`specs/digit-innermost-layout.md`](digit-innermost-layout.md) |
 | Supersedes    | *(orchestration ownership extended from EOR-consolidation; that spec remains the #194 module-layout record)* |
