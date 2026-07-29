@@ -279,21 +279,28 @@ pub fn fold_witness_digit_plan(
     // Optional digit snap-down: walk `δ_fold` downward while the symmetric
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
+    //
+    // Small fields (`field_bits < 128`) keep retain fraction `3/4`.
+    // Wide fields use the protocol binding floor (currently `1/2`).
     if let (
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         Some(rademacher_inf_norm_bound),
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
-        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
-            && fold_decomposed_digits > 1
-            && rademacher_inf_norm_bound > 0
-        {
-            let floor =
-                (rademacher_inf_norm_bound.saturating_mul(u128::from(
-                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
-                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
-                .max(1);
+        let (retain_num, retain_den) = if field_bits < 128 {
+            (3u32, 4u32)
+        } else {
+            (
+                FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
+                FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den,
+            )
+        };
+        if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
+            let floor = (rademacher_inf_norm_bound
+                .saturating_mul(u128::from(retain_num))
+                / u128::from(retain_den))
+            .max(1);
             while fold_decomposed_digits > 1 {
                 let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
                 if positive_lower < floor {
