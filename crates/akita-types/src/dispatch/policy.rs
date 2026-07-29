@@ -310,13 +310,13 @@ macro_rules! __dispatch_for_field_compression {
     ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
         match $crate::protocol_dispatch_tier::<$F>() {
             $crate::ProtocolRingDispatchTierId::Fp128 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16, 32 })
             }
             $crate::ProtocolRingDispatchTierId::Fp64 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32, 64 })
             }
             $crate::ProtocolRingDispatchTierId::Fp32 => {
-                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64 })
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128 })
             }
         }
     }};
@@ -392,7 +392,7 @@ protocol_dispatch_policy! {
         opening: [32, 64, 128, 256]
         envelope: [64, 128, 256, 512]
         ntt: [16, 32, 64, 128, 256, 512]
-        compression: [8, 16]
+        compression: [8, 16, 32]
         min_bd: 32
         ntt_max: 512
     }
@@ -402,7 +402,7 @@ protocol_dispatch_policy! {
         opening: [32, 64, 128, 256]
         envelope: [32, 64, 128, 256]
         ntt: [32, 64, 128, 256, 512, 1024]
-        compression: [16, 32]
+        compression: [16, 32, 64]
         min_bd: 32
         ntt_max: 1024
     }
@@ -412,7 +412,7 @@ protocol_dispatch_policy! {
         opening: [64, 128, 256]
         envelope: [64, 128, 256]
         ntt: [64, 128, 256, 512, 1024, 2048]
-        compression: [32, 64]
+        compression: [32, 64, 128]
         min_bd: 64
         ntt_max: 2048
     }
@@ -464,27 +464,27 @@ mod tests {
     }
 
     #[test]
-    fn compression_arms_are_the_two_map_ladder_for_each_tier() {
+    fn compression_arms_cover_the_rank_one_ladder_for_each_tier() {
         assert_eq!(
             arms_for_slot(
                 ProtocolRingDispatchTierId::Fp128,
                 ProtocolDispatchSlot::Compression
             ),
-            &[8, 16]
+            &[8, 16, 32]
         );
         assert_eq!(
             arms_for_slot(
                 ProtocolRingDispatchTierId::Fp64,
                 ProtocolDispatchSlot::Compression
             ),
-            &[16, 32]
+            &[16, 32, 64]
         );
         assert_eq!(
             arms_for_slot(
                 ProtocolRingDispatchTierId::Fp32,
                 ProtocolDispatchSlot::Compression
             ),
-            &[32, 64]
+            &[32, 64, 128]
         );
     }
 

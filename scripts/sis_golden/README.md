@@ -217,15 +217,22 @@ cargo run -p akita-sis-estimator --release --features parallel \
 ```
 
 Regenerate the six diagnostic compressed-commitment cells. Each cap is the
-largest width reachable from one 16 KiB source slice or its rank-two successor:
+The compression certificate contains only the nine rank-one cells used by the
+1--16 KiB diagnostic ladder. The established six cells retain their exact
+rank-one boundaries; the three doubled-dimension cells stop at the largest
+reachable width:
 
 ```bash
-for job in q128:8:512 q128:16:8192 q64:16:256 q64:32:4096 q32:32:128 q32:64:2048; do
+for job in \
+  q128:8:512 q128:16:8192 q128:32:4096 \
+  q64:16:256 q64:32:4096 q64:64:2048 \
+  q32:32:128 q32:64:2048 q32:128:1024
+do
   IFS=: read -r profile d cap <<< "$job"
   cargo run -p akita-sis-estimator --release --features parallel \
     --example infinity_width_table -- \
     --format csv --profiles "$profile" --dims "$d" --bounds 1 \
-    --max-rank 2 --search-cap "$cap" --profile local-minimum \
+    --max-rank 1 --search-cap "$cap" --profile local-minimum \
     --output "/tmp/akita-compression-${profile}-d${d}.csv"
 done
 ```

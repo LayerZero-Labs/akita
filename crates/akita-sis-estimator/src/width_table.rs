@@ -884,9 +884,19 @@ mod tests {
             32,
             1
         ));
-        assert!(!reachable_role_cell(
+        assert!(reachable_role_cell(
             AkitaModulusProfileId::Q128OffsetA7F7,
             32,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q64Offset59,
+            64,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q32Offset99,
+            128,
             1
         ));
     }

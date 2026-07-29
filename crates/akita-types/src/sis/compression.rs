@@ -11,7 +11,7 @@ use super::{SisModulusProfileId, SisSecurityPolicyId};
 pub const COMPRESSION_SIS_COEFF_LINF_BOUND: u128 = 1;
 
 /// Largest module rank generated for diagnostic compression matrices.
-pub const COMPRESSION_SIS_MAX_MODULE_RANK: u32 = 2;
+pub const COMPRESSION_SIS_MAX_MODULE_RANK: u32 = 1;
 
 /// One exact cell in the diagnostic compressed-commitment SIS surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,12 +39,15 @@ pub fn compression_sis_cell(
         return None;
     }
     let required_max_width = match (modulus_profile, ring_dimension) {
-        (SisModulusProfileId::Q128OffsetA7F7, 16) => 8_192,
-        (SisModulusProfileId::Q128OffsetA7F7, 8) => 512,
-        (SisModulusProfileId::Q64Offset59, 32) => 4_096,
-        (SisModulusProfileId::Q64Offset59, 16) => 256,
-        (SisModulusProfileId::Q32Offset99, 64) => 2_048,
-        (SisModulusProfileId::Q32Offset99, 32) => 128,
+        (SisModulusProfileId::Q128OffsetA7F7, 32) => 4_096,
+        (SisModulusProfileId::Q128OffsetA7F7, 16) => 4_096,
+        (SisModulusProfileId::Q128OffsetA7F7, 8) => 256,
+        (SisModulusProfileId::Q64Offset59, 64) => 2_048,
+        (SisModulusProfileId::Q64Offset59, 32) => 2_048,
+        (SisModulusProfileId::Q64Offset59, 16) => 128,
+        (SisModulusProfileId::Q32Offset99, 128) => 1_024,
+        (SisModulusProfileId::Q32Offset99, 64) => 1_024,
+        (SisModulusProfileId::Q32Offset99, 32) => 64,
         _ => return None,
     };
     Some(CompressionSisCell {
@@ -79,20 +82,22 @@ pub fn min_compression_secure_rank(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ntt_cache_requires_i16_tail;
+    use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 
     #[test]
-    fn coverage_is_exactly_the_six_compression_cells() {
+    fn coverage_is_exactly_the_nine_rank_one_compression_cells() {
         for (profile, supported) in [
-            (SisModulusProfileId::Q128OffsetA7F7, [8, 16]),
-            (SisModulusProfileId::Q64Offset59, [16, 32]),
-            (SisModulusProfileId::Q32Offset99, [32, 64]),
+            (SisModulusProfileId::Q128OffsetA7F7, [8, 16, 32]),
+            (SisModulusProfileId::Q64Offset59, [16, 32, 64]),
+            (SisModulusProfileId::Q32Offset99, [32, 64, 128]),
         ] {
             for d in supported {
                 assert!(compression_sis_cell(profile, d, 1).is_some());
             }
         }
 
-        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 32, 1).is_none());
+        assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 64, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q64Offset59, 8, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q32Offset99, 16, 1).is_none());
         assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 8, 2).is_none());
@@ -100,13 +105,13 @@ mod tests {
             compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 1)
                 .expect("first q128 map")
                 .required_max_width,
-            8_192
+            4_096
         );
         assert_eq!(
             compression_sis_cell(SisModulusProfileId::Q32Offset99, 32, 1)
                 .expect("terminal q32 map")
                 .required_max_width,
-            128
+            64
         );
     }
 
@@ -115,10 +120,13 @@ mod tests {
         for (profile, d) in [
             (SisModulusProfileId::Q128OffsetA7F7, 8),
             (SisModulusProfileId::Q128OffsetA7F7, 16),
+            (SisModulusProfileId::Q128OffsetA7F7, 32),
             (SisModulusProfileId::Q64Offset59, 16),
             (SisModulusProfileId::Q64Offset59, 32),
+            (SisModulusProfileId::Q64Offset59, 64),
             (SisModulusProfileId::Q32Offset99, 32),
             (SisModulusProfileId::Q32Offset99, 64),
+            (SisModulusProfileId::Q32Offset99, 128),
         ] {
             let cell = compression_sis_cell(profile, d, 1).expect("cell");
             assert!(min_compression_secure_rank(
@@ -138,5 +146,18 @@ mod tests {
             )
             .is_none());
         }
+    }
+
+    #[test]
+    fn reachable_negative_binary_widths_need_no_exactness_tail() {
+        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 32>(4_096, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 16>(4_096, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 8>(256, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 64>(2_048, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 32>(2_048, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 16>(128, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 128>(1_024, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 64>(1_024, 1).unwrap());
+        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 32>(64, 1).unwrap());
     }
 }

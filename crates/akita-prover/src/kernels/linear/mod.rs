@@ -40,7 +40,7 @@ pub(crate) use capacity::{selected_crt_i8_capacity_profile, CrtI8CapacityProfile
 use chunked_matvec::*;
 pub(crate) use common::digit_blocks_are_balanced;
 use common::*;
-pub(crate) use compression::compression_rows;
+pub(crate) use compression::{compression_rows, validate_compression_rows};
 #[cfg(test)]
 use crt_matvec::precompute_dense_mat_ntt_with_params;
 #[cfg(test)]

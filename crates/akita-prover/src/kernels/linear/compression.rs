@@ -7,7 +7,31 @@ pub(crate) fn compression_rows<F: FieldCore + CanonicalField, const D: usize>(
     output_rank: usize,
     digit_vectors: &[&[[i8; D]]],
 ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+    let column_count = validate_compression_rows(output_rank, digit_vectors)?;
+
+    match slot {
+        PreparedNttCache::Q32 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+        PreparedNttCache::Q64 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+        PreparedNttCache::Q128 { neg, params, .. } => {
+            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
+        }
+    }
+}
+
+pub(crate) fn validate_compression_rows<const D: usize>(
+    output_rank: usize,
+    digit_vectors: &[&[[i8; D]]],
+) -> Result<usize, AkitaError> {
     let column_count = digit_vectors.first().map_or(0, |digits| digits.len());
+    if output_rank == 0 {
+        return Err(AkitaError::InvalidInput(
+            "compression output rank must be nonzero".to_string(),
+        ));
+    }
     if digit_vectors.is_empty() || column_count == 0 {
         return Err(AkitaError::InvalidInput(
             "compression batch must contain nonempty digit vectors".to_string(),
@@ -29,18 +53,7 @@ pub(crate) fn compression_rows<F: FieldCore + CanonicalField, const D: usize>(
             "compression batch contains a digit outside {-1,0}".to_string(),
         ));
     }
-
-    match slot {
-        PreparedNttCache::Q32 { neg, params, .. } => {
-            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
-        }
-        PreparedNttCache::Q64 { neg, params, .. } => {
-            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
-        }
-        PreparedNttCache::Q128 { neg, params, .. } => {
-            compression_rows_with_params(neg, output_rank, column_count, digit_vectors, params)
-        }
-    }
+    Ok(column_count)
 }
 
 fn compression_rows_with_params<
@@ -68,8 +81,12 @@ fn compression_rows_with_params<
         .chunks_exact(column_count)
         .take(output_rank)
         .collect::<Vec<_>>();
-    let safe_width = safe_crt_chunk_width::<F, W, K, D>(params, column_count, 1)
-        .expect("one signed compression digit must fit the CRT profile");
+    let safe_width =
+        safe_crt_chunk_width::<F, W, K, D>(params, column_count, 1).ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "compression CRT profile cannot accumulate one signed digit".to_string(),
+            )
+        })?;
     let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, 1);
 
     Ok(drive_block_chunked_matvec(

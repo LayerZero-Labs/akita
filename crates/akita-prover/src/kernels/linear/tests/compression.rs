@@ -43,10 +43,16 @@ fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
 }
 
 #[test]
-fn compression_batch_matches_schoolbook_at_each_terminal_ring() {
+fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
     assert_compression_batch::<Prime128Offset275, 8>();
+    assert_compression_batch::<Prime128Offset275, 16>();
+    assert_compression_batch::<Prime128Offset275, 32>();
     assert_compression_batch::<Prime64Offset59, 16>();
+    assert_compression_batch::<Prime64Offset59, 32>();
+    assert_compression_batch::<Prime64Offset59, 64>();
     assert_compression_batch::<Prime32Offset99, 32>();
+    assert_compression_batch::<Prime32Offset99, 64>();
+    assert_compression_batch::<Prime32Offset99, 128>();
 }
 
 #[test]

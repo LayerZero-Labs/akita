@@ -116,8 +116,6 @@ where
         })
         .collect::<Result<Vec<_>, _>>()?;
     let digit_views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
-    let expanded = ctx.backend().prepared_expanded_setup(ctx.prepared());
-    ctx.ensure_envelope_ntt(expanded, D)?;
     let outputs = ctx.backend().compression_rows(
         ctx.prepared(),
         CompressionRowsPlan {

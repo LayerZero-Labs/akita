@@ -90,14 +90,15 @@ The bound is in bytes, not field elements or ring elements:
 | q32 | 4 | 4,096 |
 
 The decomposition basis and compression ring dimension determine the matrix
-width. With the negative-binary basis selected here, a maximum-size input has
-the following first-map width:
+width. The ordinary 1--8 KiB ladder starts at the standard dimension. The
+16 KiB maximum doubles only its first dimension so that the first image remains
+rank one:
 
-| Profile | First map ring dimension | First-map width |
-| ------- | ------------------------ | --------------- |
-| q128 | 16 | 8,192 |
-| q64 | 32 | 4,096 |
-| q32 | 64 | 2,048 |
+| Profile | Standard first `D` | 16 KiB first `D` | 16 KiB first width |
+| ------- | ------------------ | ---------------- | ------------------- |
+| q128 | 16 | 32 | 4,096 |
+| q64 | 32 | 64 | 2,048 |
+| q32 | 64 | 128 | 1,024 |
 
 Any future slicing policy belongs to the protocol planner. It should be
 considered only when a B or D matrix is longer than the corresponding A matrix,
@@ -113,16 +114,16 @@ terminal image.
 
 | Input size | First image | Terminal image | Maps |
 | ---------- | ----------- | -------------- | ---- |
-| 1, 2, 4, or 8 KiB | 256 B | 128 B | 2 |
-| 16 KiB | 512 B | 128 B via 256 B | 3 |
+| At most 8 KiB | 256 B | 128 B | 2 |
+| Over 8 KiB through 16 KiB | 512 B | 128 B via 256 B | 3 |
 
-The ring dimensions are profile-specific:
+The ring dimensions are profile-specific and halve at each map:
 
-| Profile | First map `D` | Later map `D` |
-| ------- | ------------- | ------------- |
-| q128 | 16 | 8 |
-| q64 | 32 | 16 |
-| q32 | 64 | 32 |
+| Profile | At-most-8-KiB ladder | Over-8-KiB ladder |
+| ------- | --------------------- | -------------------- |
+| q128 | 16, 8 | 32, 16, 8 |
+| q64 | 32, 16 | 64, 32, 16 |
+| q32 | 64, 32 | 128, 64, 32 |
 
 The 1 KiB standard case is therefore `1 KiB -> 256 B -> 128 B`. Each stage
 decomposes its complete input into negative-binary digits before applying the
@@ -130,7 +131,8 @@ next F/H matrix. Selection stops at the first exact 128-byte image.
 Undershooting the target or failing to reach it within three maps is an error.
 
 These are small negacyclic module-SIS maps, not unstructured scalar maps. Their
-small ring dimensions are intentional and are part of the kernel surface.
+small ring dimensions are intentional and are part of the kernel surface. All
+reachable maps have output rank one.
 
 ## Security Contract
 
@@ -139,16 +141,19 @@ ADPS16 floor. The coefficient infinity bound is exactly one, matching the
 negative-binary kernel.
 
 The compression table is separate from production A/B/D sizing and contains
-only the six cells exercised by the ladder:
+only the nine rank-one cells exercised by the ladder:
 
-| Profile | `D` | Rank-1 max width | Rank-2 max width | Required max width |
-| ------- | --- | ---------------- | ---------------- | ------------------ |
-| q128 | 16 | 7,077 | 8,192 | 8,192 |
-| q128 | 8 | 508 | 512 | 512 |
-| q64 | 32 | 3,538 | 4,096 | 4,096 |
-| q64 | 16 | 254 | 256 | 256 |
-| q32 | 64 | 1,769 | 2,048 | 2,048 |
-| q32 | 32 | 127 | 128 | 128 |
+| Profile | `D` | Certified rank-1 width | Required max width |
+| ------- | --- | ---------------------- | ------------------ |
+| q128 | 32 | at least 4,096 | 4,096 |
+| q128 | 16 | 7,077 | 4,096 |
+| q128 | 8 | 508 | 256 |
+| q64 | 64 | at least 2,048 | 2,048 |
+| q64 | 32 | 3,538 | 2,048 |
+| q64 | 16 | 254 | 128 |
+| q32 | 128 | at least 1,024 | 1,024 |
+| q32 | 64 | 1,769 | 1,024 |
+| q32 | 32 | 127 | 64 |
 
 The planner selects the minimum secure rank for the exact width. Width zero,
 width above the required maximum, another coefficient bound, another ring
@@ -194,6 +199,20 @@ The diagnostic must not:
 An error in diagnostic execution fails the feature-enabled proof rather than
 silently reporting success without computing the image.
 
+The CPU backend prepares one cache slot for each exact compression shape:
+
+```text
+(field profile, ring dimension, output rank, input width)
+```
+
+The slot covers exactly `output rank * input width` setup ring elements and
+contains only the negacyclic transform required by the compression kernel.
+Compression slots have a separate namespace from the generic setup cache,
+whose entries cover the full envelope and contain both cyclic and negacyclic
+transforms. This separation is required even when the two prefixes have equal
+length: a negacyclic-only slot must never satisfy a later cyclic lookup.
+Concurrent first use of one compression shape is single-flight.
+
 ## Protocol Cutover
 
 After diagnostic measurements are satisfactory, implement the protocol change
@@ -232,6 +251,8 @@ The diagnostic implementation must include:
 - schoolbook equivalence tests for q128, q64, and q32 compression kernels;
 - rejection of mixed-shape batches, non-negative-binary digits, and
   undersized setup prefixes;
+- exact-prefix compression-cache accounting, single-flight first use, and
+  isolation from full-envelope both-transform cache slots;
 - planner tests that 1, 2, 4, and 8 KiB inputs use two maps;
 - planner tests that 16 KiB uses three maps and larger inputs are rejected;
 - an end-to-end proof with diagnostics enabled that verifies with the current
