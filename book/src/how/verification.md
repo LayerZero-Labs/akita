@@ -19,6 +19,20 @@ At a high level:
    state. The terminal relation is `consistency | A`; it has no outer `u`, B
    block, D block, or quotient sumcheck.
 
+Root replay reads each commitment group's point directly from
+`PolynomialGroupClaims`.
+The verifier prepares the per-group relation and extension-opening factors from
+that complete point, without reconstructing a common point.
+When EOR is required, the groups enter one batched reduction but retain their
+own public points and native arities.
+
+At a recursive boundary, Stage 2 supplies the next-witness claim
+`(stage2_point, stage2_next_w_eval)`.
+Stage 3 independently proves the setup product and supplies
+`(stage3_setup_point, stage3_setup_prefix_eval)`.
+The successor consumes these as separate witness and setup groups.
+Stage 3 does not re-randomize, project, or serialize the witness claim.
+
 The terminal `A * z` check accepts exactly the signed-i16 coefficient class.
 Decoded coefficients outside `[-32768, 32767]` are rejected before arithmetic;
 there is no alternate i8 or balanced-radix verifier path. The exact

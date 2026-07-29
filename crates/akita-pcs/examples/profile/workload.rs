@@ -1072,8 +1072,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     let pools = ProfileThreadPools::get();
 
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
-    let point = random_claim_point::<FF, Cfg::ExtField>(final_num_vars, &mut point_rng);
-    let pre_point = &point[..pre_num_vars];
+    let pre_points = (0..PRE_GROUPS)
+        .map(|_| random_claim_point::<FF, Cfg::ExtField>(pre_num_vars, &mut point_rng))
+        .collect::<Vec<_>>();
+    let final_point = random_claim_point::<FF, Cfg::ExtField>(final_num_vars, &mut point_rng);
 
     let (proof, schedule, pre_openings, pre_commitments, final_openings, final_commitment, setup) = {
         let t0 = Instant::now();
@@ -1113,7 +1115,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let mut pre_openings = Vec::with_capacity(PRE_GROUPS);
 
         let t_commit = Instant::now();
-        for group_idx in 0..PRE_GROUPS {
+        for (group_idx, pre_point) in pre_points.iter().enumerate() {
             let key = PolynomialGroupLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP);
             let opening_batch = OpeningClaimsLayout::new(pre_num_vars, PRE_POLYS_PER_GROUP)
                 .expect("precommit batch");
@@ -1160,7 +1162,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             .collect::<Vec<_>>();
         let final_openings = final_polys
             .iter()
-            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &point))
+            .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &final_point))
             .collect::<Vec<_>>();
         let (final_commitment, final_hint) = AkitaCommitmentScheme::<ProofCfg>::commit_final_group(
             &setup,
@@ -1181,7 +1183,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             prover_groups.push(
                 PolynomialGroupClaims::new(
-                    point[..pre_num_vars].to_vec(),
+                    pre_points[group_idx].clone(),
                     openings.clone(),
                     pre_commitments[group_idx].clone(),
                 )
@@ -1190,7 +1192,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         }
         prover_groups.push(
             PolynomialGroupClaims::new(
-                point.clone(),
+                final_point.clone(),
                 final_openings.clone(),
                 final_commitment.clone(),
             )
@@ -1273,7 +1275,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
             PolynomialGroupClaims::new(
-                point[..pre_num_vars].to_vec(),
+                pre_points[group_idx].clone(),
                 openings.clone(),
                 &pre_commitments[group_idx],
             )
@@ -1281,7 +1283,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         );
     }
     verifier_groups.push(
-        PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
+        PolynomialGroupClaims::new(final_point, final_openings, &final_commitment)
             .expect("final verifier group"),
     );
 

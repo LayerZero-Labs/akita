@@ -18,6 +18,12 @@ use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
 
+#[cfg(test)]
+thread_local! {
+    static LAGRANGE_SPLIT_OPERATION_COUNTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Maximum memory budget for one materialized equality-table allocation family.
 ///
 /// This is deliberately separate from serialization's generic sequence cap:
@@ -33,6 +39,11 @@ impl<E: FieldCore> EqPolynomial<E> {
     fn split_lagrange_parent(value: E, coordinate: E) -> (E, E) {
         let right = value * coordinate;
         let left = value - right;
+        #[cfg(test)]
+        LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+            let (multiplications, subtractions) = counts.get();
+            counts.set((multiplications + 1, subtractions + 1));
+        });
         (left, right)
     }
 
@@ -419,6 +430,26 @@ mod tests {
             assert_eq!(cached.len(), n + 1);
             assert_eq!(cached[0], vec![F::one()]);
             assert_eq!(*cached.last().unwrap(), table);
+        }
+    }
+
+    #[test]
+    fn serial_expansions_use_one_multiply_and_subtract_per_parent() {
+        for num_vars in 0..9 {
+            let point = vec![F::from_u64(7); num_vars];
+            let expected = (1usize << num_vars) - 1;
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_serial(&point, None).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "serial n={num_vars}");
+            });
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_cached(&point).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "cached n={num_vars}");
+            });
         }
     }
 

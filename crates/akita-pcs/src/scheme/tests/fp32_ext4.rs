@@ -252,21 +252,23 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     )
     .expect("final commitment");
 
-    let point = extension_point(FINAL_NV);
-    let pre_opening = onehot_opening_at_point(&pre_poly, &point[..PRE_NV]);
-    let final_opening = onehot_opening_at_point(&final_poly, &point);
+    let mut pre_point = extension_point(PRE_NV);
+    pre_point[0] += SmallE::one();
+    let final_point = extension_point(FINAL_NV);
+    let pre_opening = onehot_opening_at_point(&pre_poly, &pre_point);
+    let final_opening = onehot_opening_at_point(&final_poly, &final_point);
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
     let prover_claims = ProverOpeningData::new(
         OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(
-                point[..PRE_NV].to_vec(),
+                pre_point.clone(),
                 vec![pre_opening],
                 pre_commitment.clone(),
             )
             .expect("pre prover claims"),
             PolynomialGroupClaims::new(
-                point.clone(),
+                final_point.clone(),
                 vec![final_opening],
                 final_commitment.clone(),
             )
@@ -303,9 +305,9 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
 
     let verifier_setup = ProtocolScheme::setup_verifier(&setup).expect("verifier setup");
     let verify_claims = OpeningClaims::from_groups(vec![
-        PolynomialGroupClaims::new(point[..PRE_NV].to_vec(), vec![pre_opening], &pre_commitment)
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
             .expect("pre verifier claims"),
-        PolynomialGroupClaims::new(point.clone(), vec![final_opening], &final_commitment)
+        PolynomialGroupClaims::new(final_point.clone(), vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
     ])
     .expect("grouped verifier claims");
@@ -321,12 +323,12 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
 
     let tampered_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(
-            point[..PRE_NV].to_vec(),
+            pre_point,
             vec![pre_opening + SmallE::one()],
             &pre_commitment,
         )
         .expect("tampered pre claims"),
-        PolynomialGroupClaims::new(point, vec![final_opening], &final_commitment)
+        PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
     ])
     .expect("tampered grouped claims");

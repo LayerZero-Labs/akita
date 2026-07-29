@@ -1,16 +1,34 @@
 # The commitment API
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
 The user-facing surface of `AkitaCommitmentScheme`: how to commit, prove, and
 verify, plus the setup and transcript objects those calls thread through.
 
 ## Commit, prove, verify
 
-The `batched_commit` / `batched_prove` / `batched_verify` entry points (via
-`CommitmentProver` and `CommitmentVerifier`), single-point batched openings via
-`OpeningClaims` / `ProverOpeningData` (one shared evaluation point per call;
-multipoint removed), and the shapes of the inputs and proof objects.
+The `batched_commit`, `batched_prove`, and `batched_verify` entry points operate
+on ordered commitment groups.
+Every `PolynomialGroupClaims` owns one complete opening point, its evaluations,
+and its commitment.
+Polynomials within one group share that point.
+Polynomials opened at another point belong in another group.
+
+```rust
+let claims = OpeningClaims::from_groups(vec![
+    PolynomialGroupClaims::new(point_a, evaluations_a, commitment_a)?,
+    PolynomialGroupClaims::new(point_b, evaluations_b, commitment_b)?,
+])?;
+```
+
+The group order is protocol-visible.
+The descriptor and transcript bind each group's arity, evaluation count,
+commitment, point coordinates, and evaluations in that order.
+`OpeningClaimsLayout` contains only group arities and polynomial counts, so
+setup and schedule selection do not depend on point values.
+
+On the prover side, `ProverOpeningData::new` receives the same claims together
+with commitment hints and polynomial slices in matching group order.
+The verifier receives only `OpeningClaims` and the proof.
+There is no ambient shared point or coordinate-routing object.
 
 **Sources to fold in**
 
@@ -19,7 +37,6 @@ multipoint removed), and the shapes of the inputs and proof objects.
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
 - `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`).
-- `specs/shared-opening-claims-api.md`.
 - `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching

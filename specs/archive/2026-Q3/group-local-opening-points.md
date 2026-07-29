@@ -4,11 +4,11 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-22 |
-| Status        | active |
+| Status        | archived |
 | PR            | #322 |
-| Supersedes    | Point-model portions of [`shared-opening-claims-api.md`](shared-opening-claims-api.md), [`multi-group-batching.md`](multi-group-batching.md), and the shared-point witness carry in [`batched-stage3-setup-opening.md`](batched-stage3-setup-opening.md) |
+| Supersedes    | Point-model portions of [`shared-opening-claims-api.md`](../../shared-opening-claims-api.md), [`multi-group-batching.md`](../../multi-group-batching.md), and the shared-point witness carry in [`batched-stage3-setup-opening.md`](../../batched-stage3-setup-opening.md) |
 | Superseded-by | |
-| Book-chapter  | |
+| Book-chapter  | book/src/how/architecture.md |
 
 The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 **SHOULD**, **SHOULD NOT**, **RECOMMENDED**, **NOT RECOMMENDED**, **MAY**, and
@@ -715,59 +715,59 @@ caches containing a different prefix-slot registry are not assumed compatible.
 
 #### Group-local claims cutover
 
-- [ ] `PolynomialGroupClaims` stores its complete point and
+- [x] `PolynomialGroupClaims` stores its complete point and
   `PointVariableSelection` is removed from public and internal APIs.
-- [ ] Constructors reject empty groups, inconsistent dimensions, unsupported
+- [x] Constructors reject empty groups, inconsistent dimensions, unsupported
   arities, and layout/schedule mismatches without panicking.
-- [ ] Existing one-group and multi-group proofs round-trip through the new model.
-- [ ] A multi-group end-to-end test opens at least two groups at unrelated point
+- [x] Existing one-group and multi-group proofs round-trip through the new model.
+- [x] A multi-group end-to-end test opens at least two groups at unrelated point
   values and different supported arities.
-- [ ] Dense, one-hot, base-field, extension-field/EOR, uniform-D, mixed-D, and
+- [x] Dense, one-hot, base-field, extension-field/EOR, uniform-D, mixed-D, and
   recursive-setup multi-group tests retain their current support matrix.
-- [ ] Prefix-related, suffix-related, equal, and unrelated group points produce
+- [x] Prefix-related, suffix-related, equal, and unrelated group points produce
   the same verification result. If reuse exists, results are identical with it
   enabled and disabled.
-- [ ] Setup generation and schedule lookup use only
+- [x] Setup generation and schedule lookup use only
   `OpeningClaimsLayout`; no fake points or duplicate shape types are introduced.
 
 #### Transcript and descriptor cutover
 
-- [ ] Descriptor tests show that changing one group arity, count, or order
+- [x] Descriptor tests show that changing one group arity, count, or order
   changes the digest.
-- [ ] Transcript-smell tests show that changing one group point, commitment, or
+- [x] Transcript-smell tests show that changing one group point, commitment, or
   evaluation changes all subsequently sampled batching challenges.
-- [ ] Prover and verifier transcript event logs are byte-identical for equal,
+- [x] Prover and verifier transcript event logs are byte-identical for equal,
   nested, and unrelated points.
-- [ ] Old routing fields are removed in one breaking cutover; there is no dual
+- [x] Old routing fields are removed in one breaking cutover; there is no dual
   encoding or compatibility wrapper.
 
 #### Setup-only Stage 3 cutover
 
-- [ ] Recursive setup offloading carries the Stage 2 witness point and
+- [x] Recursive setup offloading carries the Stage 2 witness point and
   `stage2_next_w_eval` unchanged into the successor witness group.
-- [ ] Stage 3 produces only the setup-prefix point and evaluation; its prover
+- [x] Stage 3 produces only the setup-prefix point and evaluation; its prover
   does not receive the compact recursive witness or construct a witness term.
-- [ ] `SetupSumcheckProof` contains only `claim`, `setup_prefix_eval`, and the
+- [x] `SetupSumcheckProof` contains only `claim`, `setup_prefix_eval`, and the
   setup-only sumcheck, and its serializer and shape descriptors agree.
-- [ ] The verifier's Stage 3 final relation contains only the setup-product
+- [x] The verifier's Stage 3 final relation contains only the setup-product
   term and rejects tampering with the claim, setup-prefix evaluation, point, or
   round polynomial.
-- [ ] Recursive-mode transcript tests confirm removal of the Stage 3 batching
+- [x] Recursive-mode transcript tests confirm removal of the Stage 3 batching
   challenge and second witness-evaluation absorption while preserving exact
   prover/verifier event parity.
-- [ ] The old fused geometry, witness reduction, routing helpers, and dead
+- [x] The old fused geometry, witness reduction, routing helpers, and dead
   tests are deleted rather than retained behind adapters.
   `ABSORB_STAGE3_NEXT_W_EVAL` is deleted;
   `CHALLENGE_SUMCHECK_BATCH` remains available to unrelated protocols but is no
   longer emitted by Stage 3.
-- [ ] Planner proof accounting matches actual serialization for `w < s`,
+- [x] Planner proof accounting matches actual serialization for `w < s`,
   `w = s`, and `w > s`, including the exact saving
   `c + 2c * max(0, w - s)`.
-- [ ] Direct setup mode remains byte-identical and does not create a Stage 3
+- [x] Direct setup mode remains byte-identical and does not create a Stage 3
   proof.
-- [ ] An end-to-end recursive-offload test opens the setup prefix and witness at
+- [x] An end-to-end recursive-offload test opens the setup prefix and witness at
   unrelated points in the successor two-group fold.
-- [ ] Setup cache tests demonstrate the intended policy explicitly: unchanged
+- [x] Setup cache tests demonstrate the intended policy explicitly: unchanged
   required prefix-slot registries round-trip, while changed registries are
   regenerated rather than silently treated as compatible.
 
@@ -778,17 +778,17 @@ caches containing a different prefix-slot registry are not assumed compatible.
   calls that traversal instead of owning another loop.
 - [x] Serial full-table, cached all-layers, and parallel builders all use one
   canonical parent-split primitive, with no duplicated two-child arithmetic.
-- [ ] An operation-count test over `s` variables observes exactly `2^s - 1`
+- [x] An operation-count test over `s` variables observes exactly `2^s - 1`
   field multiplications for each full-table serial entry point. Output-parity
   tests cover empty, scaled, base-field, and extension-field tables and preserve
   little-endian order.
-- [ ] A preparation benchmark reports base- and extension-field multiplication
+- [x] A preparation benchmark reports base- and extension-field multiplication
   counts separately for equal, nested, and unrelated points under uniform-D,
   mixed-D, and EOR profiles.
-- [ ] Arbitrary unrelated points do not add asymptotic work beyond independent
+- [x] Arbitrary unrelated points do not add asymptotic work beyond independent
   per-group preparation and do not change group-opening or setup size. Recursive
   Stage 3 proof size changes only by the setup-only formula above.
-- [ ] Any exact cache or nested-factor DAG is a separate benchmark-gated change.
+- [x] Any exact cache or nested-factor DAG is a separate benchmark-gated change.
   If added, hit/miss and negative-key tests vary basis, `d_a`, `M`, `B`,
   coordinate order, and live block length independently.
 
@@ -935,7 +935,7 @@ implementation is complete, durable user-facing behavior belongs in
 `book/src/usage/commitment-api.md`; verifier preparation and failure behavior
 belong in `book/src/how/verification.md`. At that point this spec should be
 marked `implemented` and later folded or archived according to
-[`PRUNING.md`](PRUNING.md).
+[`PRUNING.md`](../../PRUNING.md).
 
 ## Implementation slices
 
@@ -949,9 +949,9 @@ single protocol epoch.
 
 **Goal.** Canonicalize the independent arithmetic repair in PR #322.
 
-**Status.** The ownership cutover and boundary-preservation test are
-implemented on this branch. The exact operation-count and extended field-parity
-acceptance tests remain part of the completion gate.
+**Status.** Implemented on this branch. The canonical parent split is shared by
+the serial, cached, and parallel builders, and the operation-count test checks
+the exact `2^s - 1` multiplication and subtraction count.
 
 **Changes.**
 
@@ -1147,6 +1147,9 @@ and every schedule-selected prefix has a setup registry entry.
 **Goal.** Make the shipped protocol, not this transition spec, the durable
 source of truth.
 
+**Status.** Implemented on this branch. The durable claim, verification,
+architecture, and EOR descriptions live in the Book chapters listed below.
+
 **Changes.**
 
 1. Update the Book commitment API with group-owned claims examples.
@@ -1156,6 +1159,21 @@ source of truth.
    profiles.
 5. Record canonical-expansion counts and Stage 3 proof/time changes.
 6. Mark this spec implemented and fold or archive it under `PRUNING.md`.
+
+**Validation record.** On 2026-07-29, the production recursive W8R2 profile
+used two unrelated 16-variable precommitted points and an unrelated 32-variable
+final point. The two setup-only Stage 3 payloads were 832 bytes each, compared
+with 944 and 880 bytes before the cutover, a total reduction of 160 bytes.
+Single-run traced Stage 3 prover times were 58.1 ms and 43.5 ms, compared with
+186 ms and 74.2 ms before the cutover. These timings are indicative local
+measurements, not stable performance thresholds.
+
+The mixed-D one-hot, unrelated dense, and unrelated extension-field EOR
+profiles all round-tripped. Canonical serial and cached expansion tests observe
+exactly `2^s - 1` multiplications and `2^s - 1` subtractions. Point equality,
+prefix relationships, and unrelated values do not affect that count; each
+group's arity determines its independent expansion cost. No preparation cache
+or nested-factor DAG was added.
 
 **Primary diff surface.**
 
@@ -1223,14 +1241,14 @@ recursive offloading proves exactly the setup statement it is responsible for.
 
 ## References
 
-- [`shared-opening-claims-api.md`](shared-opening-claims-api.md)
-- [`multi-group-batching.md`](multi-group-batching.md)
-- [`batched-stage3-setup-opening.md`](batched-stage3-setup-opening.md)
-- [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
-- [`setup-offloading-planner.md`](setup-offloading-planner.md)
+- [`shared-opening-claims-api.md`](../../shared-opening-claims-api.md)
+- [`multi-group-batching.md`](../../multi-group-batching.md)
+- [`batched-stage3-setup-opening.md`](../../batched-stage3-setup-opening.md)
+- [`distributed-setup-offloading.md`](../../distributed-setup-offloading.md)
+- [`setup-offloading-planner.md`](../../setup-offloading-planner.md)
 - [PR #320: Stage 3 setup products and witness reduction](https://github.com/LayerZero-Labs/akita/pull/320)
 - [PR #331: mixed-D multi-group composition](https://github.com/LayerZero-Labs/akita/pull/331)
-- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
-- [`runtime-schedule-boundary.md`](runtime-schedule-boundary.md)
-- [`book/src/how/verification.md`](../book/src/how/verification.md)
-- [`book/src/usage/profiling.md`](../book/src/usage/profiling.md)
+- [`mixed-ring-dimension-per-level.md`](../../mixed-ring-dimension-per-level.md)
+- [`runtime-schedule-boundary.md`](../../runtime-schedule-boundary.md)
+- [`book/src/how/verification.md`](../../../book/src/how/verification.md)
+- [`book/src/usage/profiling.md`](../../../book/src/usage/profiling.md)
