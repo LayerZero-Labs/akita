@@ -29,6 +29,13 @@ pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
 
 impl<E: FieldCore> EqPolynomial<E> {
+    #[inline]
+    fn split_lagrange_parent(value: E, coordinate: E) -> (E, E) {
+        let right = value * coordinate;
+        let left = value - right;
+        (left, right)
+    }
+
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
         let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
             expected: usize::BITS as usize,
@@ -152,9 +159,8 @@ impl<E: FieldCore> EqPolynomial<E> {
         let mut len = 1usize;
         for &t in r.iter().rev() {
             for j in (0..len).rev() {
-                let value = evals[j];
-                let right = value * t;
-                evals[2 * j] = value - right;
+                let (left, right) = Self::split_lagrange_parent(evals[j], t);
+                evals[2 * j] = left;
                 evals[2 * j + 1] = right;
             }
             len *= 2;
@@ -200,9 +206,8 @@ impl<E: FieldCore> EqPolynomial<E> {
             let t = r[idx];
             let prev_len = 1 << j;
             for i in (0..prev_len).rev() {
-                let value = result[j][i];
-                let right = value * t;
-                result[j + 1][2 * i] = value - right;
+                let (left, right) = Self::split_lagrange_parent(result[j][i], t);
+                result[j + 1][2 * i] = left;
                 result[j + 1][2 * i + 1] = right;
             }
         }
@@ -232,8 +237,7 @@ impl<E: FieldCore> EqPolynomial<E> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_i;
-                    *x -= *y;
+                    (*x, *y) = Self::split_lagrange_parent(*x, r_i);
                 });
 
             size *= 2;
