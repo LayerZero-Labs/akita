@@ -10,7 +10,7 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
@@ -199,7 +199,7 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -418,7 +418,12 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + RandomSampling + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + FromPrimitiveInt
+        + RandomSampling
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
@@ -450,7 +455,7 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
