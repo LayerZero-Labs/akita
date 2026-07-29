@@ -1111,6 +1111,10 @@ points and exact prover/verifier transcript parity.
 
 **Goal.** Make all derived planning state reflect the smaller setup-only proof.
 
+**Status.** Implemented on this branch. Proof pricing now depends only on the
+challenge width and setup domain, generated schedules remain stable, and the
+selected setup-prefix registry and cache round-trip checks pass.
+
 **Changes.**
 
 1. Remove `output_witness_len` from `stage3_setup_product_bytes`.
