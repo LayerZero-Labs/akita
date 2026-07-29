@@ -1,7 +1,18 @@
 //! Single-field fold verifier prefix (`EXT_DEGREE == 1`): no EOR replay.
 
-use super::super::*;
-use akita_types::{dispatch_for_field, Commitment};
+// Explicit imports only: the compiler enforces that the single-field path has
+// no extension-opening-reduction symbols in scope.
+use akita_field::{
+    AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
+};
+use akita_serialization::AkitaSerialize;
+use akita_transcript::labels::ABSORB_EVALUATION_CLAIMS;
+use akita_transcript::{append_ext_field, Transcript};
+use akita_types::{
+    append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
+    sample_public_row_coefficients, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
+    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
+};
 
 pub(in crate::protocol::core) struct SingleFieldFoldPrefix<F: FieldCore, E: FieldCore> {
     pub prepared_points: Vec<PreparedOpeningPoint<F, E>>,

@@ -186,6 +186,10 @@ where
 }
 
 /// Verify the terminal fold's single-group extension-opening reduction.
+///
+/// Terminal proofs carry their geometry directly rather than through
+/// `CommittedGroupParams`, so their replay remains an explicit terminal
+/// boundary instead of being disguised as an ordinary committed-group fold.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
@@ -276,6 +280,9 @@ where
 }
 
 /// Verify one fold's extension-opening reduction over all opening groups.
+///
+/// Every group retains its native opening point and committed geometry. The
+/// groups share one batched sumcheck challenge sequence.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,

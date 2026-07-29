@@ -181,6 +181,18 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         BasisMode::Lagrange,
     )
     .expect_err("tampered extension-opening reduction partial must reject");
+
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut verifier_transcript = AkitaTranscript::<SmallF>::new(TRANSCRIPT_LABEL);
+    SmallScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims(&point, &openings, &commitment),
+        BasisMode::Lagrange,
+    )
+    .expect_err("omitting the required root extension-opening reduction must reject");
 }
 
 #[test]
@@ -329,10 +341,22 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_claims,
+        verify_claims.clone(),
         BasisMode::Lagrange,
     )
     .expect("verify grouped extension proof");
+
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut stripped_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    ProtocolScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut stripped_transcript,
+        verify_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("omitting the required multi-group root extension-opening reduction must reject");
 
     let tampered_claims = OpeningClaims::from_groups(
         point,

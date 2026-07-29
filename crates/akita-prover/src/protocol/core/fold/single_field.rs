@@ -1,11 +1,19 @@
-use super::super::*;
+// Explicit imports only: the compiler enforces that the single-field path has
+// no extension-opening-reduction or root-tensor-projection symbols in scope.
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
     ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly,
 };
-use akita_field::unreduced::{HasWide, ReduceTo};
-use akita_field::AdditiveGroup;
+use crate::{ProverOpeningData, ProverTranscriptGrind};
+use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use akita_field::{
+    AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
+    MulBaseUnreduced, RandomSampling,
+};
+use akita_serialization::AkitaSerialize;
+use akita_transcript::Transcript;
+use akita_types::{BasisMode, CommittedGroupParams, FpExtEncoding};
 
 /// Prepare a fold level when claim and coefficient fields coincide (`EXT_DEGREE == 1`).
 ///

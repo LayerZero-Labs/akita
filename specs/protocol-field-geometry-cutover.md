@@ -107,7 +107,7 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 - Verifier no-panic contract unchanged.
 - Preset/module dispatch uses only `EXT_DEGREE == 1` vs `> 1` (claim field coincides with coefficient field or not).
 - When `EXT_DEGREE > 1`, `eor_required_at_level` is the only authority for per-level EOR presence in prover, verifier, and planner.
-- `fold/single_field.rs` must not reference `extension_opening_reduction`, `tensor_root_projection`, or `RootTensorProjectionPoly` (CI grep).
+- `fold/single_field.rs` must not reference `extension_opening_reduction`, `tensor_root_projection`, or `RootTensorProjectionPoly`. Enforced by the compiler: the module uses explicit imports only (no `super::*` glob), so any EOR reference fails name resolution.
 
 ### Non-Goals
 
@@ -130,26 +130,26 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 
 **Phase A — predicate + drift fixes**
 
-- [ ] `eor_required_at_level` exists in `akita-types` and matches the table in Design.
-- [ ] Root prover, suffix prover, root verifier, suffix verifier, and planner root EOR bytes all call it (no leftover `needs_extension_reduction` / hardcoded `false` at those sites).
-- [ ] Unit table test: `EXT_DEGREE == 1` always false; `EXT_DEGREE > 1` suffix always true; root matches `root_tensor_projection_enabled`.
-- [ ] Extension-claim root missing EOR when required → `InvalidProof` (fail-closed).
-- [ ] Current fp128 multifold still has zero EOR wire bytes.
+- [x] `eor_required_at_level` exists in `akita-types` and matches the table in Design.
+- [x] Root prover, suffix prover, root verifier, suffix verifier, and planner root EOR bytes all call it (no leftover `needs_extension_reduction` / hardcoded `false` at those sites).
+- [x] Unit table test: `EXT_DEGREE == 1` always false; `EXT_DEGREE > 1` suffix always true; root matches `root_tensor_projection_enabled`.
+- [x] Extension-claim root missing EOR when required → `InvalidProof` (fail-closed).
+- [x] Current fp128 multifold still has zero EOR wire bytes.
 
 **Phase B — fold module split**
 
-- [ ] `prepare_single_field_fold` / `prepare_extension_claim_fold` share existing `FinishFoldArgs` / `finish_prepared_fold`.
-- [ ] Matching verifier prefix split; shared `prove_fold` / `verify_fold` after prep.
-- [ ] `const { E::EXT_DEGREE == 1 }` dispatch at `prove_root` / batched prove and verify entry (not preset-family or bit-width checks).
-- [ ] Compiler enforces: single-field fold module has no EOR / root-tensor-projection imports.
-- [ ] Existing fp128 and fp32/fp64 e2e round-trips green, including multi-group root.
+- [x] `prepare_single_field_fold` / `prepare_extension_claim_fold` share existing `FinishFoldArgs` / `finish_prepared_fold`.
+- [x] Matching verifier prefix split; shared `prove_fold` / `verify_fold` after prep.
+- [x] `const { E::EXT_DEGREE == 1 }` dispatch at `prove_root` / batched prove and verify entry (not preset-family or bit-width checks).
+- [x] Compiler enforces: single-field fold module has no EOR / root-tensor-projection imports.
+- [x] Existing fp128 and fp32/fp64 e2e round-trips green, including multi-group root.
 
 **Phase C — wire harden + docs**
 
-- [ ] Deserialize rejects non-empty EOR when `extension_degree == 1` or shape says absent.
-- [ ] fp128 byte fixtures roundtrip identical.
-- [ ] Book stub `how/proving/fold-path.md` + SUMMARY entry; architecture/config describe claim-vs-coefficient coincidence, not “fp128 vs small field.”
-- [ ] Spec status → `implemented`; optional supersede note on EOR-consolidation orchestration ownership.
+- [x] Deserialize rejects non-empty EOR when `extension_degree == 1` or shape says absent.
+- [x] fp128 byte fixtures roundtrip identical.
+- [x] Book stub `how/proving/fold-path.md` + SUMMARY entry; architecture/config describe claim-vs-coefficient coincidence, not “fp128 vs small field.”
+- [x] Spec status → `implemented`; optional supersede note on EOR-consolidation orchestration ownership.
 
 ### Testing Strategy
 
@@ -491,6 +491,8 @@ Alternatively keep a single extension-claim prep that takes `run_eor: bool` **on
 
 **Import isolation:** `fold/single_field.rs` must not import EOR / root-tensor-projection symbols.
 The compiler is the gate; no separate `rg` CI script.
+Implemented via explicit imports in both `single_field.rs` files (no `use super::super::*` glob, which would silently re-expose the core module's EOR re-exports).
+
 #### Diff 9 — wire fail-closed (Phase C)
 
 **File:** `crates/akita-types/src/proof/wire.rs` (deserialize helpers for `extension_opening_reduction`)

@@ -1088,6 +1088,25 @@ mod tests {
             eor_required_for_width(FoldOpeningKind::Suffix, 4, 8, 1),
             eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, 8, 1)
         );
+
+        // The width-based planner twin must agree with the typed predicate
+        // across the whole gate boundary, not just at two sample points.
+        for kind in [FoldOpeningKind::Root, FoldOpeningKind::Suffix] {
+            for ring_d in [1usize, 2, 4, 6, 8, 12, 16, 64, 128] {
+                for num_vars in [0usize, 1, 2, 3, 6, 7, 16] {
+                    assert_eq!(
+                        eor_required_for_width(kind, 1, ring_d, num_vars),
+                        eor_required_at_level::<F, F>(kind, ring_d, num_vars),
+                        "width-1 disagreement at {kind:?} ring_d={ring_d} num_vars={num_vars}"
+                    );
+                    assert_eq!(
+                        eor_required_for_width(kind, 4, ring_d, num_vars),
+                        eor_required_at_level::<F, E>(kind, ring_d, num_vars),
+                        "width-4 disagreement at {kind:?} ring_d={ring_d} num_vars={num_vars}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

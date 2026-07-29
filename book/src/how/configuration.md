@@ -12,6 +12,14 @@ The single user-facing trait that defines every per-config policy hook (algebra,
 exact SIS profile, decomposition, layout, schedule, transcript bind, prove params), and
 the `fp32` / `fp64` / `fp128` preset families built on it.
 
+Both field roles live on the trait: `Field` carries committed witnesses, setup
+matrices, and SIS, while `ExtField` carries public opening points, claimed
+evaluations, and Fiat-Shamir challenges. The protocol geometry gates on
+whether the two roles coincide (`EXT_DEGREE == 1`, all `fp128` presets) or
+claims live in a proper extension (`EXT_DEGREE > 1`, `fp32` / `fp64`), never
+on field bit-width. See
+[Fold path and field geometry](./proving/fold-path.md).
+
 **Sources to fold in**
 
 - `crates/akita-config/src/lib.rs:54-120`.
