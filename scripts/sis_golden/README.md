@@ -216,6 +216,27 @@ cargo run -p akita-sis-estimator --release --features parallel \
   --format rust-split --profile local-minimum --progress-every 500
 ```
 
+Regenerate the six diagnostic compressed-commitment cells. Each cap is the
+largest width reachable from one 16 KiB source slice or its rank-two successor:
+
+```bash
+for job in q128:8:512 q128:16:8192 q64:16:256 q64:32:4096 q32:32:128 q32:64:2048; do
+  IFS=: read -r profile d cap <<< "$job"
+  cargo run -p akita-sis-estimator --release --features parallel \
+    --example infinity_width_table -- \
+    --format csv --profiles "$profile" --dims "$d" --bounds 1 \
+    --max-rank 2 --search-cap "$cap" --profile local-minimum \
+    --output "/tmp/akita-compression-${profile}-d${d}.csv"
+done
+```
+
+The checked-in merged certificate is
+`scripts/sis_golden/compression_infinity_width_table.csv`; its compact runtime
+projection lives in
+`crates/akita-types/src/sis/generated_compression_sis_table.rs`. These
+supplemental cells do not change the production A/B/D SIS table or schedule
+identity.
+
 Regenerate all dependent schedule catalogs after the SIS table:
 
 ```bash
