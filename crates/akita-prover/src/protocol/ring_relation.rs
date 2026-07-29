@@ -687,7 +687,6 @@ impl RingRelationProver {
             )?;
             tracing::info!(
                 sources = report.sources,
-                slices = report.slices,
                 maps = report.maps,
                 terminal_bytes = report.terminal_bytes,
                 "computed and discarded shadow compressed commitments"

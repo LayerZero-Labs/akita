@@ -35,9 +35,8 @@ Groups may have different protocol B dimensions; compression starts after each
 group's B image has been computed.
 
 Main does not currently slice B or D images for compression. The diagnostic
-path introduces compression-only slicing as described below. This slicing does
-not change protocol groups, schedule levels, commitment objects, or transcript
-messages.
+path does not introduce slicing semantics: it compresses each complete image
+once and rejects images above its explicit maximum.
 
 ## Compression Map
 
@@ -75,24 +74,24 @@ Such a batch scans one shared matrix prefix. Different shapes remain separate
 batches. This supports mixed-dimension and multi-group openings without forcing
 their B images into one common shape.
 
-## Slice Bound
+## Input Bound And Deferred Slicing
 
-Each compression chain accepts at most 16 KiB of canonically encoded source
-field elements. Larger B or D images are split into independent consecutive
-slices. Each slice receives its own per-instance security guarantee and
-terminal compressed image.
+The ordinary case is an approximately 1 KiB B or D image. The diagnostic
+accepts one complete image of at most 16 KiB of canonically encoded field
+elements. Sixteen KiB is an extreme maximum, not a standard slice size. Larger
+images are rejected rather than divided automatically.
 
 The bound is in bytes, not field elements or ring elements:
 
-| Profile | Field bytes | Source coefficients per full slice |
+| Profile | Field bytes | Source coefficients at the maximum |
 | ------- | ----------- | ---------------------------------- |
 | q128 | 16 | 1,024 |
 | q64 | 8 | 2,048 |
 | q32 | 4 | 4,096 |
 
 The decomposition basis and compression ring dimension determine the matrix
-width. With the negative-binary basis selected here, a full slice has the
-following first-map width:
+width. With the negative-binary basis selected here, a maximum-size input has
+the following first-map width:
 
 | Profile | First map ring dimension | First-map width |
 | ------- | ------------------------ | --------------- |
@@ -100,28 +99,35 @@ following first-map width:
 | q64 | 32 | 4,096 |
 | q32 | 64 | 2,048 |
 
-The last slice may be shorter. The planner computes its exact width rather than
-padding it to 16 KiB. Zero padding exists only inside the final packed ring
-element.
-
-The protocol cutover must bind slice boundaries and ordering in the instance
-descriptor or another canonical protocol-owned shape. The diagnostic phase
-does not add those fields.
+Any future slicing policy belongs to the protocol planner. It should be
+considered only when a B or D matrix is longer than the corresponding A matrix,
+and only at the first few folds where this imbalance matters. Candidate sizes
+should grow through the relevant power-of-two cases, normally 1, 2, 4, and
+8 KiB, with 16 KiB as the hard ceiling. The protocol cutover must bind any
+selected slice boundaries and ordering. The diagnostic phase does none of this.
 
 ## Compression Ladder
 
-The diagnostic path permits at most three maps and targets a 128-byte terminal
-image per slice.
+The diagnostic path permits at most three maps and targets one 128-byte
+terminal image.
 
-| Profile | First map `D` | Later map `D` | Full-slice image sizes |
-| ------- | ------------- | ------------- | ---------------------- |
-| q128 | 16 | 8 | 512 B -> 256 B -> 128 B |
-| q64 | 32 | 16 | 512 B -> 256 B -> 128 B |
-| q32 | 64 | 32 | 512 B -> 256 B -> 128 B |
+| Input size | First image | Terminal image | Maps |
+| ---------- | ----------- | -------------- | ---- |
+| 1, 2, 4, or 8 KiB | 256 B | 128 B | 2 |
+| 16 KiB | 512 B | 128 B via 256 B | 3 |
 
-A shorter source may reach 128 bytes in fewer maps. Selection stops at the
-first exact 128-byte image. Undershooting the target or failing to reach it
-within three maps is an error.
+The ring dimensions are profile-specific:
+
+| Profile | First map `D` | Later map `D` |
+| ------- | ------------- | ------------- |
+| q128 | 16 | 8 |
+| q64 | 32 | 16 |
+| q32 | 64 | 32 |
+
+The 1 KiB standard case is therefore `1 KiB -> 256 B -> 128 B`. Each stage
+decomposes its complete input into negative-binary digits before applying the
+next F/H matrix. Selection stops at the first exact 128-byte image.
+Undershooting the target or failing to reach it within three maps is an error.
 
 These are small negacyclic module-SIS maps, not unstructured scalar maps. Their
 small ring dimensions are intentional and are part of the kernel surface.
@@ -157,8 +163,8 @@ compression shapes.
 The diagnostic phase is opt-in through the `compression-diagnostics` feature.
 Its planner involvement is deliberately quarantined:
 
-- one standalone module selects slices, dimensions, widths, ranks, and map
-  count;
+- one standalone module validates the input bound and selects dimensions,
+  widths, ranks, and map count;
 - schedule search, candidate derivation, suffix dynamic programming, generated
   schedule tables, catalog identity, and proof-size scoring are untouched;
 - the prover calls the standalone planner only after it has the real B/D
@@ -169,8 +175,8 @@ During proving:
 1. Record each live B group image as an independent source.
 2. Compute the current D image and absorb it exactly as the current protocol
    requires.
-3. Plan at most 16 KiB slices for every source.
-4. At each ladder stage, batch slices with identical map shape.
+3. Reject a source above 16 KiB rather than slicing it.
+4. At each ladder stage, batch complete sources with identical map shape.
 5. Execute the negative-binary compression kernel over the shared setup
    prefix.
 6. Retain timing and size metrics, then discard all terminal images.
@@ -195,10 +201,10 @@ as a full cutover from the current raw images.
 
 The cutover must address these surfaces together:
 
-1. Define the public flat compressed payload and canonical slice ordering for
-   each B group and the D image.
-2. Bind the compression plan, map views, and slice boundaries to protocol
-   identity.
+1. Define the public flat compressed payload for each B group and the D image.
+2. Bind the compression plan and map views to protocol identity. If the planner
+   activates slicing under the narrow B/D-versus-A policy, also bind the
+   selected boundaries and ordering.
 3. Add hidden decomposition and intermediate images to the witness with one
    canonical layout.
 4. Enforce raw B/D image consistency, every intermediate decomposition, and
@@ -211,8 +217,8 @@ The cutover must address these surfaces together:
    once the new protocol is live.
 
 Mixed-dimension multi-group openings are in scope. Each group keeps its own raw
-B image, slice sequence, and compression chain. Batching is an execution
-optimization over equal map shapes, not a change to semantic group ownership.
+B image and compression chain. Batching is an execution optimization over equal
+map shapes, not a change to semantic group ownership.
 
 The cutover should use measurements from the diagnostic mode to decide whether
 every eligible source should be compressed or whether protocol-owned planning
@@ -226,14 +232,14 @@ The diagnostic implementation must include:
 - schoolbook equivalence tests for q128, q64, and q32 compression kernels;
 - rejection of mixed-shape batches, non-negative-binary digits, and
   undersized setup prefixes;
-- planner tests for full and partial 16 KiB slicing;
-- planner tests that every full slice reaches 128 bytes in at most three maps;
+- planner tests that 1, 2, 4, and 8 KiB inputs use two maps;
+- planner tests that 16 KiB uses three maps and larger inputs are rejected;
 - an end-to-end proof with diagnostics enabled that verifies with the current
   verifier;
 - an extension-field or mixed-dimension proof exercising the same shadow path;
 - default-feature compilation proving that the diagnostic dependency and hook
   disappear from the normal build.
 
-Protocol-cutover tests will additionally need malformed slice shape, transcript
-binding, tampered intermediate image, tampered terminal image, mixed-group
-ordering, and cross-protocol rejection coverage.
+Protocol-cutover tests will additionally need malformed planner-owned shape,
+transcript binding, tampered intermediate image, tampered terminal image,
+mixed-group ordering, and cross-protocol rejection coverage.

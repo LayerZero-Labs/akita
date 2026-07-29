@@ -10,8 +10,8 @@ use akita_types::sis::compression::{
 };
 use akita_types::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
 
-/// Maximum uncompressed B/D input bytes handled by one compression chain.
-pub const MAX_COMPRESSION_INPUT_SLICE_BYTES: usize = 16 * 1024;
+/// Maximum uncompressed B/D image size handled by the diagnostic.
+pub const MAX_COMPRESSION_INPUT_BYTES: usize = 16 * 1024;
 
 /// Target terminal compressed commitment size.
 pub const COMPRESSION_TARGET_BYTES: usize = 128;
@@ -32,17 +32,6 @@ pub struct CompressionDiagnosticMap {
     pub output_coefficients: usize,
 }
 
-/// One source slice and its selected F/H chain.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompressionDiagnosticSlice {
-    /// Start field coefficient in the uncompressed source.
-    pub source_start: usize,
-    /// Number of uncompressed field coefficients in this slice.
-    pub source_coefficients: usize,
-    /// Selected negative-binary maps.
-    pub maps: Vec<CompressionDiagnosticMap>,
-}
-
 /// Complete shadow-compression plan for one B or D image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompressionDiagnosticPlan {
@@ -52,8 +41,10 @@ pub struct CompressionDiagnosticPlan {
     pub field_bits: usize,
     /// Canonical field byte length.
     pub field_bytes: usize,
-    /// Independently compressed input slices.
-    pub slices: Vec<CompressionDiagnosticSlice>,
+    /// Number of coefficients in the unsliced source image.
+    pub source_coefficients: usize,
+    /// Selected negative-binary maps for the complete source image.
+    pub maps: Vec<CompressionDiagnosticMap>,
 }
 
 fn profile_geometry(profile: SisModulusProfileId) -> (usize, usize, usize) {
@@ -64,15 +55,14 @@ fn profile_geometry(profile: SisModulusProfileId) -> (usize, usize, usize) {
     }
 }
 
-fn select_slice(
+fn select_maps(
     profile: SisModulusProfileId,
     field_bits: usize,
     field_bytes: usize,
     first_ring_dimension: usize,
     terminal_ring_dimension: usize,
-    source_start: usize,
     source_coefficients: usize,
-) -> Result<CompressionDiagnosticSlice, AkitaError> {
+) -> Result<Vec<CompressionDiagnosticMap>, AkitaError> {
     let mut input_coefficients = source_coefficients;
     let mut maps = Vec::with_capacity(MAX_COMPRESSION_MAPS);
     for map_index in 0..MAX_COMPRESSION_MAPS {
@@ -113,11 +103,7 @@ fn select_slice(
             output_coefficients,
         });
         if output_bytes == COMPRESSION_TARGET_BYTES {
-            return Ok(CompressionDiagnosticSlice {
-                source_start,
-                source_coefficients,
-                maps,
-            });
+            return Ok(maps);
         }
         if output_bytes < COMPRESSION_TARGET_BYTES {
             return Err(AkitaError::InvalidSetup(
@@ -135,8 +121,8 @@ fn select_slice(
 ///
 /// # Errors
 ///
-/// Returns an error for an empty source or when the narrow compression SIS
-/// table cannot price every map.
+/// Returns an error for an empty or larger-than-16-KiB source, or when the
+/// narrow compression SIS table cannot price every map.
 pub fn plan_compression_diagnostic(
     modulus_profile: SisModulusProfileId,
     source_coefficients: usize,
@@ -149,29 +135,30 @@ pub fn plan_compression_diagnostic(
     let (field_bits, first_ring_dimension, terminal_ring_dimension) =
         profile_geometry(modulus_profile);
     let field_bytes = field_bits.div_ceil(8);
-    let max_slice_coefficients = MAX_COMPRESSION_INPUT_SLICE_BYTES
-        .checked_div(field_bytes)
-        .filter(|&value| value > 0)
-        .ok_or_else(|| AkitaError::InvalidSetup("compression slice geometry is empty".into()))?;
-    let mut slices = Vec::with_capacity(source_coefficients.div_ceil(max_slice_coefficients));
-    for source_start in (0..source_coefficients).step_by(max_slice_coefficients) {
-        let source_slice_coefficients =
-            (source_coefficients - source_start).min(max_slice_coefficients);
-        slices.push(select_slice(
-            modulus_profile,
-            field_bits,
-            field_bytes,
-            first_ring_dimension,
-            terminal_ring_dimension,
-            source_start,
-            source_slice_coefficients,
-        )?);
+    let source_bytes = source_coefficients
+        .checked_mul(field_bytes)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("compression source byte length overflow".into())
+        })?;
+    if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
+        return Err(AkitaError::InvalidInput(format!(
+            "compression diagnostic source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
+        )));
     }
+    let maps = select_maps(
+        modulus_profile,
+        field_bits,
+        field_bytes,
+        first_ring_dimension,
+        terminal_ring_dimension,
+        source_coefficients,
+    )?;
     Ok(CompressionDiagnosticPlan {
         modulus_profile,
         field_bits,
         field_bytes,
-        slices,
+        source_coefficients,
+        maps,
     })
 }
 
@@ -180,17 +167,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sixteen_kib_inputs_reach_128_bytes_within_three_maps() {
+    fn one_through_eight_kib_inputs_use_two_maps() {
+        for (profile, field_bytes) in [
+            (SisModulusProfileId::Q128OffsetA7F7, 16),
+            (SisModulusProfileId::Q64Offset59, 8),
+            (SisModulusProfileId::Q32Offset99, 4),
+        ] {
+            for input_kib in [1, 2, 4, 8] {
+                let plan = plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes)
+                    .expect("plan");
+                assert_eq!(plan.maps.len(), 2);
+                assert_eq!(plan.maps[0].output_coefficients * field_bytes, 256);
+                assert_eq!(plan.maps[1].output_coefficients * field_bytes, 128);
+            }
+        }
+    }
+
+    #[test]
+    fn sixteen_kib_inputs_use_three_maps() {
         for (profile, field_bytes) in [
             (SisModulusProfileId::Q128OffsetA7F7, 16),
             (SisModulusProfileId::Q64Offset59, 8),
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
             let plan = plan_compression_diagnostic(profile, 16 * 1024 / field_bytes).expect("plan");
-            assert_eq!(plan.slices.len(), 1);
-            let slice = &plan.slices[0];
-            assert!(slice.maps.len() <= MAX_COMPRESSION_MAPS);
-            let terminal = slice.maps.last().expect("terminal map");
+            assert_eq!(plan.maps.len(), 3);
+            assert_eq!(
+                plan.maps
+                    .iter()
+                    .map(|map| map.output_coefficients * field_bytes)
+                    .collect::<Vec<_>>(),
+                [512, 256, 128]
+            );
+            let terminal = plan.maps.last().expect("terminal map");
             assert_eq!(
                 terminal.output_coefficients * field_bytes,
                 COMPRESSION_TARGET_BYTES
@@ -199,13 +208,7 @@ mod tests {
     }
 
     #[test]
-    fn source_is_sliced_at_sixteen_kib() {
-        let coefficients = 2 * (16 * 1024 / 16) + 7;
-        let plan = plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, coefficients)
-            .expect("plan");
-        assert_eq!(plan.slices.len(), 3);
-        assert_eq!(plan.slices[0].source_coefficients, 1024);
-        assert_eq!(plan.slices[1].source_start, 1024);
-        assert_eq!(plan.slices[2].source_coefficients, 7);
+    fn sources_above_sixteen_kib_are_rejected_not_sliced() {
+        assert!(plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, 1025).is_err());
     }
 }

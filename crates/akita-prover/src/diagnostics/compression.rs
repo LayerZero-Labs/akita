@@ -3,7 +3,7 @@
 use crate::compute::{CompressionRowsPlan, DigitRowsComputeBackend, OperationCtx};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_planner::compression_diagnostic::{
-    plan_compression_diagnostic, CompressionDiagnosticMap, CompressionDiagnosticSlice,
+    plan_compression_diagnostic, CompressionDiagnosticMap,
 };
 use akita_types::sis::SisModulusProfileId;
 use akita_types::{
@@ -28,14 +28,12 @@ pub(crate) struct CompressionDiagnosticSource<'a, F> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CompressionDiagnosticReport {
     pub(crate) sources: usize,
-    pub(crate) slices: usize,
     pub(crate) maps: usize,
     pub(crate) terminal_bytes: usize,
 }
 
 struct WorkItem<F> {
     source: CompressionDiagnosticSourceKind,
-    slice_index: usize,
     field_bytes: usize,
     maps: Vec<CompressionDiagnosticMap>,
     coefficients: Vec<F>,
@@ -54,19 +52,6 @@ fn modulus_profile<F: CanonicalField>() -> Result<SisModulusProfileId, AkitaErro
         )));
     }
     Ok(profile)
-}
-
-fn slice_coefficients<'a, F>(
-    source: &'a [F],
-    slice: &CompressionDiagnosticSlice,
-) -> Result<&'a [F], AkitaError> {
-    let end = slice
-        .source_start
-        .checked_add(slice.source_coefficients)
-        .ok_or_else(|| AkitaError::InvalidSetup("compression slice range overflow".into()))?;
-    source
-        .get(slice.source_start..end)
-        .ok_or_else(|| AkitaError::InvalidSetup("compression slice exceeds source image".into()))
 }
 
 fn negative_binary_digits<F: CanonicalField, const D: usize>(
@@ -202,15 +187,12 @@ where
             continue;
         }
         let plan = plan_compression_diagnostic(profile, source.coefficients.len())?;
-        for (slice_index, slice) in plan.slices.iter().enumerate() {
-            items.push(WorkItem {
-                source: source.kind,
-                slice_index,
-                field_bytes: plan.field_bytes,
-                maps: slice.maps.clone(),
-                coefficients: slice_coefficients(source.coefficients, slice)?.to_vec(),
-            });
-        }
+        items.push(WorkItem {
+            source: source.kind,
+            field_bytes: plan.field_bytes,
+            maps: plan.maps,
+            coefficients: source.coefficients.to_vec(),
+        });
     }
     let map_count = items.iter().map(|item| item.maps.len()).sum();
     let max_maps = items.iter().map(|item| item.maps.len()).max().unwrap_or(0);
@@ -225,7 +207,6 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("terminal byte length overflow".into()))?;
         tracing::debug!(
             source = ?item.source,
-            slice = item.slice_index,
             maps = item.maps.len(),
             terminal_bytes = bytes,
             "computed shadow compressed commitment"
@@ -235,8 +216,7 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("terminal byte total overflow".into()))
     })?;
     Ok(CompressionDiagnosticReport {
-        sources: sources.len(),
-        slices: items.len(),
+        sources: items.len(),
         maps: map_count,
         terminal_bytes,
     })
