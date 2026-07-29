@@ -39,12 +39,11 @@ setup-only Stage 3. This removes the Stage 3 witness reduction, reduces prover
 and verifier work, and shortens the Stage 3 proof whenever the padded setup
 prefix domain is smaller than the padded recursive-witness domain.
 
-PR #322 also contains an interim arithmetic improvement: the three serial
-full-table Lagrange/equality recurrences use one multiplication and one
-subtraction per parent instead of two multiplications. The completed
-implementation MUST consolidate those loops under one `akita-algebra` owner.
-That arithmetic slice is independent of the claims and Stage 3 wire cutovers
-and may land separately.
+PR #322 also implements the independent arithmetic slice: `akita-algebra` owns
+one Lagrange/equality parent split, and opening-point preparation delegates to
+the canonical equality-table traversal after enforcing its verifier sequence
+bound. Each parent expansion uses one multiplication and one subtraction.
+That arithmetic slice is independent of the claims and Stage 3 wire cutovers.
 
 Current `main` supports dense and one-hot multi-group roots, batched multi-group
 EOR, mixed per-group and per-role ring dimensions, recursive setup offloading,
@@ -67,7 +66,7 @@ do not mistake design work for shipped behavior.
 | Source versus opening arity | Final-group source arity and maximum opening/EOR arity are distinct | Unchanged; no ambient point is needed to represent the maximum |
 | Layout and schedules | Ordered `(num_vars, num_polys)` groups | Unchanged |
 | Recursive Stage 3 | Fused setup-product and witness-carry sumcheck so successor claims are projections of one challenge | Setup-product sumcheck only; carry the Stage 2 witness claim and point unchanged |
-| Lagrange/equality expansion | PR #322 optimizes three serial loops independently; the parallel loop was already optimal | One canonical parent split and one canonical serial full-table traversal |
+| Lagrange/equality expansion | Serial paths duplicate a two-multiplication recurrence; the parallel loop is already optimal | One canonical parent split and one canonical serial full-table traversal, implemented on this branch |
 | Preparation reuse | No protocol-visible cache | Optional, per-proof, benchmark-gated derived state |
 
 This revision was checked against `main` at `af770e129`, including merged PR
@@ -703,11 +702,11 @@ caches containing a different prefix-slot registry are not assumed compatible.
 
 - [x] This normative record passes repository documentation guardrails and
   links the superseded point and Stage 3 models from all predecessor specs.
-- [x] `lagrange_weights` and the serial `EqPolynomial` table builders use one
-  multiplication and one subtraction per expanded parent while preserving
-  exact values and order.
-- [x] This record identifies the independently optimized loops as an interim
-  state and makes canonical serial ownership a required implementation outcome.
+- [x] Serial, cached, and parallel `EqPolynomial` table builders use one
+  canonical parent split with one multiplication and one subtraction per
+  expanded parent.
+- [x] `lagrange_weights` enforces the verifier sequence bound and delegates to
+  the canonical equality-table traversal.
 - [x] Focused `akita-types` tests pass with default and no-default features.
 - [x] The branch includes `main` through `af770e129` and describes the merged
   PR #320 and #331 implementations rather than their earlier development heads.
@@ -774,10 +773,10 @@ caches containing a different prefix-slot registry are not assumed compatible.
 
 #### Verifier preparation and performance
 
-- [ ] There is exactly one serial full-table Lagrange/equality traversal in
+- [x] There is exactly one serial full-table Lagrange/equality traversal in
   `akita-algebra`; opening-point preparation validates its sequence bound and
   calls that traversal instead of owning another loop.
-- [ ] Serial full-table, cached all-layers, and parallel builders all use one
+- [x] Serial full-table, cached all-layers, and parallel builders all use one
   canonical parent-split primitive, with no duplicated two-child arithmetic.
 - [ ] An operation-count test over `s` variables observes exactly `2^s - 1`
   field multiplications for each full-table serial entry point. Output-parity
@@ -871,8 +870,8 @@ Changing each current loop to the one-multiplication recurrence gives the right
 local arithmetic count, but it preserves the defect that caused the paths to
 drift. A later edit could optimize one path, restore the old recurrence in
 another, or apply a safety fix inconsistently. This alternative also conflicts
-with the repository's one-canonical-function policy. It is accepted only as the
-interim patch in this specification PR and rejected as the completed design.
+with the repository's one-canonical-function policy. An earlier revision of
+this branch used that interim shape; the canonical implementation replaces it.
 
 ### Combine groups into one synthetic opening
 
@@ -948,7 +947,11 @@ single protocol epoch.
 
 ### Slice 1: canonical Lagrange expansion
 
-**Goal.** Finish the independent arithmetic repair already started in PR #322.
+**Goal.** Canonicalize the independent arithmetic repair in PR #322.
+
+**Status.** The ownership cutover and boundary-preservation test are
+implemented on this branch. The exact operation-count and extended field-parity
+acceptance tests remain part of the completion gate.
 
 **Changes.**
 
