@@ -11,8 +11,8 @@ use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
 use akita_types::{
-    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
-    OpeningClaimsLayout, RelationRangeImagePlan,
+    dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
+    RelationRangeImagePlan,
 };
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
@@ -40,7 +40,6 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
-    alpha_bits: usize,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -73,28 +72,41 @@ where
     // A-role fold dimension: the EOR sumcheck and tensor projection operate on
     // the claim polynomials at this level's fold ring.
     let ring_d = level_params.role_dims().d_a();
-    let (protocol_point, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_d,
-            |D| {
-                prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                    tensor.backend(),
-                    Some(tensor.prepared()),
-                    eor_polys,
-                    eor_opening_batch,
-                    pad_base_evals,
-                    transcript,
-                    if pad_base_evals { "recursive" } else { "root" },
-                )
-            }
-        )
+    let (protocol_points, row_coefficients, reduction) = if needs_extension_reduction {
+        let proved = if opening_batch.num_groups() > 1 {
+            prove_grouped_extension_opening_reduction::<F, E, T, P, TS>(
+                tensor.backend(),
+                Some(tensor.prepared()),
+                &block_claims,
+                &opening_batch,
+                level_params,
+                pad_base_evals,
+                transcript,
+                if pad_base_evals { "recursive" } else { "root" },
+            )
+        } else {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                ring_d,
+                |D| {
+                    prove_extension_opening_reduction::<F, E, T, P, TS, D>(
+                        tensor.backend(),
+                        Some(tensor.prepared()),
+                        eor_polys,
+                        eor_opening_batch,
+                        pad_base_evals,
+                        transcript,
+                        if pad_base_evals { "recursive" } else { "root" },
+                    )
+                }
+            )
+        }
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
         (
-            proved.protocol_point,
+            proved.protocol_points,
             Some(proved.row_coefficients),
             Some(proved.reduction),
         )
@@ -105,7 +117,23 @@ where
         } else {
             None
         };
-        (non_eor_protocol_point, row_coefficients, None)
+        let protocol_points = (0..opening_batch.num_groups())
+            .map(|group_index| {
+                block_claims
+                    .opening_claims()
+                    .group_point_vars(group_index)?
+                    .indices()
+                    .iter()
+                    .map(|&index| {
+                        non_eor_protocol_point
+                            .get(index)
+                            .copied()
+                            .ok_or(AkitaError::InvalidProof)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        (protocol_points, row_coefficients, None)
     };
 
     if needs_extension_reduction {
@@ -113,12 +141,11 @@ where
             finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
                 stack,
                 block_claims,
-                protocol_point: &protocol_point,
+                protocol_points: &protocol_points,
                 reduction,
                 row_coefficients,
                 trace_opening_batch: &opening_batch,
                 level_params,
-                alpha_bits,
                 basis,
                 pad_base_evals,
                 transcript,
@@ -131,22 +158,28 @@ where
                 let _span =
                     tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
                         .entered();
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
-                    F,
-                    ring_d,
-                    |D| {
-                        cfg_iter!(fold_polys)
-                            .map(|poly| {
-                                tensor_root_projection::<F, P, E, TS, D>(
-                                    tensor.backend(),
-                                    Some(tensor.prepared()),
-                                    *poly,
-                                )
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                    }
-                )?
+                let mut transformed = Vec::with_capacity(fold_polys.len());
+                for group_index in 0..opening_batch.num_groups() {
+                    let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
+                    let group_polys = block_claims.group_polys(group_index)?;
+                    transformed.extend(dispatch_for_field!(
+                        ProtocolDispatchSlot::Role(RingRole::Inner),
+                        F,
+                        group_dims.d_a(),
+                        |D| {
+                            cfg_iter!(group_polys)
+                                .map(|poly| {
+                                    tensor_root_projection::<F, P, E, TS, D>(
+                                        tensor.backend(),
+                                        Some(tensor.prepared()),
+                                        *poly,
+                                    )
+                                })
+                                .collect::<Result<Vec<_>, _>>()
+                        }
+                    )?);
+                }
+                transformed
             };
             let fold_refs = transformed.iter().collect::<Vec<_>>();
             let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
@@ -154,12 +187,11 @@ where
                 FinishFoldArgs {
                     stack,
                     block_claims: transformed_block_claims,
-                    protocol_point: &protocol_point,
+                    protocol_points: &protocol_points,
                     reduction,
                     row_coefficients,
                     trace_opening_batch: &opening_batch,
                     level_params,
-                    alpha_bits,
                     basis,
                     pad_base_evals,
                     transcript,
@@ -170,12 +202,11 @@ where
         finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
             stack,
             block_claims,
-            protocol_point: &protocol_point,
+            protocol_points: &protocol_points,
             reduction,
             row_coefficients,
             trace_opening_batch: &opening_batch,
             level_params,
-            alpha_bits,
             basis,
             pad_base_evals,
             transcript,
@@ -195,12 +226,11 @@ where
 {
     stack: &'a ProverComputeStack<'a, F, C, O, TS, R>,
     block_claims: ProverOpeningData<'a, E, Q, F>,
-    protocol_point: &'a [E],
+    protocol_points: &'a [Vec<E>],
     reduction: Option<ExtensionOpeningReduction<E>>,
     row_coefficients: Option<Vec<E>>,
     trace_opening_batch: &'a OpeningClaimsLayout,
     level_params: &'a CommittedGroupParams,
-    alpha_bits: usize,
     basis: BasisMode,
     pad_base_evals: bool,
     transcript: &'p mut T,
@@ -227,6 +257,7 @@ where
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
         + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>
         + RootPolyMeta<F>,
     O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, Q>,
     R: DigitRowsComputeBackend<F>,
@@ -236,139 +267,131 @@ where
     let FinishFoldArgs {
         stack,
         block_claims,
-        protocol_point,
+        protocol_points,
         reduction,
         row_coefficients,
         trace_opening_batch,
         level_params,
-        alpha_bits,
         basis,
         pad_base_evals,
         transcript,
     } = args;
     let opening = stack.opening();
-    // Extracted level numbers for the A-role claims-evaluation operation; the
-    // kernels below must not read schedule types.
-    let ring_d = level_params.role_dims().d_a();
-    // A-role operation: prepare the typed opening point, fold-evaluate every
-    // claim polynomial at it, and derive the trace target. Typed outputs are
-    // converted to D-free carriers (`PreparedOpeningPoint`, `RingVec`) inside
-    // the arm.
+    // A-role operation: prepare each group at its native A dimension,
+    // fold-evaluate its claim polynomials, and derive scalar openings before
+    // leaving the typed dispatch arm. Typed fold outputs cross the boundary
+    // only through D-free `PreparedOpeningPoint` / `RingVec` carriers.
     let opening_batch = block_claims
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let (prepared_points, e_folded_by_claim, trace_claim, row_coefficients, row_coefficient_rings) =
-        dispatch_for_field!(
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
+    let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
+    for group_index in 0..opening_batch.num_groups() {
+        let group_lp = level_params
+            .group_params(&opening_batch, group_index)
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!("root group params {group_index} failed: {err:?}"))
+            })?;
+        let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let target_len = group_alpha_bits
+            .checked_add(group_lp.position_index_bits())
+            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".to_string())
+            })?;
+        let group_protocol_point = protocol_points
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if group_protocol_point.len() != target_len {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: target_len,
+                actual: group_protocol_point.len(),
+            });
+        }
+        let group_polys = block_claims.group_polys(group_index).map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "root group polynomials {group_index} failed: {err:?}"
+            ))
+        })?;
+        let (prepared_point, group_e_folded_by_claim, group_openings) = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
-            ring_d,
+            group_dims.d_a(),
             |D| {
-                let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-                let mut folded_rings = Vec::with_capacity(opening_batch.num_total_polynomials());
-                let mut e_folded_by_claim =
-                    Vec::with_capacity(opening_batch.num_total_polynomials());
-                for group_index in 0..opening_batch.num_groups() {
-                    let group_lp = level_params
-                        .group_params(&opening_batch, group_index)
-                        .map_err(|err| {
-                            AkitaError::InvalidInput(format!(
-                                "root group params {group_index} failed: {err:?}"
-                            ))
-                        })?;
-                    let target_len = alpha_bits
-                        .checked_add(group_lp.position_index_bits())
-                        .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup(
-                                "group opening point length overflow".to_string(),
-                            )
-                        })?;
-                    let point_vars = block_claims
-                        .opening_claims()
-                        .group_point_vars(group_index)?;
-                    if point_vars.num_vars() != target_len {
-                        return Err(AkitaError::InvalidPointDimension {
-                            expected: target_len,
-                            actual: point_vars.num_vars(),
-                        });
-                    }
-                    let group_protocol_point = point_vars
-                        .indices()
-                        .iter()
-                        .map(|&idx| {
-                            protocol_point
-                                .get(idx)
-                                .copied()
-                                .ok_or(AkitaError::InvalidProof)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    let group_polys = block_claims.group_polys(group_index).map_err(|err| {
+                let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
+                    prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
+                        opening.backend(),
+                        Some(opening.prepared()),
+                        group_polys,
+                        group_protocol_point,
+                        basis,
+                        group_lp.num_positions_per_block(),
+                        group_lp.num_live_blocks(),
+                        group_alpha_bits,
+                        transcript,
+                    )
+                    .map_err(|err| {
                         AkitaError::InvalidInput(format!(
-                            "root group polynomials {group_index} failed: {err:?}"
+                            "evaluate claims group {group_index} failed: {err:?}"
                         ))
                     })?;
-                    let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
-                        prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
-                            opening.backend(),
-                            Some(opening.prepared()),
-                            group_polys,
-                            &group_protocol_point,
+                let inner_point =
+                    &group_protocol_point[..group_protocol_point.len().min(group_alpha_bits)];
+                let group_openings = group_folded_rings
+                    .iter()
+                    .map(|folded_ring| {
+                        scalar_opening_from_folded_ring::<F, E, D>(
+                            folded_ring,
+                            &prepared_point,
+                            inner_point,
                             basis,
-                            group_lp.num_positions_per_block(),
-                            group_lp.num_live_blocks(),
-                            alpha_bits,
-                            transcript,
                         )
-                        .map_err(|err| {
-                            AkitaError::InvalidInput(format!(
-                                "evaluate claims group {group_index} failed: {err:?}"
-                            ))
-                        })?;
-                    e_folded_by_claim.extend(
-                        group_e_folded_by_claim
-                            .iter()
-                            // The opening kernel emits A-role rings. The ring
-                            // relation reinterprets the unchanged coefficients
-                            // at its D-role dimension.
-                            .map(|rows| RingVec::from_ring_elems(rows).into_compact()),
-                    );
-                    folded_rings.extend(group_folded_rings);
-                    prepared_points.push(prepared_point);
-                }
-
-                let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T, D>(
-                    &reduction,
-                    &folded_rings,
-                    &prepared_points,
-                    protocol_point,
-                    alpha_bits,
-                    basis,
-                    trace_opening_batch,
-                    row_coefficients,
-                    transcript,
-                )
-                .map_err(|err| {
-                    AkitaError::InvalidInput(format!(
-                        "prepare evaluation-trace claim failed: {err:?}"
-                    ))
-                })?;
-                let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
-                    .map_err(|err| {
-                        AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
-                    })?;
-                Ok::<_, AkitaError>((
-                    prepared_points,
-                    e_folded_by_claim,
-                    trace_claim,
-                    row_coefficients,
-                    RingVec::from_ring_elems(&row_coefficient_rings),
-                ))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let group_e_folded_by_claim = group_e_folded_by_claim
+                    .iter()
+                    .map(|rows| RingVec::from_ring_elems(rows).into_compact())
+                    .collect::<Vec<_>>();
+                Ok::<_, AkitaError>((prepared_point, group_e_folded_by_claim, group_openings))
             }
         )
         .map_err(|err| {
-            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
+            AkitaError::InvalidInput(format!(
+                "root opening preparation group {group_index} failed: {err:?}"
+            ))
         })?;
+        prepared_points.push(prepared_point);
+        e_folded_by_claim.extend(group_e_folded_by_claim);
+        scalar_openings.extend(group_openings);
+    }
+    let (trace_claim, row_coefficients) = prepare_evaluation_trace_claim::<F, E, T>(
+        &reduction,
+        &scalar_openings,
+        trace_opening_batch,
+        row_coefficients,
+        transcript,
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("prepare evaluation-trace claim failed: {err:?}"))
+    })?;
+    let row_coefficient_rings = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        level_params.role_dims().d_a(),
+        |D| {
+            let row_coefficient_rings = row_coefficient_rings::<F, E, D>(&row_coefficients)
+                .map_err(|err| {
+                    AkitaError::InvalidInput(format!("row coefficient rings failed: {err:?}"))
+                })?;
+            Ok::<_, AkitaError>(RingVec::from_ring_elems(&row_coefficient_rings))
+        }
+    )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("root row-coefficient preparation failed: {err:?}"))
+    })?;
     let commitment = block_claims.fold_commitment(level_params).map_err(|err| {
         AkitaError::InvalidInput(format!("fold commitment preparation failed: {err:?}"))
     })?;
@@ -504,7 +527,8 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
-    let ring_d = prepared_fold.instance.role_dims().d_a();
+    let opening_batch = prepared_fold.instance.opening_batch();
+    let ring_d = lp.relation_witness_carrier_ring_dimension();
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
     let logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
@@ -573,22 +597,15 @@ where
     )
     .map_err(|err| AkitaError::InvalidInput(format!("ring-switch finalize failed: {err:?}")))?;
 
-    let digit_witness_num_vars = rs
-        .col_bits
-        .checked_add(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidInput("digit witness domain width overflow".into()))?;
     let relation_range_image_plan = RelationRangeImagePlan::new(
-        FlatBooleanDomain::new(rs.w_evals_compact.len(), digit_witness_num_vars)?,
+        rs.relation_address_geometry,
         DigitRangePlan::new(rs.b)?,
         prepared_fold.instance.segment_layout(lp, None)?,
         prepared_fold.instance.opening_batch(),
-        prepared_fold.instance.role_dims(),
-        next_opening_ring_dim,
     )?;
 
     let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
-        prepared_fold.instance.role_dims(),
         &relation_rhs_layout,
         &rs.tau1,
         rs.alpha,
@@ -605,7 +622,6 @@ where
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
-    let opening_batch = prepared_fold.instance.opening_batch();
     let evaluation_trace_row = lp.evaluation_trace_row_index(opening_batch)?;
     let evaluation_trace_weight = evaluation_trace_row_weight(evaluation_trace_row, &rs.tau1)?;
     let trace_opening_claim = evaluation_trace_weight * prepared_fold.evaluation_trace_claim;
@@ -617,7 +633,9 @@ where
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
         source_ring_dimension = ring_d,
-        coeff_count = 1usize << rs.ring_bits,
+        coeff_count = rs
+            .relation_address_geometry
+            .common_relation_witness_coeff_count(),
     )
     .entered();
     let evaluation_trace = dispatch_for_field!(
@@ -629,7 +647,7 @@ where
                 build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
                     digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
                     witness_layout: relation_range_image_plan.witness_layout(),
-                    role_dims: relation_range_image_plan.role_dims(),
+                    carrier_ring_dimension: rs.relation_address_geometry.carrier_ring_dimension(),
                     level_params: lp,
                     opening_batch,
                     prepared_points: evaluation_trace_points,
@@ -638,15 +656,18 @@ where
                 })?;
             PreparedProverEvaluationTrace::new(
                 &semantic_trace,
-                1usize << rs.ring_bits,
+                rs.relation_address_geometry
+                    .common_relation_witness_coeff_count(),
                 evaluation_trace_weight,
             )
         }
     )?;
     drop(trace_preparation_span);
-    let ring_bits = rs.ring_bits;
-    let col_bits = rs.col_bits;
-    let live_x_cols = rs.live_x_cols;
+    let ring_bits = rs
+        .relation_address_geometry
+        .common_relation_witness_variable_count();
+    let col_bits = rs.relation_address_geometry.relation_lane_variable_count();
+    let live_x_cols = rs.relation_address_geometry.live_relation_lane_count();
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -764,17 +785,13 @@ where
 {
     let _sumcheck_span = tracing::info_span!("stage1_sumcheck").entered();
     let domain = plan.digit_witness_domain();
-    if domain.live_len() != rs.w_evals_compact.len() || plan.digit_range_plan().basis() != rs.b {
+    if plan.relation_address_geometry() != rs.relation_address_geometry
+        || domain.live_len() != rs.w_evals_compact.len()
+        || plan.digit_range_plan().basis() != rs.b
+    {
         return Err(AkitaError::InvalidSetup(
             "ring-switch output disagrees with the relation/range-image plan".into(),
         ));
-    }
-    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
-    if derived_live_x_cols != rs.live_x_cols {
-        return Err(AkitaError::InvalidSize {
-            expected: derived_live_x_cols,
-            actual: rs.live_x_cols,
-        });
     }
     let digit_range_equality_col_bits = rs
         .tau0
@@ -817,15 +834,13 @@ where
 {
     let _sumcheck_span = tracing::info_span!("stage2_sumcheck").entered();
     let domain = plan.digit_witness_domain();
-    let derived_live_x_cols = domain.live_block_count(rs.ring_bits)?;
-    let derived_col_bits = domain
-        .num_vars()
-        .checked_sub(rs.ring_bits)
-        .ok_or_else(|| AkitaError::InvalidSetup("stage-2 ring width exceeds domain".into()))?;
-    if domain.live_len() != rs.w_evals_compact.len()
+    let geometry = rs.relation_address_geometry;
+    let live_relation_lane_count = geometry.live_relation_lane_count();
+    let relation_lane_variable_count = geometry.relation_lane_variable_count();
+    let common_relation_witness_variable_count = geometry.common_relation_witness_variable_count();
+    if plan.relation_address_geometry() != geometry
+        || domain.live_len() != rs.w_evals_compact.len()
         || plan.digit_range_plan().basis() != rs.b
-        || derived_live_x_cols != rs.live_x_cols
-        || derived_col_bits != rs.col_bits
     {
         return Err(AkitaError::InvalidSetup(
             "ring-switch output disagrees with the relation/range-image plan".into(),
@@ -834,7 +849,7 @@ where
     let (common_alpha_factor, relation_lane_weights) = rs
         .relation_weight_factorization
         .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = 1usize << rs.ring_bits;
+    let expected_factor_len = geometry.common_relation_witness_coeff_count();
     if common_alpha_factor.len() != expected_factor_len {
         return Err(AkitaError::InvalidSetup(format!(
             "common alpha factor has length {}, expected {expected_factor_len}",
@@ -849,9 +864,9 @@ where
         plan.digit_range_plan().basis(),
         common_alpha_factor,
         relation_lane_weights,
-        derived_live_x_cols,
-        derived_col_bits,
-        rs.ring_bits,
+        live_relation_lane_count,
+        relation_lane_variable_count,
+        common_relation_witness_variable_count,
         relation_claim,
         evaluation_trace,
         trace_opening_claim,
@@ -889,31 +904,50 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + FromPrimitiveInt + LiftBase<F> + AkitaSerialize,
+    E: FpExtEncoding<F>
+        + FromPrimitiveInt
+        + LiftBase<F>
+        + AkitaSerialize
+        + akita_field::unreduced::HasUnreducedOps
+        + akita_field::MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
-            let mut stage3_prover = AkitaStage3Prover::new::<F, T>(
-                expanded,
-                prefix_slots,
-                lp,
-                next_level_params,
-                instance,
-                tau1,
-                alpha,
-                sumcheck_challenges,
-                stage2_next_w_eval,
-                logical_w,
-                live_x_cols,
-                col_bits,
-                ring_bits,
+            let role_dims = instance.role_dims();
+            let _stage3_span = tracing::info_span!(
+                "stage3_sumcheck",
                 level,
-                eta,
-                transcript,
-            )?;
-            let output = stage3_prover.prove::<F, T, _>(transcript, |tr| {
+                witness_len = logical_w.len(),
+                stage2_rounds = sumcheck_challenges.len(),
+                d_a = lp.d_a(),
+                d_b = role_dims.d_b(),
+                d_d = role_dims.d_d(),
+            )
+            .entered();
+            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
+            let mut stage3_prover = {
+                let _prepare_span = tracing::info_span!("stage3_prover_prepare").entered();
+                AkitaStage3Prover::new::<T>(
+                    expanded,
+                    prefix_slots,
+                    lp,
+                    next_level_params,
+                    instance,
+                    tau1,
+                    alpha,
+                    sumcheck_challenges,
+                    stage2_next_w_eval,
+                    logical_w,
+                    live_x_cols,
+                    col_bits,
+                    ring_bits,
+                    level,
+                    eta,
+                    transcript,
+                )?
+            };
+            let output = stage3_prover.prove::<T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
             transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);

@@ -233,7 +233,8 @@ where
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
@@ -437,9 +438,10 @@ fn first_jointly_accepted_nonce<T>(
     )))
 }
 
-/// Probe every group as one transcript transaction for each candidate nonce.
+/// Probe every group at its native A dimension as one transcript transaction
+/// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn sample_multi_group_fold_decompose_witnesses_at_dim<F, P, B, T, const D: usize>(
+fn sample_multi_group_fold_decompose_witnesses_native<F, P, B, T>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     transcript: &mut T,
@@ -450,10 +452,12 @@ fn sample_multi_group_fold_decompose_witnesses_at_dim<F, P, B, T, const D: usize
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootOpeningSource<F, D>,
-    B: crate::compute::ComputeBackendSetup<F>
-        + for<'a> OpeningBatchKernel<P::OpeningBatchView<'a>, F, D>
-        + for<'a> OpeningFoldKernel<P::OpeningView<'a>, F, D>,
+    P: RootOpeningSource<F, 32>
+        + RootOpeningSource<F, 64>
+        + RootOpeningSource<F, 128>
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
+    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     if groups.is_empty() {
@@ -461,7 +465,6 @@ where
             "fold grind batch has no groups".to_string(),
         ));
     }
-    let ring_d = root_lp.role_dims().d_a();
     let labels = witness_fold_challenge_labels();
     let (nonce, mut candidate_outputs) = first_jointly_accepted_nonce(probe_nonces, |nonce| {
         let mut candidate_outputs = Vec::with_capacity(groups.len());
@@ -469,38 +472,54 @@ where
             let mut preview = PreviewFoldDraw::new(transcript);
             for prepared_group in groups {
                 let group = &prepared_group.input;
-                let challenges = preview.draw_folding_challenges(
+                let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
+                let candidate = dispatch_for_field!(
+                    akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
+                    F,
                     ring_d,
-                    group.group_index,
-                    group.params.num_live_blocks(),
-                    group.polys.len(),
-                    &root_lp.fold_challenge_config,
-                    &group.params.fold_challenge_shape(),
-                    labels,
-                    nonce,
+                    |D| {
+                        let challenges = preview.draw_folding_challenges(
+                            D,
+                            group.group_index,
+                            group.params.num_live_blocks(),
+                            group.polys.len(),
+                            &group.params.fold_challenge_config(),
+                            &group.params.fold_challenge_shape(),
+                            labels,
+                            nonce,
+                        )?;
+                        let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
+                            backend,
+                            prepared,
+                            &challenges,
+                            group.polys,
+                            &prepared_group.point_indices,
+                            root_lp,
+                            group.params,
+                        )?;
+                        if accepts_fold_witness::<F, D>(
+                            &prepared_group.acceptance,
+                            &witness,
+                            &z_per_chunk,
+                        ) {
+                            let centered_per_chunk = z_per_chunk
+                                .into_iter()
+                                .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
+                                .collect();
+                            Ok::<_, AkitaError>(Some(FoldGrindGroupOutput {
+                                witness,
+                                centered_per_chunk,
+                                challenges,
+                            }))
+                        } else {
+                            Ok::<_, AkitaError>(None)
+                        }
+                    }
                 )?;
-                let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
-                    backend,
-                    prepared,
-                    &challenges,
-                    group.polys,
-                    &prepared_group.point_indices,
-                    root_lp,
-                    group.params,
-                )?;
-                if !accepts_fold_witness::<F, D>(&prepared_group.acceptance, &witness, &z_per_chunk)
-                {
+                let Some(candidate) = candidate else {
                     return Ok(None);
-                }
-                let centered_per_chunk = z_per_chunk
-                    .into_iter()
-                    .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                    .collect();
-                candidate_outputs.push(FoldGrindGroupOutput {
-                    witness,
-                    centered_per_chunk,
-                    challenges,
-                });
+                };
+                candidate_outputs.push(candidate);
             }
         }
         Ok(Some(candidate_outputs))
@@ -509,12 +528,13 @@ where
     let mut live = LiveFoldDraw::<F, T>::new(transcript);
     for (prepared_group, output) in groups.iter().zip(candidate_outputs.iter_mut()) {
         let group = &prepared_group.input;
+        let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
         let challenges = live.draw_folding_challenges(
             ring_d,
             group.group_index,
             group.params.num_live_blocks(),
             group.polys.len(),
-            &root_lp.fold_challenge_config,
+            &group.params.fold_challenge_config(),
             &group.params.fold_challenge_shape(),
             labels,
             nonce,
@@ -553,12 +573,11 @@ where
     P: RootOpeningSource<F, 32>
         + RootOpeningSource<F, 64>
         + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>,
+        + RootOpeningSource<F, 256>
+        + RootOpeningSource<F, 512>,
     B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
-    // A-role fold dimension; per-role split attaches here (mixed-row spec).
-    let ring_d = root_lp.role_dims().d_a();
     let binding = FoldLinfProtocolBinding::CURRENT;
     let contract =
         root_lp.fold_witness_grind_batch_contract(opening_batch, binding.max_grind_attempts)?;
@@ -583,7 +602,7 @@ where
             ));
         }
         let challenge = akita_types::sis::FoldChallengeNorms::new(
-            &root_lp.fold_challenge_config,
+            &group.params.fold_challenge_config(),
             group.params.fold_challenge_shape(),
         );
         let cap_config = root_lp.fold_witness_linf_cap_config_for_params(group.params)?;
@@ -622,20 +641,13 @@ where
     let probe_nonces =
         grind_probe_nonces(&contract, &binding, transcript, root_lp, &group_geometries)?;
 
-    dispatch_for_field!(
-        akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            sample_multi_group_fold_decompose_witnesses_at_dim::<F, P, B, T, D>(
-                backend,
-                prepared,
-                transcript,
-                root_lp,
-                &prepared_groups,
-                &probe_nonces,
-            )
-        }
+    sample_multi_group_fold_decompose_witnesses_native::<F, P, B, T>(
+        backend,
+        prepared,
+        transcript,
+        root_lp,
+        &prepared_groups,
+        &probe_nonces,
     )
 }
 

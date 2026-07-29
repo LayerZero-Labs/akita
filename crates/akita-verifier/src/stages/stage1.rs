@@ -27,7 +27,7 @@ type DigitRangeVerifyOutput<E> = Vec<E>;
 /// D-block `v = D · concat_g(ê_g)` is absorbed a single time (it spans every
 /// group; the terminal layout drops the D-block so the absorb is skipped on
 /// both sides), then each group samples with its own `num_live_blocks`/`K_g` under
-/// the shared root `fold_challenge_config`, each group's local challenge shape,
+/// each group's native fold-challenge config and local challenge shape,
 /// and the shared
 /// accepted grind nonce. A scalar batch (`num_groups == 1`) samples a single
 /// `Challenges` set with `lp.num_live_blocks`/`num_total_polynomials`.
@@ -40,7 +40,6 @@ pub(crate) fn derive_multi_group_stage1_challenges<F, T>(
     transcript: &mut T,
     v_coeffs: &[F],
     v_ring_d: usize,
-    challenge_ring_d: usize,
     opening_batch: &OpeningClaimsLayout,
     lp: &CommittedGroupParams,
     grind_nonce: u32,
@@ -54,14 +53,15 @@ where
     let mut group_challenges = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
         let k_g = opening_batch.group_layout(group_index)?.num_polynomials();
         group_challenges.push(
             LiveFoldDraw::<F, T>::new(transcript).draw_folding_challenges(
-                challenge_ring_d,
+                group_dims.d_a(),
                 group_index,
                 group_lp.num_live_blocks(),
                 k_g,
-                &lp.fold_challenge_config,
+                &group_lp.fold_challenge_config(),
                 &group_lp.fold_challenge_shape(),
                 labels,
                 grind_nonce,

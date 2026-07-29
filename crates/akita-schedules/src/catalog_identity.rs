@@ -1,6 +1,6 @@
 //! Catalog identity validation for generated schedule tables.
 //!
-//! Each shipped table embeds a [`GeneratedScheduleCatalogIdentity`] that must
+//! Each generated table embeds a [`GeneratedScheduleCatalogIdentity`] that must
 //! match the runtime [`PlannerPolicy`] and hook closures before lookup proceeds.
 //! Identity mismatch is a hard error; a row miss after validation falls back to
 //! the offline DP search.
@@ -153,7 +153,7 @@ struct CatalogIdentityExpectation {
 }
 
 impl CatalogIdentityExpectation {
-    /// The owned mirror of a shipped catalog's embedded identity.
+    /// The owned mirror of a generated catalog's embedded identity.
     fn from_embedded(identity: &GeneratedScheduleCatalogIdentity) -> Self {
         Self {
             family_name: identity.family_name,
@@ -548,6 +548,8 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
     h.write_u64(key.num_live_blocks as u64);
     h.write_u64(u64::from(key.log_basis_inner));
     h.write_u64(u64::from(key.log_basis_outer));
+    h.write_u64(key.inner_ring_dimension as u64);
+    h.write_u64(key.outer_ring_dimension as u64);
     h.write_u64(key.n_a as u64);
     h.write_bytes(&key.a_coeff_linf_bound.to_le_bytes());
     h.write_u64(key.n_b as u64);

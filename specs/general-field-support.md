@@ -36,7 +36,7 @@ small-field roots, so those roots no longer rely on the huge root-direct
 fallback. Generated production fp32/fp64 schedule tables are now family-bound
 by SIS modulus, include extension-opening-reduction proof bytes in planned
 accounting, price the small-field `psi` embedding norm bound in SIS A-role
-collisions, and cover separate full-field and one-hot configs for fp32
+collisions, and cover separate dense and one-hot configs for fp32
 `D = 64,128,256,512` plus fp64 `D = 32,64,128,256` through `num_vars <= 32`
 for singleton and same-point `np=4` shapes. fp32 `D=32` remains a tuning-only
 candidate under the current rank-4 SIS floor table.
@@ -79,7 +79,7 @@ extension-opening cutover.
 - Planner digit counts and proof-size estimates respect the configured field
   bit width instead of assuming 128-bit elements.
 - The original static fp32/fp64 configs were scaffolding profiles. The follow-up
-  completion work replaced the production surface with full-field and one-hot
+  completion work replaced the production surface with dense and one-hot
   generated small-field configs.
 - Local scratch notes and generated planning scripts remain untracked and are
   not part of this PR.

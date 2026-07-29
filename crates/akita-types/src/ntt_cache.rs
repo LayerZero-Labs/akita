@@ -931,6 +931,14 @@ mod tests {
     }
 
     #[test]
+    fn q128_a7f7_selector_accepts_d512() {
+        assert!(matches!(
+            select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),
+            Ok(ProtocolCrtNttParams::Q128(_))
+        ));
+    }
+
+    #[test]
     fn signed_i16_cache_checks_shape_and_digit_class() {
         const D: usize = 64;
         let flat = flat_zeros::<Prime32Offset99, D>(2);

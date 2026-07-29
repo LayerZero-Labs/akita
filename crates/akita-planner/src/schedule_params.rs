@@ -5,9 +5,8 @@
 //! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
-//! exactly the shape `crate::schedule_from_entry` already consumes. This keeps the
-//! DP a pure function of `(policy, key)` so `akita-config` can call it
-//! directly on a schedule-table miss without a dependency cycle.
+//! exactly the shape generated catalog emission consumes. This keeps the DP a
+//! pure function of `(policy, key)` for offline table generation.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -36,12 +35,9 @@ mod suffix_dp;
 
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
-    derive_candidate_level_params, planned_next_witness_len,
-    scalar_root_fold_level_params_candidate,
+    derive_candidate_level_params, scalar_root_fold_level_params_candidate,
 };
-pub(crate) use suffix_dp::{
-    derive_optimal_suffix_schedule, FoldSuffix, ScheduleMemo, SuffixCtx, SuffixState,
-};
+pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -145,15 +141,7 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: if root.params.onehot_chunk_size == 0 {
-                        RootSource::Dense {
-                            coefficient_bits: root.params.field_bits_for_cache(),
-                        }
-                    } else {
-                        RootSource::OneHot {
-                            chunk_size: root.params.onehot_chunk_size,
-                        }
-                    },
+                    source: RootSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -385,6 +373,126 @@ pub fn find_schedule(
     )
 }
 
+/// One recursive fold of an independently planned suffix
+/// ([`plan_optimal_suffix`]).
+#[derive(Clone, Debug)]
+pub struct PlannedSuffixFold {
+    /// Committed-group params for this fold level (already priced at
+    /// `policy.ring_dimension`).
+    pub params: CommittedGroupParams,
+    /// Field-element witness length entering this fold.
+    pub input_witness_len: usize,
+    /// Field-element witness length produced for the next level.
+    pub output_witness_len: usize,
+}
+
+/// Terminal (cleartext) response of an independently planned suffix.
+#[derive(Clone, Debug)]
+pub struct PlannedSuffixTerminal {
+    /// Terminal committed-group params.
+    pub params: akita_types::TerminalCommittedGroupParams,
+    /// Short ring challenge family for the terminal fold.
+    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    /// Field-element witness length entering the terminal fold.
+    pub input_witness_len: usize,
+    /// Cleartext response wire shape.
+    pub response_shape: TerminalResponseShape,
+}
+
+/// Optimal recursive suffix planned from an intermediate witness.
+#[derive(Clone, Debug)]
+pub struct PlannedSuffix {
+    /// Recursive fold levels, starting at `start_level`.
+    pub folds: Vec<PlannedSuffixFold>,
+    /// Terminal fold.
+    pub terminal: PlannedSuffixTerminal,
+    /// Header-stripped direct-mode proof bytes of the suffix (folds + terminal).
+    pub total_bytes: usize,
+}
+
+/// Plan the proof-size-optimal recursive suffix that folds a witness of
+/// `start_witness_len` field elements (produced by some predecessor fold at
+/// `start_level - 1`) down to a cleartext terminal, at `policy.ring_dimension`.
+///
+/// This is the exact suffix DP [`find_schedule`] runs after choosing a root,
+/// exposed so callers can splice an optimal suffix onto a differently sized
+/// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
+/// folds at a larger ring dimension than the suffix. `start_lb` is the
+/// predecessor level's `log_basis` (fold `log_basis` is non-decreasing), and
+/// `num_vars` is the opening arity (used for the singleton opening layout the
+/// suffix prices against).
+///
+/// # Errors
+///
+/// Returns [`AkitaError::UnsupportedSchedule`] if no terminating suffix exists
+/// for the requested state, or propagates SIS-sizing / overflow failures.
+pub fn plan_optimal_suffix(
+    policy: &PlannerPolicy,
+    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
+    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
+    num_vars: usize,
+    start_level: usize,
+    start_witness_len: usize,
+    start_lb: u32,
+) -> Result<PlannedSuffix, AkitaError> {
+    validate_policy(policy)?;
+    if policy.recursive_setup_planning {
+        return Err(AkitaError::InvalidSetup(
+            "recursive setup planning is not supported by plan_optimal_suffix".to_string(),
+        ));
+    }
+    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let ctx = SuffixCtx {
+        policy,
+        ring_challenge_cfg: &ring_challenge_cfg,
+        ring_challenge_config: &ring_challenge_config,
+        fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
+        num_vars,
+        key: PolynomialGroupLayout::singleton(num_vars),
+        setup_envelope_budget: None,
+        root_lookup_key: None,
+    };
+    let mut memo = ScheduleMemo::new();
+    let result = derive_optimal_suffix_schedule(
+        &ctx,
+        &mut memo,
+        SuffixState {
+            level: start_level,
+            current_witness_len: start_witness_len,
+            current_lb: start_lb,
+            incoming_setup_prefix: None,
+        },
+        0,
+    )?;
+    let best = result
+        .best_by_payload_per_lb
+        .values()
+        .min_by_key(|suffix| suffix.total_bytes)
+        .ok_or_else(|| {
+            AkitaError::UnsupportedSchedule(format!(
+                "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
+            ))
+        })?;
+    Ok(PlannedSuffix {
+        folds: best
+            .folds
+            .iter()
+            .map(|fold| PlannedSuffixFold {
+                params: fold.params.clone(),
+                input_witness_len: fold.input_witness_len,
+                output_witness_len: fold.output_witness_len,
+            })
+            .collect(),
+        terminal: PlannedSuffixTerminal {
+            params: best.terminal.params.clone(),
+            sparse_challenge_config: best.terminal.sparse_challenge_config,
+            input_witness_len: best.terminal.input_witness_len,
+            response_shape: best.terminal.response_shape.clone(),
+        },
+        total_bytes: best.total_bytes,
+    })
+}
+
 fn find_schedule_inner(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
@@ -400,10 +508,12 @@ fn find_schedule_inner(
     let suffix_ctx = SuffixCtx {
         policy,
         ring_challenge_cfg: &ring_challenge_cfg,
+        ring_challenge_config,
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
         setup_envelope_budget: None,
+        root_lookup_key: None,
     };
 
     if policy.recursive_setup_planning {
@@ -439,15 +549,16 @@ fn find_schedule_inner(
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
+    let root_eor_bytes = extension_opening_reduction_level_bytes(
+        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+        policy.claim_ext_degree,
+        0,
+        key,
+        witness_len,
+    )
+    .ok();
 
-    let (configured_min_log_basis, max_log_basis) = policy.basis_range;
-    let min_log_basis = configured_min_log_basis
-        .max(policy.decomposition.log_basis)
-        .max(if policy.decomposition.field_bits() < 128 {
-            5
-        } else {
-            0
-        });
+    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     for candidate_log_basis in min_log_basis..=max_log_basis {
         for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
             let Some(candidate_params) = scalar_root_fold_level_params_candidate(
@@ -499,13 +610,7 @@ fn find_schedule_inner(
             if suffix.is_empty() {
                 continue;
             }
-            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-                policy.claim_ext_degree,
-                0,
-                key,
-                witness_len,
-            ) else {
+            let Some(eor_bytes) = root_eor_bytes else {
                 continue;
             };
 

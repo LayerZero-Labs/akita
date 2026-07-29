@@ -15,7 +15,7 @@ use crate::generated::{
     GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedOpenCommitMatrix,
     GeneratedSetupPrefixInput, GeneratedTerminalFold,
 };
-use crate::schedule_params::optimize_fold_challenge_shape;
+use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -109,6 +109,8 @@ impl GeneratedSetupPrefixInput {
             num_live_blocks,
             log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
             log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            inner_ring_dimension: d,
+            outer_ring_dimension: d,
             n_a: 1,
             a_coeff_linf_bound: 1,
             n_b: 1,
@@ -138,7 +140,7 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        layout.validate_root_geometry(d)?;
+        layout.validate_root_geometry()?;
         if fold_shape != TensorChallengeShape::Flat {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix challenge shape mismatch".into(),
@@ -148,6 +150,7 @@ impl GeneratedSetupPrefixInput {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             d,
             inner_decomp,
@@ -238,6 +241,7 @@ impl GeneratedSetupPrefixInput {
             inner_commit_matrix,
             outer_commit_matrix,
             log_basis_open,
+            fold_challenge_config: *ring_challenge_cfg,
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
@@ -276,7 +280,7 @@ impl GeneratedCommittedGroup {
     /// # Errors
     ///
     /// Returns an error when the stored ring dimension disagrees with the
-    /// policy, bucket/width resolution fails, or a shipped rank fails its SIS
+    /// policy, bucket/width resolution fails, or a generated rank fails its SIS
     /// audit against the (batched) width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
@@ -349,7 +353,7 @@ impl GeneratedCommittedGroup {
         // `akita_types::sis` primitives. The B/D widths carry the `num_claims`
         // batch factor (the root commits `num_claims` polynomials); `n_a` is the
         // A-matrix row count. Unlike the planner DP, expansion audits the
-        // *shipped* ranks against these (norm, width) via `try_new`.
+        // generated ranks against these (norm, width) via `try_new`.
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
@@ -377,6 +381,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -453,7 +458,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width())
+            .map(|prefix| prefix.commitment_params.d_segment_width(ring_d))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -492,7 +497,7 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
 
-        // Audit each shipped rank against its width + bucket as we build the
+        // Audit each generated rank against its width + bucket as we build the
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
@@ -633,6 +638,7 @@ impl GeneratedCommittedGroup {
             .ok_or_else(|| no_layout("A"))?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
+            policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
             witness_decomp,
@@ -827,6 +833,7 @@ impl GeneratedTerminalFold {
         )?;
         let collision_bucket = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
+            policy.sis_table_digest,
             policy.sis_modulus_profile,
             ring_dimension,
             witness_decomposition,

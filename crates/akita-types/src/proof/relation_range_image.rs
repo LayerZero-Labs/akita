@@ -5,8 +5,8 @@ use std::ops::Range;
 use akita_field::AkitaError;
 
 use crate::{
-    validate_role_dims, CommitmentRingDims, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,
-    WitnessLayout,
+    CommitmentRingDims, DigitRangePlan, FlatBooleanDomain, OpeningClaimsLayout,
+    RelationAddressGeometry, WitnessLayout,
 };
 
 /// One commitment group's claims and witness units in physical processing order.
@@ -40,16 +40,13 @@ impl RelationRangeImageGroupPlan {
 /// Checked semantic plan for the direct relation/evaluation-trace/range-image sum-check.
 ///
 /// This plan joins the existing flat coefficient domain, Stage 1 range basis,
-/// semantic witness layout, opening-claim order, and nested role dimensions. Mutable
+/// semantic witness layout, opening-claim order, and per-role dimensions. Mutable
 /// compact/folded tables remain prover state and are intentionally not represented here.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RelationRangeImagePlan {
-    digit_witness_domain: FlatBooleanDomain,
+    relation_address_geometry: RelationAddressGeometry,
     digit_range_plan: DigitRangePlan,
     witness_layout: WitnessLayout,
-    role_dims: CommitmentRingDims,
-    coeff_count: usize,
-    relation_lane_count: usize,
     groups: Vec<RelationRangeImageGroupPlan>,
 }
 
@@ -59,22 +56,20 @@ impl RelationRangeImagePlan {
     /// # Errors
     ///
     /// Returns an error if role dimensions are unsupported, the flat live prefix does
-    /// not exactly encode the semantic witness layout at the inner ring dimension, or
+    /// not exactly encode the semantic witness layout at the batch carrier dimension, or
     /// witness groups/chunks do not follow the authenticated opening order.
     pub fn new(
-        digit_witness_domain: FlatBooleanDomain,
+        relation_address_geometry: RelationAddressGeometry,
         digit_range_plan: DigitRangePlan,
         witness_layout: WitnessLayout,
         opening_batch: &OpeningClaimsLayout,
-        role_dims: CommitmentRingDims,
-        outgoing_witness_ring_dimension: usize,
     ) -> Result<Self, AkitaError> {
-        validate_role_dims(role_dims)?;
         opening_batch.check()?;
 
+        let digit_witness_domain = relation_address_geometry.digit_witness_domain();
         let expected_live_len = witness_layout
             .total_len()
-            .checked_mul(role_dims.d_a())
+            .checked_mul(relation_address_geometry.carrier_ring_dimension())
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("relation/range-image witness size overflow".into())
             })?;
@@ -85,23 +80,13 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let coeff_count =
-            role_dims.common_relation_witness_coeff_count(outgoing_witness_ring_dimension);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !outgoing_witness_ring_dimension.is_power_of_two()
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation/range-image joint relation-witness geometry is malformed".into(),
-            ));
-        }
+        let coeff_count = relation_address_geometry.common_relation_witness_coeff_count();
         if !digit_witness_domain.live_len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
                 "digit witness is not aligned to the joint relation-witness block".into(),
             ));
         }
-        let relation_lane_count = digit_witness_domain.live_len() / coeff_count;
-        if relation_lane_count == 0 {
+        if relation_address_geometry.live_relation_lane_count() == 0 {
             return Err(AkitaError::InvalidSetup(
                 "relation/range-image plan requires a non-empty lane domain".into(),
             ));
@@ -176,20 +161,23 @@ impl RelationRangeImagePlan {
         }
 
         Ok(Self {
-            digit_witness_domain,
+            relation_address_geometry,
             digit_range_plan,
             witness_layout,
-            role_dims,
-            coeff_count,
-            relation_lane_count,
             groups,
         })
+    }
+
+    /// Canonical relation-witness address geometry.
+    #[must_use]
+    pub fn relation_address_geometry(&self) -> RelationAddressGeometry {
+        self.relation_address_geometry
     }
 
     /// Complete coefficient-domain authority shared with Stage 1.
     #[must_use]
     pub fn digit_witness_domain(&self) -> FlatBooleanDomain {
-        self.digit_witness_domain
+        self.relation_address_geometry.digit_witness_domain()
     }
 
     /// Global range-basis authority shared with Stage 1.
@@ -207,26 +195,7 @@ impl RelationRangeImagePlan {
     /// Nested inner/outer/opening ring dimensions.
     #[must_use]
     pub fn role_dims(&self) -> CommitmentRingDims {
-        self.role_dims
-    }
-
-    /// Width of the low coefficient block aligned for both relation alpha
-    /// sequences and outgoing witness ring elements.
-    #[must_use]
-    pub fn coeff_count(&self) -> usize {
-        self.coeff_count
-    }
-
-    /// Number of aligned low address bits bound before relation-lane coordinates.
-    #[must_use]
-    pub fn coeff_variable_count(&self) -> usize {
-        self.coeff_count.trailing_zeros() as usize
-    }
-
-    /// Number of live relation lanes after extracting the common alpha factor.
-    #[must_use]
-    pub fn relation_lane_count(&self) -> usize {
-        self.relation_lane_count
+        self.relation_address_geometry.role_dims()
     }
 
     /// Groups in authenticated root processing order.
@@ -291,18 +260,18 @@ mod tests {
         .unwrap();
         let witness_layout = test_layout(&opening_batch, chunks_per_group);
         let live_len = witness_layout.total_len() * role_dims.d_a();
-        let domain = FlatBooleanDomain::new(
-            live_len,
-            live_len.next_power_of_two().trailing_zeros() as usize,
+        assert!(live_len.is_multiple_of(opening_ring_dimension));
+        let geometry = RelationAddressGeometry::new(
+            role_dims,
+            opening_ring_dimension,
+            live_len / opening_ring_dimension,
         )
         .unwrap();
         RelationRangeImagePlan::new(
-            domain,
+            geometry,
             DigitRangePlan::new(basis).unwrap(),
             witness_layout,
             &opening_batch,
-            role_dims,
-            opening_ring_dimension,
         )
         .unwrap()
     }
@@ -329,9 +298,14 @@ mod tests {
                         );
                         assert_eq!(plan.digit_range_plan().basis(), basis);
                         assert_eq!(plan.role_dims(), role_dims);
-                        assert_eq!(plan.coeff_count(), role_dims.d_d());
+                        let geometry = plan.relation_address_geometry();
                         assert_eq!(
-                            plan.relation_lane_count() * plan.coeff_count(),
+                            geometry.common_relation_witness_coeff_count(),
+                            role_dims.d_d()
+                        );
+                        assert_eq!(
+                            geometry.live_relation_lane_count()
+                                * geometry.common_relation_witness_coeff_count(),
                             plan.digit_witness_domain().live_len()
                         );
                         assert_eq!(plan.groups().len(), group_sizes.len());
@@ -359,9 +333,10 @@ mod tests {
     #[test]
     fn plan_common_block_respects_outgoing_ring_dimension() {
         let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(128), 64, 8);
-        assert_eq!(plan.coeff_count(), 64);
+        let geometry = plan.relation_address_geometry();
+        assert_eq!(geometry.common_relation_witness_coeff_count(), 64);
         assert_eq!(
-            plan.relation_lane_count() * plan.coeff_count(),
+            geometry.live_relation_lane_count() * geometry.common_relation_witness_coeff_count(),
             plan.digit_witness_domain().live_len()
         );
     }
@@ -371,36 +346,28 @@ mod tests {
         let opening_batch = OpeningClaimsLayout::from_group_sizes(3, &[1, 1]).unwrap();
         let witness_layout = test_layout(&opening_batch, 1);
         let live_len = witness_layout.total_len() * 64;
-        let short_domain = FlatBooleanDomain::new(
-            live_len - 1,
-            live_len.next_power_of_two().trailing_zeros() as usize,
-        )
-        .unwrap();
+        let short_geometry =
+            RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 64, live_len / 64 - 1)
+                .unwrap();
         assert!(RelationRangeImagePlan::new(
-            short_domain,
+            short_geometry,
             DigitRangePlan::new(8).unwrap(),
             witness_layout.clone(),
             &opening_batch,
-            CommitmentRingDims::uniform(64),
-            64,
         )
         .is_err());
 
         let mut reversed_units = witness_layout.units().to_vec();
         reversed_units.reverse();
         let malformed = WitnessLayout::new_for_test(reversed_units, witness_layout.r_range());
-        let domain = FlatBooleanDomain::new(
-            live_len,
-            live_len.next_power_of_two().trailing_zeros() as usize,
-        )
-        .unwrap();
+        let geometry =
+            RelationAddressGeometry::new(CommitmentRingDims::uniform(64), 64, live_len / 64)
+                .unwrap();
         assert!(RelationRangeImagePlan::new(
-            domain,
+            geometry,
             DigitRangePlan::new(8).unwrap(),
             malformed,
             &opening_batch,
-            CommitmentRingDims::uniform(64),
-            64,
         )
         .is_err());
     }

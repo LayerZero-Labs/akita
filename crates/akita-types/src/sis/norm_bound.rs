@@ -113,6 +113,7 @@ pub fn max_response_linf_for_role_a_collision(
 #[allow(clippy::too_many_arguments)]
 pub fn rounded_up_role_a_inf_norm(
     policy: SisSecurityPolicyId,
+    table_digest: SisTableDigest,
     sis_modulus_profile: SisModulusProfileId,
     d: usize,
     witness_decomposition: DecompositionParams,
@@ -160,7 +161,7 @@ pub fn rounded_up_role_a_inf_norm(
     )?;
     ceil_supported_linf_bound(
         policy,
-        SisTableDigest::CURRENT,
+        table_digest,
         sis_modulus_profile,
         SisMatrixRole::Inner,
         d as u32,
@@ -223,7 +224,7 @@ impl FoldWitnessNorms {
     /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
     /// `nonzeros = ceil(D / K)`:
     ///
-    /// - dense / full-field        : `K = 1`     ⇒ `nonzeros = D`
+    /// - dense                     : `K = 1`     ⇒ `nonzeros = D`
     /// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
     /// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
     #[inline]
@@ -530,6 +531,7 @@ mod tests {
         assert_eq!(
             rounded_up_role_a_inf_norm(
                 DEFAULT_SIS_SECURITY_POLICY,
+                SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
                 d,
                 decomposition,
@@ -600,6 +602,7 @@ mod tests {
         );
         let digit_priced = rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
             SisModulusProfileId::Q64Offset59,
             d,
             decomposition,
@@ -741,6 +744,7 @@ mod tests {
         let z_bound = balanced_digit_abs_max(decomposition.log_basis, delta_fold);
         let priced = rounded_up_role_a_inf_norm(
             DEFAULT_SIS_SECURITY_POLICY,
+            SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
             d,
             decomposition,

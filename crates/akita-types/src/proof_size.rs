@@ -42,7 +42,7 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// over the challenge field, which may be a non-trivial extension of the
 /// base field for small-prime configurations.
 ///
-/// This prices the **direct-mode** two-stage fold payload only
+/// This prices the **direct-mode** folded payload only
 /// (`SetupContributionMode::Direct`): the y/v ring blocks, the stage-1
 /// range-check tree, the fused stage-2 sumcheck, and the next-level witness
 /// binding plus its evaluation. An ordinary recursive edge ships the outer
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+    fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
         const D: usize = 64;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let next_lp = CommittedGroupParams::params_only(
@@ -360,7 +360,7 @@ mod tests {
                     crate::NextWitnessBindingPolicy::OuterCommitment,
                 )
                 .unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
         }
     }

@@ -8,6 +8,7 @@ use crate::proof::AkitaExpandedSetup;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SetupProjectionGroupGeometry {
+    pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_rows: usize,
     pub(crate) a_cols: usize,
     pub(crate) b_rows: usize,
@@ -53,43 +54,82 @@ impl SetupProjectionGeometry {
                 "setup projection requires at least one group".into(),
             ));
         }
+        validate_role_dims(role_dims)?;
+        let base_ring_dim =
+            groups
+                .iter()
+                .try_fold(role_dims.common_relation_coeff_count(), |base, group| {
+                    validate_role_dims(group.role_dims)?;
+                    if group.role_dims.d_d() != role_dims.d_d() {
+                        return Err(AkitaError::InvalidSetup(
+                            "setup projection groups disagree on the shared D dimension".into(),
+                        ));
+                    }
+                    Ok(base.min(group.role_dims.common_relation_coeff_count()))
+                })?;
+        let ratio = |role: &'static str, dimension: usize| {
+            checked_projection_ratio(role, dimension, base_ring_dim)
+        };
+        let d_ratio = ratio("D", role_dims.d_d())?;
         let d_footprint = d_rows
             .checked_mul(d_physical_cols)
+            .and_then(|footprint| footprint.checked_mul(d_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("setup D footprint overflow".into()))?;
         let mut a_footprint = 0usize;
         let mut b_footprint = 0usize;
         for group in groups {
-            a_footprint =
-                a_footprint.max(group.a_rows.checked_mul(group.a_cols).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A footprint overflow".into())
-                })?);
-            b_footprint =
-                b_footprint.max(group.b_rows.checked_mul(group.b_cols).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup B footprint overflow".into())
-                })?);
+            let a_ratio = ratio("A", group.role_dims.d_a())?;
+            let b_ratio = ratio("B", group.role_dims.d_b())?;
+            a_footprint = a_footprint.max(
+                group
+                    .a_rows
+                    .checked_mul(group.a_cols)
+                    .and_then(|footprint| footprint.checked_mul(a_ratio))
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup A footprint overflow".into()))?,
+            );
+            b_footprint = b_footprint.max(
+                group
+                    .b_rows
+                    .checked_mul(group.b_cols)
+                    .and_then(|footprint| footprint.checked_mul(b_ratio))
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup B footprint overflow".into()))?,
+            );
         }
-        let mut geometry =
-            Self::from_role_footprints(role_dims, a_footprint, b_footprint, d_footprint)?;
+        let (a_ratio, b_ratio) = (ratio("A", role_dims.d_a())?, ratio("B", role_dims.d_b())?);
+        let required = a_footprint.max(b_footprint).max(d_footprint);
+        let mut geometry = Self::from_projected_footprints(
+            role_dims,
+            base_ring_dim,
+            a_ratio,
+            b_ratio,
+            d_ratio,
+            a_footprint,
+            b_footprint,
+            d_footprint,
+            required,
+        )?;
         let mut evaluation_terms = 0usize;
         for group in groups {
+            let a_ratio = ratio("A", group.role_dims.d_a())?;
+            let b_ratio = ratio("B", group.role_dims.d_b())?;
             let d_terms = group
                 .d_active_cols
                 .checked_mul(d_rows)
-                .and_then(|terms| terms.checked_mul(geometry.d_ratio))
+                .and_then(|terms| terms.checked_mul(d_ratio))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("setup D evaluation work overflow".into())
                 })?;
             let b_terms = group
                 .b_cols
                 .checked_mul(group.b_rows)
-                .and_then(|terms| terms.checked_mul(geometry.b_ratio))
+                .and_then(|terms| terms.checked_mul(b_ratio))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("setup B evaluation work overflow".into())
                 })?;
             let a_terms = group
                 .a_cols
                 .checked_mul(group.a_rows)
-                .and_then(|terms| terms.checked_mul(geometry.a_ratio))
+                .and_then(|terms| terms.checked_mul(a_ratio))
                 .and_then(|terms| terms.checked_mul(group.ownership_units))
                 .and_then(|terms| terms.checked_mul(group.depth_fold))
                 .ok_or_else(|| {
@@ -124,6 +164,31 @@ impl SetupProjectionGeometry {
         let required = a_projection_width
             .max(b_projection_width)
             .max(d_projection_width);
+        Self::from_projected_footprints(
+            role_dims,
+            base_ring_dim,
+            a_ratio,
+            b_ratio,
+            d_ratio,
+            a_projection_width,
+            b_projection_width,
+            d_projection_width,
+            required,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn from_projected_footprints(
+        role_dims: CommitmentRingDims,
+        base_ring_dim: usize,
+        a_ratio: usize,
+        b_ratio: usize,
+        d_ratio: usize,
+        a_projection_width: usize,
+        b_projection_width: usize,
+        d_projection_width: usize,
+        required: usize,
+    ) -> Result<Self, AkitaError> {
         if required == 0 {
             return Err(AkitaError::InvalidSetup(
                 "setup projection requires a non-empty footprint".into(),
@@ -157,8 +222,12 @@ impl SetupProjectionGeometry {
         })
     }
 
-    /// Number of native B- and D-role subcolumns in one A-role witness column.
-    pub fn witness_subcolumn_ratios(
+    /// Number of native B- and D-role subcolumns in the current A-width
+    /// relation-witness carrier.
+    ///
+    /// B and D are not ordered relative to each other. Both fit the A carrier
+    /// under the canonical role-dimension invariant.
+    pub fn a_carrier_subcolumn_counts(
         role_dims: CommitmentRingDims,
     ) -> Result<(usize, usize), AkitaError> {
         let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
@@ -166,13 +235,17 @@ impl SetupProjectionGeometry {
             .checked_div(b_ratio)
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("B role does not divide the A-role witness width".into())
+                AkitaError::InvalidSetup(
+                    "current A-width relation witness cannot carry the B role".into(),
+                )
             })?;
         let d_subcolumns = a_ratio
             .checked_div(d_ratio)
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
-                AkitaError::InvalidSetup("D role does not divide the A-role witness width".into())
+                AkitaError::InvalidSetup(
+                    "current A-width relation witness cannot carry the D role".into(),
+                )
             })?;
         if !b_subcolumns.is_power_of_two() || !d_subcolumns.is_power_of_two() {
             return Err(AkitaError::InvalidSetup(
@@ -296,26 +369,31 @@ fn checked_role_ratios(
 ) -> Result<(usize, usize, usize, usize), AkitaError> {
     validate_role_dims(role_dims)?;
     let base_ring_dim = role_dims.d_a().min(role_dims.d_b()).min(role_dims.d_d());
-    let ratio = |role: &'static str, dimension: usize| {
-        if !dimension.is_multiple_of(base_ring_dim) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role} ring dimension does not decompose over the Stage 3 base"
-            )));
-        }
-        let ratio = dimension / base_ring_dim;
-        if ratio == 0 || !ratio.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(format!(
-                "{role} Stage 3 projection ratio must be a non-zero power of two"
-            )));
-        }
-        Ok(ratio)
-    };
     Ok((
         base_ring_dim,
-        ratio("A", role_dims.d_a())?,
-        ratio("B", role_dims.d_b())?,
-        ratio("D", role_dims.d_d())?,
+        checked_projection_ratio("A", role_dims.d_a(), base_ring_dim)?,
+        checked_projection_ratio("B", role_dims.d_b(), base_ring_dim)?,
+        checked_projection_ratio("D", role_dims.d_d(), base_ring_dim)?,
     ))
+}
+
+fn checked_projection_ratio(
+    role: &'static str,
+    dimension: usize,
+    base_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    if base_ring_dim == 0 || !dimension.is_multiple_of(base_ring_dim) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{role} ring dimension does not decompose over the Stage 3 base"
+        )));
+    }
+    let ratio = dimension / base_ring_dim;
+    if ratio == 0 || !ratio.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{role} Stage 3 projection ratio must be a non-zero power of two"
+        )));
+    }
+    Ok(ratio)
 }
 
 /// Fail-closed envelope guard: `required` inner (`d_a`) rows must fit the shared
@@ -364,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn projection_geometry_uses_nested_common_base() {
+    fn projection_geometry_uses_common_base() {
         let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
                 inner: 64,
@@ -375,7 +453,7 @@ mod tests {
             11,
             13,
         )
-        .expect("nested geometry");
+        .expect("common-base geometry");
         assert_eq!(geometry.base_ring_dim(), 32);
         assert_eq!(geometry.a_ratio(), 2);
         assert_eq!(geometry.b_ratio(), 1);
@@ -386,19 +464,22 @@ mod tests {
     }
 
     #[test]
-    fn projection_geometry_rejects_non_nested_roles() {
-        let err = SetupProjectionGeometry::from_role_footprints(
+    fn projection_geometry_accepts_reversed_b_d_order() {
+        let geometry = SetupProjectionGeometry::from_role_footprints(
             CommitmentRingDims {
-                inner: 64,
-                outer: 16,
-                opening: 32,
+                inner: 128,
+                outer: 32,
+                opening: 64,
             },
             1,
             1,
             1,
         )
-        .expect_err("non-nested roles");
-        assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("role ordering is irrelevant to common-base projection");
+        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.a_ratio(), 4);
+        assert_eq!(geometry.b_ratio(), 1);
+        assert_eq!(geometry.d_ratio(), 2);
     }
 
     #[test]
@@ -408,6 +489,7 @@ mod tests {
             0,
             0,
             &[SetupProjectionGroupGeometry {
+                role_dims: CommitmentRingDims::uniform(64),
                 a_rows: 1,
                 a_cols: MAX_COMPACT_STRIDE_TERMS,
                 b_rows: 0,
@@ -428,6 +510,7 @@ mod tests {
             0,
             0,
             &[SetupProjectionGroupGeometry {
+                role_dims: CommitmentRingDims::uniform(64),
                 a_rows: 1,
                 a_cols: MAX_COMPACT_STRIDE_TERMS + 1,
                 b_rows: 0,
@@ -442,5 +525,51 @@ mod tests {
             geometry_above_cap.ensure_evaluation_budget(),
             Err(AkitaError::InvalidSize { .. })
         ));
+    }
+
+    #[test]
+    fn projection_geometry_uses_every_groups_native_dimensions() {
+        let geometry = SetupProjectionGeometry::from_groups(
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            1,
+            3,
+            &[
+                SetupProjectionGroupGeometry {
+                    role_dims: CommitmentRingDims::uniform(64),
+                    a_rows: 2,
+                    a_cols: 5,
+                    b_rows: 3,
+                    b_cols: 7,
+                    d_active_cols: 1,
+                    ownership_units: 1,
+                    depth_fold: 1,
+                },
+                SetupProjectionGroupGeometry {
+                    role_dims: CommitmentRingDims {
+                        inner: 128,
+                        outer: 32,
+                        opening: 64,
+                    },
+                    a_rows: 2,
+                    a_cols: 5,
+                    b_rows: 3,
+                    b_cols: 7,
+                    d_active_cols: 2,
+                    ownership_units: 1,
+                    depth_fold: 1,
+                },
+            ],
+        )
+        .expect("mixed-group geometry");
+
+        assert_eq!(geometry.base_ring_dim(), 32);
+        assert_eq!(geometry.a_projection_width(), 40);
+        assert_eq!(geometry.b_projection_width(), 42);
+        assert_eq!(geometry.d_projection_width(), 6);
+        assert_eq!(geometry.required(), 42);
     }
 }

@@ -1,5 +1,6 @@
 //! Schedule-authority and role-dispatch orchestration gates.
 
+#![cfg(feature = "schedules-default")]
 #![allow(missing_docs)]
 
 use akita_config::proof_optimized::{fp128, fp64};
@@ -12,15 +13,16 @@ use akita_types::{
 
 #[test]
 fn batched_selection_preserves_typed_schedule_topology() {
-    type Cfg = fp64::D64Full;
+    type Cfg = fp64::D128Dense;
     let nv = 14;
     let expected = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
     ))
     .expect("runtime schedule");
     let batch = OpeningClaimsLayout::new(nv, 1).expect("opening batch");
-    let point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
-    let actual = effective_batched_schedule::<Cfg>(&batch, &point).expect("effective schedule");
+    let final_group_point = vec![<Cfg as CommitmentConfig>::ExtField::zero(); nv];
+    let actual =
+        effective_batched_schedule::<Cfg>(&batch, &final_group_point).expect("effective schedule");
     assert_eq!(actual.recursive_folds.len(), expected.recursive_folds.len());
     assert_eq!(
         actual.terminal.input_witness_len,
@@ -30,7 +32,7 @@ fn batched_selection_preserves_typed_schedule_topology() {
 
 #[test]
 fn role_dispatch_rejects_wrong_inner_dimension() {
-    let schedule = fp128::D128Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(16),
     ))
     .expect("runtime schedule");
@@ -40,17 +42,17 @@ fn role_dispatch_rejects_wrong_inner_dimension() {
 
 #[test]
 fn real_presets_validate_against_setup_ring_dimension() {
-    for schedule in [
-        fp64::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(14),
-        ))
-        .expect("fp64 schedule"),
-        fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
-            PolynomialGroupLayout::singleton(13),
-        ))
-        .expect("fp128 schedule"),
-    ] {
-        validate_schedule_ring_dims(&schedule, &ring_plan_test_seed(64))
-            .expect("D64 schedule envelope");
-    }
+    let fp64_schedule = fp64::D128Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(14),
+    ))
+    .expect("fp64 schedule");
+    validate_schedule_ring_dims(&fp64_schedule, &ring_plan_test_seed(128))
+        .expect("D128 schedule envelope");
+
+    let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(13),
+    ))
+    .expect("fp128 schedule");
+    validate_schedule_ring_dims(&fp128_schedule, &ring_plan_test_seed(64))
+        .expect("D64 schedule envelope");
 }

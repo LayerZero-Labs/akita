@@ -443,14 +443,17 @@ fn compact_pair_matches_direct_non_power_of_two_sweep() {
                     for len in [1usize, 2, 3, 5, 9] {
                         let left_offset = left_bits;
                         let right_offset = right_bits + 1;
-                        let got = eval_compact_pair_eq(
+                        let got = eval_weighted_compact_pair_eq(
                             &left,
-                            left_offset,
-                            left_stride,
                             &right,
-                            right_offset,
-                            right_stride,
-                            len,
+                            &[WeightedCompactPairTerm {
+                                left_offset,
+                                left_stride,
+                                right_offset,
+                                right_stride,
+                                len,
+                                weight: F::one(),
+                            }],
                         )
                         .unwrap();
                         let expected = (0..len)
@@ -474,13 +477,159 @@ fn compact_pair_matches_direct_non_power_of_two_sweep() {
 fn compact_pair_boolean_challenges_need_no_inverses() {
     let left = [F::zero(), F::one(), F::one(), F::zero(), F::one()];
     let right = [F::one(), F::zero(), F::one(), F::one(), F::zero()];
-    let got = eval_compact_pair_eq(&left, 3, 3, &right, 1, 5, 7).unwrap();
+    let got = eval_weighted_compact_pair_eq(
+        &left,
+        &right,
+        &[WeightedCompactPairTerm {
+            left_offset: 3,
+            left_stride: 3,
+            right_offset: 1,
+            right_stride: 5,
+            len: 7,
+            weight: F::one(),
+        }],
+    )
+    .unwrap();
     let expected = (0..7)
         .map(|index| {
             eq_eval_at_index(&left, 3 + 3 * index) * eq_eval_at_index(&right, 1 + 5 * index)
         })
         .sum();
     assert_eq!(got, expected);
+}
+
+#[test]
+fn weighted_compact_pairs_match_independent_dense_sum() {
+    let mut rng = StdRng::seed_from_u64(0x00C0_11AB);
+    for term_count in [1usize, 2, 5, 17, 43] {
+        let left = random_vec(&mut rng, 10);
+        let right = random_vec(&mut rng, 11);
+        let terms = (0..term_count)
+            .map(|index| WeightedCompactPairTerm {
+                left_offset: (7 * index + 3) % 97,
+                left_stride: [3usize, 5, 8][index % 3],
+                right_offset: (11 * index + 1) % 113,
+                right_stride: [2usize, 5, 9][index % 3],
+                len: [1usize, 2, 3, 5, 9, 16, 19][index % 7],
+                weight: F::random(&mut rng),
+            })
+            .collect::<Vec<_>>();
+        let got = eval_weighted_compact_pair_eq(&left, &right, &terms).unwrap();
+        let expected = terms
+            .iter()
+            .map(|term| {
+                term.weight
+                    * (0..term.len)
+                        .map(|index| {
+                            eq_eval_at_index(&left, term.left_offset + term.left_stride * index)
+                                * eq_eval_at_index(
+                                    &right,
+                                    term.right_offset + term.right_stride * index,
+                                )
+                        })
+                        .sum::<F>()
+            })
+            .sum();
+        assert_eq!(got, expected, "term_count={term_count}");
+    }
+}
+
+#[test]
+fn weighted_compact_pairs_merge_equal_states_and_cancel() {
+    let mut rng = StdRng::seed_from_u64(0x00C0_11AC);
+    let left = random_vec(&mut rng, 8);
+    let right = random_vec(&mut rng, 8);
+    let weight = F::random(&mut rng);
+    let term = WeightedCompactPairTerm {
+        left_offset: 9,
+        left_stride: 7,
+        right_offset: 5,
+        right_stride: 11,
+        len: 31,
+        weight,
+    };
+    let cancelling = WeightedCompactPairTerm {
+        weight: -weight,
+        ..term
+    };
+    assert_eq!(
+        eval_weighted_compact_pair_eq(&left, &right, &[term, cancelling]).unwrap(),
+        F::zero()
+    );
+}
+
+#[test]
+fn weighted_compact_pairs_coalesce_contiguous_fragments() {
+    let mut rng = StdRng::seed_from_u64(0x00C0_11AD);
+    let left = random_vec(&mut rng, 12);
+    let right = random_vec(&mut rng, 13);
+    let weight = F::random(&mut rng);
+    let fragments = [3usize, 5, 7, 16]
+        .into_iter()
+        .scan(0usize, |base, len| {
+            let term = WeightedCompactPairTerm {
+                left_offset: 11 + 9 * *base,
+                left_stride: 9,
+                right_offset: 17 + 13 * *base,
+                right_stride: 13,
+                len,
+                weight,
+            };
+            *base += len;
+            Some(term)
+        })
+        .collect::<Vec<_>>();
+    let whole = WeightedCompactPairTerm {
+        left_offset: 11,
+        left_stride: 9,
+        right_offset: 17,
+        right_stride: 13,
+        len: fragments.iter().map(|term| term.len).sum(),
+        weight,
+    };
+    assert_eq!(
+        eval_weighted_compact_pair_eq(&left, &right, &fragments).unwrap(),
+        eval_weighted_compact_pair_eq(&left, &right, &[whole]).unwrap()
+    );
+}
+
+#[test]
+fn weighted_compact_pairs_fuse_interleaved_affine_rectangle() {
+    let mut rng = StdRng::seed_from_u64(0x00C0_11AE);
+    let left = random_vec(&mut rng, 14);
+    let right = random_vec(&mut rng, 15);
+    let weight = F::random(&mut rng);
+    let width = 7usize;
+    let rows = 19usize;
+    let left_inner = 3usize;
+    let right_inner = 5usize;
+    let lanes = (0..width)
+        .map(|lane| WeightedCompactPairTerm {
+            left_offset: 11 + left_inner * lane,
+            left_stride: left_inner * width,
+            right_offset: 17 + right_inner * lane,
+            right_stride: right_inner * width,
+            len: rows,
+            weight,
+        })
+        .collect::<Vec<_>>();
+    let rectangle = WeightedCompactPairTerm {
+        left_offset: 11,
+        left_stride: left_inner,
+        right_offset: 17,
+        right_stride: right_inner,
+        len: rows * width,
+        weight,
+    };
+
+    assert_eq!(
+        coalesce_weighted_compact_pair_terms(&lanes).unwrap(),
+        vec![rectangle]
+    );
+    assert_eq!(
+        eval_weighted_compact_pair_eq(&left, &right, &lanes).unwrap(),
+        eval_weighted_compact_pair_eq(&left, &right, &[rectangle]).unwrap()
+    );
 }
 
 #[allow(clippy::too_many_arguments)]

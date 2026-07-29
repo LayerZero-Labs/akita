@@ -133,6 +133,7 @@ pub fn optimal_block_geometry_split(
         };
         let Some(a_collision) = rounded_up_role_a_inf_norm(
             policy,
+            crate::sis::SisTableDigest::CURRENT,
             sis_modulus_profile,
             d as usize,
             decomposition,

@@ -238,7 +238,7 @@ challenge args entirely, which is strictly clearer.
 ### Submodule: `sis/decomposition_digits.rs`
 
 Owns the gadget digit counts and the per-role committed widths. Moves the digit
-primitives (`compute_num_digits`, `compute_num_digits_full_field`,
+primitives (`compute_num_digits`, `compute_num_digits_field_width`,
 `num_digits_for_bound`, `balanced_digit_max`), `decomp_depths`, and the fold
 digit count here.
 

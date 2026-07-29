@@ -6,7 +6,7 @@ This module is independent of the `Cfg` trait because `Cfg` uses the planner; if
 
 The planner covers the parameter-selection features supported by Akita, including batching, tensor challenges, and extension fields. For each case it resolves the fold parameters that minimize the modeled proof size.
 
-The planner can also generate and cache schedule values when a preset wants a shipped table. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search. If no cached value is available, the same deterministic planner computes the schedule on demand.
+The planner can also generate schedule values when a preset wants a table-backed runtime path. Later runtime calls can fetch and expand those compact entries quickly instead of repeating the heavy dynamic-programming search.
 
 ## What The Planner Optimizes
 
@@ -49,15 +49,15 @@ The `ring_challenge_config` closure supplies the sparse challenge configuration 
 
 ## Resolution Flow
 
-Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the planner's cache-then-generate entry point:
+Most runtime callers use `resolve_schedule` / `resolve_group_batch_schedule`, not the DP directly. Resolution is the strict table entry point:
 
 1. The caller passes the preset's optional `GeneratedScheduleTable` catalog.
 2. If a catalog is supplied, `resolve_schedule` validates its embedded identity against the runtime policy and hook closures.
 3. If the validated table contains the lookup key, it expands the compact
    `GeneratedFoldScheduleEntry` with `schedule_from_entry`.
-4. If there is no catalog or no matching entry, it calls `find_group_batch_schedule` and regenerates the schedule from scratch.
+4. If there is no catalog or no matching entry, the request is unsupported.
 
-Both paths are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
+Table generation and table expansion are deterministic functions of the lookup key, `PlannerPolicy`, and the two closures. This is important because prover and verifier must resolve the same schedule before the Fiat-Shamir transcript is bound.
 
 ## Search Model
 
@@ -139,9 +139,9 @@ ordinary recursive edges and zero outgoing-commitment bytes for the
 nonce plus any extension-opening reduction; their clear witness is priced by
 `terminal_response_bytes`.
 
-This keeps generated-table expansion and DP fallback aligned. A table hit and a
-table miss are two ways to produce the same typed runtime `FoldSchedule` and
-the same separately held `FoldScheduleEstimate`.
+This keeps generated-table expansion and offline DP regeneration aligned. A
+generated table row and a fresh DP run are two ways to produce the same typed
+`FoldSchedule` and the same separately held `FoldScheduleEstimate`.
 
 ## SIS Layout Derivation
 
@@ -172,13 +172,13 @@ another table or role.
 
 The searched parameters are therefore small: mostly `log_basis` and the fold split. The matrix dimensions are consequences of those choices and of the fixed policy inputs.
 
-One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and full-field roots use dense balanced-digit witness bounds.
+One-hot roots use a sparse committed-witness norm when `log_commit_bound == 1`. Recursive levels and dense roots use dense balanced-digit witness bounds.
 
 ## Generated Tables
 
 The planner owns the generated schedule-table representation and expansion
-logic under `src/generated/`. Shipped table data lives in the
-`akita-schedules` crate. Compact entries mirror the protocol topology:
+logic. Generated table data is emitted into the `akita-schedules` crate during
+local/CI bootstrap. Compact entries mirror the protocol topology:
 
 - `GeneratedRootFold` records the root source, root-only challenge form,
   ordered precommitted groups, final-group commitment, open matrix, and witness
@@ -192,15 +192,17 @@ Generated matrices store ring dimension, digit basis, and slice count where
 applicable. Expansion reconstructs widths, collision buckets, and minimum
 SIS-secure output ranks from the shared security primitives.
 
-The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary lives in `akita-config` because only `akita-config` can name concrete preset `Cfg` types. The emitted modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
+The reusable generated-table emitter lives in this crate and accepts explicit `EmitSpec` values. The `gen_schedule_tables` binary is enabled by the `catalog-gen` feature, which is allowed to name concrete `akita-config` preset `Cfg` types. The emitted family modules are written into `akita-schedules/src/generated/`, where feature-gated table constructors return `GeneratedScheduleTable` values to opted-in presets.
+
+The large generated family modules are intentionally not checked into Git. Run the repository bootstrap script before schedule-enabled builds.
 
 To regenerate schedule tables:
 
 ```bash
-cargo run --release -p akita-config --no-default-features --bin gen_schedule_tables -- crates/akita-schedules/src/generated
+scripts/generate-schedule-tables.sh
 ```
 
-The family list is in `akita-config::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so shipped entries and regeneration hooks stay aligned.
+The family list is in `akita_planner::generated_families::ALL_GENERATED_FAMILIES`. It is shared by the emitter and drift-guard tests so generated entries and regeneration hooks stay aligned.
 
 ## Supported Features
 
@@ -225,23 +227,25 @@ Recursive levels use the flat fold shape in the current planner search.
 The dependency direction is:
 
 ```text
-akita-config -> akita-planner -> akita-types / akita-challenges / akita-field
-akita-config -> akita-schedules -> akita-planner
+akita-config -> akita-schedules -> akita-types / akita-challenges / akita-field
+akita-planner -> akita-schedules
+akita-planner --features catalog-gen -> akita-config
 ```
 
-`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_planner::resolve_schedule`. The planner never names a preset type.
+`akita-config` derives `PlannerPolicy` from concrete presets with `policy_of::<Cfg>()` and delegates `CommitmentConfig::runtime_schedule` to `akita_schedules::resolve_schedule`. Runtime resolution is strict and never invokes planner search.
 
-This boundary avoids a circular dependency while keeping a single source of truth for preset policy. It also means the DP fallback is verifier-reachable through config, so planner code follows the verifier no-panic contract: malformed verifier-facing input must return `AkitaError` rather than panic.
+This boundary avoids a circular dependency while keeping a single source of truth for preset policy. The DP remains offline-only in `akita-planner`; verifier-reachable runtime code must return `AkitaError` rather than panic on malformed input.
 
 ## Source Map
 
 - `src/lib.rs`: public planner surface and `PlannerPolicy`.
-- `src/resolve.rs`: cache-then-generate resolution, catalog validation, compact entry expansion, and proof-byte estimation.
+- `src/generated_families.rs`: offline generated-table family registry behind `catalog-gen`.
+- `src/emit/`: generated table emission and wiring refresh helpers.
 - `src/schedule_params.rs`: DP search, root enumeration, and recursive suffix search.
 - `src/generated/mod.rs`: generated table types and table lookup helpers.
 - `src/generated/expand.rs`: typed compact root/recursive/terminal expansion to
   runtime schedule parameters.
 - `src/emit/mod.rs`: reusable generated-table emitter.
-- `crates/akita-config/src/bin/gen_schedule_tables.rs`: offline table emitter adapter for concrete presets.
+- `crates/akita-planner/src/bin/gen_schedule_tables.rs`: offline table emitter adapter for concrete presets.
 - `crates/akita-config/src/generated_families.rs`: preset family list and regeneration hooks.
-- `crates/akita-schedules/src/generated/`: feature-gated shipped schedule table data.
+- `crates/akita-schedules/src/generated/`: feature-gated generated schedule table wiring and ignored family table output.

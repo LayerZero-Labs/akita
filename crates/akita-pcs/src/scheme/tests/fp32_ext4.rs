@@ -22,8 +22,8 @@ fn onehot_poly(seed: usize) -> OneHotPoly<SmallF, u8> {
     OneHotPoly::new(onehot_k, SMALL_D, indices).expect("valid fp32 one-hot polynomial")
 }
 
-fn extension_point() -> Vec<SmallE> {
-    (0..SMALL_NV)
+fn extension_point(num_vars: usize) -> Vec<SmallE> {
+    (0..num_vars)
         .map(|coordinate| {
             SmallE::from_base_slice(&[
                 SmallF::from_u64((coordinate * 5 + 1) as u64),
@@ -44,6 +44,49 @@ fn onehot_opening(poly: &OneHotPoly<SmallF, u8>, weights: &[SmallE]) -> SmallE {
         .fold(SmallE::zero(), |sum, weight| sum + weight)
 }
 
+#[cfg(feature = "profile-ci")]
+fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly<SmallF, u8> {
+    // Keep the tensor-partial fixture sparse at large arity. `K = 256` is
+    // divisible by the supported native ring dimensions and leaves enough low
+    // variables available for the Ext4 tensor head, so the one-hot kernel
+    // never materializes the full 2^num_vars equality table.
+    let onehot_k = 256;
+    let total_field = params
+        .num_live_blocks
+        .checked_mul(params.num_positions_per_block)
+        .and_then(|count| count.checked_mul(params.d_a()))
+        .expect("grouped one-hot field length");
+    assert_eq!(total_field % onehot_k, 0);
+    let indices = (0..total_field / onehot_k)
+        .map(|chunk| Some(((chunk * 29 + seed * 41 + 7) % onehot_k) as u8))
+        .collect();
+    OneHotPoly::new(onehot_k, params.d_a(), indices).expect("grouped one-hot polynomial")
+}
+
+#[cfg(feature = "profile-ci")]
+fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> SmallE {
+    let onehot_k = poly.onehot_k();
+    poly.indices()
+        .iter()
+        .enumerate()
+        .filter_map(|(chunk, hot)| {
+            hot.map(|index| {
+                let evaluation_index = chunk * onehot_k + usize::from(index);
+                point
+                    .iter()
+                    .enumerate()
+                    .fold(SmallE::one(), |weight, (variable, &coordinate)| {
+                        if (evaluation_index >> variable) & 1 == 0 {
+                            weight * (SmallE::one() - coordinate)
+                        } else {
+                            weight * coordinate
+                        }
+                    })
+            })
+        })
+        .fold(SmallE::zero(), |sum, weight| sum + weight)
+}
+
 #[test]
 fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let opening_batch =
@@ -56,7 +99,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
 
     let polys = [onehot_poly(0), onehot_poly(1)];
     let poly_refs: Vec<_> = polys.iter().collect();
-    let point = extension_point();
+    let point = extension_point(SMALL_NV);
     let weights = lagrange_weights(&point).expect("extension-field Lagrange weights");
     let openings: Vec<_> = polys
         .iter()
@@ -138,4 +181,184 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         BasisMode::Lagrange,
     )
     .expect_err("tampered extension-opening reduction partial must reject");
+}
+
+#[test]
+#[cfg(feature = "profile-ci")]
+fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
+    const PRE_NV: usize = 14;
+    const FINAL_NV: usize = 20;
+    type ProtocolCfg =
+        crate::test_support::EnvelopeFinalGroupConfig<fp32::D256OneHot, fp32::D128OneHot>;
+    type PreNativeCfg = fp32::D256OneHot;
+    type PreNativeScheme = AkitaCommitmentScheme<PreNativeCfg>;
+    type ProtocolScheme = AkitaCommitmentScheme<ProtocolCfg>;
+
+    let pre_layout = OpeningClaimsLayout::new(PRE_NV, 1).expect("precommit layout");
+    let pre_params =
+        <PrecommittedCommitmentConfig<PreNativeCfg> as CommitmentConfig>::
+            get_params_for_batched_commitment(&pre_layout)
+                .expect("precommit params");
+    let pre_poly = grouped_onehot_poly(&pre_params, 1);
+    let pre_setup = PreNativeScheme::setup_prover(PRE_NV, 1).expect("precommit setup");
+    let pre_prepared = CpuBackend
+        .prepare_setup(&pre_setup)
+        .expect("prepared precommit setup");
+    let pre_stack = akita_prover::UniformProverStack::uniform(
+        &CpuBackend,
+        &pre_prepared,
+        pre_setup.expanded.as_ref(),
+    )
+    .expect("precommit stack");
+    let (_pre_frozen, pre_commitment, pre_hint) =
+        PreNativeScheme::commit_group(&pre_setup, std::slice::from_ref(&pre_poly), &pre_stack)
+            .expect("precommit");
+
+    let grouped_layout = OpeningClaimsLayout::from_groups(vec![
+        akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
+        akita_types::PolynomialGroupLayout::new(FINAL_NV, 1),
+    ])
+    .expect("grouped layout");
+    let schedule = ProtocolCfg::get_params_for_prove(&grouped_layout).expect("grouped schedule");
+    let root_params = &schedule.root.params.final_group.commitment;
+    assert_eq!(
+        root_params
+            .group_role_dims(&grouped_layout, 0)
+            .expect("pre group dims")
+            .d_a(),
+        256
+    );
+    assert_eq!(
+        root_params
+            .group_role_dims(&grouped_layout, 1)
+            .expect("final group dims")
+            .d_a(),
+        128
+    );
+    let final_poly = grouped_onehot_poly(root_params, 2);
+
+    let setup = ProtocolScheme::setup_prover(FINAL_NV, 2).expect("protocol setup");
+    let prepared = CpuBackend
+        .prepare_setup(&setup)
+        .expect("prepared protocol setup");
+    let stack =
+        akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("protocol stack");
+    let (final_commitment, final_hint) = ProtocolScheme::commit_final_group(
+        &setup,
+        std::slice::from_ref(&final_poly),
+        &stack,
+        vec![akita_types::PolynomialGroupLayout::new(PRE_NV, 1)],
+    )
+    .expect("final commitment");
+
+    let point = extension_point(FINAL_NV);
+    let pre_opening = onehot_opening_at_point(&pre_poly, &point[..PRE_NV]);
+    let final_opening = onehot_opening_at_point(&final_poly, &point);
+    let pre_refs = [&pre_poly];
+    let final_refs = [&final_poly];
+    let prover_claims = ProverOpeningData::new(
+        OpeningClaims::from_groups(
+            point.clone(),
+            vec![
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
+                    vec![pre_opening],
+                    pre_commitment.clone(),
+                )
+                .expect("pre prover claims"),
+                PolynomialGroupClaims::new(
+                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV)
+                        .expect("final point routing"),
+                    vec![final_opening],
+                    final_commitment.clone(),
+                )
+                .expect("final prover claims"),
+            ],
+        )
+        .expect("grouped prover claims"),
+        vec![pre_hint, final_hint],
+        vec![&pre_refs, &final_refs],
+    )
+    .expect("grouped prover data");
+
+    let mut prover_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    let proof = ProtocolScheme::batched_prove(
+        &setup,
+        prover_claims,
+        &stack,
+        &mut prover_transcript,
+        BasisMode::Lagrange,
+    )
+    .expect("grouped extension proof");
+    let reduction = proof
+        .root
+        .extension_opening_reduction
+        .as_ref()
+        .expect("grouped root EOR");
+    assert_eq!(
+        reduction.sumcheck.round_polys.len(),
+        FINAL_NV
+            - akita_types::tensor_opening_split::<SmallF, SmallE>()
+                .expect("tensor split")
+                .0,
+        "all groups must share one max-arity sumcheck"
+    );
+
+    let verifier_setup = ProtocolScheme::setup_verifier(&setup).expect("verifier setup");
+    let verify_claims = OpeningClaims::from_groups(
+        point.clone(),
+        vec![
+            PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
+                vec![pre_opening],
+                &pre_commitment,
+            )
+            .expect("pre verifier claims"),
+            PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
+                vec![final_opening],
+                &final_commitment,
+            )
+            .expect("final verifier claims"),
+        ],
+    )
+    .expect("grouped verifier claims");
+    let mut verifier_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    ProtocolScheme::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verify_claims,
+        BasisMode::Lagrange,
+    )
+    .expect("verify grouped extension proof");
+
+    let tampered_claims = OpeningClaims::from_groups(
+        point,
+        vec![
+            PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
+                vec![pre_opening + SmallE::one()],
+                &pre_commitment,
+            )
+            .expect("tampered pre claims"),
+            PolynomialGroupClaims::new(
+                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
+                vec![final_opening],
+                &final_commitment,
+            )
+            .expect("final verifier claims"),
+        ],
+    )
+    .expect("tampered grouped claims");
+    let mut tampered_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    ProtocolScheme::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut tampered_transcript,
+        tampered_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("tampered smaller-group opening must reject");
 }

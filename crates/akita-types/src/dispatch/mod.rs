@@ -13,9 +13,10 @@ use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_field::{AkitaError, CanonicalField};
 
 pub use policy::{
-    inner_ring_dim_supported_for_tier, ntt_max_ring_d, opening_ring_dim_supported_for_tier,
-    outer_opening_min_ring_d, outer_opening_ring_dim_supported_for_tier,
-    outer_ring_dim_supported_for_tier, role_dim_supported_for_tier, slot_dim_supported_for_tier,
+    inner_ring_dim_supported_for_tier, ntt_max_ring_d, ntt_min_ring_d,
+    opening_ring_dim_supported_for_tier, outer_opening_min_ring_d,
+    outer_opening_ring_dim_supported_for_tier, outer_ring_dim_supported_for_tier,
+    role_dim_supported_for_tier, slot_dim_supported_for_tier,
 };
 
 /// PCS base-field tier for protocol and NTT dispatch arm tables.
@@ -59,13 +60,6 @@ pub fn protocol_dispatch_tier<F: CanonicalField>() -> ProtocolRingDispatchTierId
     } else {
         ProtocolRingDispatchTierId::Fp128
     }
-}
-
-/// Minimum ring degree for NTT cache build on `tier`.
-#[inline]
-#[must_use]
-pub const fn ntt_min_ring_d(tier: ProtocolRingDispatchTierId) -> usize {
-    outer_opening_min_ring_d(tier)
 }
 
 /// Whether `d` is a supported NTT ring degree for `tier`.
@@ -178,46 +172,42 @@ mod tests {
     }
 
     #[test]
-    fn inner_dispatch_fp128_rejects_d32_and_d256() {
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            64usize,
-            |D| Ok(D)
-        )
-        .is_ok());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            128usize,
-            |D| Ok(D)
-        )
-        .is_ok());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            32usize,
-            |D| Ok(D)
-        )
-        .is_err());
-        assert!(dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            Prime128OffsetA7F7,
-            256usize,
-            |D| Ok(D)
-        )
-        .is_err());
+    fn inner_dispatch_fp128_accepts_through_d512() {
+        for d in [64usize, 128, 256, 512] {
+            assert_eq!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime128OffsetA7F7,
+                    d,
+                    |D| Ok(D)
+                )
+                .expect("supported fp128 inner dimension"),
+                d
+            );
+        }
+        for d in [32usize, 1024] {
+            assert!(
+                dispatch_for_field!(
+                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    Prime128OffsetA7F7,
+                    d,
+                    |D| Ok(D)
+                )
+                .is_err(),
+                "unsupported fp128 inner d={d} must be rejected"
+            );
+        }
     }
 
     #[test]
-    fn outer_dispatch_accepts_d16_on_fp128() {
+    fn outer_dispatch_floor_is_d32_on_fp128() {
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             Prime128OffsetA7F7,
             16usize,
             |D| Ok(D)
         )
-        .is_ok());
+        .is_err());
         assert!(dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             Prime128OffsetA7F7,
@@ -301,10 +291,15 @@ mod tests {
     }
 
     #[test]
-    fn global_ring_dims_include_d16_for_planner() {
+    fn global_ring_dims_keep_d16_for_ntt_but_not_fp128_roles() {
         assert!(crate::layout::SUPPORTED_RING_DIMS.contains(&16));
         assert!(crate::layout::SUPPORTED_RING_DIMS.contains(&32));
         assert!(!crate::layout::SUPPORTED_CHALLENGE_RING_DIMS.contains(&32));
+        assert_eq!(
+            outer_opening_min_ring_d(ProtocolRingDispatchTierId::Fp128),
+            32
+        );
+        assert_eq!(ntt_min_ring_d(ProtocolRingDispatchTierId::Fp128), 16);
     }
 
     #[test]
@@ -329,5 +324,12 @@ mod tests {
             opening: 64,
         };
         assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_b).is_err());
+
+        let fp128_high_a = CommitmentRingDims {
+            inner: 512,
+            outer: 256,
+            opening: 64,
+        };
+        assert!(validate_role_dims_for_field::<Prime128OffsetA7F7>(fp128_high_a).is_ok());
     }
 }

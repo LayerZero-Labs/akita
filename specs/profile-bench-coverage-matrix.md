@@ -55,9 +55,12 @@ The checked-in workflow currently runs:
 | `onehot_fp32_d128` | fp32 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp32 one-hot under honest pricing. Capped at nv=28: the ext-degree-4 challenge schedule keeps a large un-folded witness, so at nv>=30 the prover's eq-evaluation table exceeds the 1 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` ceiling. |
 | `onehot_fp64_d128` | fp64 | 1-of-256 one-hot | 28 | 1 | D128 | `direct` | Smallest securable fp64 one-hot under honest pricing. Capped at nv=28 for the same eq-table-budget reason as the fp32 cell. |
 | `dense_fp128_d64` | fp128 | dense | 24 | 1 | D64 | `direct` | fp128 dense smoke at the proof-size-optimal ring dimension (D64 beats D128 by ~18-22%). |
+| `onehot_fp128_d64_tensor` | fp128 | 1-of-256 one-hot tensor | 26 | 1 | D64 tensor | `direct` | Tensor-root profile capped at nv=26 to keep hosted-runner setup size tractable. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `direct` | Explicit fp128 one-hot mode at the proof-size-optimal ring dimension. fp128 folds aggressively enough to stay at nv=32 under the eq-table budget. |
-| `onehot_fp128_d64` | fp128 | 1-of-256 one-hot | 32 | 1 | D64 | `recursive` | Same nv32 singleton as the direct row, but with `SetupContributionMode::Recursive`, so the report compares proof size, prover time, and verifier time for recursive setup-product checks. |
 | `onehot_fp128_d64` | fp128 | 1-of-256 one-hot batched | 30 | 4 | D64 | `direct` | Preserves same-point batched one-hot coverage. |
+| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `direct` | Direct setup-contribution baseline for the recursive setup comparison skill's canonical multi-group profile. |
+| `onehot_fp128_d64_multi_group_recursive` | fp128 | 1-of-256 one-hot batched multi-group | 32 | 4 | D64 recursive multi-group | `recursive` | Same multi-group profile with `SetupContributionMode::Recursive`, so CI tracks recursive setup-product verifier work against the direct baseline. |
+| `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot batched multi-group W8R2 | 32 | 4 | D64 recursive multi-group W8R2 | `recursive` | Existing distributed recursive setup-offload row: `8` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w2r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W2R2 | `direct` | `2` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w4r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W4R2 | `direct` | `4` chunks, `2` leading levels. |
 | `onehot_fp128_d64_multi_chunk_w8r2` | fp128 | 1-of-256 one-hot distributed chunked relation | 32 | 1 | D64 multi-chunk W8R2 | `direct` | Production distributed preset (`8` chunks, `2` leading levels). |
@@ -75,16 +78,15 @@ The ring degree differs by field, for two distinct reasons:
   133,000 B at D64 vs 163,968 B at D128; dense nv=24: 131,656 B vs 160,080 B),
   while still folding through 8-9 secure recursive levels. This is confirmed by
   `current_d64_onehot_schedule_stays_within_audited_sis_widths` (securability)
-  and by the `best_full_schedule` / `best_onehot_schedule` selectors, which
+  and by the `best_dense_schedule` / `best_onehot_schedule` selectors, which
   pick D64 (or D32), never D128. The earlier D128 fp128 cells were *not*
   proof-size optimal; D32/D64 are the planner optima (D32 is marginally
   smaller for fp128). The benchmark matrix tracks D64; use
-  `best_onehot_schedule` / `best_full_schedule` to compare D32/D64/D128.
+  `best_onehot_schedule` / `best_dense_schedule` to compare D32/D64/D128.
 
-D32/D128 profile modes still exist for direct local comparisons, and `main`
-adds a D64-only tensor-verifier profile mode, but neither the adaptive
-`full`/`onehot` selectors nor those comparison modes are part of the active
-benchmark matrix.
+D32/D128 profile modes still exist for direct local comparisons, but neither
+the adaptive `full`/`onehot` selectors nor those comparison modes are part of
+the active benchmark matrix.
 
 Deferred target cells:
 
@@ -187,8 +189,8 @@ The test-coverage cleanup touches:
 ### Acceptance Criteria
 
 - [x] `.github/workflows/profile-bench.yml` sets `AKITA_BENCH_RUNS` to `3`.
-- [x] The active workflow lists exactly the 7 currently supported
-      hosted-runner matrix cases.
+- [x] The active workflow lists the currently supported hosted-runner matrix
+      cases.
 - [x] The known long hosted-runner offender `onehot_fp16_d32:32:1` is
       documented as deferred rather than active.
 - [x] `dense_fp128_d128` remains active at `nv=24`, not the earlier `nv=26`

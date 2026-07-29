@@ -1,9 +1,10 @@
-use akita_challenges::TensorChallengeShape;
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
 use crate::schedule::PrecommittedGroupDescriptor;
 use crate::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
+use crate::CommitmentRingDims;
 
 use super::CommittedGroupParams;
 
@@ -21,6 +22,8 @@ pub struct PrecommittedLevelParams {
     pub outer_commit_matrix: OuterCommitMatrixParams,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
     pub log_basis_open: u32,
+    /// Sparse fold-challenge family certified for this group's native A ring.
+    pub fold_challenge_config: SparseChallengeConfig,
     /// Gadget decomposition depth for A/source coefficients.
     pub num_digits_inner: usize,
     /// Gadget decomposition depth for B/`t_hat` values.
@@ -32,9 +35,25 @@ pub struct PrecommittedLevelParams {
 }
 
 impl PrecommittedLevelParams {
+    /// This group's A/B dimensions completed with the consuming level's shared
+    /// D dimension.
+    #[must_use]
+    pub fn role_dims(&self, shared_opening_ring_dimension: usize) -> CommitmentRingDims {
+        CommitmentRingDims {
+            inner: self.inner_commit_matrix.ring_dimension(),
+            outer: self.outer_commit_matrix.ring_dimension(),
+            opening: shared_opening_ring_dimension,
+        }
+    }
+
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
         self.layout.validate()?;
+        if self.fold_challenge_config.weight() != 0 {
+            self.fold_challenge_config
+                .validate_for_ring_dim(self.layout.inner_ring_dimension)
+                .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
+        }
         if self.log_basis_open == 0
             || self.num_digits_inner == 0
             || self.num_digits_outer == 0
@@ -57,12 +76,28 @@ impl PrecommittedLevelParams {
             .num_positions_per_block
             .checked_mul(self.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted A width overflow".to_string()))?;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        if self.layout.inner_ring_dimension != inner_ring_dimension
+            || self.layout.outer_ring_dimension != outer_ring_dimension
+        {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted A/B key dimensions do not match the frozen group layout".to_string(),
+            ));
+        }
+        if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
+            return Err(AkitaError::InvalidSetup(
+                "current A-width relation witness cannot carry the precommitted B role".to_string(),
+            ));
+        }
+        let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
         let expected_b_width = self
             .inner_commit_matrix
             .output_rank()
             .checked_mul(self.num_digits_outer)
             .and_then(|width| width.checked_mul(self.layout.num_live_blocks))
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(outer_projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
         if self.layout.n_a != self.inner_commit_matrix.output_rank()
             || self.layout.a_coeff_linf_bound != self.inner_commit_matrix.coeff_linf_bound()
@@ -93,11 +128,20 @@ impl PrecommittedLevelParams {
         self.outer_commit_matrix.input_width()
     }
 
-    /// Width contribution to the shared D matrix (`w_hat_g` segment).
-    pub fn d_segment_width(&self) -> Result<usize, AkitaError> {
+    /// Width contribution to the consuming batch's shared D matrix
+    /// (`w_hat_g` segment).
+    ///
+    /// Group metadata owns its A/B dimensions. The D role is batch-shared, so
+    /// the caller supplies the consuming level's opening dimension.
+    pub fn d_segment_width(&self, opening_ring_dimension: usize) -> Result<usize, AkitaError> {
+        let role_dims = self.role_dims(opening_ring_dimension);
+        role_dims.validate_a_carrier()?;
+        let inner_ring_dimension = role_dims.d_a();
+        let projection_ratio = inner_ring_dimension / opening_ring_dimension;
         self.num_digits_open
             .checked_mul(self.layout.num_live_blocks)
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("group D segment width overflow".to_string()))
     }
 
@@ -113,6 +157,10 @@ impl PrecommittedLevelParams {
         self.inner_commit_matrix.append_descriptor_bytes(bytes);
         self.outer_commit_matrix.append_descriptor_bytes(bytes);
         crate::descriptor_bytes::push_u32(bytes, self.log_basis_open);
+        super::append_schedule_sparse_challenge_descriptor_bytes(
+            bytes,
+            &self.fold_challenge_config,
+        );
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
@@ -134,6 +182,7 @@ pub trait LevelParamsLike {
     fn num_positions_per_block(&self) -> usize;
     fn num_live_blocks(&self) -> usize;
     fn fold_challenge_shape(&self) -> TensorChallengeShape;
+    fn fold_challenge_config(&self) -> SparseChallengeConfig;
     fn position_index_bits(&self) -> usize;
     fn block_index_bits(&self) -> usize;
     fn num_digits_inner(&self) -> usize;
@@ -180,6 +229,10 @@ impl LevelParamsLike for CommittedGroupParams {
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
         self.fold_challenge_shape
+    }
+
+    fn fold_challenge_config(&self) -> SparseChallengeConfig {
+        self.fold_challenge_config
     }
 
     fn position_index_bits(&self) -> usize {
@@ -254,6 +307,10 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn fold_challenge_shape(&self) -> TensorChallengeShape {
         TensorChallengeShape::Flat
+    }
+
+    fn fold_challenge_config(&self) -> SparseChallengeConfig {
+        self.fold_challenge_config
     }
 
     fn position_index_bits(&self) -> usize {

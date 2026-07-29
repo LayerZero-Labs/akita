@@ -105,9 +105,9 @@ The key surfaces modified are:
 - [x] Planner-table misses report explicit errors when planner fallback is not
       compiled in.
 - [x] Planner-dependent tests are gated with `#[cfg(feature = "planner")]`.
-- [x] fp128 full/onehot schedule-family selectors choose among generated
+- [x] fp128 dense/onehot schedule-family selectors choose among generated
       presets.
-- [x] `examples/profile.rs` handles the generated `D64Full` schedule choice.
+- [x] `examples/profile.rs` handles the generated `D64Dense` schedule choice.
 - [x] Protocol regression-vector fixtures are removed.
 - [x] All-target/all-feature and no-default-feature CI paths compile cleanly.
 

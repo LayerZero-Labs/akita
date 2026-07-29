@@ -13,12 +13,16 @@ pub struct LgsaSummary {
     pub effective_dimension: u64,
     /// First squared Gram-Schmidt norm.
     pub first_squared_norm: f64,
+    /// Base-2 logarithm of the first Gram-Schmidt length.
+    pub first_log2_norm: f64,
     /// Dilithium-style q-vector prefix length.
     pub idx_start: u64,
     /// Last coordinate whose Gram-Schmidt length is materially above one.
     pub idx_end: u64,
     /// Gram-Schmidt length at `idx_start`.
     pub vector_length_at_idx_start: f64,
+    /// Base-2 logarithm of the Gram-Schmidt length at `idx_start`.
+    pub log2_vector_length_at_idx_start: f64,
 }
 
 /// Return squared Gram-Schmidt norms for the LGSA profile.
@@ -158,14 +162,17 @@ pub fn lgsa_summary(
         .checked_sub(1)
         .unwrap_or_else(|| d.saturating_sub(1));
     let idx_start = idx_start.min(d.saturating_sub(1));
-    let vector_length_at_idx_start = 2.0_f64.powf(log_norm_at(idx_start));
+    let log2_vector_length_at_idx_start = log_norm_at(idx_start);
+    let vector_length_at_idx_start = 2.0_f64.powf(log2_vector_length_at_idx_start);
 
     Ok(LgsaSummary {
         effective_dimension: d,
         first_squared_norm: 2.0_f64.powf(2.0 * first_log_norm),
+        first_log2_norm: first_log_norm,
         idx_start,
         idx_end,
         vector_length_at_idx_start,
+        log2_vector_length_at_idx_start,
     })
 }
 
@@ -190,6 +197,10 @@ mod tests {
         let profile = lgsa_squared_norms(96, 64, &q, 40).unwrap();
         let summary = lgsa_summary(96, 64, &q, 40).unwrap();
         assert!((profile[0] - summary.first_squared_norm).abs() <= 1e-8 * profile[0]);
+        assert!(
+            (profile[0].sqrt().log2() - summary.first_log2_norm).abs()
+                <= 1e-8 * profile[0].sqrt().log2().abs().max(1.0)
+        );
 
         let q_f = log2_biguint(&q).exp2();
         let idx_start = if (profile[0].sqrt() - q_f).abs() < 1e-8 {
@@ -209,6 +220,10 @@ mod tests {
         assert!(
             (profile[idx_start].sqrt() - summary.vector_length_at_idx_start).abs()
                 <= 1e-8 * profile[idx_start].sqrt()
+        );
+        assert!(
+            (profile[idx_start].sqrt().log2() - summary.log2_vector_length_at_idx_start).abs()
+                <= 1e-8 * profile[idx_start].sqrt().log2().abs().max(1.0)
         );
     }
 }

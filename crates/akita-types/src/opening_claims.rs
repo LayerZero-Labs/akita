@@ -11,24 +11,6 @@ use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
 use std::collections::BTreeSet;
 
-/// Dense polynomials cannot open multi-group root batches yet.
-pub const MULTI_GROUP_ROOT_DENSE_UNSUPPORTED: &str =
-    "dense polynomial multi-group root batching is not supported; see specs/multi-group-batching.md";
-
-/// Return the multi-group-root rejection message, if the layout should be rejected.
-pub fn should_reject_multi_group_root(
-    layout: &OpeningClaimsLayout,
-    includes_dense_polynomial: bool,
-) -> Option<&'static str> {
-    if layout.num_groups() <= 1 {
-        return None;
-    }
-    if includes_dense_polynomial {
-        return Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED);
-    }
-    None
-}
-
 /// Ordered coordinate selection into an opening batch's shared point.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PointVariableSelection {
@@ -373,6 +355,46 @@ impl OpeningClaimsLayout {
                 Ok(acc + coefficient * opening)
             })
     }
+
+    /// Scale flat row coefficients by one transparent reduction factor per
+    /// opening group.
+    ///
+    /// The returned coefficients remain in canonical flat-claim order. This is
+    /// the shared prover/verifier definition of the final grouped
+    /// extension-opening relation.
+    pub fn scale_row_coefficients_by_group<E>(
+        &self,
+        row_coefficients: &[E],
+        group_factors: &[E],
+    ) -> Result<Vec<E>, AkitaError>
+    where
+        E: FieldCore,
+    {
+        if row_coefficients.len() != self.num_total_polynomials() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_total_polynomials(),
+                actual: row_coefficients.len(),
+            });
+        }
+        if group_factors.len() != self.num_groups() {
+            return Err(AkitaError::InvalidSize {
+                expected: self.num_groups(),
+                actual: group_factors.len(),
+            });
+        }
+        let mut scaled = Vec::with_capacity(row_coefficients.len());
+        for (group_index, &factor) in group_factors.iter().enumerate() {
+            let range = self.root_group_claim_range(group_index)?;
+            scaled.extend(
+                row_coefficients
+                    .get(range)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .iter()
+                    .map(|&coefficient| coefficient * factor),
+            );
+        }
+        Ok(scaled)
+    }
 }
 
 /// Public claims and commitment payload for one polynomial group.
@@ -573,6 +595,21 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .get(g)
             .map(PolynomialGroupClaims::point_vars)
             .ok_or(AkitaError::InvalidProof)
+    }
+
+    /// Materialize one group's opening point in its declared coordinate order.
+    pub fn group_point(&self, g: usize) -> Result<Vec<F>, AkitaError> {
+        self.group_point_vars(g)?
+            .indices()
+            .iter()
+            .map(|&index| {
+                self.point
+                    .as_ref()
+                    .get(index)
+                    .cloned()
+                    .ok_or(AkitaError::InvalidProof)
+            })
+            .collect()
     }
 
     /// Borrow one group's commitment.
@@ -792,22 +829,5 @@ mod tests {
         let err = OpeningClaims::with_padded_point(&[F::zero(); 3], 2, 1)
             .expect_err("point longer than num_vars");
         assert!(matches!(err, AkitaError::InvalidPointDimension { .. }));
-    }
-
-    #[test]
-    fn should_reject_multi_group_root_returns_canonical_messages() {
-        let layout = OpeningClaimsLayout::from_group_sizes(4, &[1, 1]).expect("layout");
-        assert_eq!(should_reject_multi_group_root(&layout, false), None);
-        assert_eq!(
-            should_reject_multi_group_root(&layout, true),
-            Some(MULTI_GROUP_ROOT_DENSE_UNSUPPORTED)
-        );
-        assert_eq!(
-            should_reject_multi_group_root(
-                &OpeningClaimsLayout::new(4, 1).expect("single group"),
-                true,
-            ),
-            None
-        );
     }
 }

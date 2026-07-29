@@ -5,9 +5,9 @@
 
 use akita_algebra::{offset_eq::OffsetEqWindow, poly::multilinear_eval, ring::scalar_powers};
 use akita_field::{AkitaError, FieldCore};
+use akita_types::RelationAddressGeometry;
 #[cfg(test)]
-use akita_types::{checked_opening_source_index, RingRole};
-use akita_types::{opening_domain_len, validate_role_dims, CommitmentRingDims};
+use akita_types::{checked_opening_source_index, opening_domain_len, CommitmentRingDims, RingRole};
 use std::sync::Arc;
 
 pub(super) struct PreparedRolePoint<E: FieldCore> {
@@ -23,8 +23,9 @@ pub(super) struct PreparedRolePoint<E: FieldCore> {
 /// lanes followed by semantic witness columns. Role-native setup columns split
 /// one A-role witness column into `d_a / d_role` subcolumns.
 pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
-    coeff_count: usize,
-    coeff_eval: E,
+    relation_address_geometry: RelationAddressGeometry,
+    common_relation_witness_coeff_count: usize,
+    common_alpha_evaluation: E,
     alpha: E,
     address_point: &'a [E],
     equality_window: OffsetEqWindow<E>,
@@ -37,53 +38,21 @@ pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
     inner: Arc<PreparedRolePoint<E>>,
     outer: Arc<PreparedRolePoint<E>>,
     opening: Arc<PreparedRolePoint<E>>,
+    additional: Vec<Arc<PreparedRolePoint<E>>>,
 }
 
 impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     pub(super) fn new(
         point: &'a [E],
         alpha: E,
-        role_dims: CommitmentRingDims,
-        outgoing_ring_dim: usize,
-        opening_source_len: usize,
+        geometry: RelationAddressGeometry,
+        additional_ring_dims: &[usize],
     ) -> Result<Self, AkitaError> {
-        validate_role_dims(role_dims)?;
-        if outgoing_ring_dim == 0 || !outgoing_ring_dim.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "outgoing witness ring dimension must be a non-zero power of two".into(),
-            ));
-        }
+        let role_dims = geometry.role_dims();
+        geometry.validate_relation_point_len(point.len())?;
+        let coeff_count = geometry.common_relation_witness_coeff_count();
 
-        let coeff_count = role_dims.common_relation_witness_coeff_count(outgoing_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !role_dims.d_a().is_multiple_of(coeff_count)
-            || !role_dims.d_b().is_multiple_of(coeff_count)
-            || !role_dims.d_d().is_multiple_of(coeff_count)
-            || !outgoing_ring_dim.is_multiple_of(coeff_count)
-        {
-            return Err(AkitaError::InvalidSetup(
-                "relation and outgoing witness do not admit a common coefficient block".into(),
-            ));
-        }
-
-        let field_len = opening_domain_len(opening_source_len)?
-            .checked_mul(outgoing_ring_dim)
-            .ok_or_else(|| AkitaError::InvalidSetup("relation point domain overflow".into()))?;
-        if !field_len.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "relation point domain must be a power of two".into(),
-            ));
-        }
-        let expected = field_len.trailing_zeros() as usize;
-        if point.len() != expected {
-            return Err(AkitaError::InvalidSize {
-                expected,
-                actual: point.len(),
-            });
-        }
-
-        let coeff_bits = coeff_count.trailing_zeros() as usize;
+        let coeff_bits = geometry.common_relation_witness_variable_count();
         let coeff_point = point.get(..coeff_bits).ok_or(AkitaError::InvalidProof)?;
         let lane_and_column_point = point.get(coeff_bits..).ok_or(AkitaError::InvalidProof)?;
         let coeff_powers = scalar_powers(alpha, coeff_count);
@@ -126,31 +95,59 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         } else {
             prepare_role(role_dims.d_d())?
         };
+        let mut additional = Vec::new();
+        let carrier_ring_dimension = geometry.carrier_ring_dimension();
+        for &ring_dim in additional_ring_dims {
+            if ring_dim == 0
+                || !ring_dim.is_power_of_two()
+                || ring_dim > carrier_ring_dimension
+                || !carrier_ring_dimension.is_multiple_of(ring_dim)
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "relation quotient ring dimension {ring_dim} does not fit the A carrier {}",
+                    carrier_ring_dimension
+                )));
+            }
+            if [role_dims.d_a(), role_dims.d_b(), role_dims.d_d()].contains(&ring_dim)
+                || additional
+                    .iter()
+                    .any(|prepared: &Arc<PreparedRolePoint<E>>| prepared.ring_dim == ring_dim)
+            {
+                continue;
+            }
+            additional.push(prepare_role(ring_dim)?);
+        }
 
         Ok(Self {
-            coeff_count,
-            coeff_eval,
+            relation_address_geometry: geometry,
+            common_relation_witness_coeff_count: coeff_count,
+            common_alpha_evaluation: coeff_eval,
             alpha,
             address_point: lane_and_column_point,
             equality_window,
             #[cfg(test)]
             role_dims,
             #[cfg(test)]
-            outgoing_ring_dim,
+            outgoing_ring_dim: geometry.outgoing_witness_ring_dimension(),
             #[cfg(test)]
-            opening_source_len,
+            opening_source_len: geometry.outgoing_witness_source_len(),
             inner,
             outer,
             opening,
+            additional,
         })
     }
 
-    pub(super) const fn coeff_count(&self) -> usize {
-        self.coeff_count
+    pub(super) const fn relation_address_geometry(&self) -> RelationAddressGeometry {
+        self.relation_address_geometry
     }
 
-    pub(super) fn coeff_eval(&self) -> E {
-        self.coeff_eval
+    pub(super) const fn common_relation_witness_coeff_count(&self) -> usize {
+        self.common_relation_witness_coeff_count
+    }
+
+    pub(super) fn common_alpha_evaluation(&self) -> E {
+        self.common_alpha_evaluation
     }
 
     pub(super) fn alpha(&self) -> E {
@@ -183,6 +180,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     ) -> Result<&PreparedRolePoint<E>, AkitaError> {
         [self.inner(), self.outer(), self.opening()]
             .into_iter()
+            .chain(self.additional.iter().map(Arc::as_ref))
             .find(|role| role.ring_dim == ring_dim)
             .ok_or(AkitaError::InvalidProof)
     }
@@ -226,10 +224,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             self.opening_source_len,
             last_physical / self.outgoing_ring_dim,
         )?;
-        if !physical_start.is_multiple_of(self.coeff_count) {
+        if !physical_start.is_multiple_of(self.common_relation_witness_coeff_count) {
             return Err(AkitaError::InvalidProof);
         }
-        let lane_start = physical_start / self.coeff_count;
+        let lane_start = physical_start / self.common_relation_witness_coeff_count;
 
         prepared.lane_powers.iter().copied().enumerate().try_fold(
             E::zero(),
@@ -273,17 +271,12 @@ mod tests {
         let opening_source_len = 9;
         let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
         let point = point_for(field_len);
-        let prepared = PreparedRelationPoint::new(
-            &point,
-            alpha,
-            role_dims,
-            outgoing_ring_dim,
-            opening_source_len,
-        )
-        .unwrap();
+        let geometry =
+            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
+        let prepared = PreparedRelationPoint::new(&point, alpha, geometry, &[]).unwrap();
 
         assert_eq!(
-            prepared.coeff_count(),
+            prepared.common_relation_witness_coeff_count(),
             role_dims.common_relation_witness_coeff_count(outgoing_ring_dim)
         );
         for role in [RingRole::Inner, RingRole::Outer, RingRole::Opening] {
@@ -299,7 +292,7 @@ mod tests {
                         dense[physical_start + offset] = alpha_power;
                     }
                     let expected = multilinear_eval(&dense, &point).unwrap();
-                    let got = prepared.coeff_eval()
+                    let got = prepared.common_alpha_evaluation()
                         * prepared
                             .role_column_weight(witness_column, role, role_subcolumn)
                             .unwrap();
@@ -346,20 +339,21 @@ mod tests {
         let role_dims = CommitmentRingDims::uniform(128);
         let point = point_for(2048);
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), role_dims, 0, 9),
+            RelationAddressGeometry::new(role_dims, 0, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
+        let geometry = RelationAddressGeometry::new(role_dims, 128, 9).unwrap();
         assert!(matches!(
-            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), role_dims, 128, 9),
+            PreparedRelationPoint::new(&point[..point.len() - 1], F::one(), geometry, &[]),
             Err(AkitaError::InvalidSize { .. })
         ));
-        let non_nested = CommitmentRingDims {
-            inner: 128,
-            outer: 32,
+        let invalid_carrier = CommitmentRingDims {
+            inner: 64,
+            outer: 128,
             opening: 64,
         };
         assert!(matches!(
-            PreparedRelationPoint::new(&point, F::one(), non_nested, 128, 9),
+            RelationAddressGeometry::new(invalid_carrier, 128, 9),
             Err(AkitaError::InvalidSetup(_))
         ));
     }
@@ -375,14 +369,9 @@ mod tests {
         let outgoing_ring_dim = 32;
         let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
         let point = point_for(field_len);
-        let prepared = PreparedRelationPoint::new(
-            &point,
-            F::from_u64(7),
-            role_dims,
-            outgoing_ring_dim,
-            opening_source_len,
-        )
-        .unwrap();
+        let geometry =
+            RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
+        let prepared = PreparedRelationPoint::new(&point, F::from_u64(7), geometry, &[]).unwrap();
         assert!(matches!(
             prepared.role_column_weight(3, RingRole::Inner, 0),
             Err(AkitaError::InvalidInput(_))
@@ -391,5 +380,32 @@ mod tests {
             prepared.role_column_weight(0, RingRole::Outer, 2),
             Err(AkitaError::InvalidProof)
         ));
+    }
+
+    #[test]
+    fn prepares_additional_group_local_quotient_dimension() {
+        let role_dims = CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 32,
+        };
+        let point = point_for(512);
+        let geometry = RelationAddressGeometry::new_for_groups(
+            role_dims,
+            &[CommitmentRingDims::uniform(64)],
+            32,
+            9,
+        )
+        .unwrap();
+        let prepared = PreparedRelationPoint::new(&point, F::from_u64(7), geometry, &[64, 64])
+            .expect("additional group-local dimension");
+        assert_eq!(
+            prepared
+                .for_dimension(64)
+                .expect("prepared D64 quotient factors")
+                .ring_dim,
+            64
+        );
+        assert_eq!(prepared.additional.len(), 1);
     }
 }

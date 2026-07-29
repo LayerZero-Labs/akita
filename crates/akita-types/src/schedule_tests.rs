@@ -26,9 +26,10 @@ use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    DecompositionParams, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -40,6 +41,14 @@ use akita_sumcheck::{CompressedUniPoly, EqFactoredSumcheckProof, SumcheckProof};
 type F = Prime128OffsetA7F7;
 
 fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
+    committed_params_with_geometry(ring_dimension, 4, 4)
+}
+
+fn committed_params_with_geometry(
+    ring_dimension: usize,
+    num_positions_per_block: usize,
+    num_live_ring_elements_per_claim: usize,
+) -> CommittedGroupParams {
     CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         ring_dimension,
@@ -49,8 +58,67 @@ fn committed_params(ring_dimension: usize) -> CommittedGroupParams {
         2,
         SparseChallengeConfig::pm1_only(3),
     )
-    .with_decomp(4, 4, 2, 2, 2)
+    .with_decomp(
+        num_positions_per_block,
+        num_live_ring_elements_per_claim,
+        2,
+        2,
+        2,
+    )
     .expect("schedule validation params")
+}
+
+fn retarget_outer_dimension(
+    params: &mut CommittedGroupParams,
+    ring_dimension: usize,
+) -> Result<(), AkitaError> {
+    let outer = &params.outer_commit_matrix;
+    let column_scale = outer.ring_dimension() / ring_dimension;
+    params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width() * column_scale,
+        outer.coeff_linf_bound(),
+        ring_dimension,
+    );
+    Ok(())
+}
+
+fn retarget_open_dimension(
+    params: &mut CommittedGroupParams,
+    ring_dimension: usize,
+) -> Result<(), AkitaError> {
+    let open = &params.open_commit_matrix;
+    let column_scale = open.ring_dimension() / ring_dimension;
+    params.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width() * column_scale,
+        open.coeff_linf_bound(),
+        ring_dimension,
+    );
+    Ok(())
+}
+
+fn precommitted_group_params(
+    params: &CommittedGroupParams,
+    group: PolynomialGroupLayout,
+) -> crate::PrecommittedLevelParams {
+    crate::PrecommittedLevelParams {
+        layout: PrecommittedGroupDescriptor::from_params(group, params),
+        inner_commit_matrix: params.inner_commit_matrix.clone(),
+        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        log_basis_open: params.log_basis_open,
+        fold_challenge_config: params.fold_challenge_config,
+        num_digits_inner: params.num_digits_inner,
+        num_digits_outer: params.num_digits_outer,
+        num_digits_open: params.num_digits_open,
+        num_digits_fold_one: params.num_digits_fold_one,
+    }
 }
 
 fn recursive_schedule(
@@ -125,6 +193,65 @@ fn recursive_schedule(
 }
 
 #[test]
+fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
+    let dense = committed_params(64);
+    assert_eq!(
+        RootSource::from_commitment(&dense),
+        RootSource::Dense {
+            coefficient_bits: 128
+        }
+    );
+    assert_eq!(
+        RootSource::from_config(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 128,
+                log_open_bound: None,
+            },
+            256,
+        ),
+        RootSource::Dense {
+            coefficient_bits: 128
+        }
+    );
+
+    let onehot = dense.with_onehot_chunk_size(256);
+    assert_eq!(
+        RootSource::from_commitment(&onehot),
+        RootSource::OneHot { chunk_size: 256 }
+    );
+    assert_eq!(
+        RootSource::from_config(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 1,
+                log_open_bound: Some(128),
+            },
+            256,
+        ),
+        RootSource::OneHot { chunk_size: 256 }
+    );
+}
+
+#[test]
+fn schedule_rejects_root_source_that_disagrees_with_commitment_bounds() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.root.params.final_group.source = RootSource::OneHot { chunk_size: 256 };
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+
+    schedule.root.params.final_group.source = RootSource::Dense {
+        coefficient_bits: 32,
+    };
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(_))
+    ));
+}
+
+#[test]
 fn schedule_rejects_setup_prefix_split_authority() {
     let mut schedule = recursive_schedule(64, 64, true);
     schedule.recursive_folds[0].params.witness.setup_prefix = None;
@@ -136,12 +263,12 @@ fn schedule_rejects_setup_prefix_split_authority() {
 }
 
 #[test]
-fn schedule_rejects_offloaded_ring_dimension_transition() {
+fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
     let schedule = recursive_schedule(128, 64, true);
 
     let err = schedule
         .validate_structure()
-        .expect_err("offload requires uniform predecessor/successor geometry");
+        .expect_err("offload prefix must use the producer setup projection dimension");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }
 
@@ -157,6 +284,113 @@ fn schedule_accepts_offload_at_uniform_successor_dimension() {
     recursive_schedule(64, 64, true)
         .validate_structure()
         .expect("offload supports uniform predecessor/successor geometry");
+}
+
+#[test]
+fn schedule_accepts_mixed_producer_projecting_to_prefix_dimension() {
+    let mut schedule = recursive_schedule(128, 64, true);
+    let producer = &mut schedule.root.params.final_group.commitment;
+    retarget_outer_dimension(producer, 64).expect("retarget producer B role");
+    retarget_open_dimension(producer, 64).expect("retarget producer D role");
+
+    schedule
+        .validate_structure()
+        .expect("mixed A128/B64/D64 producer projects its setup prefix at D64");
+}
+
+#[test]
+fn schedule_rejects_prefix_commitment_roles_that_miss_consumer_roles() {
+    let mut schedule = recursive_schedule(64, 64, true);
+    retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 32)
+        .expect("retarget consumer B role");
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("prefix B commitment must match the consumer B role");
+    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
+    let mut schedule = recursive_schedule(128, 64, false);
+    let producer = &mut schedule.root.params.final_group.commitment;
+    retarget_outer_dimension(producer, 64).expect("retarget producer B role");
+    retarget_open_dimension(producer, 64).expect("retarget producer D role");
+
+    let final_group = PolynomialGroupLayout::new(9, 1);
+    let singleton_layout =
+        OpeningClaimsLayout::from_groups(vec![final_group]).expect("singleton layout");
+    let singleton_natural_len = crate::active_setup_field_len(producer, &singleton_layout)
+        .expect("singleton setup geometry");
+
+    let precommitted_group = PolynomialGroupLayout::new(9, 1);
+    let mut group_params = producer.clone();
+    group_params.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(group_params.d_a())
+            .expect("precommitted test group uses a production ring dimension");
+    let inner = &group_params.inner_commit_matrix;
+    group_params.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        1,
+        inner.ring_dimension(),
+    );
+    let outer = &group_params.outer_commit_matrix;
+    group_params.outer_commit_matrix = crate::sis::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width(),
+        1,
+        outer.ring_dimension(),
+    );
+    let precommitted = precommitted_group_params(&group_params, precommitted_group);
+    let one_precommitted_d_width = precommitted
+        .d_segment_width(producer.role_dims().d_d())
+        .expect("precommitted D width");
+    let precommitted_group_count = 8;
+    producer.precommitted_groups = vec![precommitted; precommitted_group_count];
+    let precommitted_d_width = one_precommitted_d_width * precommitted_group_count;
+
+    let open = &producer.open_commit_matrix;
+    producer.open_commit_matrix = crate::sis::OpenCommitMatrixParams::new_unchecked(
+        open.security_policy(),
+        open.sis_table_key().table_digest,
+        open.sis_modulus_profile(),
+        open.output_rank(),
+        open.input_width() + precommitted_d_width,
+        open.coeff_linf_bound(),
+        open.ring_dimension(),
+    );
+
+    let mut groups = vec![precommitted_group; precommitted_group_count];
+    groups.push(final_group);
+    let opening_layout = OpeningClaimsLayout::from_groups(groups).expect("multi-group layout");
+    let natural_len = crate::active_setup_field_len(producer, &opening_layout)
+        .expect("multi-group mixed setup geometry");
+    assert!(
+        natural_len > singleton_natural_len,
+        "the exact prefix must include the larger multi-group setup footprint"
+    );
+
+    let consumer = committed_params_with_geometry(64, 16, 64);
+    let n_prefix = crate::padded_setup_prefix_len(natural_len);
+    let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
+        .expect("consumer-compatible prefix commitment");
+    let prefix =
+        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params);
+    schedule.recursive_folds[0].params.witness = consumer.clone();
+    schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix.clone();
+    schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
+    schedule.recursive_folds[0].params.witness.setup_prefix = Some(prefix);
+
+    schedule
+        .validate_structure()
+        .expect("mixed multi-group producer offloads its exact D64 setup projection");
 }
 
 #[test]
@@ -368,7 +602,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 }
 
 #[test]
-fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -405,7 +639,7 @@ fn planned_level_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
-                "planned level bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }
@@ -463,7 +697,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
 }
 
 #[test]
-fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
+fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     let next_lp = CommittedGroupParams::params_only(
@@ -517,7 +751,7 @@ fn planned_batched_root_bytes_match_two_stage_payload_at_all_bases() {
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),
-                "planned batched root bytes should match the serialized two-stage body at log_basis={log_basis}"
+                "planned batched root bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
     }
 }
@@ -591,51 +825,72 @@ fn validate_rejects_zero_dimensions() {
     );
 }
 
-#[test]
-fn group_batch_key_rejects_precommitted_num_vars_above_main() {
-    let multi_group_key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupDescriptor {
-            group: PolynomialGroupLayout::new(24, 1),
-            num_live_ring_elements_per_claim: 1usize << 18,
-            num_positions_per_block: 16,
-            num_live_blocks: 1usize << 14,
-            log_basis_inner: 1,
-            log_basis_outer: 2,
-            n_a: 3,
-            a_coeff_linf_bound: 1,
-            n_b: 4,
-            b_coeff_linf_bound: 1,
-        }],
-    };
-
-    let err = multi_group_key
-        .validate()
-        .expect_err("precommitted groups above the main num_vars must be rejected");
-    assert!(matches!(err, AkitaError::InvalidInput(_)));
+fn precommitted_descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
+    PrecommittedGroupDescriptor {
+        group: PolynomialGroupLayout::new(num_vars, 1),
+        num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
+        num_positions_per_block: 16,
+        num_live_blocks: 1usize << (num_vars - 10),
+        log_basis_inner: 1,
+        log_basis_outer: 2,
+        inner_ring_dimension: 64,
+        outer_ring_dimension: 64,
+        n_a: 3,
+        a_coeff_linf_bound: 1,
+        n_b: 4,
+        b_coeff_linf_bound: 1,
+    }
 }
 
 #[test]
-fn group_batch_key_rejects_precommitted_num_vars_above_half_main() {
+fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
     let multi_group_key = AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupDescriptor {
-            group: PolynomialGroupLayout::new(12, 1),
-            num_live_ring_elements_per_claim: 64,
-            num_positions_per_block: 16,
-            num_live_blocks: 4,
-            log_basis_inner: 1,
-            log_basis_outer: 2,
-            n_a: 3,
-            a_coeff_linf_bound: 1,
-            n_b: 4,
-            b_coeff_linf_bound: 1,
-        }],
+        final_group: PolynomialGroupLayout::new(14, 3),
+        precommitteds: vec![precommitted_descriptor(20)],
     };
 
     multi_group_key
         .validate()
-        .expect_err("precommitted groups above half the main key must be rejected");
+        .expect("commit order must not impose an arity ordering");
+    assert_eq!(multi_group_key.final_group.num_vars(), 14);
+    assert_eq!(multi_group_key.max_num_vars(), 20);
+    assert!(!multi_group_key.fits_setup_capacity(19, 4).unwrap());
+    assert!(multi_group_key.fits_setup_capacity(20, 4).unwrap());
+
+    let opening_layout = multi_group_key.opening_layout().expect("opening layout");
+    assert_eq!(opening_layout.max_num_vars(), 20);
+    assert_eq!(
+        opening_layout.groups(),
+        &[
+            PolynomialGroupLayout::new(20, 1),
+            PolynomialGroupLayout::new(14, 3),
+        ],
+        "opening layout must preserve precommitted-then-final transcript order"
+    );
+}
+
+#[test]
+fn group_batch_key_allows_independent_precommitted_num_vars() {
+    let multi_group_key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(20, 3),
+        precommitteds: vec![precommitted_descriptor(12)],
+    };
+
+    multi_group_key
+        .validate()
+        .expect("precommitted group arity is not derived from the final group");
+}
+
+#[test]
+fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
+    let multi_group_key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(20, 3),
+        precommitteds: vec![precommitted_descriptor(20)],
+    };
+
+    multi_group_key
+        .validate()
+        .expect("precommitted groups may use the final group's full arity");
 }
 
 #[test]
@@ -643,12 +898,14 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         precommitteds: vec![PrecommittedGroupDescriptor {
-            group: PolynomialGroupLayout::new(10, 1),
+            group: PolynomialGroupLayout::new(10, 2),
             num_live_ring_elements_per_claim: 16,
             num_positions_per_block: 4,
             num_live_blocks: 4,
             log_basis_inner: 1,
             log_basis_outer: 2,
+            inner_ring_dimension: 64,
+            outer_ring_dimension: 64,
             n_a: 3,
             a_coeff_linf_bound: 1,
             n_b: 4,
@@ -658,8 +915,11 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 
     multi_group_key
         .validate()
-        .expect("unequal K_g is allowed for a supported precommitted dimension");
+        .expect("a precommitted group may contain multiple polynomials");
     assert_eq!(multi_group_key.num_commitment_groups(), 2);
+    assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
+    assert!(!multi_group_key.fits_setup_capacity(20, 4).unwrap());
+    assert!(multi_group_key.fits_setup_capacity(20, 5).unwrap());
 }
 
 #[test]
@@ -671,13 +931,15 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         num_live_blocks: 1,
         log_basis_inner: 1,
         log_basis_outer: 2,
+        inner_ring_dimension: 64,
+        outer_ring_dimension: 64,
         n_a: 3,
         a_coeff_linf_bound: 1,
         n_b: 4,
         b_coeff_linf_bound: 1,
     };
     let err = layout
-        .validate_frozen_precommit(64)
+        .validate_frozen_precommit()
         .expect_err("geometry must match num_vars");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

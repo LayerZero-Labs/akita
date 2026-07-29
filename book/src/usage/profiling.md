@@ -25,7 +25,7 @@ normal release link look like a verifier regression.
 
 Under committed-fold A-role SIS pricing, **fp128** production is **D=64**
 (signed-sparse; ~20% smaller than D128).
-Shipped tables: `fp128_d64_onehot`, `fp128_d64_full`, `fp128_d128_*`.
+Shipped tables: `fp128_d64_onehot`, `fp128_d64_dense`, `fp128_d128_*`.
 **fp128 D=32** is not a valid A-role fold degree (`d_a ≥ 64`); there is no
 `D32OneHot` preset.
 **fp32/fp64** D32/D64 are not securable; smallest secure choice is **D128
@@ -33,7 +33,7 @@ one-hot** (CI benches at `nv=28`).
 
 Compare ring degrees with
 `akita_config::proof_optimized::fp128::best_onehot_schedule` /
-`best_full_schedule`.
+`best_dense_schedule`.
 
 ## Environment knobs
 
@@ -74,18 +74,21 @@ Committed-fold A-role pricing (every cell folds securely):
 | `onehot_fp32_d128` | 28 | 1 | `direct` |
 | `onehot_fp64_d128` | 28 | 1 | `direct` |
 | `dense_fp128_d64` | 24 | 1 | `direct` |
+| `onehot_fp128_d64_tensor` | 26 | 1 | `direct` |
 | `onehot_fp128_d64` | 32 | 1 | `direct` |
-| `onehot_fp128_d64` | 32 | 1 | `recursive` |
 | `onehot_fp128_d64` | 30 | 4 | `direct` |
+| `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `direct` |
+| `onehot_fp128_d64_multi_group_recursive` | 32 | 4 | `recursive` |
+| `onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2` | 32 | 4 | `recursive` |
 | `onehot_fp128_d64_multi_chunk_w2r2` | 32 | 1 | `direct` |
 | `onehot_fp128_d64_multi_chunk_w4r2` | 32 | 1 | `direct` |
 | `onehot_fp128_d64_multi_chunk_w8r2` | 32 | 1 | `direct` |
 
 fp32/fp64 use `nv=28` because the ext-degree-4 challenge schedule exceeds the 1
 GiB `MAX_MATERIALIZED_EQ_TABLE_BYTES` budget at higher `num_vars`.
-The multi-chunk row runs in its own parallel CI group. It exercises the
-distributed chunked relation shape on a single hosted runner; after the
-introducing PR lands, it is compared against merge-base like the other rows.
+The long multi-group recursive rows run in separate parallel CI groups so each
+task keeps one benchmark case. The distributed rows also run in their own group
+and are compared against merge-base like the other rows.
 
 Report pipeline: `scripts/profile_bench_report.py`.
 Coverage matrix spec: `specs/profile-bench-coverage-matrix.md`.

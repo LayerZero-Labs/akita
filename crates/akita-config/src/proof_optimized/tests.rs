@@ -5,16 +5,16 @@ use crate::proof_optimized::{fp128, fp32};
 #[cfg(feature = "schedules-default")]
 use crate::CommitmentConfig;
 #[cfg(feature = "schedules-default")]
-use akita_planner::{generated::GeneratedScheduleTable, schedule_from_entry};
-#[cfg(feature = "schedules-default")]
 use akita_schedules::{fp32_d128_onehot_table, fp32_d256_onehot_table};
+#[cfg(feature = "schedules-default")]
+use akita_schedules::{schedule_from_entry, GeneratedScheduleTable};
 #[cfg(feature = "schedules-default")]
 use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_levels_are_exactly_root_and_recursive_folds() {
-    let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
     ))
     .expect("generated fp128 schedule");
@@ -48,7 +48,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_includes_terminal_inner_matrix() {
-    let schedule = fp128::D64Full::runtime_schedule(AkitaScheduleLookupKey::single(
+    let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
@@ -121,4 +121,19 @@ fn generated_q32_terminals_require_the_i16_tail() {
 fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
     assert_eq!(fp128::D64OneHotK16::onehot_chunk_size(), 16);
     assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {
+    let layouts =
+        setup_envelope_scan_layouts::<fp128::D64OneHot>(14, 3).expect("setup scan layouts");
+
+    assert!(layouts.iter().any(|layout| {
+        layout.groups()
+            == [
+                PolynomialGroupLayout::new(14, 2),
+                PolynomialGroupLayout::new(14, 1),
+            ]
+    }));
 }

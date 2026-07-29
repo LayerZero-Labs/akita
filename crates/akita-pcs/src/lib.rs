@@ -39,6 +39,8 @@
 #![warn(unreachable_pub)]
 
 mod scheme;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 
 pub use akita_algebra::Module;
 pub use akita_field::AkitaError;

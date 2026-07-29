@@ -7,8 +7,9 @@ use akita_types::dispatch_for_field;
 /// Samples challenges and builds the evaluation tables for the fused sumcheck.
 /// The caller must first absorb the next-witness binding into `transcript`.
 ///
-/// Only the current level's inner ring dimension is needed to expand the
-/// full relation-weight table.
+/// The batch-owned relation carrier dimension is used to interpret the flat
+/// witness. Each commitment group still contributes relation events at its
+/// native role dimensions.
 ///
 /// # Errors
 ///
@@ -32,9 +33,8 @@ where
     E: FpExtEncoding<F> + FromPrimitiveInt + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let dims = instance.role_dims();
-    let d_a = dims.d_a();
-    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+    let d_w = lp.relation_witness_carrier_ring_dimension();
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_w, |D| {
         let default_gamma;
         let gamma = if let Some(gamma) = gamma {
             gamma
@@ -79,35 +79,29 @@ where
         // Bind the low coefficient block shared by every role first, then the
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
-        let x_capacity = akita_types::opening_domain_len(opening_source_len)?;
-        let coeff_count = dims.common_relation_witness_coeff_count(opening_ring_dim);
-        if coeff_count == 0
-            || !coeff_count.is_power_of_two()
-            || !w.len().is_multiple_of(coeff_count)
-            || !opening_ring_dim.is_multiple_of(coeff_count)
-        {
+        let geometry =
+            lp.relation_address_geometry(opening_batch, opening_ring_dim, opening_source_len)?;
+        let coeff_count = geometry.common_relation_witness_coeff_count();
+        if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
-                "relation and outgoing witness do not admit a common coefficient block".into(),
+                "relation witness is not aligned to the common coefficient block".into(),
             ));
         }
-        let common_opening_source_len = opening_source_len
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("common opening domain overflow".into()))?;
-        let lane_capacity = x_capacity
-            .checked_mul(opening_ring_dim / coeff_count)
-            .ok_or_else(|| AkitaError::InvalidSetup("stage-2 lane domain overflow".into()))?;
-        let live_x_cols = w.len() / coeff_count;
-        let col_bits = lane_capacity.trailing_zeros() as usize;
-        let ring_bits = coeff_count.trailing_zeros() as usize;
-        // This is the Stage-1 transcript permutation boundary, not the Stage-2
-        // coefficient split. On mixed paths tau0 is already sampled in flat
-        // physical-address order, so zero means "no permutation," not "no low bits."
-        let digit_range_equality_low_variable_count =
-            if dims == akita_types::CommitmentRingDims::uniform(opening_ring_dim) {
-                opening_ring_dim.trailing_zeros() as usize
-            } else {
-                0
-            };
+        let live_relation_lane_count = geometry.live_relation_lane_count();
+        let col_bits = geometry.relation_lane_variable_count();
+        let ring_bits = geometry.common_relation_witness_variable_count();
+        // Bind the shared low coefficient block (`coeff_count`) as the digit
+        // range check's ring phase on every path. On uniform schedules
+        // `coeff_count == opening_ring_dim`, so this equals the historical value
+        // and the proof is byte-identical. On non-uniform schedules (per-level
+        // ring switch, e.g. a D=128 root folding into a D=64 tail, or per-role
+        // compression) it lets the range check exploit the same low ring block
+        // the witness is actually stored in — the fast compact ring phase —
+        // instead of collapsing to the dense flat x-sweep (`low = 0`). The
+        // Stage-1 challenge point folds the ring block first in both cases; the
+        // downstream Stage-2 relation reads that point through the same
+        // `col_bits`/`ring_bits` split, so the ordering stays consistent.
+        let digit_range_equality_low_variable_count = ring_bits;
         let num_sc_vars = col_bits + ring_bits;
         let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
@@ -145,7 +139,7 @@ where
                     w.shared_i8_digits(),
                     coeff_count,
                     1,
-                    common_opening_source_len,
+                    live_relation_lane_count,
                 )
             });
         #[cfg(not(feature = "parallel"))]
@@ -155,7 +149,7 @@ where
                 w.shared_i8_digits(),
                 coeff_count,
                 1,
-                common_opening_source_len,
+                live_relation_lane_count,
             );
             (relation_weight_factorization, w_compact)
         };
@@ -175,10 +169,8 @@ where
 
         Ok(RingSwitchOutput {
             w_evals_compact,
-            live_x_cols,
+            relation_address_geometry: geometry,
             relation_weight_factorization,
-            col_bits,
-            ring_bits,
             digit_range_equality_low_variable_count,
             tau0,
             tau1,

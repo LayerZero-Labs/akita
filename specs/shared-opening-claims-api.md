@@ -449,18 +449,19 @@ impl PrecommittedGroupDescriptor {
 }
 ```
 
-**Grouped-root invariant.** Validation is per group and no longer relates
-precommitted group variable counts to the final group variable count:
+**Grouped-root invariant.** The final group defines the shared maximum arity.
+Validation does not impose any ratio between group arities:
 
 ```text
 ∀ pre in precommitteds:
     pre.group.validate()
+    pre.group.num_vars <= final_group.num_vars
     pre.validate()
 ```
 
 The setup envelope and schedule lookup decide whether a concrete precommitted
-group is supported by the selected preset; above-half and larger-than-final
-precommitted groups are valid schedule keys.
+group is supported by the selected preset. Precommitted arities are independent
+within the final-group maximum, including equal arities.
 
 **Scalar openings** remain the empty-precommitted case:
 
@@ -471,9 +472,8 @@ AkitaScheduleLookupKey {
 }
 ```
 
-**Test migration:** `group_batch_key_allows_precommitted_num_vars_above_half_main`
-remains an acceptance test, and coverage includes precommitted groups larger
-than the final group.
+**Test migration:** independent precommitted arities and equal arities have
+acceptance coverage. Precommitted groups larger than the final group reject.
 
 #### 10. Generated schedule tables — shared runtime types
 
@@ -561,7 +561,7 @@ Inventory from the current codebase (~60 references):
 | Full prove/verify e2e | builds batch structs | `OpeningClaims` / `ProverOpeningData` |
 | Descriptor digest routing tests | `OpeningBatchShape::from_groups` with custom `point_vars` | claims-side `PolynomialGroupClaims` with custom `point_vars`; layout uses derived `num_vars` |
 | Catalog / planner unit tests | shape / `CommitmentGroupScheduleKey` | layout / `PolynomialGroupLayout` |
-| Grouped schedule validation | allows precommitted above half main | accepts arbitrary per-group `num_vars` supported by setup/schedule |
+| Grouped schedule validation | accepts independent precommitted arities | accepts precommitted `num_vars` through the full final-group arity |
 
 **F. Instance descriptor** → layout for routing digest, claims for live prove
 
@@ -636,7 +636,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 | Layout/claims consistency | `opening_claims.layout()` matches group sizes and per-group `num_vars` derived from claims routing |
 | Prover/verifier consistency | Same `OpeningClaims` transcript binding |
 | No verifier panic | Constructors and validation return `AkitaError`; no panic on malformed input |
-| Grouped-root sizing | Precommitted `num_vars` are independent of final-group `num_vars`; setup/schedule capacity decides support |
+| Grouped-root sizing | Precommitted `num_vars` have no ratio constraint and may use the full final-group arity |
 | Shared schedule key | `PolynomialGroupLayout` is the only per-group schedule lookup key type |
 | Generated table types | Static rows use `PolynomialGroupLayout` / `PrecommittedGroupDescriptor` directly — no generated mirror structs |
 
@@ -666,7 +666,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 - [ ] Batch-level count API is `num_total_polynomials()` **only** — no `num_claims()` or `num_polynomials()` on `OpeningClaims`.
 - [ ] `OpeningClaimsLayout` has no batch-level `num_vars`; exposes `max_num_vars()` and `groups()`.
 - [ ] `PolynomialGroupLayout` replaces `CommitmentGroupScheduleKey`; `PrecommittedGroupDescriptor` replaces schedule `CommitmentGroupLayout`.
-- [ ] `AkitaScheduleLookupKey` uses `PolynomialGroupLayout` / `PrecommittedGroupDescriptor`; grouped validation accepts independent precommitted group sizes.
+- [ ] `AkitaScheduleLookupKey` uses `PolynomialGroupLayout` / `PrecommittedGroupDescriptor`; grouped validation accepts precommitted arities through the full final-group arity.
 - [ ] Generated tables use shared types; `GeneratedCommitmentGroupScheduleKey`, `GeneratedCommitmentGroupLayout`, and `GeneratedScheduleLookupKey` are deleted.
 - [ ] `OpeningClaimsLayout` / `PolynomialGroupLayout` replace `OpeningBatchShape` / `OpeningGroupShape`.
 - [ ] Setup/planner/config use `OpeningClaimsLayout` — not `OpeningClaims::fixture`.
@@ -678,7 +678,8 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 ### Testing Strategy
 
 - Port unit tests to `OpeningClaims`; assert `num_total_polynomials()` matches group sum.
-- Update schedule tests: precommitted `num_vars` above half of `final_group.num_vars` and larger than the final group are accepted when setup/schedule capacity supports them.
+- Update schedule tests: independent precommitted `num_vars` through the final
+  arity are accepted; larger arities reject.
 - Grep gate: no `OpeningBatchShape`, `OpeningGroupShape`, `OpeningBatchLimits`, `CommitmentGroupScheduleKey`, schedule `CommitmentGroupLayout`, or generated mirror struct names.
 - Run full workspace `cargo test`.
 
@@ -1016,7 +1017,7 @@ GeneratedScheduleTableEntry {
 5. Migrate `CommitmentConfig`, schedule, descriptor, setup to `&OpeningClaimsLayout` and `PolynomialGroupLayout`.
 6. Switch PCS traits; migrate verifier then prover protocol. Replace `claims.validate(OpeningBatchLimits { … })` with `opening_claims.validate(setup.expanded.seed())`, then derive the structural view from `opening_claims.layout()`.
 7. Delete `OpeningBatchShape`, `OpeningGroupShape`, `OpeningBatchLimits`, old batch structs, generated mirror structs, and retired items from `proof/opening_batch.rs`.
-8. Test/bench migration: layout for schedule-only, claims for e2e; keep above-half and larger-than-final grouped validation as acceptance coverage.
+8. Test/bench migration: layout for schedule-only, claims for e2e; keep independent and equal-arity grouped validation as acceptance coverage.
 
 
 
