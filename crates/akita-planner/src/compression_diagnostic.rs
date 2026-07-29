@@ -20,15 +20,16 @@ pub const COMPRESSION_TARGET_BYTES: usize = 128;
 pub const MAX_COMPRESSION_MAPS: usize = 3;
 
 /// One selected negative-binary F/H map.
+///
+/// Compression maps are structurally rank one: the image has exactly
+/// `ring_dimension` field coefficients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CompressionDiagnosticMap {
     /// Ring dimension of this F/H matrix.
     pub ring_dimension: usize,
     /// Number of input ring columns after negative-binary decomposition.
     pub input_width: usize,
-    /// SIS-secure output module rank.
-    pub output_rank: usize,
-    /// Number of field coefficients in this map's image.
+    /// Number of field coefficients in this map's image (`== ring_dimension`).
     pub output_coefficients: usize,
 }
 
@@ -78,7 +79,7 @@ fn select_maps(
             .checked_mul(field_bits)
             .ok_or_else(|| AkitaError::InvalidSetup("compression digit length overflow".into()))?;
         let input_width = digit_coefficients.div_ceil(ring_dimension);
-        let output_rank = min_compression_secure_rank(
+        let secure_rank = min_compression_secure_rank(
             DEFAULT_SIS_SECURITY_POLICY,
             profile,
             u32::try_from(ring_dimension).map_err(|_| {
@@ -93,16 +94,18 @@ fn select_maps(
                 "no compression SIS rank for profile={profile:?} d={ring_dimension} width={input_width}"
             ))
         })?;
-        let output_coefficients = output_rank
-            .checked_mul(ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("compression output length overflow".into()))?;
+        if secure_rank != 1 {
+            return Err(AkitaError::InvalidSetup(format!(
+                "compression diagnostic requires rank-one maps, got rank {secure_rank} for profile={profile:?} d={ring_dimension} width={input_width}"
+            )));
+        }
+        let output_coefficients = ring_dimension;
         let output_bytes = output_coefficients
             .checked_mul(field_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("compression output bytes overflow".into()))?;
         maps.push(CompressionDiagnosticMap {
             ring_dimension,
             input_width,
-            output_rank,
             output_coefficients,
         });
         if output_bytes == COMPRESSION_TARGET_BYTES {
@@ -185,7 +188,10 @@ mod tests {
                 let plan = plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes)
                     .expect("plan");
                 assert_eq!(plan.maps.len(), 2);
-                assert!(plan.maps.iter().all(|map| map.output_rank == 1));
+                assert!(plan
+                    .maps
+                    .iter()
+                    .all(|map| map.output_coefficients == map.ring_dimension));
                 assert_eq!(plan.maps[0].output_coefficients * field_bytes, 256);
                 assert_eq!(plan.maps[1].output_coefficients * field_bytes, 128);
             }
@@ -212,7 +218,10 @@ mod tests {
                     SisModulusProfileId::Q32Offset99 => [128, 64, 32],
                 }
             );
-            assert!(plan.maps.iter().all(|map| map.output_rank == 1));
+            assert!(plan
+                .maps
+                .iter()
+                .all(|map| map.output_coefficients == map.ring_dimension));
             assert_eq!(
                 plan.maps
                     .iter()
@@ -239,7 +248,10 @@ mod tests {
                 let plan =
                     plan_compression_diagnostic(profile, source_bytes / field_bytes).expect("plan");
                 assert_eq!(plan.maps.len(), 3);
-                assert!(plan.maps.iter().all(|map| map.output_rank == 1));
+                assert!(plan
+                    .maps
+                    .iter()
+                    .all(|map| map.output_coefficients == map.ring_dimension));
             }
         }
     }

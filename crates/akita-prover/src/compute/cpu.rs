@@ -5,9 +5,9 @@ use crate::compute::backend::{
     DigitRowsComputeBackend, RingSwitchComputeBackend,
 };
 use crate::compute::plans::{
-    CompressionRowsPlan, DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
-    RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
+    DenseCommitInput, DenseCommitRowsPlan, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
+    RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use crate::kernels::linear::{
     compression_rows, digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
@@ -39,7 +39,6 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct CompressionNttCacheKey {
     ring_d: usize,
-    output_rank: usize,
     input_width: usize,
 }
 
@@ -155,13 +154,11 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
 
     fn with_compression_ntt<const D: usize, R>(
         &self,
-        output_rank: usize,
         input_width: usize,
         f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
     ) -> Result<R, AkitaError> {
         let key = CompressionNttCacheKey {
             ring_d: D,
-            output_rank,
             input_width,
         };
         let entry = {
@@ -178,8 +175,7 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             #[cfg(test)]
             self.compression_ntt_slot_build_count
                 .fetch_add(1, Ordering::Relaxed);
-            build_compression_ntt_slot::<F, D>(self.expanded.as_ref(), output_rank, input_width)
-                .map(Arc::new)
+            build_compression_ntt_slot::<F, D>(self.expanded.as_ref(), input_width).map(Arc::new)
         });
         let slot = build_result.as_ref().map_err(Clone::clone)?;
         if slot.ring_d != D {
@@ -263,12 +259,9 @@ fn build_ntt_slot_for_key<F: FieldCore + CanonicalField>(
 
 fn build_compression_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     expanded: &AkitaExpandedSetup<F>,
-    output_rank: usize,
     input_width: usize,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
-    let view = expanded
-        .shared_matrix()
-        .ring_view::<D>(output_rank, input_width)?;
+    let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
     let cache = Arc::new(prepare_ntt_cache(
         view,
         NttCacheMode::ExactNegacyclic {
@@ -674,18 +667,18 @@ where
     fn compression_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
-        plan: CompressionRowsPlan<'_, D>,
+        digit_vectors: &[&[[i8; D]]],
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let input_width = validate_compression_rows(plan.output_rank, plan.digit_vectors)?;
+        let input_width = validate_compression_rows(digit_vectors)?;
         let total_ring_elements = prepared
             .expanded
             .shared_matrix
             .total_ring_elements_at::<D>()?;
-        for digits in plan.digit_vectors {
-            validate_digit_row_request(plan.output_rank, digits.len(), total_ring_elements)?;
+        for digits in digit_vectors {
+            validate_digit_row_request(1, digits.len(), total_ring_elements)?;
         }
-        prepared.with_compression_ntt::<D, _>(plan.output_rank, input_width, |ntt| {
-            compression_rows(ntt, plan.output_rank, plan.digit_vectors)
+        prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
+            compression_rows(ntt, digit_vectors)
         })
     }
 }
@@ -947,21 +940,14 @@ mod tests {
         let views = vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
         CpuBackend
-            .compression_rows::<D>(
-                &prepared,
-                CompressionRowsPlan {
-                    output_rank: 2,
-                    digit_vectors: &views,
-                },
-            )
+            .compression_rows::<D>(&prepared, &views)
             .expect("compression rows");
 
-        let expected_bytes = 2 * 3 * D * 3 * core::mem::size_of::<i32>();
+        let expected_bytes = 3 * D * 3 * core::mem::size_of::<i32>();
         assert_eq!(prepared.compression_ntt_cache_bytes(), expected_bytes);
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
         let key = CompressionNttCacheKey {
             ring_d: D,
-            output_rank: 2,
             input_width: 3,
         };
         let entry = prepared
@@ -993,13 +979,7 @@ mod tests {
             .expect("envelope width");
         let compression_digits = vec![[0i8; D]; envelope_width];
         CpuBackend
-            .compression_rows::<D>(
-                &prepared,
-                CompressionRowsPlan {
-                    output_rank: 1,
-                    digit_vectors: &[compression_digits.as_slice()],
-                },
-            )
+            .compression_rows::<D>(&prepared, &[compression_digits.as_slice()])
             .expect("compression cache at full envelope length");
         assert_eq!(prepared.shared_ntt_cache_bytes(), 0);
 
@@ -1030,13 +1010,7 @@ mod tests {
                 let digits = &digits;
                 scope.spawn(move || {
                     CpuBackend
-                        .compression_rows::<D>(
-                            prepared,
-                            CompressionRowsPlan {
-                                output_rank: 2,
-                                digit_vectors: &[digits.as_slice()],
-                            },
-                        )
+                        .compression_rows::<D>(prepared, &[digits.as_slice()])
                         .expect("compression rows");
                 });
             }
@@ -1051,22 +1025,16 @@ mod tests {
     }
 
     #[test]
-    fn compression_cache_key_includes_matrix_shape_not_only_prefix_length() {
+    fn compression_cache_key_includes_input_width() {
         let setup =
             AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, setup_envelope(D)).unwrap();
         let prepared = CpuBackend
             .prepare_expanded::<D>(setup.expanded.clone())
             .expect("empty prepared setup");
-        for (output_rank, input_width) in [(1, 6), (2, 3)] {
+        for input_width in [3, 6] {
             let digits = vec![[0i8; D]; input_width];
             CpuBackend
-                .compression_rows::<D>(
-                    &prepared,
-                    CompressionRowsPlan {
-                        output_rank,
-                        digit_vectors: &[digits.as_slice()],
-                    },
-                )
+                .compression_rows::<D>(&prepared, &[digits.as_slice()])
                 .expect("compression rows");
         }
 
@@ -1090,13 +1058,7 @@ mod tests {
         let short = vec![[0i8; D]; 2];
 
         assert!(CpuBackend
-            .compression_rows::<D>(
-                &prepared,
-                CompressionRowsPlan {
-                    output_rank: 2,
-                    digit_vectors: &[valid.as_slice(), short.as_slice()],
-                },
-            )
+            .compression_rows::<D>(&prepared, &[valid.as_slice(), short.as_slice()])
             .is_err());
         assert!(prepared.compression_ntt.lock().unwrap().is_empty());
         assert_eq!(prepared.compression_ntt_cache_bytes(), 0);

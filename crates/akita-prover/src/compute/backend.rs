@@ -1,9 +1,8 @@
 use crate::compute::plans::{
-    CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
-use crate::kernels::linear::validate_compression_rows;
 use crate::AkitaProverSetup;
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -140,43 +139,15 @@ where
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 
-    /// Exact-shape negative-binary compression products over one matrix prefix.
+    /// Exact-shape rank-one negative-binary compression products over one matrix prefix.
     ///
-    /// The default is a cache-free coefficient-form implementation. Backends
-    /// may override it to use a prefix-scoped negacyclic-only cache and scan
-    /// the matrix once across all right-hand sides.
+    /// Compression-capable backends must implement this explicitly. There is no
+    /// default coefficient-form fallback that would hide missing support.
     fn compression_rows<const D: usize>(
         &self,
         prepared: &Self::PreparedSetup,
-        plan: CompressionRowsPlan<'_, D>,
-    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let input_width = validate_compression_rows(plan.output_rank, plan.digit_vectors)?;
-        let matrix = self
-            .prepared_expanded_setup(prepared)
-            .shared_matrix()
-            .ring_view::<D>(plan.output_rank, input_width)?;
-        Ok(plan
-            .digit_vectors
-            .iter()
-            .map(|digits| {
-                matrix
-                    .rows()
-                    .map(|row| {
-                        row.iter().zip(*digits).fold(
-                            CyclotomicRing::<F, D>::zero(),
-                            |mut accumulator, (lhs, digit)| {
-                                let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(
-                                    |coefficient| F::from_i64(i64::from(digit[coefficient])),
-                                ));
-                                lhs.mul_accumulate_into(&rhs, &mut accumulator);
-                                accumulator
-                            },
-                        )
-                    })
-                    .collect()
-            })
-            .collect())
-    }
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

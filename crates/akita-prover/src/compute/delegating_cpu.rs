@@ -18,7 +18,7 @@ use super::operation_plans::{
     RingSwitchQuotientPlan, RingSwitchRelationPlan,
 };
 use super::plans::{
-    CompressionRowsPlan, DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
+    DenseCommitRowsPlan, OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan,
     RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
     SparseRingCommitRowsPlan,
 };
@@ -95,9 +95,9 @@ macro_rules! delegate_digit_rows {
             fn compression_rows<const D: usize>(
                 &self,
                 prepared: &Self::PreparedSetup,
-                plan: CompressionRowsPlan<'_, D>,
+                digit_vectors: &[&[[i8; D]]],
             ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-                CpuBackend.compression_rows(prepared, plan)
+                CpuBackend.compression_rows(prepared, digit_vectors)
             }
         }
     };

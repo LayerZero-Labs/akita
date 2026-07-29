@@ -1,6 +1,6 @@
 //! Opt-in execution of compressed commitments without protocol effects.
 
-use crate::compute::{CompressionRowsPlan, DigitRowsComputeBackend, OperationCtx};
+use crate::compute::{DigitRowsComputeBackend, OperationCtx};
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_planner::compression_diagnostic::{
@@ -45,7 +45,6 @@ pub(crate) struct CompressionDiagnosticGroupReport {
     pub(crate) map_index: usize,
     pub(crate) ring_dimension: usize,
     pub(crate) input_width: usize,
-    pub(crate) output_rank: usize,
     pub(crate) batch_size: usize,
     pub(crate) input_bytes: usize,
     pub(crate) output_bytes: usize,
@@ -146,13 +145,9 @@ where
     let digitization_elapsed = digitization_started.elapsed();
     let digit_views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
     let kernel_started = Instant::now();
-    let outputs = ctx.backend().compression_rows(
-        ctx.prepared(),
-        CompressionRowsPlan {
-            output_rank: first_map.output_rank,
-            digit_vectors: &digit_views,
-        },
-    )?;
+    let outputs = ctx
+        .backend()
+        .compression_rows(ctx.prepared(), &digit_views)?;
     let kernel_elapsed = kernel_started.elapsed();
     if outputs.len() != item_indices.len() {
         return Err(AkitaError::InvalidSetup(
@@ -185,7 +180,6 @@ where
         map_index,
         ring_dimension: D,
         input_width: first_map.input_width,
-        output_rank: first_map.output_rank,
         batch_size: item_indices.len(),
         input_bytes,
         output_bytes,
@@ -203,18 +197,18 @@ where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
-    let mut groups = BTreeMap::<(usize, usize, usize), Vec<usize>>::new();
+    let mut groups = BTreeMap::<(usize, usize), Vec<usize>>::new();
     for (item_index, item) in items.iter().enumerate() {
         if let Some(map) = item.maps.get(map_index) {
             groups
-                .entry((map.ring_dimension, map.input_width, map.output_rank))
+                .entry((map.ring_dimension, map.input_width))
                 .or_default()
                 .push(item_index);
         }
     }
     groups
         .into_iter()
-        .map(|((ring_dimension, _, _), item_indices)| {
+        .map(|((ring_dimension, _), item_indices)| {
             dispatch_for_field!(
                 akita_types::ProtocolDispatchSlot::Compression,
                 F,
@@ -289,7 +283,6 @@ where
             map_index = group.map_index,
             ring_dimension = group.ring_dimension,
             input_width = group.input_width,
-            output_rank = group.output_rank,
             batch_size = group.batch_size,
             input_bytes = group.input_bytes,
             output_bytes = group.output_bytes,
@@ -402,7 +395,7 @@ mod tests {
         salt: usize,
     ) -> Vec<F> {
         assert_eq!(map.ring_dimension, D);
-        assert_eq!(map.output_rank, 1);
+        assert_eq!(map.output_coefficients, D);
         let digits =
             negative_binary_digits::<F, D>(coefficients, map.input_width).expect("digitization");
         let matrix_row = deterministic_matrix_row::<F, D>(map.input_width, salt);
@@ -417,7 +410,7 @@ mod tests {
         )
         .expect("exact-prefix compression cache");
         assert!(!slot.has_cyclic());
-        let actual = compression_rows::<F, D>(&slot, 1, &[digits.as_slice()]).expect("kernel");
+        let actual = compression_rows::<F, D>(&slot, &[digits.as_slice()]).expect("kernel");
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].len(), 1);
         let expected = schoolbook_rank_one_digit_mat_vec(&matrix_row, &digits);

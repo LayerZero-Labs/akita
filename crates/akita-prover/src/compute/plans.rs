@@ -165,14 +165,6 @@ pub struct RecursiveWitnessCommitRowsPlan<'a, const D: usize> {
     pub known_balanced_log_basis: Option<u32>,
 }
 
-/// Exact-shape batch of negative-binary compressed-commitment products.
-pub struct CompressionRowsPlan<'a, const D: usize> {
-    /// Number of output ring rows.
-    pub output_rank: usize,
-    /// Right-hand sides sharing one exact matrix prefix.
-    pub digit_vectors: &'a [&'a [[i8; D]]],
-}
-
 /// Full ring-switch relation operation input.
 pub struct RingSwitchRelationRowsPlan<'a, const D: usize> {
     /// Number of D-side cyclic rows to produce.

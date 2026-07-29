@@ -140,6 +140,14 @@ where
     ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
         CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
     }
+
+    fn compression_rows<const RING_D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; RING_D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend.compression_rows(prepared, digit_vectors)
+    }
 }
 
 impl<const DD: usize> RootCommitKernel<ContractCommitView<'_>, F, DD> for ContractCommitBackend

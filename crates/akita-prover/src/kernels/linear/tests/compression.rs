@@ -1,13 +1,12 @@
 use super::{prepare_both_transforms, schoolbook_digit_mat_vec};
 use crate::kernels::linear::compression_rows;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, Prime128Offset275, Prime32Offset99, Prime64Offset59};
+use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::layout::FlatMatrix;
 
 fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
-    let output_rank = 2;
     let column_count = 3;
-    let matrix = (0..output_rank * column_count)
+    let matrix = (0..column_count)
         .map(|index| {
             CyclotomicRing::from_coefficients(std::array::from_fn(|coefficient| {
                 F::from_i64(((index * 7 + coefficient * 3) % 17) as i64 - 8)
@@ -26,27 +25,23 @@ fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
     ];
     let flat = FlatMatrix::from_ring_slice(&matrix);
     let slot = prepare_both_transforms(
-        flat.ring_view::<D>(output_rank, column_count)
+        flat.ring_view::<D>(1, column_count)
             .expect("compression matrix view"),
     )
     .expect("compression NTT profile");
     let views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
-    let actual =
-        compression_rows::<F, D>(&slot, output_rank, &views).expect("compression batch rows");
-    let expected_matrix = matrix
-        .chunks(column_count)
-        .map(<[_]>::to_vec)
-        .collect::<Vec<_>>();
+    let actual = compression_rows::<F, D>(&slot, &views).expect("compression batch rows");
+    let expected_matrix = vec![matrix];
     let expected = schoolbook_digit_mat_vec::<F, D>(&expected_matrix, &digit_vectors);
     assert_eq!(actual, expected);
 }
 
 #[test]
 fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
-    assert_compression_batch::<Prime128Offset275, 8>();
-    assert_compression_batch::<Prime128Offset275, 16>();
-    assert_compression_batch::<Prime128Offset275, 32>();
+    assert_compression_batch::<Prime128OffsetA7F7, 8>();
+    assert_compression_batch::<Prime128OffsetA7F7, 16>();
+    assert_compression_batch::<Prime128OffsetA7F7, 32>();
     assert_compression_batch::<Prime64Offset59, 16>();
     assert_compression_batch::<Prime64Offset59, 32>();
     assert_compression_batch::<Prime64Offset59, 64>();
@@ -57,16 +52,15 @@ fn compression_batch_matches_schoolbook_across_the_rank_one_ladders() {
 
 #[test]
 fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
-    type F = Prime128Offset275;
+    type F = Prime128OffsetA7F7;
     const D: usize = 8;
     let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::one(); 4]);
     let slot = prepare_both_transforms(flat.ring_view::<D>(1, 4).expect("matrix"))
         .expect("compression NTT profile");
     let short = [[0i8; D]; 3];
     let full = [[0i8; D]; 4];
-    assert!(compression_rows::<F, D>(&slot, 1, &[&short, &full]).is_err());
+    assert!(compression_rows::<F, D>(&slot, &[&short, &full]).is_err());
 
     let outside_binary = [[2i8; D]; 4];
-    assert!(compression_rows::<F, D>(&slot, 1, &[&outside_binary]).is_err());
-    assert!(compression_rows::<F, D>(&slot, 2, &[&full]).is_err());
+    assert!(compression_rows::<F, D>(&slot, &[&outside_binary]).is_err());
 }
