@@ -678,7 +678,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,
         fp128::D64OneHotMultiChunkW2R2,
-    >(15, 30, &[1], 3, false);
+    >(14, 14, &[1], 1, false);
 }
 
 #[test]

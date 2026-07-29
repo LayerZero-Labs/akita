@@ -28,6 +28,7 @@ use crate::{
 use akita_field::{AkitaError, CanonicalField, ExtField};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
+    DEFAULT_MAX_SEQUENCE_LEN,
 };
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
@@ -662,9 +663,31 @@ impl AkitaDeserialize for CallSection {
     ) -> Result<Self, SerializationError> {
         let num_commitment_groups =
             u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let expected_count = usize::try_from(num_commitment_groups).map_err(|_| {
+            SerializationError::InvalidData(
+                "descriptor commitment-group count does not fit usize".to_string(),
+            )
+        })?;
+        if expected_count == 0 || expected_count > DEFAULT_MAX_SEQUENCE_LEN {
+            return Err(SerializationError::InvalidData(format!(
+                "descriptor commitment-group count {expected_count} is outside 1..={DEFAULT_MAX_SEQUENCE_LEN}"
+            )));
+        }
         let arity_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut num_vars_per_commitment_group = Vec::with_capacity(arity_count as usize);
-        for _ in 0..arity_count {
+        if arity_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor group arity count mismatch".to_string(),
+            ));
+        }
+        let mut num_vars_per_commitment_group = Vec::new();
+        num_vars_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor group arity allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
             num_vars_per_commitment_group.push(u32::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -673,8 +696,20 @@ impl AkitaDeserialize for CallSection {
             )?);
         }
         let group_count = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let mut num_polys_per_commitment_group = Vec::with_capacity(group_count as usize);
-        for _ in 0..group_count {
+        if group_count != num_commitment_groups {
+            return Err(SerializationError::InvalidData(
+                "descriptor commitment-group count mismatch".to_string(),
+            ));
+        }
+        let mut num_polys_per_commitment_group = Vec::new();
+        num_polys_per_commitment_group
+            .try_reserve_exact(expected_count)
+            .map_err(|_| {
+                SerializationError::InvalidData(
+                    "descriptor commitment-group allocation failed".to_string(),
+                )
+            })?;
+        for _ in 0..expected_count {
             num_polys_per_commitment_group.push(u32::deserialize_with_mode(
                 &mut reader,
                 compress,

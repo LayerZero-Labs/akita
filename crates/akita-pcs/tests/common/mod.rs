@@ -3,7 +3,9 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
+pub(super) use akita_field::{
+    AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -17,7 +19,7 @@ pub(super) use akita_types::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor,
+    PrecommittedGroupDescriptor, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -304,6 +306,18 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
             .any(|step| step.stage3_sumcheck_proof.is_some())
 }
 
+fn first_stage3_proof_mut(
+    proof: &mut AkitaBatchedProof<F, F>,
+) -> Option<&mut SetupSumcheckProof<F>> {
+    if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
+        return Some(stage3);
+    }
+    proof
+        .recursive_folds
+        .iter_mut()
+        .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
+}
+
 /// Drives the shared recursive setup-offload profile end to end: two precommitted
 /// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
@@ -501,6 +515,47 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             BasisMode::Lagrange,
         )
         .expect("generated-profile recursive verify");
+
+        let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
+            let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
+            let result = Recursive::<BaseCfg>::batched_verify(
+                &tampered_proof,
+                &verifier_setup,
+                &mut transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                matches!(result, Err(AkitaError::InvalidProof)),
+                "{label} must return InvalidProof without panicking, got {result:?}"
+            );
+        };
+
+        let mut tampered_claim = proof.clone();
+        first_stage3_proof_mut(&mut tampered_claim)
+            .expect("recursive profile Stage 3 proof")
+            .claim += F::one();
+        reject_stage3_tamper(tampered_claim, "tampered Stage 3 claim");
+
+        let mut tampered_prefix_eval = proof.clone();
+        first_stage3_proof_mut(&mut tampered_prefix_eval)
+            .expect("recursive profile Stage 3 proof")
+            .setup_prefix_eval += F::one();
+        reject_stage3_tamper(
+            tampered_prefix_eval,
+            "tampered Stage 3 setup-prefix evaluation",
+        );
+
+        let mut tampered_round = proof.clone();
+        let coefficient = first_stage3_proof_mut(&mut tampered_round)
+            .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
+            .and_then(|round| round.coeffs_except_linear_term.first_mut())
+            .expect("recursive profile Stage 3 round coefficient");
+        *coefficient += F::one();
+        reject_stage3_tamper(
+            tampered_round,
+            "tampered Stage 3 round polynomial and derived point",
+        );
 
         let mut tampered = final_openings;
         tampered[0] += F::from_canonical_u128_reduced(1);
