@@ -207,44 +207,6 @@ where
     )
 }
 
-fn setup_envelope_at_generation_dimension(
-    schedule: &FoldSchedule,
-    generation_dimension: usize,
-) -> Result<SetupMatrixEnvelope, AkitaError> {
-    if generation_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be nonzero".into(),
-        ));
-    }
-    let mut max_field_elements = 1usize;
-    let mut include_level = |params: &CommittedGroupParams| -> Result<(), AkitaError> {
-        let mut local = SetupMatrixEnvelope::minimum().max_setup_len;
-        akita_types::accumulate_matrix_envelope_for_level(params, &mut local)?;
-        let fields = local
-            .checked_mul(params.d_a())
-            .ok_or_else(|| AkitaError::InvalidSetup("setup envelope overflow".into()))?;
-        max_field_elements = max_field_elements.max(fields);
-        Ok(())
-    };
-    include_level(&schedule.root.params.final_group.commitment)?;
-    for fold in &schedule.recursive_folds {
-        include_level(&fold.params.witness)?;
-    }
-    let mut terminal = SetupMatrixEnvelope::minimum().max_setup_len;
-    akita_types::accumulate_terminal_matrix_envelope(
-        &schedule.terminal.params.witness,
-        &mut terminal,
-    )?;
-    max_field_elements = max_field_elements.max(
-        terminal
-            .checked_mul(schedule.terminal.params.witness.d_a())
-            .ok_or_else(|| AkitaError::InvalidSetup("terminal setup envelope overflow".into()))?,
-    );
-    Ok(SetupMatrixEnvelope {
-        max_setup_len: max_field_elements.div_ceil(generation_dimension),
-    })
-}
-
 /// Test-only config for the recursive mixed-D transition benchmark.
 #[derive(Debug)]
 #[allow(clippy::type_complexity)]
@@ -374,7 +336,7 @@ where
             ROOT_BD_RING_DIM,
             L1_BD_RING_DIM,
         )?;
-        setup_envelope_at_generation_dimension(&schedule, Root::D)
+        akita_types::setup_matrix_envelope_for_schedule(&schedule, Root::D)
     }
 
     fn basis_range() -> (u32, u32) {

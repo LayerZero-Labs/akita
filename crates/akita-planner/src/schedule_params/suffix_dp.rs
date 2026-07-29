@@ -15,7 +15,7 @@ use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPol
 use super::{
     componentwise_dimensions_at_most, derive_candidate_level_params,
     derive_candidate_level_params_all_splits, level_setup_envelope_at_generation,
-    prune_dimensions_above_rank_one, stage3_payload_bytes_for_successor, suffix_opening_layout,
+    stage3_payload_bytes_for_successor, suffix_opening_layout,
     terminal_setup_envelope_at_generation, CandidateFoldStep, CandidateTerminalResponse,
     ScheduleSelectionObjective, MAX_RECURSION_DEPTH, MIXED_SEARCH_FOLD_LEVELS,
     MIXED_SEARCH_SUFFIX_RING_DIMENSION,
@@ -147,6 +147,12 @@ struct CandidateSuffixChoice {
     setup_envelope_ring_elements: usize,
     folds: Vec<CandidateFoldStep>,
     terminal: CandidateTerminalResponse,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MixedFrontierMode {
+    Pareto,
+    Exhaustive,
 }
 
 fn offloaded_witness_contracts(
@@ -327,9 +333,14 @@ fn empty_suffix_result() -> Arc<SuffixResult> {
 }
 
 fn insert_mixed_frontier(
+    mode: MixedFrontierMode,
     frontier: &mut Vec<CandidateSuffixChoice>,
     candidate: CandidateSuffixChoice,
 ) {
+    if mode == MixedFrontierMode::Exhaustive {
+        frontier.push(candidate);
+        return;
+    }
     let same_first_step = |other: &CandidateSuffixChoice| {
         other.folds.first().map(|fold| &fold.params)
             == candidate.folds.first().map(|fold| &fold.params)
@@ -338,6 +349,8 @@ fn insert_mixed_frontier(
         same_first_step(other)
             && other.setup_envelope_ring_elements <= candidate.setup_envelope_ring_elements
             && other.total_bytes <= candidate.total_bytes
+            && (other.setup_envelope_ring_elements < candidate.setup_envelope_ring_elements
+                || other.total_bytes < candidate.total_bytes)
     }) {
         return;
     }
@@ -345,6 +358,8 @@ fn insert_mixed_frontier(
         !same_first_step(other)
             || candidate.setup_envelope_ring_elements > other.setup_envelope_ring_elements
             || candidate.total_bytes > other.total_bytes
+            || (candidate.setup_envelope_ring_elements == other.setup_envelope_ring_elements
+                && candidate.total_bytes == other.total_bytes)
     });
     frontier.push(candidate);
 }
@@ -368,6 +383,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_envelope_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(crate) mixed_frontier_mode: MixedFrontierMode,
 }
 
 #[derive(Clone, Copy)]
@@ -465,7 +481,7 @@ fn price_level_candidate_with_children(
                 ctx.objective,
                 ScheduleSelectionObjective::SetupThenProofPayload
             ) {
-                insert_mixed_frontier(mixed_frontier, candidate.clone());
+                insert_mixed_frontier(ctx.mixed_frontier_mode, mixed_frontier, candidate.clone());
             }
             if best_payload_for_this_lb
                 .as_ref()
@@ -513,7 +529,7 @@ fn price_level_candidate_with_children(
     ) {
         for suffix in &direct_child.mixed_frontier {
             if let Some(candidate) = child_choice(&direct_edge, suffix)? {
-                insert_mixed_frontier(mixed_frontier, candidate);
+                insert_mixed_frontier(ctx.mixed_frontier_mode, mixed_frontier, candidate);
             }
         }
     }
@@ -576,6 +592,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         key: _,
         setup_envelope_budget: _,
         root_lookup_key,
+        mixed_frontier_mode: _,
     } = *ctx;
     let SuffixState {
         level,
@@ -714,9 +731,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     };
                     candidates.push(candidate);
                 }
-            }
-            if searches_mixed_dimensions {
-                prune_dimensions_above_rank_one(&mut candidates)?;
             }
             if candidates.is_empty() {
                 continue;

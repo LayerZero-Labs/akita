@@ -21,6 +21,7 @@ mod test_oracle_weights;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use geometry::SetupProjectionGroupGeometry;
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
 pub(crate) use plan::get_d_col_range;
 #[cfg(test)]

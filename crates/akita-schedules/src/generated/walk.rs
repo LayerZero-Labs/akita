@@ -240,11 +240,18 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated schedule validates to zero proof bytes".to_string(),
         ));
     }
-    let mut setup_envelope = 1;
+    let mut setup_field_elements = 1;
     for fold in &folds {
-        akita_types::accumulate_matrix_envelope_for_level(&fold.params, &mut setup_envelope)?;
+        akita_types::accumulate_matrix_field_elements_for_level(
+            &fold.params,
+            &mut setup_field_elements,
+        )?;
     }
-    akita_types::accumulate_terminal_matrix_envelope(&terminal_params, &mut setup_envelope)?;
+    akita_types::accumulate_terminal_matrix_field_elements(
+        &terminal_params,
+        &mut setup_field_elements,
+    )?;
+    let setup_envelope = setup_field_elements.div_ceil(policy.ring_dimension);
     let first_direct_setup_field_len = if policy.recursive_setup_planning {
         folds
             .iter()
@@ -267,6 +274,7 @@ pub(crate) fn walk_generated_schedule_entry(
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
         setup_envelope,
+        policy.ring_dimension,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

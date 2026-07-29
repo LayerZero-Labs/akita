@@ -318,14 +318,14 @@ pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
     root_num_claims: usize,
+    setup_generation_dimension: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    let setup_envelope_ring_elements = akita_types::setup_matrix_envelope_for_schedule(schedule)
-        .map(|envelope| envelope.max_setup_len)
-        .unwrap_or(0);
-    let setup_envelope_field_elements = setup_envelope_ring_elements
-        .saturating_mul(schedule.root.params.final_group.commitment.d_a());
+    let setup_envelope_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
+    let setup_envelope_ring_elements =
+        setup_envelope_field_elements.div_ceil(setup_generation_dimension);
     let setup_envelope_bytes =
         setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule

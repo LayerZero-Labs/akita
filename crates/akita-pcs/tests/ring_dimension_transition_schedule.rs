@@ -154,7 +154,8 @@ fn d512_root_uses_additive_a_matrix_sis_table() {
         root.flat_field_len().expect("root flat length"),
         1usize << NUM_VARS
     );
-    let required = setup_matrix_envelope_for_schedule(&schedule).expect("schedule envelope");
+    let required = setup_matrix_envelope_for_schedule(&schedule, fp128::D512OneHot::D)
+        .expect("schedule envelope");
     let configured = <ThreeBandRingDimensionTransitionConfig<
         fp128::D512OneHot,
         fp128::D128OneHot,
@@ -188,7 +189,8 @@ fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
         root.log_basis_open,
     );
 
-    let required = setup_matrix_envelope_for_schedule(&schedule).expect("schedule envelope");
+    let required = setup_matrix_envelope_for_schedule(&schedule, fp128::D128OneHot::D)
+        .expect("schedule envelope");
     let configured =
         <PerMatrixRingDimsRootConfig<fp128::D128OneHot, 32, 64> as CommitmentConfig>::
             max_setup_matrix_size(NUM_VARS, 1)

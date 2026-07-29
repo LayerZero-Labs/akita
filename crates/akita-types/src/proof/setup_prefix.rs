@@ -1175,59 +1175,55 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let mut max_a_slots = 0usize;
-    let mut max_b_slots = 0usize;
-    let mut shared_d_width = 0usize;
+    let mut d_physical_cols = 0usize;
+    let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
         let (b_subcolumns, d_subcolumns) =
             crate::SetupProjectionGeometry::a_carrier_subcolumn_counts(group_role_dims)?;
-        let a_width = group_params
+        let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-        let a_slots = group_params
-            .a_rows_len()
-            .checked_mul(a_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
 
-        let b_width = group_layout
+        let b_cols = group_layout
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
             .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
             .and_then(|n| n.checked_mul(group_params.num_digits_outer()))
             .and_then(|n| n.checked_mul(b_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-        let b_slots = group_params
-            .b_rows_len()
-            .checked_mul(b_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
 
-        let d_width = group_layout
+        let d_active_cols = group_layout
             .num_polynomials()
             .checked_mul(group_params.num_live_blocks())
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
             .and_then(|n| n.checked_mul(d_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-        shared_d_width = shared_d_width
-            .checked_add(d_width)
+        d_physical_cols = d_physical_cols
+            .checked_add(d_active_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
 
-        max_a_slots = max_a_slots.max(a_slots);
-        max_b_slots = max_b_slots.max(b_slots);
+        groups.push(crate::setup_contribution::SetupProjectionGroupGeometry {
+            role_dims: group_role_dims,
+            a_rows: group_params.a_rows_len(),
+            a_cols,
+            b_rows: group_params.b_rows_len(),
+            b_cols,
+            d_active_cols,
+            // Prefix sizing consumes only the physical footprint. Stage 3
+            // fills these work-only fields from the witness layout.
+            ownership_units: 0,
+            depth_fold: 0,
+        });
     }
-    let d_slots = level_params
-        .open_commit_matrix
-        .output_rank()
-        .checked_mul(shared_d_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    crate::SetupProjectionGeometry::from_role_footprints(
+    crate::SetupProjectionGeometry::from_groups(
         level_params.role_dims(),
-        max_a_slots,
-        max_b_slots,
-        d_slots,
+        level_params.open_commit_matrix.output_rank(),
+        d_physical_cols,
+        &groups,
     )
 }
 

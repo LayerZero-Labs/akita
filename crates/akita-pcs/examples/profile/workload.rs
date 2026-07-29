@@ -11,24 +11,22 @@ use akita_field::{
     FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
     TranscriptChallenge,
 };
+use akita_pcs::test_support::materialize_schedule_setup_prefix_slots;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{
-    CommitmentComputeBackend, OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend,
-    RootPolyShape, RootProvePoly, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly,
+    OpeningFoldKernel, OpeningFoldPlan, RecursiveProveBackend, RootPolyShape, RootProvePoly,
+    RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly,
 };
-use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, DensePoly, OneHotIndex, OneHotPoly, ProverOpeningData,
-};
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{AkitaProverSetup, ComputeBackendSetup, CpuBackend};
+use akita_prover::{DensePoly, OneHotIndex, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    dispatch_for_field, lagrange_weights, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment,
-    CommittedGroupParams, FoldSchedule, FpExtEncoding, NttCacheKey, OpeningClaims,
-    OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, SetupContributionMode,
+    lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
+    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, CommittedGroupParams,
+    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -540,7 +538,7 @@ fn run_prove<
                 plan,
             );
         }
-        emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(label, plan, 1, Cfg::D, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -561,7 +559,13 @@ fn run_prove<
                 &schedule,
             );
         }
-        emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            &schedule,
+            1,
+            Cfg::D,
+            Cfg::decomposition().field_bits(),
+        );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -913,7 +917,13 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(
+            label,
+            plan,
+            num_polys,
+            Cfg::D,
+            Cfg::decomposition().field_bits(),
+        );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -933,6 +943,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             label,
             &schedule,
             num_polys,
+            Cfg::D,
             Cfg::decomposition().field_bits(),
         );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
@@ -1087,60 +1098,6 @@ pub(crate) fn run_recursive_multi_group_onehot_mixed<FF, const D: usize, Cfg>(
     );
 }
 
-fn materialize_profile_setup_prefix_slots<FF, B>(
-    setup: &mut AkitaProverSetup<FF>,
-    backend: &B,
-    prepared: &B::PreparedSetup,
-    schedule: &FoldSchedule,
-) where
-    FF: FieldCore + CanonicalField + RandomSampling,
-    B: CommitmentComputeBackend<FF>,
-{
-    for slot_id in schedule
-        .recursive_folds
-        .iter()
-        .filter_map(|fold| fold.params.incoming_setup_prefix.as_ref())
-    {
-        if setup.prefix_slots.get(slot_id).is_some() {
-            continue;
-        }
-        for ring_d in [
-            slot_id.d_setup,
-            slot_id
-                .commitment_params
-                .outer_commit_matrix
-                .ring_dimension(),
-        ] {
-            let ntt_key =
-                NttCacheKey::from_envelope(&setup.expanded, ring_d).expect("setup-prefix NTT key");
-            backend
-                .ensure_ntt_slot(prepared, ntt_key)
-                .expect("warm setup-prefix NTT slot");
-        }
-        let n_prefix = slot_id.n_prefix().expect("setup-prefix length");
-        let slot = dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-            FF,
-            slot_id.d_setup,
-            |D_SETUP| {
-                commit_setup_prefix::<FF, D_SETUP, B>(
-                    &setup.expanded,
-                    backend,
-                    prepared,
-                    &slot_id.commitment_params,
-                    n_prefix,
-                    slot_id.natural_len,
-                )
-            }
-        )
-        .expect("materialize profile setup prefix");
-        setup
-            .prefix_slots
-            .insert(slot)
-            .expect("insert profile setup-prefix slot");
-    }
-}
-
 fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, ProofCfg>(
     label: &str,
     pre_num_vars: usize,
@@ -1200,7 +1157,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let setup_expand_secs = t0.elapsed().as_secs_f64();
         let t_prepare = Instant::now();
         let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        materialize_profile_setup_prefix_slots(&mut setup, &CpuBackend, &prepared, &schedule);
+        materialize_schedule_setup_prefix_slots(&mut setup, &CpuBackend, &prepared, &schedule)
+            .expect("materialize schedule setup-prefix slots");
         let stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
             &prepared,
@@ -1366,6 +1324,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         label,
         &schedule,
         total_polys,
+        Cfg::D,
         Cfg::decomposition().field_bits(),
     );
     emit_proof_tail_report::<FF, Cfg::ExtField>(

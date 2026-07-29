@@ -885,6 +885,17 @@ impl FoldSchedule {
         self.root.input_witness_len
     }
 
+    /// Canonical byte encoding used to order semantically distinct schedules.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript
+    /// commitment. It includes every schedule field that can affect proving or
+    /// verification.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(1);
         match self.root.params.final_group.source {

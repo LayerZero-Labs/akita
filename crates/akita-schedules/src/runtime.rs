@@ -268,6 +268,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
 pub(crate) fn materialize_candidate_schedule(
     cached_total: usize,
     cached_setup_envelope: usize,
+    setup_generation_dimension: usize,
     first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
@@ -359,7 +360,8 @@ pub(crate) fn materialize_candidate_schedule(
     };
     schedule.validate_structure()?;
     let recomputed_envelope =
-        akita_types::setup_matrix_envelope_for_schedule(&schedule)?.max_setup_len;
+        akita_types::setup_matrix_envelope_for_schedule(&schedule, setup_generation_dimension)?
+            .max_setup_len;
     if recomputed_envelope != cached_setup_envelope {
         return Err(AkitaError::InvalidSetup(format!(
             "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"

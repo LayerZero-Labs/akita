@@ -145,6 +145,7 @@ impl SetupProjectionGeometry {
         Ok(geometry)
     }
 
+    #[cfg(test)]
     pub(crate) fn from_role_footprints(
         role_dims: CommitmentRingDims,
         a_footprint: usize,

@@ -210,8 +210,7 @@ mod tests {
 
     #[test]
     fn selected_recursive_keys_yield_exact_prefix_slots() {
-        use akita_types::inflate_envelope_for_setup_prefix_slot;
-        use akita_types::SetupMatrixEnvelope;
+        use akita_types::setup_prefix_slot_field_elements;
 
         let slots = setup_prefix_slot_ids_for_capacity::<SetupCfg>(32, 4).expect("slots");
         assert!(
@@ -224,15 +223,14 @@ mod tests {
             slots.len()
         );
 
-        let mut slot_envelope = SetupMatrixEnvelope::minimum();
+        let mut slot_field_elements = 1usize;
         for slot in &slots {
             let n_prefix = slot.n_prefix().expect("n_prefix");
             assert!(n_prefix >= slot.natural_len);
-            let mut one_slot_envelope = SetupMatrixEnvelope::minimum();
-            inflate_envelope_for_setup_prefix_slot(&mut one_slot_envelope, slot, slot.d_setup)
-                .expect("inflate one slot");
+            let one_slot_field_elements =
+                setup_prefix_slot_field_elements(slot).expect("size one slot");
             assert!(
-                one_slot_envelope.max_setup_len >= n_prefix / slot.d_setup,
+                one_slot_field_elements >= n_prefix,
                 "slot envelope must cover the padded prefix storage"
             );
             let a_coeff_len = slot.commitment_params.inner_commit_matrix.output_rank()
@@ -241,21 +239,19 @@ mod tests {
             let b_coeff_len = slot.commitment_params.outer_commit_matrix.output_rank()
                 * slot.commitment_params.outer_width()
                 * slot.commitment_params.outer_commit_matrix.ring_dimension();
-            assert!(one_slot_envelope.max_setup_len >= a_coeff_len.div_ceil(slot.d_setup));
-            assert!(one_slot_envelope.max_setup_len >= b_coeff_len.div_ceil(slot.d_setup));
-            slot_envelope.max_setup_len = slot_envelope
-                .max_setup_len
-                .max(one_slot_envelope.max_setup_len);
+            assert!(one_slot_field_elements >= a_coeff_len);
+            assert!(one_slot_field_elements >= b_coeff_len);
+            slot_field_elements = slot_field_elements.max(one_slot_field_elements);
         }
-        assert!(slot_envelope.max_setup_len > 1);
+        assert!(slot_field_elements > 1);
     }
 
     #[test]
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
-        let envelope =
-            akita_types::setup_matrix_envelope_for_schedule(&schedule).expect("setup envelope");
+        let envelope = akita_types::setup_matrix_envelope_for_schedule(&schedule, SetupCfg::D)
+            .expect("setup envelope");
         let envelope_field_elements = envelope
             .max_setup_len
             .checked_mul(schedule.root.params.final_group.commitment.d_a())

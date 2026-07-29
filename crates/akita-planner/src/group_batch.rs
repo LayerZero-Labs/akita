@@ -612,6 +612,7 @@ fn find_group_batch_schedule_inner(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_envelope_budget,
         root_lookup_key: Some(key),
+        mixed_frontier_mode: crate::schedule_params::MixedFrontierMode::Pareto,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

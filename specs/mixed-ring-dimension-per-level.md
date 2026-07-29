@@ -164,9 +164,11 @@ outgoing witness, and retain enough alternatives to optimize the non-additive
 setup objective correctly.
 
 The approved search policy limits dimension choice to L0 and L1. Dimensions
-are component-wise non-increasing, L2 and later are uniform D64, and a matrix
-dimension is not increased beyond the first comparable candidate where that
-matrix reaches rank one.
+are component-wise non-increasing, and L2 and later are uniform D64. Rank-one
+dimension pruning is not part of the authoritative search: B and D widths
+depend on upstream ranks, so a geometry-only bucket is not an equivalence
+class. The correctness baseline is exhaustive L0/L1 enumeration with Pareto
+frontier retention and descriptor-byte tie-breaking.
 
 The proposed direct-schedule score is:
 
@@ -518,17 +520,13 @@ The approved mixed search is deliberately bounded:
    derivation reuses the existing uniform-D64 planner path.
 4. A mixed domain must contain `64/64/64`, and every admitted component must
    be at least 64 so the transition back to D64 cannot increase a dimension.
-5. Within the same physical fold geometry and digit basis, once a role reaches
-   matrix rank one at dimension `d`, candidates using a larger dimension for
-   that role are removed. Comparable geometry means the same live-block count
-   and the same physical coefficients per block; ranks from unrelated block
-   splits must not cap one another.
-6. Enumerate direct-terminal and direct-child edges, price them with the
+5. Enumerate direct-terminal and direct-child edges, price them with the
    existing exact proof-size functions, combine physical setup cost by `max`,
-   and retain the required frontier per first-step descriptor.
-7. Do not terminate before L2: the terminal and every fold from L2 onward use
+   and retain the required frontier per first-step descriptor. Exact-cost ties
+   survive until the root descriptor comparator chooses a canonical winner.
+6. Do not terminate before L2: the terminal and every fold from L2 onward use
    D64.
-8. At the root, choose the global minimum by the requested score.
+7. At the root, choose the global minimum by the requested score.
 
 `derive_candidate_level_params_all_splits` is required only at the two mixed
 levels. Once the schedule returns to D64, `derive_candidate_level_params`
@@ -572,9 +570,8 @@ Under an unrestricted choice among only these seven predefined schedules,
 `(setup field elements, proof bytes)` selects A′: it ties B/E/D on setup and
 has the smallest proof among them. That historical comparison is not an oracle
 for the approved planner domain. The planner additionally enforces
-component-wise descent, returns to D64 at L2, and removes dimensions above the
-first comparable rank-one matrix. It also searches block splits that do not
-necessarily reproduce any predefined profile.
+component-wise descent and returns to D64 at L2. It also searches block splits
+that do not necessarily reproduce any predefined profile.
 
 This also proves that setup footprint alone is not a complete verifier-time
 model: B and E verify about 21% faster than A′ despite the same setup
@@ -709,8 +706,11 @@ catalog/policy digest, and effective schedule digest.
 
 The planner must be independent of hash-map iteration and thread scheduling:
 
-- require candidate domains to be in canonical sorted, duplicate-free form
-  and reject malformed policy input;
+- canonicalize candidate domains by sorting and deduplicating explicit
+  `(d_a, d_b, d_d)` tuples (`RingDimensionSearchDomain::new`); equivalent
+  reordered or duplicated input shares one value identity;
+- reject empty domains and tuples that fail A-carrier validation or that are
+  not divisors of the setup-generation dimension;
 - enumerate bases, dimensions, and splits in a documented order;
 - store frontiers in ordered collections or sort before selection/emission;
 - compare semantic cost components first;
@@ -753,11 +753,11 @@ byte-identical.
 3. Enumerate all admitted tuples and block splits at L0 and L1.
 4. Enforce component-wise non-increasing transitions and a uniform-D64 L2+
    suffix.
-5. Stop increasing a role dimension after rank one within comparable fold
-   geometry.
+5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
+   until an equivalence key is proved against the exhaustive oracle.
 6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
    reuse the existing uniform-D64 split search.
-7. Select by setup field elements, then proof bytes.
+7. Select by setup field elements, then proof bytes, then descriptor bytes.
 8. Keep recursive setup families on singleton D64.
 
 #### Cut 2: catalog replay and shipped adaptive family
@@ -792,8 +792,9 @@ preserving `find_schedule` and all generated catalogs:
 - L0 and L1 exhaustively enumerate splits over admissible, component-wise
   descending tuples;
 - dimensions are uniform D64 from L2 through the terminal;
-- rank-one pruning compares only equal physical fold geometries, so an
-  unrelated block split cannot suppress a larger dimension;
+- rank-one dimension pruning is disabled in the authoritative mixed search;
+  production Pareto frontiers are checked against a test-only exhaustive
+  frontier on cost and canonical descriptor bytes;
 - L1 memo identity includes the parent dimension ceiling, while L2+ states
   canonicalize to D64 and reuse the fixed planner's split search;
 - mixed-boundary states retain the required setup/proof alternatives per exact
@@ -838,9 +839,9 @@ policy, `nv=24` exceeded one minute and `nv=36` was stopped after five minutes.
 
 The speedup comes from policy, not approximate pruning: mixed dimensions and
 exhaustive split enumeration stop after L1, monotonicity removes upward
-transitions, rank-one caps remove dimensions that cannot lower a comparable
-matrix rank, and the complete D64 suffix reuses the existing fixed planner
-split derivation.
+transitions, and the complete D64 suffix reuses the existing fixed planner
+split derivation. Rank-one dimension caps are intentionally absent from the
+authoritative search until an equivalence key is oracle-validated.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -890,7 +891,7 @@ The planner integration is complete only when all of these hold:
 | Small exhaustive oracle | Constrained L0/L1 frontier and selected schedule match brute-force enumeration |
 | Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
 | Transition tests | A/B/D are component-wise non-increasing; L2+ is exactly D64 |
-| Rank-one tests | A role never exceeds the first rank-one dimension for equal physical fold geometry and basis |
+| Deterministic tie-break | Exact-cost ties resolve by full canonical schedule descriptor bytes |
 | Terminal tests | Mixed search does not terminate before the D64 suffix boundary |
 | Generated parity | Planner schedule equals emitted/expanded schedule and estimate |
 | Identity drift | Every candidate-domain or objective change invalidates the old table |
@@ -901,12 +902,14 @@ The planner integration is complete only when all of these hold:
 ### Resolved search policy
 
 The approved first planner cut uses the deterministic
-`(physical setup fields, proof bytes)` comparator subject to three
-catalog-bound constraints:
+`(physical setup fields, proof bytes, descriptor bytes)` comparator subject to
+two catalog-bound constraints:
 
 1. only L0 and L1 search mixed dimensions;
-2. dimensions never increase and L2+ is uniform D64;
-3. comparable candidates stop increasing a role dimension after rank one.
+2. dimensions never increase and L2+ is uniform D64.
+
+Rank-one pruning is intentionally absent from this cut. Reintroduce it only
+after an independent exhaustive oracle agrees on a proved equivalence key.
 
 Measured verifier latency remains a possible later objective. It requires a
 versioned deterministic work model; host timings are not planner inputs.
@@ -1300,13 +1303,13 @@ transition.”
 |---|---|
 | `mixed_d_per_level_e2e.rs` | Cross-level D128→D64 prove/verify, replay, malformed input, tamper rejection |
 | `per_matrix_ring_dims_root_e2e.rs` | Active `128/32/64` root through public PCS API; wrong opening and commitment tamper rejection |
-| `ring_dimension_transition_e2e.rs` | L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
+| `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
 | `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
-| profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Full `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads described below |
+| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 honest prove/verify, serialize round-trip, and wrong-opening rejection |
+| profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Benchmark-only `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads; excluded from active `profile-ci` |
 
-`crates/akita-pcs/tests/mixed_role_e2e.rs` is a disabled legacy fixture using
-the removed pre-merge schedule API. It is not active coverage and should not
-be cited as validation.
+The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active
+per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 
 ### Lower-level coverage
 
@@ -1688,6 +1691,8 @@ cargo test -p akita-pcs --test ring_dimension_transition_schedule
 cargo test -p akita-pcs --test per_matrix_ring_dims_root_e2e
 cargo test -p akita-pcs --test ring_dimension_transition_e2e
 cargo test -p akita-pcs --test mixed_d_per_level_e2e
+cargo test -p akita-pcs --test recursive_ring_dimension_transition_e2e
+cargo test -p akita-planner --lib --features catalog-gen
 ```
 
 Affected lower-level suites:
@@ -1752,16 +1757,13 @@ row.
 
 ### P1: dynamic setup-prefix dimension
 
-Setup-prefix offload still uses the D64 registry contract. A mixed batch whose
-common relation dimension is 64 is supported. A lower common base is rejected
-until setup generation, registry lookup, planner admission, and verifier
-dispatch select `d_setup` consistently.
-
-### P1: remove the disabled legacy fixture
-
-`crates/akita-pcs/tests/mixed_role_e2e.rs` is dead pre-merge code under
-`#![cfg(any())]`. The active per-matrix E2E supersedes its intended coverage.
-Delete or port it; do not count it in CI coverage.
+Setup-prefix offload still uses the D64 registry contract for catalog
+recursive families. The synthetic recursive mixed-D profile materializes a
+dynamic D128 prefix outside that registry and is covered by
+`recursive_ring_dimension_transition_e2e.rs`. A production mixed batch whose
+common relation dimension is below 64 remains rejected until setup generation,
+registry lookup, planner admission, and verifier dispatch select `d_setup`
+consistently.
 
 ### P2: expand the sweep
 

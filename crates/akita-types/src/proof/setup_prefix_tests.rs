@@ -1,5 +1,8 @@
 use super::*;
-use crate::{CommittedGroupParams, OpeningClaimsLayout, SisModulusProfileId};
+use crate::{
+    CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId,
+};
 use akita_challenges::SparseChallengeConfig;
 
 fn sample_level_params() -> CommittedGroupParams {
@@ -79,7 +82,7 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        inner.coeff_linf_bound(),
+        inner.coeff_linf_bound().max(1),
         128,
     );
     let opening_batch = OpeningClaimsLayout::new(5, 3).expect("opening batch");
@@ -101,6 +104,121 @@ fn active_setup_field_len_includes_mixed_role_subcolumns() {
     assert_eq!(
         active_setup_field_len(&lp, &opening_batch).expect("mixed-D field len"),
         expected_field_len
+    );
+}
+
+fn retarget_group_role_dims(
+    params: &mut CommittedGroupParams,
+    inner_ring_dimension: usize,
+    outer_ring_dimension: usize,
+) {
+    params.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
+            .expect("production challenge");
+    let inner = &params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound().max(1),
+        inner_ring_dimension,
+    );
+    let outer = &params.outer_commit_matrix;
+    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        outer.input_width() * (inner_ring_dimension / outer_ring_dimension),
+        outer.coeff_linf_bound().max(1),
+        outer_ring_dimension,
+    );
+}
+
+fn precommitted_group(
+    params: &CommittedGroupParams,
+    group: PolynomialGroupLayout,
+) -> PrecommittedLevelParams {
+    PrecommittedLevelParams {
+        layout: PrecommittedGroupDescriptor::from_params(group, params),
+        inner_commit_matrix: params.inner_commit_matrix.clone(),
+        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        log_basis_open: params.log_basis_open,
+        fold_challenge_config: params.fold_challenge_config,
+        num_digits_inner: params.num_digits_inner,
+        num_digits_outer: params.num_digits_outer,
+        num_digits_open: params.num_digits_open,
+        num_digits_fold_one: params.num_digits_fold_one,
+    }
+}
+
+#[test]
+fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
+    let mut final_params = sample_level_params();
+    retarget_group_role_dims(&mut final_params, 128, 64);
+
+    let mut precommitted_params = sample_level_params();
+    retarget_group_role_dims(&mut precommitted_params, 256, 128);
+    let precommitted_layout = PolynomialGroupLayout::new(5, 1);
+    final_params.precommitted_groups = vec![precommitted_group(
+        &precommitted_params,
+        precommitted_layout,
+    )];
+    let opening_batch = OpeningClaimsLayout::from_root_groups(
+        &[precommitted_layout],
+        PolynomialGroupLayout::new(5, 3),
+    )
+    .expect("heterogeneous opening batch");
+
+    let base_ring_dimension = 64usize;
+    let mut expected_a_projection = 0usize;
+    let mut expected_b_projection = 0usize;
+    let mut expected_d_physical_cols = 0usize;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_layout = opening_batch
+            .group_layout(group_index)
+            .expect("group layout");
+        let group_params = final_params
+            .group_params(&opening_batch, group_index)
+            .expect("group params");
+        let dims = final_params
+            .group_role_dims(&opening_batch, group_index)
+            .expect("group role dimensions");
+        let a_cols = group_params.num_positions_per_block() * group_params.num_digits_inner();
+        let b_cols = group_layout.num_polynomials()
+            * group_params.a_rows_len()
+            * group_params.num_live_blocks()
+            * group_params.num_digits_outer()
+            * (dims.d_a() / dims.d_b());
+        let d_cols = group_layout.num_polynomials()
+            * group_params.num_live_blocks()
+            * group_params.num_digits_open()
+            * (dims.d_a() / dims.d_d());
+        expected_a_projection = expected_a_projection
+            .max(group_params.a_rows_len() * a_cols * (dims.d_a() / base_ring_dimension));
+        expected_b_projection = expected_b_projection
+            .max(group_params.b_rows_len() * b_cols * (dims.d_b() / base_ring_dimension));
+        expected_d_physical_cols += d_cols;
+    }
+    let expected_d_projection = final_params.open_commit_matrix.output_rank()
+        * expected_d_physical_cols
+        * (final_params.role_dims().d_d() / base_ring_dimension);
+    let expected_ring_slots = expected_a_projection
+        .max(expected_b_projection)
+        .max(expected_d_projection);
+    let geometry = active_setup_projection_geometry(&final_params, &opening_batch)
+        .expect("heterogeneous projection geometry");
+
+    assert_eq!(geometry.base_ring_dim(), base_ring_dimension);
+    assert_eq!(geometry.a_projection_width(), expected_a_projection);
+    assert_eq!(geometry.b_projection_width(), expected_b_projection);
+    assert_eq!(geometry.d_projection_width(), expected_d_projection);
+    assert_eq!(geometry.required(), expected_ring_slots);
+    assert_eq!(
+        active_setup_field_len(&final_params, &opening_batch).expect("active setup field length"),
+        expected_ring_slots * base_ring_dimension
     );
 }
 

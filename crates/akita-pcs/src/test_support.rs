@@ -425,7 +425,7 @@ where
                 num_polynomials,
                 SWITCH_AT_FOLD,
             )?;
-            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule)?;
+            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)?;
             envelope.max_setup_len = envelope.max_setup_len.max(required.max_setup_len);
         }
         Ok(envelope)
@@ -731,7 +731,7 @@ where
                 opening: MID_BD_RING_DIM,
             },
         )?;
-        akita_types::setup_matrix_envelope_for_schedule(&schedule)
+        akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -1059,9 +1059,11 @@ where
 }
 
 mod recursive_transition;
+mod setup_prefix_slots;
 pub use recursive_transition::{
     recursive_ring_dimension_transition_schedule, RecursiveRingDimensionTransitionConfig,
 };
+pub use setup_prefix_slots::materialize_schedule_setup_prefix_slots;
 /// Config adapter for [`ring_dimension_transition_schedule`].
 ///
 /// `Root`/`Mid`/`Suffix` set the A-matrix dimensions; `ROOT_BD_RING_DIM` and
@@ -1153,7 +1155,7 @@ where
                 opening: L1_BD_RING_DIM,
             },
         )?;
-        akita_types::setup_matrix_envelope_for_schedule(&schedule)
+        akita_types::setup_matrix_envelope_for_schedule(&schedule, Root::D)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -1279,7 +1281,7 @@ where
                 B_RING_DIM,
                 D_RING_DIM,
             )?;
-            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule)?;
+            let required = akita_types::setup_matrix_envelope_for_schedule(&schedule, Env::D)?;
             max_setup_len = max_setup_len.max(required.max_setup_len);
         }
         Ok(SetupMatrixEnvelope { max_setup_len })
