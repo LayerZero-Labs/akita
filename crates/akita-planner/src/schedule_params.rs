@@ -1227,22 +1227,21 @@ mod geometry_tests {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
         let policy = policy_of::<D256OneHot>();
+        let d64 = CommitmentRingDims::uniform(64);
+        let d128_mixed = CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        };
+        let d128 = CommitmentRingDims::uniform(128);
+        let d256_mixed = CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        };
         let domain = RingDimensionSearchDomain::new(
             policy.ring_dimension,
-            [
-                CommitmentRingDims::uniform(64),
-                CommitmentRingDims {
-                    inner: 128,
-                    outer: 64,
-                    opening: 64,
-                },
-                CommitmentRingDims::uniform(128),
-                CommitmentRingDims {
-                    inner: 256,
-                    outer: 128,
-                    opening: 128,
-                },
-            ],
+            [d64, d128_mixed, d128, d256_mixed],
         )
         .expect("benchmark dimension domain");
         let selected = find_schedule_with_ring_dimension_domain(
@@ -1253,21 +1252,21 @@ mod geometry_tests {
             D256OneHot::fold_challenge_shape_at_level,
         )
         .expect("nv36 mixed planner");
+        let rank_one_capped_domain =
+            RingDimensionSearchDomain::new(policy.ring_dimension, [d64, d128_mixed, d128])
+                .expect("rank-one-capped comparison domain");
+        let rank_one_capped = find_schedule_with_ring_dimension_domain(
+            PolynomialGroupLayout::singleton(36),
+            &policy,
+            &rank_one_capped_domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("rank-one-capped nv36 planner");
+        let selected_root = &selected.schedule.root.params.final_group.commitment;
+        let rank_one_capped_root = &rank_one_capped.schedule.root.params.final_group.commitment;
 
-        assert_eq!(
-            selected
-                .schedule
-                .root
-                .params
-                .final_group
-                .commitment
-                .role_dims(),
-            CommitmentRingDims {
-                inner: 256,
-                outer: 128,
-                opening: 128,
-            }
-        );
+        assert_eq!(selected_root.role_dims(), d256_mixed);
         assert_eq!(
             selected.schedule.recursive_folds[0]
                 .params
@@ -1282,6 +1281,22 @@ mod geometry_tests {
         assert_eq!(
             selected.estimate.estimated_proof_payload_bytes().unwrap(),
             99_368
+        );
+        assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
+        assert_eq!(selected_root.inner_commit_matrix.output_rank(), 2);
+        assert_eq!(rank_one_capped_root.outer_commit_matrix.output_rank(), 1);
+        assert_eq!(selected_root.outer_commit_matrix.output_rank(), 1);
+        assert!(
+            selected_root.outer_commit_matrix.input_width()
+                < rank_one_capped_root.outer_commit_matrix.input_width(),
+            "the lower D256 A rank must reduce B width despite both B matrices having rank one"
+        );
+        assert!(
+            selected.estimate.estimated_setup_envelope_ring_elements
+                < rank_one_capped
+                    .estimate
+                    .estimated_setup_envelope_ring_elements,
+            "the rank-two D256 candidate must beat the rank-one-capped search on setup"
         );
     }
 

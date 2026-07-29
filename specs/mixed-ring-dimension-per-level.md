@@ -1319,8 +1319,10 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 ### Lower-level coverage
 
 - planner tests compare the mixed Pareto frontier with exhaustive enumeration,
-  preserve a lower-proof child when a larger parent setup masks child setup
-  differences, and require descriptor-identical concurrent generation.
+  show that a lower D256 A rank can reduce B width even after both B matrices
+  reach rank one, preserve a lower-proof child when a larger parent setup masks
+  child setup differences, and require descriptor-identical concurrent
+  generation.
 - `akita-types` setup-contribution span tests compare dense, materialized,
   direct, deferred, single-chunk, multi-chunk, and mixed-role projections.
 - verifier ring-switch tests check prepared relation geometry and deferred
