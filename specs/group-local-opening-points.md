@@ -17,17 +17,19 @@ when, and only when, they appear in all capitals.
 
 ## Summary
 
-Akita's multi-group root protocol already prepares and retains one ring opening
-point per group, but its public claims model reconstructs those points by routing
-prefixes or suffixes out of one shared point. This restriction is not required by
-the proof relation and currently provides no verifier multiplication saving.
+Current `main` already carries vectors of prepared ring opening points through
+the multi-group prover, verifier, extension-opening reduction (EOR), and ring
+relation. The remaining public boundary is older: `OpeningClaims` owns one
+ambient point, while each `PolynomialGroupClaims` owns a
+`PointVariableSelection` into that point. Root and recursive-suffix code
+materialize each selected point into a new `Vec` before entering the otherwise
+group-local protocol.
 
-This spec makes one complete opening point per polynomial group the canonical
-model. The verifier uses one preparation pipeline for all groups, with internal
-reuse when two groups happen to require identical material. Point equality or
-nesting is an optimization opportunity, not a protocol precondition and not
-caller-supplied routing metadata. The existing layout and schedule model remains
-the single source of structural truth.
+This spec completes that cutover. Each polynomial group owns its complete
+opening point. `OpeningClaims` owns only the ordered groups, and
+`OpeningClaimsLayout` remains the field-free source of setup and schedule
+geometry. Equal, nested, and unrelated points are all ordinary inputs. Any reuse
+is derived inside preparation and is never public routing metadata.
 
 Independent group-local points also remove the reason for Stage 3 to carry the
 recursive-witness claim through the setup-product sumcheck. Under recursive
@@ -37,37 +39,41 @@ setup-only Stage 3. This removes the Stage 3 witness reduction, reduces prover
 and verifier work, and shortens the Stage 3 proof whenever the padded setup
 prefix domain is smaller than the padded recursive-witness domain.
 
-The first implementation PR also changes full-table multilinear Lagrange and
-equality-table expansion from two multiplications per parent to one
-multiplication and one subtraction. That independent improvement removes almost
-half of the opening point preparation multiplications in the representative
-production schedule. The final implementation MUST also consolidate the
-duplicated serial builders: `akita-algebra` owns one parent-split primitive and
-one full-table serial traversal, and opening-point preparation calls that
-implementation after applying its verifier sequence bound. Optimizing several
-copies independently is an interim arithmetic repair, not the approved
-single-source-of-truth design. The claims, transcript, and descriptor cutover is
-larger follow-up work governed by the acceptance criteria below.
+PR #322 also contains an interim arithmetic improvement: the three serial
+full-table Lagrange/equality recurrences use one multiplication and one
+subtraction per parent instead of two multiplications. The completed
+implementation MUST consolidate those loops under one `akita-algebra` owner.
+That arithmetic slice is independent of the claims and Stage 3 wire cutovers
+and may land separately.
+
+Current `main` supports dense and one-hot multi-group roots, batched multi-group
+EOR, mixed per-group and per-role ring dimensions, recursive setup offloading,
+and a planner/runtime schedule split. This record preserves all of those
+capabilities. It changes point ownership and removes dead Stage 3 witness
+routing; it does not roll the protocol back to the narrower July 22 feature
+matrix.
 
 ## Status and decision boundary
 
 This record distinguishes current code from the approved target so that readers
 do not mistake design work for shipped behavior.
 
-| Concern | State before this record | Approved target |
-|---------|--------------------------|-----------------|
-| Public point input | One shared point plus `PointVariableSelection` per group | One complete point stored by each group |
-| Group preparation | One `prepare_opening_point` call per group | The same canonical call per group, backed by internal exact reuse |
-| Nested points | Prefix/suffix routing is representable | Arbitrary points are valid; nesting is optional optimization metadata derived internally |
+| Concern | Current `main` (`af770e129`) | Approved target |
+|---------|------------------------------|-----------------|
+| Public point input | One ambient point plus `PointVariableSelection` per group | One complete point stored by each group |
+| Internal group points | `OpeningClaims::group_point` allocates selected coordinates; prover/verifier then carry per-group vectors | Borrow the point directly from its owning group |
+| Multi-group EOR | One batched EOR already accepts a vector of materialized group points | Same protocol, sourced directly from group-owned points |
+| Mixed ring dimensions | Per-group `d_a` and per-role `d_a/d_b/d_d` already drive preparation and relations | Unchanged |
+| Source versus opening arity | Final-group source arity and maximum opening/EOR arity are distinct | Unchanged; no ambient point is needed to represent the maximum |
 | Layout and schedules | Ordered `(num_vars, num_polys)` groups | Unchanged |
-| Recursive Stage 3 | Fused setup-product and witness-carry sumcheck so both successor groups use projections of one point | Setup-product sumcheck only; carry the Stage 2 witness claim and point unchanged |
-| Lagrange/equality full-table expansion | Three independent serial recurrences, each using two multiplications per parent; a separate parallel recurrence is already optimal | One canonical parent split and one canonical full-table serial traversal, using one multiplication and one subtraction per parent |
+| Recursive Stage 3 | Fused setup-product and witness-carry sumcheck so successor claims are projections of one challenge | Setup-product sumcheck only; carry the Stage 2 witness claim and point unchanged |
+| Lagrange/equality expansion | PR #322 optimizes three serial loops independently; the parallel loop was already optimal | One canonical parent split and one canonical serial full-table traversal |
+| Preparation reuse | No protocol-visible cache | Optional, per-proof, benchmark-gated derived state |
 
-The analysis and concrete opening-preparation counts in this record were checked
-against `main` at commit `a1c8782e9b2f3d4fa35e78918c64e4c3c0a6d94d`.
-The Stage 3 analysis was checked against the complete diff and implementation at
-open PR #320 head `6652c08a21cb418a845adf65891b276dc1e81816`; this
-specification remains based directly on `main`, not on that PR.
+This revision was checked against `main` at `af770e129`, including merged PR
+#320 (`9c4f3e645`) and the mixed-D/multi-group composition in PR #331
+(`af770e129`). Historical counts from the July 22 draft are retained only as
+motivation and are not acceptance baselines.
 
 ## Terminology
 
@@ -75,14 +81,14 @@ specification remains based directly on `main`, not on that PR.
   polynomial in one commitment group is opened.
 - **Opening preparation** converts a field point into its padded point, packed
   inner factor, position weights, live block weights, and ring-multiplier view.
-- **Exact reuse** shares a prepared factor when its complete semantic cache key
-  is equal.
+- **Exact reuse** is an optional preparation optimization that shares material
+  when its complete semantic key is equal.
 - **Nested reuse** constructs a larger tensor-product factor from a smaller
   prefix or suffix factor plus additional coordinates.
 - **Recursive setup offloading** proves a setup-prefix opening in Stage 3 and
   carries that committed prefix into a successor fold instead of scanning the
   corresponding setup contribution there.
-- **Witness-claim reduction** is PR #320's Stage 3 term that reopens the
+- **Witness-claim reduction** is the Stage 3 term introduced by PR #320 that reopens the
   recursive witness from its Stage 2 point at a projection of the Stage 3
   challenge. It is required by shared-point routing, not by the setup-product
   relation.
@@ -115,9 +121,10 @@ layout-driven scheduling, and efficient internal reuse.
    routing from a shared point.
 7. Prover and verifier MUST use the same checked geometry split
    `[inner | position | block]` and the same basis-weight primitives.
-8. Caches MUST be derived implementation state. Cache identity MUST include all
-   data that affects a factor: basis, ring dimension, coordinate values, factor
-   role, and relevant position/block geometry.
+8. If a preparation cache is implemented, it MUST be derived per-proof state.
+   Its identity MUST include all data that affects a factor: basis, the
+   group's A-role ring dimension, coordinate values, factor role, and relevant
+   position/block geometry.
 9. Transcript and descriptor commitments MUST bind group order, each group's
    arity, polynomial count, point, commitment, and evaluation claims before the
    batching challenge is sampled.
@@ -142,8 +149,8 @@ layout-driven scheduling, and efficient internal reuse.
 16. `SetupSumcheckProof` MUST contain exactly the setup-product claim, the
     setup-prefix evaluation, and the setup-only sumcheck. The Stage 2 proof
     remains the single source of the recursive-witness evaluation.
-17. All verifier-reachable point validation and cache lookups MUST satisfy the
-    repository no-panic contract.
+17. All verifier-reachable point validation and any cache lookups MUST satisfy
+    the repository no-panic contract.
 18. `akita-algebra` MUST own the canonical Lagrange/equality parent split and
     the canonical full-table serial traversal. `lagrange_weights` and
     `EqPolynomial` MUST NOT maintain sibling full-table expansion loops.
@@ -159,14 +166,16 @@ layout-driven scheduling, and efficient internal reuse.
 
 - Opening different polynomials within one commitment group at different
   points. Such claims belong in separate groups.
-- Extending dense, extension-opening-reduction, root-terminal, or recursive
-  suffix protocols to more groups where their schedules currently require one.
+- Adding new dense, one-hot, EOR, mixed-D, or recursive schedule families. The
+  implementations already supported on `main` MUST keep working.
+- Implementing immediately-terminal multi-group roots or tiered multi-group
+  commitments, which remain separately guarded.
 - Changing the setup-product relation, offload eligibility policy, witness
   partition, or generated commitment geometry. Exact proof-byte repricing is
   in scope.
 - Adding a persistent or cross-proof cache.
-- Shipping a general prefix/suffix tensor DAG in the first group-local-point
-  implementation.
+- Shipping a point-factor cache or general prefix/suffix tensor DAG as part of
+  the correctness cutover. Both require post-cutover benchmark evidence.
 - Preserving serialized API compatibility. Akita makes no backward-
   compatibility guarantee.
 
@@ -286,39 +295,38 @@ C_block_new(q, B) = (2^floor(q/2) - 1)
                   + B
 ```
 
-### Representative production schedule
+### Production measurement contract
 
-The generated `fp128_d64_onehot_recursive_multi_chunk_w8r2` entry with a
-32-variable final group has:
+The July 22 draft used one generated fp128 D64 W8R2 row to show that the
+one-multiplication recurrence dominates any plausible cross-group reuse. Since
+then the planner, runtime schedule resolver, generated-table ownership,
+root-basis policy, setup-prefix planning, supported ring dimensions, and
+multi-group protocol have changed. Those old row counts are not current
+acceptance numbers.
 
-| Group | Arity | `D` | `M` | `B` | Old full/prefix multiplications | After full-table rewrite |
-|-------|------:|----:|----:|----:|--------------------------------:|-------------------------:|
-| Final | 32 | 64 | 65,536 | 1,024 | 132,344 | 66,684 |
-| Precommitted 0 | 16 | 64 | 32 | 32 | 240 | 136 |
-| Precommitted 1 | 16 | 64 | 32 | 32 | 240 | 136 |
-| **Total** | | | | | **132,824** | **66,956** |
+The implementation benchmark MUST obtain its schedule through the same runtime
+resolution path as production. It MUST report, per group:
 
-Thus the generic recurrence improvement removes 65,868 base-field
-multiplications for this root before any cross-group caching.
+| Input | Meaning |
+|-------|---------|
+| `num_vars` | Group-owned point arity |
+| `d_a` | A-role ring dimension used by `prepare_opening_point` |
+| `M` | `num_positions_per_block` |
+| `B` | `num_live_blocks` |
+| basis | Lagrange or monomial |
+| field | Base or extension point field |
+| expansion multiplications | Count before and after canonicalization |
+| preparation wall time | Isolated point-preparation time |
 
-If both 16-variable precommitted points are nested in the final point, the
-absolute upper bound from reusing all of their old preparation work is only 480
-multiplications, about 0.36% of the old total. That upper bound overstates what
-whole-point reuse can achieve because a 16-coordinate prefix crosses different
-`inner | position | block` boundaries in the two geometries.
-
-After the recurrence rewrite, the corresponding upper bound is 272
-multiplications, about 0.41% of the new total.
-
-The current short Stage 2 evaluation-trace preparation for the same three
-groups costs 353 extension-field multiplications in the analyzed path; sharing
-the two equal precommitted preparations can save at most 146. This is separate
-from the much larger generic Lagrange-table saving, and later direct equality-
-MLE evaluation can reduce the absolute importance of that trace reuse.
+At minimum, profile the current production fp128 multi-group recursive W8R2
+case, one mixed-D case from `mixed-ring-dimension-per-level`, and one
+extension-field multi-group case. Cache or nesting numbers MUST NOT be quoted
+until measured on these current paths.
 
 ### Stage 3 witness-reduction elimination
 
-PR #320's recursive Stage 3 combines two terms over a padded common cube:
+The Stage 3 implementation merged in PR #320 combines two terms over a padded
+common cube:
 
 ```text
 setup product at the Stage 3 setup point
@@ -358,7 +366,7 @@ s = log2(D_setup) + log2(next_power_of_two(setup_prefix_field_len / D_setup))
 c = serialized challenge-field bytes
 ```
 
-PR #320 prices the fused Stage 3 payload as:
+Current `stage3_setup_product_bytes` prices the fused Stage 3 payload as:
 
 ```text
 bytes_fused = 3c + 2c * max(w, s)
@@ -379,20 +387,12 @@ rounds only when its padded power-of-two domain is also smaller. If `w <= s`,
 the proof still saves one field element and removes all witness-term prover and
 verifier work, but the sumcheck round count does not decrease.
 
-The first 32-variable production entry in PR #320's generated
-`fp128_d64_onehot_recursive_multi_chunk_w8r2` table makes the difference
-concrete:
-
-| Offloaded edge | Live witness ring elements | Padded witness rounds `w` | Padded setup field length | Setup rounds `s` | Fused bytes | Setup-only bytes | Saving |
-|----------------|---------------------------:|--------------------------:|--------------------------:|-----------------:|------------:|-----------------:|-------:|
-| Root to recursive fold 0 | 2,647,068 | 28 | `2^25` | 25 | 944 | 832 | 112 |
-| Recursive fold 0 to 1 | 722,408 | 26 | `2^25` | 25 | 880 | 832 | 48 |
-| **Total** | | | | | **1,824** | **1,664** | **160** |
-
-The removed prover witness passes traverse up to 169,412,352 and 46,234,112
-compact digits on these two edges, respectively. These are structural counts
-from the generated geometry at PR #320 head `6652c08a`, not wall-clock benchmark
-results; the implementation must measure the realized speedup.
+The formula is the invariant; concrete schedule savings are derived outputs.
+After changing it, the implementation MUST regenerate schedule tables and
+report every planner-selected edge whose suffix or setup-prefix slot changes.
+It MUST also report the removed compact-witness scan length and realized Stage
+3 wall time for the current production W8R2 profile. Historical July 22 byte
+and digit counts are deliberately not carried forward as targets.
 
 ### Work that point nesting does not remove
 
@@ -419,20 +419,47 @@ unnecessary because independent group-local points remove its protocol purpose.
 The target public model is logically:
 
 ```rust,ignore
-pub struct PolynomialGroupClaims<'a, F, C> {
-    point: &'a [F],
+pub struct PolynomialGroupClaims<'a, F: Clone, C> {
+    point: OpeningPoints<'a, F>,
     evaluations: Vec<F>,
     commitment: C,
 }
 
-pub struct OpeningClaims<'a, F, C> {
+pub struct OpeningClaims<'a, F: Clone, C> {
     groups: Vec<PolynomialGroupClaims<'a, F, C>>,
 }
 ```
 
-The concrete implementation MAY use the repository's existing owned or
-borrowed point type, but it MUST preserve this ownership relation: there is one
-complete point per group and no separate routing layer.
+The concrete implementation SHOULD reuse the existing owned-or-borrowed
+`OpeningPoints` carrier. The required API shape is:
+
+```rust,ignore
+impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
+    pub fn new(
+        point: impl Into<OpeningPoints<'a, F>>,
+        evaluations: Vec<F>,
+        commitment: C,
+    ) -> Result<Self, AkitaError>;
+
+    pub fn point(&self) -> &[F];
+    pub fn num_vars(&self) -> usize;
+    pub fn evaluations(&self) -> &[F];
+    pub fn commitment(&self) -> &C;
+}
+
+impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
+    pub fn from_groups(
+        groups: Vec<PolynomialGroupClaims<'a, F, C>>,
+    ) -> Result<Self, AkitaError>;
+
+    pub fn group_point(&self, group: usize) -> Result<&[F], AkitaError>;
+    pub fn max_num_vars(&self) -> usize;
+}
+```
+
+The batch-level `point()` and `num_vars()` accessors are removed. There is no
+replacement ambient point, point arena, parallel point vector, or custom-routing
+constructor. `group_point` changes from allocation to borrowing.
 
 The current recursive suffix construction's setup-prefix and witness points
 become the complete points of their respective groups. It MUST NOT rebuild them
@@ -443,12 +470,39 @@ the ordered list of `PolynomialGroupLayout` values and continues to drive setup,
 planner, schedule lookup, and relation layout. Aggregate counts and maximum
 arity are derived accessors, not separately serialized fields.
 
+The final group continues to define the newly committed source arity.
+`AkitaScheduleLookupKey::max_num_vars()` continues to define the maximum
+opening/EOR capacity across all groups. Group-local ownership removes only the
+ambient-value representation; it does not collapse these distinct structural
+quantities.
+
+### Existing implementation seams
+
+Current `main` already has the correct downstream shape:
+
+- `verify_multi_group_root_inner` and its prover counterpart build a
+  `group_points` vector and dispatch preparation with each group's `d_a`, `M`,
+  and `B`;
+- `verify_fold_eor` accepts all group points and returns prepared points in
+  group order;
+- `PreparedFoldReplay` and `RingRelationInstance` store per-group opening and
+  multiplier points;
+- grouped EOR uses one batched sumcheck while retaining a distinct equality
+  factor for each group point; and
+- recursive suffix code is the remaining place that concatenates Stage 2 and
+  Stage 3 points and reconstructs routing selections.
+
+The cutover MUST simplify these seams in place. It MUST NOT add a second
+group-point carrier beside `PolynomialGroupClaims`, or a second relation
+statement beside `RingRelationInstance`.
+
 ### Descriptor and transcript
 
 The opening descriptor MUST commit to the ordered group count and, for every
-group, `(num_vars, num_polys)`, the basis mode, and the existing domain or
-protocol separator. The layout digest MUST use these canonical ordered fields;
-it MUST NOT retain selection indices or a second scalar "shared arity" field.
+group, `(num_vars, num_polys)`, plus the existing basis/domain/protocol fields
+owned by the surrounding descriptor. The layout digest MUST use these canonical
+ordered fields; it MUST NOT retain selection indices or a second scalar
+"shared arity" field.
 
 The transcript order for a multi-group root MUST be canonical and identical on
 the prover and verifier:
@@ -456,7 +510,7 @@ the prover and verifier:
 1. protocol and descriptor data;
 2. ordered group layout;
 3. commitments in group order;
-4. each complete group-local point in group order;
+4. every coordinate of each complete group-local point in group order;
 5. claimed evaluations in group and polynomial order;
 6. batching challenges; and
 7. proof messages.
@@ -465,13 +519,14 @@ Existing transcript helper functions SHOULD be extended directly. The cutover
 MUST NOT introduce a second claims-absorption wrapper or retain old routing
 absorption alongside the new path.
 
-For recursive setup offloading, Stage 2 continues to absorb its
-`next_w_eval`. Setup-only Stage 3 then absorbs its setup-product claim, samples
-only its own sumcheck challenges, and checks the setup-prefix evaluation at the
-resulting point. It MUST NOT sample `CHALLENGE_SUMCHECK_BATCH` for an absent
-witness term or absorb `ABSORB_STAGE3_NEXT_W_EVAL`. The successor transcript
-binds the unchanged Stage 2 witness point and the Stage 3 setup point when it
-absorbs the two ordered group-local claims.
+For recursive setup offloading, Stage 2 continues to absorb
+`ABSORB_STAGE2_NEXT_W_EVAL`. Setup-only Stage 3 then absorbs its setup-product
+claim, samples only `CHALLENGE_SUMCHECK_ROUND`, and checks the setup-prefix
+evaluation at the resulting point. It MUST NOT sample the Stage 3 use of
+`CHALLENGE_SUMCHECK_BATCH` or absorb `ABSORB_STAGE3_NEXT_W_EVAL`. Those labels
+remain available to unrelated sumchecks that still use them. The successor
+transcript binds the unchanged Stage 2 witness point and the Stage 3 setup point
+when it absorbs the two ordered group-local claims.
 
 ### One preparation pipeline
 
@@ -522,17 +577,19 @@ This ownership boundary is part of the implementation, not optional cleanup.
 After the cutover, adding another Lagrange or equality-table builder instead of
 extending the canonical primitive is non-conforming.
 
-### Exact reuse
+### Optional exact reuse
 
-The first group-local-point implementation MUST reuse exact duplicate factors
-within one proof. Reuse belongs behind the preparation pipeline and MUST be
-invisible to callers and transcripts.
+The correctness cutover does not require a cache. Current preparation already
+operates once per group, and the dominant proven win is canonicalizing the
+full-table recurrence. Exact reuse may be added afterward only if the
+post-cutover benchmark shows material wall-clock value.
 
-The implementation SHOULD cache factor-level outputs rather than only complete
-prepared points. A factor cache key contains:
+If implemented, reuse belongs behind the preparation pipeline and MUST be
+invisible to callers and transcripts. Factor-level outputs are preferable to
+only complete prepared points. A factor cache key contains:
 
 ```text
-(basis, ring dimension, factor role, coordinates, relevant geometry)
+(basis, d_a, factor role, coordinates, relevant geometry)
 ```
 
 This permits safe reuse of:
@@ -544,14 +601,16 @@ This permits safe reuse of:
 - a complete prepared point when all components match.
 
 The cache is bounded by the number of groups and factors in one proof. It MUST
-NOT accept caller-provided cache keys.
+NOT accept caller-provided cache keys or persist across proofs. A linear scan
+over the small group set is preferable to adding a public hashability contract
+to field types.
 
 ### Nested reuse
 
-Nested prefix/suffix reuse is OPTIONAL and MUST be benchmark-gated after exact
-reuse lands. If implemented, it constructs a factor by tensoring an already
-validated factor with the missing coordinates. It MUST NOT change accepted
-claims, transcript bytes, or schedule selection.
+Nested prefix/suffix reuse is OPTIONAL and MUST be benchmark-gated after the
+canonical expansion path is measured. If implemented, it constructs a factor
+by tensoring an already validated factor with the missing coordinates. It MUST
+NOT change accepted claims, transcript bytes, or schedule selection.
 
 Prefix nesting is only directly useful when the reused coordinate interval is
 also a complete semantic factor under both groups' geometry. Suffix nesting is
@@ -563,16 +622,17 @@ geometry split.
 ### Setup offloading
 
 Setup-contribution preparation remains a schedule concern. The same
-`RelationRangeImagePlan`, contribution identifiers, and checked setup geometry
-are used for local and offloaded evaluation. Group-local points neither add nor
-remove contribution materials.
+`RelationAddressGeometry`, `SetupContributionPlan`, contribution identifiers,
+outgoing-aware spans, and checked setup geometry are used for local and
+offloaded evaluation. Group-local points neither add nor remove contribution
+materials.
 
 The verifier always prepares the point factors required by the root opening and
 evaluation trace. An offloaded contribution result MAY skip the corresponding
 local contribution scan exactly as it does today, but MUST NOT skip point
 validation or any prepared factor consumed by another relation.
 
-This rule does not retain PR #320's witness-claim reduction. That reduction is
+This rule does not retain the witness-claim reduction from PR #320. That reduction is
 neither setup-contribution material nor group opening preparation; it only moves
 the already-proved recursive-witness claim onto the setup challenge. The target
 offloaded flow is:
@@ -585,11 +645,29 @@ offloaded flow is:
 4. The ordinary multi-group opening pipeline verifies both commitments at their
    respective points.
 
-`BatchedStage3Geometry::shared_suffix_point`,
-`BatchedStage3Geometry::setup_prefix_point_vars`, and
-`WitnessClaimReductionTerm` MUST be removed if they have no consumer after this
-cutover. The implementation MUST extend the setup-product prover directly; it
-MUST NOT preserve the fused driver as a wrapper around a one-term sumcheck.
+`BatchedStage3Geometry`, `WitnessClaimReductionTerm`, and
+`witness_claim_reduction.rs` MUST be removed. Setup Stage 3 has one native
+domain, so its sumcheck challenge vector is already the setup-prefix point; no
+two-domain projection type remains. The implementation MUST simplify the
+setup-product prover directly and MUST NOT preserve the fused driver as a
+wrapper around a one-term sumcheck.
+
+The Stage 3 orchestration signatures lose all witness-only inputs:
+
+```text
+stage2_next_w_eval
+logical_w
+live_x_cols
+col_bits
+ring_bits
+eta
+```
+
+Stage 2 challenges remain an input only where the setup-contribution plan needs
+the outgoing relation point. `Stage3ProveOutput` contains the proof and
+setup-prefix point/evaluation only. Verifier Stage 3 returns the setup-prefix
+opening only. The enclosing fold output always takes its successor witness
+point and evaluation from Stage 2.
 
 The target proof shape is:
 
@@ -601,9 +679,21 @@ pub struct SetupSumcheckProof<E> {
 }
 ```
 
-The planner's `stage3_setup_product_bytes` MUST use the setup domain alone and
-MUST match actual serialization. It no longer accepts `output_witness_len`
-unless another setup-only sizing rule genuinely requires it.
+The canonical sizing API becomes:
+
+```rust,ignore
+pub fn stage3_setup_product_bytes(
+    challenge_field_bits: u32,
+    setup_ring_dimension: usize,
+    setup_ring_len: usize,
+) -> usize;
+```
+
+It MUST match actual serialization and use only the setup domain. Planner and
+runtime schedule callers remove `output_witness_len`. Generated schedules and
+required setup-prefix slot registries MUST be regenerated from the new totals.
+The transparent setup matrix and SIS bounds are unchanged, but serialized setup
+caches containing a different prefix-slot registry are not assumed compatible.
 
 ## Evaluation
 
@@ -619,8 +709,10 @@ unless another setup-only sizing rule genuinely requires it.
 - [x] This record identifies the independently optimized loops as an interim
   state and makes canonical serial ownership a required implementation outcome.
 - [x] Focused `akita-types` tests pass with default and no-default features.
-- [x] The branch has `origin/main` as its merge base and contains no commits
-  from another open PR.
+- [x] The branch includes `main` through `af770e129` and describes the merged
+  PR #320 and #331 implementations rather than their earlier development heads.
+- [x] Dense, one-hot, EOR, mixed-D, runtime-schedule, and setup-prefix behavior
+  added since the original draft is represented in the target and diff plan.
 
 #### Group-local claims cutover
 
@@ -631,8 +723,11 @@ unless another setup-only sizing rule genuinely requires it.
 - [ ] Existing one-group and multi-group proofs round-trip through the new model.
 - [ ] A multi-group end-to-end test opens at least two groups at unrelated point
   values and different supported arities.
+- [ ] Dense, one-hot, base-field, extension-field/EOR, uniform-D, mixed-D, and
+  recursive-setup multi-group tests retain their current support matrix.
 - [ ] Prefix-related, suffix-related, equal, and unrelated group points produce
-  the same verification result with reuse enabled and disabled.
+  the same verification result. If reuse exists, results are identical with it
+  enabled and disabled.
 - [ ] Setup generation and schedule lookup use only
   `OpeningClaimsLayout`; no fake points or duplicate shape types are introduced.
 
@@ -661,8 +756,11 @@ unless another setup-only sizing rule genuinely requires it.
 - [ ] Recursive-mode transcript tests confirm removal of the Stage 3 batching
   challenge and second witness-evaluation absorption while preserving exact
   prover/verifier event parity.
-- [ ] The old fused geometry, witness reduction, routing helpers, labels, and
-  dead tests are deleted rather than retained behind adapters.
+- [ ] The old fused geometry, witness reduction, routing helpers, and dead
+  tests are deleted rather than retained behind adapters.
+  `ABSORB_STAGE3_NEXT_W_EVAL` is deleted;
+  `CHALLENGE_SUMCHECK_BATCH` remains available to unrelated protocols but is no
+  longer emitted by Stage 3.
 - [ ] Planner proof accounting matches actual serialization for `w < s`,
   `w = s`, and `w > s`, including the exact saving
   `c + 2c * max(0, w - s)`.
@@ -670,6 +768,9 @@ unless another setup-only sizing rule genuinely requires it.
   proof.
 - [ ] An end-to-end recursive-offload test opens the setup prefix and witness at
   unrelated points in the successor two-group fold.
+- [ ] Setup cache tests demonstrate the intended policy explicitly: unchanged
+  required prefix-slot registries round-trip, while changed registries are
+  regenerated rather than silently treated as compatible.
 
 #### Verifier preparation and performance
 
@@ -682,18 +783,15 @@ unless another setup-only sizing rule genuinely requires it.
   field multiplications for each full-table serial entry point. Output-parity
   tests cover empty, scaled, base-field, and extension-field tables and preserve
   little-endian order.
-- [ ] Exact duplicate factor reuse is covered by hit/miss tests for inner,
-  position, block, and complete-point keys.
-- [ ] Cache-key negative tests vary basis, `D`, `M`, `B`, coordinate order, and
-  live block length independently.
 - [ ] A preparation benchmark reports base- and extension-field multiplication
-  counts separately for equal, nested, and unrelated points.
+  counts separately for equal, nested, and unrelated points under uniform-D,
+  mixed-D, and EOR profiles.
 - [ ] Arbitrary unrelated points do not add asymptotic work beyond independent
   per-group preparation and do not change group-opening or setup size. Recursive
   Stage 3 proof size changes only by the setup-only formula above.
-- [ ] Any nested-factor DAG is merged only if the representative production
-  profile shows a material wall-clock benefit after exact reuse and the generic
-  Lagrange rewrite.
+- [ ] Any exact cache or nested-factor DAG is a separate benchmark-gated change.
+  If added, hit/miss and negative-key tests vary basis, `d_a`, `M`, `B`,
+  coordinate order, and live block length independently.
 
 ### Testing Strategy
 
@@ -711,7 +809,8 @@ tests, multi-group end-to-end tests, and the repository preflight commands from
 feature graph. Malformed claims tests must exercise verifier-reachable APIs and
 confirm `AkitaError` rather than panics. The Stage 3 cutover must also run the
 planner's exact-byte tests and recursive setup-offload end-to-end suite inherited
-from PR #320.
+from merged PR #320, plus the dense, extension-opening, mixed-D, and generated
+schedule suites added afterward.
 
 ### Performance
 
@@ -731,12 +830,12 @@ cargo run -p akita-pcs --release --no-default-features \
   --example profile
 ```
 
-For a fixed layout, setup bytes and commitment geometry remain unchanged. Stage
-3 proof bytes decrease by the formula above, so generated schedule totals and
-possibly the planner-selected suffix MUST be regenerated from the canonical
-proof-size helper. Exact reuse should allocate at most one stored factor per
-distinct cache key. A nested-factor implementation is optional unless profiling
-shows a material improvement beyond exact reuse.
+For a fixed schedule, setup matrix dimensions and commitment geometry remain
+unchanged. Stage 3 proof bytes decrease by the formula above, so generated
+schedule totals and possibly the planner-selected suffix and required
+setup-prefix registry MUST be regenerated from the canonical proof-size helper.
+Any preparation cache or nested-factor implementation remains optional unless
+profiling after the correctness cutover shows a material improvement.
 
 ## Alternatives Considered
 
@@ -794,10 +893,10 @@ shape, which Akita does not guarantee. It is rejected.
 
 Binding complete ordered group points before batching challenges prevents a
 prover from adapting point routing after seeing coefficients. Layout and point
-dimensions are validated before allocation or indexing. Cache equality is an
-implementation optimization only: a false miss costs time, while a false hit
-would be a soundness bug, so semantic cache keys are complete and tested by
-negative cases.
+dimensions are validated before allocation or indexing. If preparation reuse
+is implemented, cache equality remains an optimization only: a false miss costs
+time, while a false hit would be a soundness bug. Its semantic keys therefore
+must be complete and covered by negative tests.
 
 Removing the Stage 3 witness carry does not remove the witness opening proof.
 Stage 2 already binds `stage2_next_w_eval` to the recursive witness commitment
@@ -821,10 +920,11 @@ new APIs are not cross-compatible.
 
 The Stage 3 cutover is also a proof-wire and transcript break:
 `SetupSumcheckProof.next_w_eval`, the fused witness rounds, and their transcript
-events disappear. Setup artifacts, commitment dimensions, and SIS pricing
-remain valid, but planner proof totals and generated schedule choices must be
-recomputed. The Lagrange recurrence change is purely computational and produces
-byte-identical field values.
+events disappear. Commitment dimensions, the transparent setup matrix, and SIS
+pricing remain valid. Planner proof totals and generated schedule choices must
+be recomputed, and serialized setup caches must be regenerated if their
+required setup-prefix slot registry changes. The Lagrange recurrence change is
+purely computational and produces byte-identical field values.
 
 ## Documentation
 
@@ -838,29 +938,271 @@ belong in `book/src/how/verification.md`. At that point this spec should be
 marked `implemented` and later folded or archived according to
 [`PRUNING.md`](PRUNING.md).
 
-## Execution
+## Implementation slices
 
-1. Land this decision record and the interim one-multiplication
-   Lagrange/equality recurrence on a branch based directly on `main`.
-2. Consolidate the serial full-table builders in `akita-algebra`, route
-   opening-point preparation through that owner after its sequence-bound check,
-   and make cached and parallel expansion use the canonical parent split.
-3. Change claims, prover data, descriptor absorption, and transcript absorption
-   in one breaking cutover; remove point selection and all pass-through routing
-   APIs.
-4. In that same cutover, simplify recursive Stage 3 to the setup-product term,
-   carry the Stage 2 witness claim unchanged, and delete fused witness-routing
-   machinery.
-5. Reprice Stage 3 from the setup domain alone, regenerate affected schedules,
-   and add exact serialization tests.
-6. Route every group through the canonical preparation pipeline and add bounded
-   exact factor reuse.
-7. Add unrelated-point end-to-end tests and preparation benchmarks, including a
-   recursive setup-offload successor whose two group points are unrelated.
-8. Implement nested-factor reuse only if the measured result justifies its
-   complexity.
-9. Fold the shipped behavior into the Akita Book and update this spec's
-   lifecycle fields.
+The slices below describe review and ownership boundaries. Slices 2 through 5
+form one protocol cutover: no branch state may expose both the ambient-point API
+and the group-owned API, and no compatibility wrapper may survive the final
+diff. They may be separate commits while developing, but the merged result is a
+single protocol epoch.
+
+### Slice 1: canonical Lagrange expansion
+
+**Goal.** Finish the independent arithmetic repair already started in PR #322.
+
+**Changes.**
+
+1. Add one inlinable parent split and one serial full-table traversal to
+   `akita-algebra`.
+2. Make `EqPolynomial::evals_serial` delegate to the traversal.
+3. Make `lagrange_weights` retain only `basis_weight_len` validation and
+   delegation, or remove it after converting all callers.
+4. Make cached-layer and parallel expansion use the canonical split.
+5. Add output-parity and multiplication-count tests.
+
+**Primary diff surface.**
+
+- `crates/akita-algebra/src/eq_poly.rs`
+- `crates/akita-types/src/layout/opening_point.rs`
+- their unit tests and exports only if the public boundary changes
+
+**Completion gate.** A grep/review finds one serial full-table traversal and
+one two-child arithmetic primitive. Empty, scaled, base-field, extension-field,
+serial, cached, and parallel outputs retain their existing order and values.
+
+### Slice 2: group-owned public claims
+
+**Goal.** Replace the ambient point plus routing selection with one point owned
+by each `PolynomialGroupClaims`.
+
+**Changes.**
+
+1. Move `OpeningPoints` into `PolynomialGroupClaims`.
+2. Remove `PointVariableSelection`, the batch point, batch `num_vars`,
+   `group_point_vars`, `from_groups_allow_custom_routing`, and shared-point
+   padding constructors.
+3. Change `group_point` to return a borrowed slice.
+4. Derive `OpeningClaimsLayout` from group point lengths and evaluation counts.
+5. Update capacity validation to compare `max_num_vars()` with the setup seed.
+6. Update prover validation so each group's polynomial arity equals its owned
+   point length.
+7. Update descriptor/transcript tests for ordered group points.
+
+**Primary diff surface.**
+
+- `crates/akita-types/src/opening_claims.rs`
+- `crates/akita-types/src/lib.rs`
+- `crates/akita-types/src/proof/mod.rs`
+- `crates/akita-prover/src/types/opening_data.rs`
+- `crates/akita-prover/src/api/commitment.rs`
+- public PCS re-exports, examples, benches, and claim-construction tests
+
+**Mechanical migration surface.** Every
+`PolynomialGroupClaims::new(PointVariableSelection::..., ...)` call becomes
+`PolynomialGroupClaims::new(group_point, ...)`. Multi-group fixtures pass the
+existing per-group point slices instead of first padding or concatenating them.
+
+**Completion gate.**
+
+```text
+rg "PointVariableSelection|group_point_vars|from_groups_allow_custom_routing" crates
+```
+
+returns no matches, and no replacement arena/selection type exists.
+
+### Slice 3: direct root and EOR consumption
+
+**Goal.** Feed group-owned points into the per-group machinery already present
+on `main`.
+
+**Changes.**
+
+1. Root prove/verify borrows each claim group's point directly.
+2. Each group is validated against its scheduled `d_a`, position bits, and
+   block bits before preparation.
+3. Batched multi-group EOR receives the borrowed group-point vector directly;
+   the single-group EOR path creates one ordinary group rather than a synthetic
+   padded ambient claim.
+4. `PreparedFoldReplay` and `RingRelationInstance` keep their existing
+   per-group carriers and ordering.
+5. Remove point materialization allocations and routing-only checks.
+
+**Primary diff surface.**
+
+- `crates/akita-prover/src/protocol/core/root_fold.rs`
+- `crates/akita-prover/src/protocol/core/extension_opening_reduction.rs`
+- `crates/akita-verifier/src/protocol/core/root_fold.rs`
+- `crates/akita-verifier/src/protocol/core/fold.rs`
+- `crates/akita-types/src/extension_opening_reduction.rs`
+- multi-group dense, one-hot, EOR, and mixed-D tests
+
+**Completion gate.** Equal, prefix-related, suffix-related, and unrelated group
+points all reach the same per-group preparation and relation APIs. No root code
+constructs a common value point.
+
+### Slice 4: setup-only Stage 3 and recursive suffix
+
+**Goal.** Remove the witness carry and let the successor consume the independent
+Stage 2 and Stage 3 claims directly.
+
+**Changes.**
+
+1. Simplify the Stage 3 prover to one setup-product term and one native setup
+   domain.
+2. Delete `witness_claim_reduction.rs`, `WitnessClaimReductionTerm`, the
+   two-term batching driver, `eta`, lift scales, and witness digit scans.
+3. Delete `BatchedStage3Geometry`; the Stage 3 sumcheck challenge is the setup
+   point.
+4. Remove `next_w_eval` from `SetupSumcheckProof`, its wire serializer,
+   deserializer, size calculation, validity checks, dummy proofs, and reports.
+5. Remove the Stage 3 sample of `CHALLENGE_SUMCHECK_BATCH` and delete
+   `ABSORB_STAGE3_NEXT_W_EVAL`; keep `CHALLENGE_SUMCHECK_BATCH` for the other
+   protocols that still use it.
+6. Make recursive suffix construction create:
+
+   ```text
+   setup group   = (stage3_setup_point, stage3_setup_prefix_eval)
+   witness group = (stage2_point, stage2_next_w_eval)
+   ```
+
+7. Remove shared-point concatenation, suffix selection, and setup-offset
+   construction from prover and verifier suffix code.
+
+**Primary diff surface.**
+
+- `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`
+- delete
+  `crates/akita-prover/src/protocol/sumcheck/akita_stage3/witness_claim_reduction.rs`
+- `crates/akita-prover/src/protocol/core/fold.rs`
+- `crates/akita-prover/src/protocol/core/suffix.rs`
+- `crates/akita-prover/src/types/opening_data.rs`
+- `crates/akita-verifier/src/stages/stage3.rs`
+- `crates/akita-verifier/src/protocol/core/fold.rs`
+- `crates/akita-verifier/src/protocol/core/suffix.rs`
+- delete `crates/akita-types/src/stage3_geometry.rs`
+- `crates/akita-types/src/proof/levels.rs`
+- `crates/akita-types/src/proof/wire.rs`
+- `crates/akita-transcript/src/labels.rs`
+- transcript-hardening, recursive setup, and malformed-proof tests
+
+**Completion gate.**
+
+```text
+rg "BatchedStage3Geometry|WitnessClaimReductionTerm|ABSORB_STAGE3_NEXT_W_EVAL" crates
+```
+
+returns no matches. Recursive-offload E2Es demonstrate unrelated successor
+points and exact prover/verifier transcript parity.
+
+### Slice 5: proof pricing, schedules, and setup registries
+
+**Goal.** Make all derived planning state reflect the smaller setup-only proof.
+
+**Changes.**
+
+1. Remove `output_witness_len` from `stage3_setup_product_bytes`.
+2. Update planner and runtime schedule callers to price only
+   `(challenge bits, d_setup, setup ring length)`.
+3. Update actual-serialization tests for `SetupSumcheckProof`.
+4. Regenerate schedule tables and identify any changed planner-selected suffix.
+5. Recompute required setup-prefix slot IDs for every supported capacity.
+6. Regenerate serialized setup caches when the registry changes.
+7. Update profile reporting to remove the Stage 3 witness-evaluation component.
+
+**Primary diff surface.**
+
+- `crates/akita-types/src/proof_size.rs`
+- `crates/akita-planner/src/schedule_params.rs`
+- `crates/akita-schedules/src/runtime.rs`
+- `crates/akita-schedules/src/generated/`
+- `crates/akita-config/src/setup_prefix_slots.rs`
+- `crates/akita-setup/src/recursive_prefixes.rs`
+- `crates/akita-setup/src/lib.rs`
+- `crates/akita-pcs/examples/profile/report.rs`
+- generated-table, proof-size, setup-cache, and planner tests
+
+**Completion gate.** Planned Stage 3 bytes equal serialized bytes for several
+setup-domain sizes and fields. Schedule regeneration is clean on a second run,
+and every schedule-selected prefix has a setup registry entry.
+
+### Slice 6: documentation and performance record
+
+**Goal.** Make the shipped protocol, not this transition spec, the durable
+source of truth.
+
+**Changes.**
+
+1. Update the Book commitment API with group-owned claims examples.
+2. Update verifier and extension-opening chapters with the group-local dataflow.
+3. Update architecture diagrams and proof-size descriptions.
+4. Run the current production W8R2, mixed-D, and extension-field multi-group
+   profiles.
+5. Record canonical-expansion counts and Stage 3 proof/time changes.
+6. Mark this spec implemented and fold or archive it under `PRUNING.md`.
+
+**Primary diff surface.**
+
+- `book/src/usage/commitment-api.md`
+- `book/src/how/verification.md`
+- `book/src/how/architecture.md`
+- `book/src/how/proving/extension-opening-reduction.md`
+- relevant profiling documentation and superseded specs
+
+### Optional Slice 7: preparation reuse
+
+Only after Slice 6 measurements, add bounded exact or nested factor reuse if it
+has material wall-clock value. This slice is not part of protocol completion.
+It changes neither public claims, transcript, descriptor, proof wire, schedule,
+nor setup.
+
+## Final state
+
+After Slices 1 through 6, the opening path has one simple ownership tree:
+
+```text
+OpeningClaims
+└── groups, in transcript order
+    └── PolynomialGroupClaims
+        ├── complete point
+        ├── evaluations
+        └── commitment
+```
+
+The structural and value paths are cleanly separated:
+
+```text
+group lengths/counts ──> OpeningClaimsLayout ──> setup / planner / schedule
+group points ──────────> EOR / prepare_opening_point ──> RingRelationInstance
+group evaluations ─────> transcript batching / relation target
+```
+
+Recursive setup offloading has no point-routing detour:
+
+```text
+Stage 2 ──> witness point + witness evaluation ─┐
+                                               ├─> successor OpeningClaims
+Stage 3 ──> setup point + setup evaluation ────┘
+```
+
+There is:
+
+- no ambient shared point;
+- no `PointVariableSelection`;
+- no allocation to recover a group point;
+- no custom-routing constructor;
+- no fused Stage 3 witness term;
+- no duplicate Stage 3 witness evaluation;
+- no two-domain Stage 3 geometry;
+- one canonical Lagrange parent split and serial table traversal;
+- one existing multi-group EOR and ring-relation pipeline serving arbitrary
+  points, dense/one-hot sources, extension fields, and mixed ring dimensions;
+- unchanged layout-driven setup/SIS geometry; and
+- smaller, exactly priced recursive Stage 3 proofs.
+
+The resulting implementation is materially easier to explain and audit:
+public ownership matches algebraic ownership, the prover and verifier consume
+the same ordered group objects, schedule code sees only field-free layout, and
+recursive offloading proves exactly the setup statement it is responsible for.
 
 ## References
 
@@ -869,6 +1211,9 @@ marked `implemented` and later folded or archived according to
 - [`batched-stage3-setup-opening.md`](batched-stage3-setup-opening.md)
 - [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
 - [`setup-offloading-planner.md`](setup-offloading-planner.md)
-- [PR #320 at inspected head `6652c08a`](https://github.com/LayerZero-Labs/akita/pull/320)
+- [PR #320: Stage 3 setup products and witness reduction](https://github.com/LayerZero-Labs/akita/pull/320)
+- [PR #331: mixed-D multi-group composition](https://github.com/LayerZero-Labs/akita/pull/331)
+- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
+- [`runtime-schedule-boundary.md`](runtime-schedule-boundary.md)
 - [`book/src/how/verification.md`](../book/src/how/verification.md)
 - [`book/src/usage/profiling.md`](../book/src/usage/profiling.md)
