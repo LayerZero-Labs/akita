@@ -20,8 +20,8 @@ use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    dispatch_for_field, prepare_ntt_cache, AkitaExpandedSetup, NttCacheKey, NttCacheMode,
-    PreparedNttCache,
+    dispatch_for_field, prepare_compression_ntt_cache, prepare_ntt_cache, AkitaExpandedSetup,
+    NttCacheKey, NttCacheMode, PreparedNttCache,
 };
 use std::any::Any;
 use std::array::from_fn;
@@ -262,13 +262,7 @@ fn build_compression_ntt_slot<F: FieldCore + CanonicalField, const D: usize>(
     input_width: usize,
 ) -> Result<ErasedCpuNttCache, AkitaError> {
     let view = expanded.shared_matrix().ring_view::<D>(1, input_width)?;
-    let cache = Arc::new(prepare_ntt_cache(
-        view,
-        NttCacheMode::ExactNegacyclic {
-            width: input_width,
-            log_basis: 1,
-        },
-    )?);
+    let cache = Arc::new(prepare_compression_ntt_cache(view, input_width)?);
     if cache.has_cyclic() {
         return Err(AkitaError::InvalidSetup(
             "compression NTT cache unexpectedly contains a cyclic transform".into(),

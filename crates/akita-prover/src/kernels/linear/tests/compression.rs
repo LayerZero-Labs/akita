@@ -1,8 +1,9 @@
-use super::{prepare_both_transforms, schoolbook_digit_mat_vec};
+use super::schoolbook_digit_mat_vec;
 use crate::kernels::linear::compression_rows;
 use akita_algebra::CyclotomicRing;
 use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::layout::FlatMatrix;
+use akita_types::prepare_compression_ntt_cache;
 
 fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
     let column_count = 3;
@@ -24,9 +25,10 @@ fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
             .collect::<Vec<_>>(),
     ];
     let flat = FlatMatrix::from_ring_slice(&matrix);
-    let slot = prepare_both_transforms(
+    let slot = prepare_compression_ntt_cache(
         flat.ring_view::<D>(1, column_count)
             .expect("compression matrix view"),
+        column_count,
     )
     .expect("compression NTT profile");
     let views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
@@ -55,7 +57,7 @@ fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
     type F = Prime128OffsetA7F7;
     const D: usize = 8;
     let flat = FlatMatrix::from_ring_slice(&[CyclotomicRing::<F, D>::one(); 4]);
-    let slot = prepare_both_transforms(flat.ring_view::<D>(1, 4).expect("matrix"))
+    let slot = prepare_compression_ntt_cache(flat.ring_view::<D>(1, 4).expect("matrix"), 4)
         .expect("compression NTT profile");
     let short = [[0i8; D]; 3];
     let full = [[0i8; D]; 4];

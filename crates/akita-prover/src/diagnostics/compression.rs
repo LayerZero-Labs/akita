@@ -314,7 +314,7 @@ mod tests {
     use akita_algebra::CyclotomicRing;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use akita_types::layout::FlatMatrix;
-    use akita_types::{prepare_ntt_cache, NttCacheMode};
+    use akita_types::prepare_compression_ntt_cache;
     use std::hint::black_box;
 
     fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
@@ -400,13 +400,10 @@ mod tests {
             negative_binary_digits::<F, D>(coefficients, map.input_width).expect("digitization");
         let matrix_row = deterministic_matrix_row::<F, D>(map.input_width, salt);
         let flat = FlatMatrix::from_ring_slice(&matrix_row);
-        let slot = prepare_ntt_cache(
+        let slot = prepare_compression_ntt_cache(
             flat.ring_view::<D>(1, map.input_width)
                 .expect("compression matrix view"),
-            NttCacheMode::ExactNegacyclic {
-                width: map.input_width,
-                log_basis: 1,
-            },
+            map.input_width,
         )
         .expect("exact-prefix compression cache");
         assert!(!slot.has_cyclic());
