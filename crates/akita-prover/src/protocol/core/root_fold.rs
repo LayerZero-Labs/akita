@@ -7,6 +7,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
+use akita_types::PolynomialGroupClaims;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
@@ -80,12 +81,6 @@ where
     let needs_extension_reduction =
         root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 
-    if claims.point().len() > opening_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: opening_num_vars,
-            actual: claims.point().len(),
-        });
-    }
     let flat_polys = claims.flat_polys();
     if flat_polys.len() != num_claims {
         return Err(AkitaError::InvalidInput(
@@ -93,9 +88,15 @@ where
         ));
     }
 
-    let eor_opening_batch =
-        OpeningClaims::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
-    let non_eor_protocol_point = claims.point().to_vec();
+    let final_group_index = opening_batch.root_final_group_index()?;
+    let eor_opening_batch = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        claims
+            .opening_claims()
+            .group_point(final_group_index)?
+            .to_vec(),
+        vec![E::zero(); num_claims],
+        (),
+    )?])?;
     prepare_fold_inner::<F, E, T, P, _, C, O, TS, R>(
         stack,
         needs_extension_reduction,
@@ -104,7 +105,6 @@ where
         &eor_opening_batch,
         false,
         transcript,
-        non_eor_protocol_point,
         || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
         root_params,
         basis,

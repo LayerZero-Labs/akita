@@ -29,8 +29,8 @@ mod tail_segments;
 mod tests;
 mod wire;
 pub use crate::opening_claims::{
-    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PolynomialGroupLayout,
 };
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,

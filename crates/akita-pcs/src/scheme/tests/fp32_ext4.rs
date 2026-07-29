@@ -258,24 +258,20 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
     let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                    vec![pre_opening],
-                    pre_commitment.clone(),
-                )
-                .expect("pre prover claims"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV)
-                        .expect("final point routing"),
-                    vec![final_opening],
-                    final_commitment.clone(),
-                )
-                .expect("final prover claims"),
-            ],
-        )
+        OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                point[..PRE_NV].to_vec(),
+                vec![pre_opening],
+                pre_commitment.clone(),
+            )
+            .expect("pre prover claims"),
+            PolynomialGroupClaims::new(
+                point.clone(),
+                vec![final_opening],
+                final_commitment.clone(),
+            )
+            .expect("final prover claims"),
+        ])
         .expect("grouped prover claims"),
         vec![pre_hint, final_hint],
         vec![&pre_refs, &final_refs],
@@ -306,23 +302,12 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     );
 
     let verifier_setup = ProtocolScheme::setup_verifier(&setup).expect("verifier setup");
-    let verify_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening],
-                &pre_commitment,
-            )
+    let verify_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(point[..PRE_NV].to_vec(), vec![pre_opening], &pre_commitment)
             .expect("pre verifier claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
+        PolynomialGroupClaims::new(point.clone(), vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
-        ],
-    )
+    ])
     .expect("grouped verifier claims");
     let mut verifier_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(
@@ -334,23 +319,16 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     )
     .expect("verify grouped extension proof");
 
-    let tampered_claims = OpeningClaims::from_groups(
-        point,
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening + SmallE::one()],
-                &pre_commitment,
-            )
-            .expect("tampered pre claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
+    let tampered_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            point[..PRE_NV].to_vec(),
+            vec![pre_opening + SmallE::one()],
+            &pre_commitment,
+        )
+        .expect("tampered pre claims"),
+        PolynomialGroupClaims::new(point, vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
-        ],
-    )
+    ])
     .expect("tampered grouped claims");
     let mut tampered_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(

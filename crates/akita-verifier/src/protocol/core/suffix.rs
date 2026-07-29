@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
+use akita_types::{OpeningClaimsLayout, RingView};
 
 fn absorb_prepared_opening_points<F, E, T>(
     prepared_points: &[PreparedOpeningPoint<F, E>],
@@ -61,19 +61,18 @@ where
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
-                let point_vars = block_claims.group_point_vars(group_index)?;
-                if point_vars.num_vars() != target_len {
+                let group_protocol_point = block_claims.group_point(group_index)?;
+                if group_protocol_point.len() != target_len {
                     return Err(AkitaError::InvalidInput(format!(
                         "suffix group point width mismatch: group={group_index}, \
                          groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
                         opening_batch.num_groups(),
                         lp.setup_prefix.is_some(),
-                        point_vars.num_vars()
+                        group_protocol_point.len()
                     )));
                 }
-                let group_protocol_point = block_claims.group_point(group_index)?;
                 prepared_points.push(prepare_opening_point::<F, E, D>(
-                    &group_protocol_point,
+                    group_protocol_point,
                     BasisMode::Lagrange,
                     group_lp.num_positions_per_block(),
                     group_lp.num_live_blocks(),
@@ -483,39 +482,26 @@ where
         &current_state.setup_prefix_opening,
         lp.setup_prefix.as_ref(),
     ) {
-        (Some((setup_prefix_point, setup_prefix_eval)), Some(setup_prefix_id)) => {
-            let (shared_point, setup_offset) = BatchedStage3Geometry::shared_suffix_point(
-                setup_prefix_point,
-                current_state.opening_point.as_slice(),
-            )?;
-            let setup_point_vars = BatchedStage3Geometry::setup_prefix_point_vars(
-                setup_prefix_point.len(),
-                setup_prefix_id,
-                setup_offset,
-                shared_point.len(),
-            )?;
+        (Some((setup_prefix_point, setup_prefix_eval)), Some(_)) => {
             let groups = vec![
-                PolynomialGroupClaims::new(setup_point_vars, vec![*setup_prefix_eval], ())?,
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::suffix(
-                        current_state.opening_point.len(),
-                        shared_point.len(),
-                    )?,
+                    setup_prefix_point.clone(),
+                    vec![*setup_prefix_eval],
+                    (),
+                )?,
+                PolynomialGroupClaims::new(
+                    current_state.opening_point.clone(),
                     vec![current_state.opening],
                     (),
                 )?,
             ];
-            OpeningClaims::from_groups_allow_custom_routing(shared_point, groups)?
+            OpeningClaims::from_groups(groups)?
         }
         (None, None) => {
             let mut padded_point = current_state.opening_point.clone();
             padded_point.resize(recursive_num_vars, E::zero());
-            let claims = PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(recursive_num_vars, recursive_num_vars)?,
-                vec![current_state.opening],
-                (),
-            )?;
-            OpeningClaims::from_groups(padded_point, vec![claims])?
+            let claims = PolynomialGroupClaims::new(padded_point, vec![current_state.opening], ())?;
+            OpeningClaims::from_groups(vec![claims])?
         }
         _ => return Err(AkitaError::InvalidProof),
     };

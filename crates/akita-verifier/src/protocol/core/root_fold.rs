@@ -57,7 +57,6 @@ where
     };
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    let shared_opening_point = claims.point();
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
@@ -65,7 +64,7 @@ where
     // Transcript binding, D-free and byte-identical to the prover's absorb
     // (`ProverOpeningData::append_to_transcript`): batch shape header, then each
     // group commitment's flat coefficients under `ring_dim` in `OpeningClaims`
-    // order, then the shared opening point. Each group's committed row count is
+    // order, then each group's complete opening point. Each group's committed row count is
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
@@ -79,8 +78,10 @@ where
         }
         commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
     }
-    for coord in shared_opening_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+    for group in claims.groups() {
+        for coord in group.point() {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+        }
     }
 
     // D-free root replay: typed kernels dispatch inside `verify_fold` and
@@ -107,6 +108,7 @@ where
         .single_group_commitment()
         .copied()
         .ok_or(AkitaError::InvalidProof)?;
+    let opening_point = claims.group_point(0)?;
     verify_root_inner::<F, E, T>(
         proof,
         setup,
@@ -114,7 +116,7 @@ where
         commitment.rows(),
         &openings,
         &opening_batch,
-        shared_opening_point,
+        opening_point,
         extension_opening_reduction,
         stage3_sumcheck_proof,
         next_fold_level_params,
@@ -137,7 +139,7 @@ fn verify_root_inner<F, E, T>(
     commitment: &RingVec<F>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
-    shared_opening_point: &[E],
+    opening_point: &[E],
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
     next_fold_level_params: Option<&CommittedGroupParams>,
@@ -164,7 +166,7 @@ where
         let prepared_point =
             dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
                 prepare_opening_point::<F, E, D>(
-                    shared_opening_point,
+                    opening_point,
                     basis,
                     root_lp.num_positions_per_block,
                     root_lp.num_live_blocks,
@@ -180,7 +182,7 @@ where
     };
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
-    let group_points = [shared_opening_point.to_vec()];
+    let group_points = [opening_point];
     let root_eor = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
         &group_points,
@@ -318,11 +320,11 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
-        let point_vars = claims.group_point_vars(group_index)?;
-        if point_vars.num_vars() != target_len {
+        let group_point = claims.group_point(group_index)?;
+        if group_point.len() != target_len {
             return Err(AkitaError::InvalidProof);
         }
-        group_points.push(claims.group_point(group_index)?);
+        group_points.push(group_point);
     }
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     if extension_opening_reduction.is_none() {

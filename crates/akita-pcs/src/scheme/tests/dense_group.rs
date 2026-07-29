@@ -51,30 +51,24 @@ fn dense_multi_group_root_round_trips() {
     ));
     assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
 
-    let point = (0..NUM_VARS)
+    let pre_point = (0..NUM_VARS)
+        .map(|index| F::from_u64((index + 101) as u64))
+        .collect::<Vec<_>>();
+    let final_point = (0..NUM_VARS)
         .map(|index| F::from_u64((index + 2) as u64))
         .collect::<Vec<_>>();
-    let pre_opening = dense_opening(&pre_evals, &point);
-    let final_opening = dense_opening(&final_evals, &point);
-    let full_point =
-        PointVariableSelection::prefix(NUM_VARS, NUM_VARS).expect("full-point selection");
-    let prover_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                full_point.clone(),
-                vec![pre_opening],
-                pre_commitment.clone(),
-            )
+    let pre_opening = dense_opening(&pre_evals, &pre_point);
+    let final_opening = dense_opening(&final_evals, &final_point);
+    let prover_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], pre_commitment.clone())
             .expect("precommitted prover claim"),
-            PolynomialGroupClaims::new(
-                full_point.clone(),
-                vec![final_opening],
-                final_commitment.clone(),
-            )
-            .expect("final prover claim"),
-        ],
-    )
+        PolynomialGroupClaims::new(
+            final_point.clone(),
+            vec![final_opening],
+            final_commitment.clone(),
+        )
+        .expect("final prover claim"),
+    ])
     .expect("dense grouped prover claims");
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
@@ -98,15 +92,12 @@ fn dense_multi_group_root_round_trips() {
 
     let verifier_setup =
         DenseGroupScheme::setup_verifier(&setup).expect("dense grouped verifier setup");
-    let verifier_claims = OpeningClaims::from_groups(
-        point,
-        vec![
-            PolynomialGroupClaims::new(full_point.clone(), vec![pre_opening], &pre_commitment)
-                .expect("precommitted verifier claim"),
-            PolynomialGroupClaims::new(full_point, vec![final_opening], &final_commitment)
-                .expect("final verifier claim"),
-        ],
-    )
+    let verifier_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
+            .expect("precommitted verifier claim"),
+        PolynomialGroupClaims::new(final_point.clone(), vec![final_opening], &final_commitment)
+            .expect("final verifier claim"),
+    ])
     .expect("dense grouped verifier claims");
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     DenseGroupScheme::batched_verify(
@@ -117,4 +108,23 @@ fn dense_multi_group_root_round_trips() {
         BasisMode::Lagrange,
     )
     .expect("dense multi-group verification");
+
+    let mut wrong_pre_point = pre_point;
+    wrong_pre_point[0] += F::one();
+    let wrong_point_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(wrong_pre_point, vec![pre_opening], &pre_commitment)
+            .expect("wrong-point precommitted verifier claim"),
+        PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
+            .expect("final verifier claim"),
+    ])
+    .expect("wrong-point verifier claims");
+    let mut wrong_point_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    DenseGroupScheme::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut wrong_point_transcript,
+        wrong_point_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("wrong group point must reject");
 }

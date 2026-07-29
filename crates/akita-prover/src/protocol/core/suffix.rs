@@ -269,9 +269,8 @@ where
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     let eor_claims =
         ProverOpeningData::<E, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
-            sumcheck_challenges.clone(),
             None,
-            sumcheck_challenges.len(),
+            sumcheck_challenges.clone(),
         )?;
     let polys = [&logical_source];
     let needs_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
@@ -496,17 +495,16 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (block_claims, eor_opening_batch, protocol_point) =
-        ProverOpeningData::new_recursive_suffix_fold(
-            opening_point,
-            recursive_num_vars,
-            setup_prefix_opening,
-            setup_slot,
-            setup_polys_storage.as_ref().map(|polys| &polys[..]),
-            opening,
-            &witness_polys[..],
-            (Commitment::new(witness_commitment), suffix_hint),
-        )?;
+    let (block_claims, eor_opening_batch, _) = ProverOpeningData::new_recursive_suffix_fold(
+        opening_point,
+        recursive_num_vars,
+        setup_prefix_opening,
+        setup_slot,
+        setup_polys_storage.as_ref().map(|polys| &polys[..]),
+        opening,
+        &witness_polys[..],
+        (Commitment::new(witness_commitment), suffix_hint),
+    )?;
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
@@ -520,7 +518,6 @@ where
         &eor_opening_batch,
         true,
         transcript,
-        protocol_point,
         || Ok(()),
         level_params,
         BasisMode::Lagrange,

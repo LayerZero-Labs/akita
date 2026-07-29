@@ -37,7 +37,6 @@ pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS,
     eor_opening_batch: &OpeningClaims<'_, E>,
     pad_base_evals: bool,
     transcript: &mut T,
-    non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -121,16 +120,8 @@ where
             .map(|group_index| {
                 block_claims
                     .opening_claims()
-                    .group_point_vars(group_index)?
-                    .indices()
-                    .iter()
-                    .map(|&index| {
-                        non_eor_protocol_point
-                            .get(index)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
+                    .group_point(group_index)
+                    .map(<[E]>::to_vec)
             })
             .collect::<Result<Vec<_>, _>>()?;
         (protocol_points, row_coefficients, None)

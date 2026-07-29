@@ -23,9 +23,8 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, CommittedGroupParams,
-    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
-    SetupContributionMode,
+    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -76,13 +75,12 @@ fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, E, P, CommitF> {
     let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        point.to_vec(),
         vec![E::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
-    let opening_claims =
-        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
@@ -92,15 +90,12 @@ fn verifier_claims<'a, E: FieldCore, C>(
     openings: &[E],
     commitment: &'a C,
 ) -> OpeningClaims<'static, E, &'a C> {
-    OpeningClaims::from_groups(
+    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
-            openings.to_vec(),
-            commitment,
-        )
-        .expect("valid verifier claims group")],
+        openings.to_vec(),
+        commitment,
     )
+    .expect("valid verifier claims group")])
     .expect("valid verifier claims")
 }
 
@@ -1186,8 +1181,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             prover_groups.push(
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(pre_num_vars, final_num_vars)
-                        .expect("pre point vars"),
+                    point[..pre_num_vars].to_vec(),
                     openings.clone(),
                     pre_commitments[group_idx].clone(),
                 )
@@ -1196,8 +1190,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         }
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(final_num_vars, final_num_vars)
-                    .expect("final point vars"),
+                point.clone(),
                 final_openings.clone(),
                 final_commitment.clone(),
             )
@@ -1222,7 +1215,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         let proof = AkitaCommitmentScheme::<ProofCfg>::batched_prove::<_, _, _>(
             &setup,
             ProverOpeningData::new(
-                OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
+                OpeningClaims::from_groups(prover_groups).expect("prover claims"),
                 prover_hints,
                 prover_polys,
             )
@@ -1280,8 +1273,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(pre_num_vars, final_num_vars)
-                    .expect("pre point vars"),
+                point[..pre_num_vars].to_vec(),
                 openings.clone(),
                 &pre_commitments[group_idx],
             )
@@ -1289,13 +1281,8 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         );
     }
     verifier_groups.push(
-        PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(final_num_vars, final_num_vars)
-                .expect("final point vars"),
-            final_openings,
-            &final_commitment,
-        )
-        .expect("final verifier group"),
+        PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
+            .expect("final verifier group"),
     );
 
     let t_verifier_setup = Instant::now();
@@ -1314,7 +1301,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            OpeningClaims::from_groups(point, verifier_groups).expect("verifier claims"),
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims"),
             BasisMode::Lagrange,
         ) {
             Ok(()) => {}

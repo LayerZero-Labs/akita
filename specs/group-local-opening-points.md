@@ -978,6 +978,9 @@ serial, cached, and parallel outputs retain their existing order and values.
 **Goal.** Replace the ambient point plus routing selection with one point owned
 by each `PolynomialGroupClaims`.
 
+**Status.** Implemented on this branch, including the descriptor epoch cutover
+and all public, test, benchmark, profile, prover, and verifier call sites.
+
 **Changes.**
 
 1. Move `OpeningPoints` into `PolynomialGroupClaims`.
@@ -1017,6 +1020,9 @@ returns no matches, and no replacement arena/selection type exists.
 
 **Goal.** Feed group-owned points into the per-group machinery already present
 on `main`.
+
+**Status.** Implemented on this branch. Root and EOR paths borrow group-owned
+points directly, and end-to-end tests cover unrelated group points.
 
 **Changes.**
 

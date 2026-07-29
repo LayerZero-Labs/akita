@@ -4,8 +4,7 @@ use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
 use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
-    PolynomialGroupLayout,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
@@ -23,15 +22,12 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    let opening_batch = OpeningClaims::from_groups(
+    let opening_batch = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("point vars"),
-            vec![E::zero()],
-            (),
-        )
-        .expect("group claims")],
+        vec![E::zero()],
+        (),
     )
+    .expect("group claims")])
     .expect("opening batch");
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
         &crate::compute::CpuBackend,

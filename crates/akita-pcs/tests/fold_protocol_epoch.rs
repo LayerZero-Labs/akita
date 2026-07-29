@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire fixture for the in-development descriptor v1: typed fold
+//! Complete-fold wire fixture for descriptor v2: typed fold
 //! topology plus the direct terminal response.
 
 mod common;
@@ -41,16 +41,16 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 12,
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
-        proof_len: 54_176,
-        proof_digest: "c8df00cc15d665229ada8dc337ec702c",
-        event_count: 165,
-        event_digest: "99c0a238e991d558a25863ddd2de890d",
-        terminal_len: 51_212,
-        terminal_digest: "e646145c3e9a49414f3f48bbc0eaa8f7",
+        proof_len: 49_056,
+        proof_digest: "59bae92128cdb75d71b99554297ab502",
+        event_count: 151,
+        event_digest: "b9a5fac83fc7137a365b8239e70d796d",
+        terminal_len: 46_092,
+        terminal_digest: "4c8f5f60f8933caafbdef515920fdfa6",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "c1cabdaab7dff2ceedac0f2e0a5a31af",
+            payload_digest: "e04008f6b99e2d15636451141bfb9549",
         }],
     },
     FoldProtocolEpoch {
@@ -58,32 +58,37 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 80_829,
-        proof_digest: "0e0cbcc8fb998256e21301cceb0b0f51",
-        event_count: 876,
-        event_digest: "821366da0c45c42a717952fa73c07b76",
-        terminal_len: 58_525,
-        terminal_digest: "d79746542ccdfb3b6c963d7eb4242e91",
+        proof_len: 78_443,
+        proof_digest: "23a3149e0cb0b68208643a63a3f48eac",
+        event_count: 949,
+        event_digest: "173835b11819121b949518eef0567529",
+        terminal_len: 52_391,
+        terminal_digest: "ecc7670a06af8edc8164b31a0b1ffb8b",
         digit_range_levels: &[
+            DigitRangeLevelEpoch {
+                basis: 8,
+                payload_len: 1_232,
+                payload_digest: "ebcbb761b7429b5d08e400bbf312a62d",
+            },
+            DigitRangeLevelEpoch {
+                basis: 32,
+                payload_len: 2_384,
+                payload_digest: "f6af5de3fa5cb53f067fd32b3326df84",
+            },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "a81664c5d991abf197c2beb0fd145439",
+                payload_digest: "d700e584e8caad8aade00f5f6eff941a",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "e85486acc8992dbfd0988a2ddf37a126",
+                payload_digest: "a98584e881d2410cc597727cb4039491",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "21eb1b2448c7b4bc39642a60d9a25f13",
-            },
-            DigitRangeLevelEpoch {
-                basis: 64,
-                payload_len: 2_896,
-                payload_digest: "db7b5bcb6453f76939812aab7d7d56f2",
+                payload_digest: "0b0580fdda44144541f111b53c56b4e9",
             },
         ],
     },

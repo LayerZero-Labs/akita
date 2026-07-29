@@ -33,10 +33,10 @@ where
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
 
-    /// Verify a fused batched opening proof at one shared opening point.
+    /// Verify a fused batched opening proof over ordered commitment groups.
     ///
-    /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`OpeningClaims`] built from `claims` (single shared point, no multipoint).
+    /// The root layout and Fiat-Shamir batching are derived from normalized
+    /// [`OpeningClaims`], with each group carrying its complete opening point.
     ///
     /// # Errors
     ///

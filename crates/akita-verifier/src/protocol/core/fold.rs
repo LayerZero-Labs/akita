@@ -78,7 +78,7 @@ where
 
 fn verify_eor_sumcheck<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    group_points: &[Vec<E>],
+    group_points: &[&[E]],
     openings: &[E],
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -252,7 +252,7 @@ where
     eor_point.resize(opening_batch.max_num_vars(), E::zero());
     let replay = verify_eor_sumcheck::<F, E, T>(
         extension_opening_reduction,
-        &[eor_point],
+        &[eor_point.as_slice()],
         openings,
         row_coefficients,
         opening_batch,
@@ -286,7 +286,7 @@ where
 /// groups share one batched sumcheck challenge sequence.
 pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    group_points: &[Vec<E>],
+    group_points: &[&[E]],
     openings: &[E],
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -848,10 +848,11 @@ mod tests {
             PolynomialGroupLayout::singleton(WITNESS_VARS),
         ])
         .expect("recursive setup-prefix opening layout");
-        let group_points = vec![
+        let group_points = [
             extension_point(SETUP_PREFIX_VARS, 10),
             extension_point(WITNESS_VARS, 100),
         ];
+        let group_point_refs = group_points.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
@@ -873,7 +874,7 @@ mod tests {
         let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let replay = verify_eor_sumcheck::<F, E, _>(
             Some(&reduction),
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -891,7 +892,7 @@ mod tests {
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let tampered_result = verify_eor_sumcheck::<F, E, _>(
             Some(&tampered),
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -907,7 +908,7 @@ mod tests {
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let missing_result = verify_eor_sumcheck::<F, E, _>(
             None,
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,

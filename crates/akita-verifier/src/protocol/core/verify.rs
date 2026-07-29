@@ -247,7 +247,7 @@ where
     let final_group_point = claims
         .group_point(final_group_index)
         .map_err(|_| AkitaError::InvalidProof)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, &final_group_point)
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, final_group_point)
         .map_err(|_| AkitaError::InvalidProof)?;
     validate_schedule_ring_dims(&schedule, setup.expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(setup.expanded.as_ref(), &schedule, &opening_batch)?;
