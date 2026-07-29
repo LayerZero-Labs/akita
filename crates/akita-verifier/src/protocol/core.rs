@@ -39,11 +39,11 @@ use akita_types::{
     scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
     AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
     EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding,
-    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
-    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    TerminalWitnessTranscriptParts,
+    FoldOpeningKind, FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
+    PointVariableSelection, PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams,
+    RingMultiplierOpeningPoint, RingOpeningPoint, RingRelationInstance, RingVec,
+    SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts, eor_required_at_level,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -65,6 +65,8 @@ pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPr
 pub(in crate::protocol::core) use fold::{
     verify_fold, verify_fold_eor, verify_terminal_fold_eor, FoldEorReplay, PreparedFoldPayload,
     PreparedFoldReplay, PreparedNextWitness,
+    verify_single_field_multi_group_root_prefix, verify_single_field_scalar_root_prefix,
+    verify_single_field_suffix_prefix, verify_single_field_terminal_suffix_prefix,
 };
 
 fn prepare_terminal_witness_replay<F, T>(

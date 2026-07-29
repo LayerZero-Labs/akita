@@ -1,0 +1,453 @@
+//! Extension-claim fold verifier prefix: extension-opening reduction replay.
+
+use super::super::*;
+use akita_types::dispatch_for_field;
+
+pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
+}
+
+#[derive(Clone, Copy)]
+struct EorReductionShape {
+    split_bits: usize,
+    width: usize,
+    num_rounds: usize,
+}
+
+struct EorSumcheckReplay<E: FieldCore> {
+    rho: Vec<E>,
+    final_claim: E,
+    final_factors: Vec<E>,
+}
+
+fn eor_reduction_shape<F, E>(
+    opening_num_vars: usize,
+    partials_len: usize,
+    num_claims: usize,
+) -> Result<EorReductionShape, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    let (split_bits, width) =
+        tensor_opening_split::<F, E>().map_err(|_| AkitaError::InvalidProof)?;
+    let num_rounds = opening_num_vars
+        .checked_sub(split_bits)
+        .ok_or(AkitaError::InvalidProof)?;
+    let expected_partials = width
+        .checked_mul(num_claims)
+        .ok_or(AkitaError::InvalidProof)?;
+    if width == 1 || partials_len != expected_partials {
+        return Err(AkitaError::InvalidProof);
+    }
+    Ok(EorReductionShape {
+        split_bits,
+        width,
+        num_rounds,
+    })
+}
+
+fn eor_input_claim_from_partials<F, E>(
+    partials: &[E],
+    shape: EorReductionShape,
+    eta: &[E],
+    row_coefficients: &[E],
+) -> Result<E, AkitaError>
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    if shape.width == 0
+        || !partials.len().is_multiple_of(shape.width)
+        || row_coefficients.len() != partials.len() / shape.width
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut input_claim = E::zero();
+    for (&row_coefficient, partials) in row_coefficients
+        .iter()
+        .zip(partials.chunks_exact(shape.width))
+    {
+        let row_partials = tensor_row_partials_from_columns::<F, E>(partials)?;
+        let claim = tensor_reduction_claim_from_rows::<F, E>(&row_partials, eta)?;
+        input_claim += row_coefficient * claim;
+    }
+    Ok(input_claim)
+}
+
+fn verify_eor_sumcheck<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    group_points: &[Vec<E>],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<Option<EorSumcheckReplay<E>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: ExtField<F> + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let num_claims = opening_batch.num_total_polynomials();
+    if openings.len() != num_claims
+        || row_coefficients.len() != num_claims
+        || group_points.len() != opening_batch.num_groups()
+    {
+        return Err(AkitaError::InvalidProof);
+    }
+    let Some(reduction) = extension_opening_reduction else {
+        if requires_reduction && <E as ExtField<F>>::EXT_DEGREE != 1 {
+            return Err(AkitaError::InvalidProof);
+        }
+        return Ok(None);
+    };
+    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let shape = eor_reduction_shape::<F, E>(
+        opening_batch.max_num_vars(),
+        reduction.partials.len(),
+        num_claims,
+    )?;
+    let mut claim_offset = 0usize;
+    for (group_index, group_point) in group_points.iter().enumerate() {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        if group_point.len() != group_layout.num_vars() || group_point.len() < shape.split_bits {
+            return Err(AkitaError::InvalidProof);
+        }
+        for opening in openings
+            .get(claim_offset..)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .take(group_layout.num_polynomials())
+        {
+            let partial_start = claim_offset
+                .checked_mul(shape.width)
+                .ok_or(AkitaError::InvalidProof)?;
+            let partial_end = partial_start
+                .checked_add(shape.width)
+                .ok_or(AkitaError::InvalidProof)?;
+            let partials = reduction
+                .partials
+                .get(partial_start..partial_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            let expected =
+                derive_tensor_extension_opening_claim_from_partials::<F, E>(group_point, partials)?;
+            if expected != *opening {
+                return Err(AkitaError::InvalidProof);
+            }
+            for partial in partials {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, partial);
+            }
+            claim_offset = claim_offset
+                .checked_add(1)
+                .ok_or(AkitaError::InvalidProof)?;
+        }
+    }
+    if claim_offset != num_claims {
+        return Err(AkitaError::InvalidProof);
+    }
+    let eta = (0..shape.split_bits)
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
+        .collect::<Vec<_>>();
+    let input_claim =
+        eor_input_claim_from_partials::<F, E>(&reduction.partials, shape, &eta, row_coefficients)?;
+    let (final_claim, rho) = verify_extension_opening_reduction_sumcheck::<F, T, E, _>(
+        input_claim,
+        shape.num_rounds,
+        &reduction.sumcheck,
+        transcript,
+        |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
+    )?;
+    let mut final_factors = Vec::with_capacity(group_points.len());
+    for group_point in group_points {
+        let tail_point = group_point
+            .get(shape.split_bits..)
+            .ok_or(AkitaError::InvalidProof)?;
+        let local_rho = rho
+            .get(..tail_point.len())
+            .ok_or(AkitaError::InvalidProof)?;
+        let mut factor = tensor_equality_factor_eval_at_point::<F, E>(tail_point, &eta, local_rho)?;
+        for &extra_challenge in rho
+            .get(tail_point.len()..)
+            .ok_or(AkitaError::InvalidProof)?
+        {
+            factor *= E::one() - extra_challenge;
+        }
+        final_factors.push(factor);
+    }
+    Ok(Some(EorSumcheckReplay {
+        rho,
+        final_claim,
+        final_factors,
+    }))
+}
+
+/// Verify the terminal fold's single-group extension-opening reduction.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_terminal_fold_eor<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    challenge_point: &[E],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    d_a: usize,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
+        verify_terminal_fold_eor_kernel::<F, E, T, D>(
+            extension_opening_reduction,
+            challenge_point,
+            openings,
+            row_coefficients,
+            opening_batch,
+            basis,
+            num_positions_per_block,
+            num_live_blocks,
+            d_a.trailing_zeros() as usize,
+            requires_reduction,
+            transcript,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_terminal_fold_eor_kernel<F, E, T, const D: usize>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    challenge_point: &[E],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    num_positions_per_block: usize,
+    num_live_blocks: usize,
+    alpha_bits: usize,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    if challenge_point.len() > opening_batch.max_num_vars() || opening_batch.num_groups() != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let mut eor_point = challenge_point.to_vec();
+    eor_point.resize(opening_batch.max_num_vars(), E::zero());
+    let replay = verify_eor_sumcheck::<F, E, T>(
+        extension_opening_reduction,
+        &[eor_point],
+        openings,
+        row_coefficients,
+        opening_batch,
+        requires_reduction,
+        transcript,
+    )?;
+    let prepared_points = if let Some(replay) = &replay {
+        let protocol_point =
+            ring_subfield_packed_extension_opening_point::<F, E, D>(replay.rho.len(), &replay.rho)?;
+        let prepared = prepare_opening_point::<F, E, D>(
+            &protocol_point,
+            basis,
+            num_positions_per_block,
+            num_live_blocks,
+            alpha_bits,
+        )?;
+        vec![prepared]
+    } else {
+        Vec::new()
+    };
+    Ok(FoldEorReplay {
+        prepared_points,
+        final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
+    })
+}
+
+/// Verify one fold's extension-opening reduction over all opening groups.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    group_points: &[Vec<E>],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    lp: &CommittedGroupParams,
+    requires_reduction: bool,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let replay = verify_eor_sumcheck::<F, E, T>(
+        extension_opening_reduction,
+        group_points,
+        openings,
+        row_coefficients,
+        opening_batch,
+        requires_reduction,
+        transcript,
+    )?;
+    let mut prepared_points = Vec::new();
+    if let Some(replay) = &replay {
+        prepared_points.reserve(group_points.len());
+        for (group_index, group_point) in group_points.iter().enumerate() {
+            let group_lp = lp.group_params(opening_batch, group_index)?;
+            let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+            let alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+            let tail_vars = group_point
+                .len()
+                .checked_sub(tensor_opening_split::<F, E>()?.0)
+                .ok_or(AkitaError::InvalidProof)?;
+            let local_rho = replay
+                .rho
+                .get(..tail_vars)
+                .ok_or(AkitaError::InvalidProof)?;
+            let prepared = dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_dims.d_a(),
+                |D| {
+                    let protocol_point = ring_subfield_packed_extension_opening_point::<F, E, D>(
+                        local_rho.len(),
+                        local_rho,
+                    )?;
+                    prepare_opening_point::<F, E, D>(
+                        &protocol_point,
+                        basis,
+                        group_lp.num_positions_per_block(),
+                        group_lp.num_live_blocks(),
+                        alpha_bits,
+                    )
+                }
+            )?;
+            prepared_points.push(prepared);
+        }
+    }
+    Ok(FoldEorReplay {
+        prepared_points,
+        final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_algebra::CompressedUniPoly;
+    use akita_field::{FpExt4, Prime32Offset99};
+    use akita_sumcheck::SumcheckProof;
+    use akita_transcript::AkitaTranscript;
+    use akita_types::{PolynomialGroupLayout, EXTENSION_OPENING_REDUCTION_DEGREE};
+
+    type F = Prime32Offset99;
+    type E = FpExt4<F>;
+
+    fn extension_point(num_vars: usize, offset: u64) -> Vec<E> {
+        (0..num_vars)
+            .map(|index| {
+                let value = offset + index as u64;
+                E::from_base_slice(&[
+                    F::from_u64(value + 1),
+                    F::from_u64(value + 2),
+                    F::from_u64(value + 3),
+                    F::from_u64(value + 4),
+                ])
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recursive_setup_prefix_groups_share_one_max_tail_eor_and_reject_tampering() {
+        const SETUP_PREFIX_VARS: usize = 12;
+        const WITNESS_VARS: usize = 20;
+        let opening_batch = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::singleton(SETUP_PREFIX_VARS),
+            PolynomialGroupLayout::singleton(WITNESS_VARS),
+        ])
+        .expect("recursive setup-prefix opening layout");
+        let group_points = vec![
+            extension_point(SETUP_PREFIX_VARS, 10),
+            extension_point(WITNESS_VARS, 100),
+        ];
+        let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
+        let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
+        let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
+        let max_tail_rounds = WITNESS_VARS - split_bits;
+        let reduction = ExtensionOpeningReductionProof {
+            partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
+            sumcheck: SumcheckProof {
+                round_polys: (0..max_tail_rounds)
+                    .map(|_| CompressedUniPoly {
+                        coeffs_except_linear_term: vec![
+                            E::zero();
+                            EXTENSION_OPENING_REDUCTION_DEGREE
+                        ],
+                    })
+                    .collect(),
+            },
+        };
+
+        let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let replay = verify_eor_sumcheck::<F, E, _>(
+            Some(&reduction),
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut transcript,
+        )
+        .expect("recursive setup-prefix grouped EOR")
+        .expect("extension claims require EOR");
+        assert_eq!(replay.rho.len(), max_tail_rounds);
+        assert_eq!(replay.final_factors.len(), 2);
+
+        let mut tampered = reduction.clone();
+        tampered.partials[0] += E::one();
+        let mut tampered_transcript =
+            AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let tampered_result = verify_eor_sumcheck::<F, E, _>(
+            Some(&tampered),
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut tampered_transcript,
+        );
+        assert!(
+            matches!(tampered_result, Err(AkitaError::InvalidProof)),
+            "tampered setup-prefix EOR partial must reject"
+        );
+
+        let mut missing_transcript =
+            AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
+        let missing_result = verify_eor_sumcheck::<F, E, _>(
+            None,
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            true,
+            &mut missing_transcript,
+        );
+        assert!(
+            matches!(missing_result, Err(AkitaError::InvalidProof)),
+            "missing setup-prefix EOR must reject for extension claims"
+        );
+    }
+}

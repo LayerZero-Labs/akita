@@ -913,6 +913,62 @@ where
         && num_vars >= ring_d.trailing_zeros() as usize
 }
 
+/// Fold level kind for extension-opening reduction presence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FoldOpeningKind {
+    /// Root fold: EOR only when root tensor projection is enabled.
+    Root,
+    /// Suffix / recursive fold: EOR whenever claim field is a proper extension.
+    Suffix,
+}
+
+/// Sole per-level authority for whether extension-opening reduction is required.
+///
+/// When `[ExtField : Field] == 1` (claim field coincides with coefficient field),
+/// both arms are false. When the claim field is a proper extension, suffix levels
+/// always require EOR and root levels defer to [`root_tensor_projection_enabled`].
+#[inline]
+pub fn eor_required_at_level<F, E>(
+    kind: FoldOpeningKind,
+    ring_d: usize,
+    opening_num_vars: usize,
+) -> bool
+where
+    F: FieldCore,
+    E: ExtField<F>,
+{
+    match kind {
+        FoldOpeningKind::Root => root_tensor_projection_enabled::<F, E>(ring_d, opening_num_vars),
+        FoldOpeningKind::Suffix => E::EXT_DEGREE > 1,
+    }
+}
+
+/// Planner-facing twin of [`eor_required_at_level`] that takes extension width
+/// instead of monomorphizing on `ExtField`.
+#[inline]
+pub fn eor_required_for_width(
+    kind: FoldOpeningKind,
+    extension_opening_width: usize,
+    ring_d: usize,
+    opening_num_vars: usize,
+) -> bool {
+    match kind {
+        FoldOpeningKind::Root => {
+            let width = extension_opening_width;
+            let Some(double_width) = width.checked_mul(2) else {
+                return false;
+            };
+            width > 1
+                && width.is_power_of_two()
+                && ring_d.is_power_of_two()
+                && ring_d >= double_width
+                && ring_d.is_multiple_of(width)
+                && opening_num_vars >= ring_d.trailing_zeros() as usize
+        }
+        FoldOpeningKind::Suffix => extension_opening_width > 1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1004,6 +1060,31 @@ mod tests {
     fn root_tensor_projection_gate_requires_room_for_signed_subfield_basis() {
         assert!(root_tensor_projection_enabled::<F, E>(8, 3));
         assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
+    }
+
+    #[test]
+    fn eor_required_at_level_matches_geometry_table() {
+        // Claim field coincides with coefficient field: never.
+        assert!(!eor_required_at_level::<F, F>(FoldOpeningKind::Root, 64, 10));
+        assert!(!eor_required_at_level::<F, F>(
+            FoldOpeningKind::Suffix,
+            64,
+            10
+        ));
+
+        // Proper extension: suffix always; root follows tensor gate.
+        assert!(eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, 8, 1));
+        assert!(eor_required_at_level::<F, E>(FoldOpeningKind::Root, 8, 3));
+        assert!(!eor_required_at_level::<F, E>(FoldOpeningKind::Root, 4, 2));
+
+        assert_eq!(
+            eor_required_for_width(FoldOpeningKind::Root, 4, 8, 3),
+            eor_required_at_level::<F, E>(FoldOpeningKind::Root, 8, 3)
+        );
+        assert_eq!(
+            eor_required_for_width(FoldOpeningKind::Suffix, 4, 8, 1),
+            eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, 8, 1)
+        );
     }
 
     #[test]

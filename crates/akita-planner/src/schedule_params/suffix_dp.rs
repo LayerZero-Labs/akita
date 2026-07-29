@@ -537,6 +537,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         level,
         eor_key,
         current_witness_len,
+        policy.ring_dimension,
     ) else {
         let result = empty_suffix_result();
         memo.insert(memo_key, Arc::clone(&result));

@@ -95,8 +95,19 @@ pub fn extension_opening_reduction_level_bytes(
     fold_level: usize,
     key: PolynomialGroupLayout,
     input_witness_len: usize,
+    ring_d: usize,
 ) -> Result<usize, AkitaError> {
-    if extension_opening_width <= 1 {
+    let kind = if fold_level == 0 {
+        crate::FoldOpeningKind::Root
+    } else {
+        crate::FoldOpeningKind::Suffix
+    };
+    let opening_num_vars = if fold_level == 0 {
+        key.num_vars()
+    } else {
+        padded_boolean_opening_vars(input_witness_len)?
+    };
+    if !crate::eor_required_for_width(kind, extension_opening_width, ring_d, opening_num_vars) {
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
@@ -105,10 +116,7 @@ pub fn extension_opening_reduction_level_bytes(
             key.num_vars(),
         )
     } else {
-        (
-            extension_opening_width,
-            padded_boolean_opening_vars(input_witness_len)?,
-        )
+        (extension_opening_width, opening_num_vars)
     };
     extension_opening_reduction_proof_bytes(
         challenge_field_bits,
