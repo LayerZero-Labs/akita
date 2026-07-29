@@ -1054,6 +1054,10 @@ constructs a common value point.
 **Goal.** Remove the witness carry and let the successor consume the independent
 Stage 2 and Stage 3 claims directly.
 
+**Status.** Implemented on this branch. Stage 3 proves only the setup product,
+while recursive successors consume the Stage 2 witness point and Stage 3 setup
+point as independent group-owned claims.
+
 **Changes.**
 
 1. Simplify the Stage 3 prover to one setup-product term and one native setup

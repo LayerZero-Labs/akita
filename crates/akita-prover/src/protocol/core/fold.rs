@@ -654,11 +654,7 @@ where
         }
     )?;
     drop(trace_preparation_span);
-    let ring_bits = rs
-        .relation_address_geometry
-        .common_relation_witness_variable_count();
-    let col_bits = rs.relation_address_geometry.relation_lane_variable_count();
-    let live_x_cols = rs.relation_address_geometry.live_relation_lane_count();
+    let relation_address_geometry = rs.relation_address_geometry;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -692,26 +688,20 @@ where
             &tau1,
             alpha,
             &sumcheck_challenges,
-            w_eval,
-            logical_w.as_i8_digits(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            relation_address_geometry,
             transcript,
         )?,
         None => None,
     };
-    let (stage3_sumcheck_proof, next_opening_point, next_opening, setup_prefix_opening) =
-        if let Some(stage3) = stage3_sumcheck_proof {
-            (
-                Some(stage3.proof),
-                stage3.next_w_point,
-                stage3.next_w_eval,
-                Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
-            )
-        } else {
-            (None, sumcheck_challenges, w_eval, None)
-        };
+    let (stage3_sumcheck_proof, setup_prefix_opening) = if let Some(stage3) = stage3_sumcheck_proof
+    {
+        (
+            Some(stage3.proof),
+            Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+        )
+    } else {
+        (None, None)
+    };
     let stage1_proof = stage1_proof.ok_or_else(|| {
         AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
     })?;
@@ -756,8 +746,8 @@ where
             binding: next_binding,
             hint: committed_hint,
             log_basis: next_params.log_basis_inner(),
-            sumcheck_challenges: next_opening_point,
-            opening: next_opening,
+            sumcheck_challenges,
+            opening: w_eval,
             setup_prefix_opening,
         },
     })
@@ -886,11 +876,7 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     tau1: &[E],
     alpha: E,
     sumcheck_challenges: &[E],
-    stage2_next_w_eval: E,
-    logical_w: &[i8],
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    relation_address_geometry: akita_types::RelationAddressGeometry,
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
@@ -905,18 +891,13 @@ where
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let role_dims = instance.role_dims();
             let _stage3_span = tracing::info_span!(
                 "stage3_sumcheck",
                 level,
-                witness_len = logical_w.len(),
                 stage2_rounds = sumcheck_challenges.len(),
                 d_a = lp.d_a(),
-                d_b = role_dims.d_b(),
-                d_d = role_dims.d_d(),
             )
             .entered();
-            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
             let mut stage3_prover = {
                 let _prepare_span = tracing::info_span!("stage3_prover_prepare").entered();
                 AkitaStage3Prover::new::<T>(
@@ -928,31 +909,21 @@ where
                     tau1,
                     alpha,
                     sumcheck_challenges,
-                    stage2_next_w_eval,
-                    logical_w,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    level,
-                    eta,
+                    relation_address_geometry,
                     transcript,
                 )?
             };
             let output = stage3_prover.prove::<T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
-            transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
             Ok(Some(Stage3ProveOutput {
                 proof: SetupSumcheckProof {
                     claim: output.setup_product_claim,
                     setup_prefix_eval: output.setup_prefix_eval,
-                    next_w_eval: output.next_w_eval,
                     sumcheck: output.sumcheck,
                 },
-                next_w_point: output.next_w_point,
                 setup_prefix_point: output.setup_prefix_point,
                 setup_prefix_eval: output.setup_prefix_eval,
-                next_w_eval: output.next_w_eval,
             }))
         }
         SetupContributionMode::Direct => Ok(None),

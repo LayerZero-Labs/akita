@@ -269,9 +269,7 @@ where
         };
         current_state = SuffixVerifierState {
             opening_point: challenges,
-            opening: fold
-                .stage3_sumcheck_proof()
-                .map_or_else(|| fold.next_w_eval(), |proof| proof.next_w_eval),
+            opening: fold.next_w_eval(),
             witness: next_witness,
             basis: BasisMode::Lagrange,
             witness_len: step.output_witness_len,

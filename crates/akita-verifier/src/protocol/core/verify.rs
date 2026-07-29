@@ -182,10 +182,6 @@ where
         (None, Some(t_state)) => SuffixWitnessState::TerminalT(t_state),
         _ => return Err(AkitaError::InvalidProof),
     };
-    let root_next_opening = proof
-        .root
-        .stage3_sumcheck_proof()
-        .map_or_else(|| proof.root.next_w_eval(), |stage3| stage3.next_w_eval);
     verify_suffix::<F, E, T>(
         &proof.recursive_folds,
         &proof.terminal,
@@ -194,7 +190,7 @@ where
         schedule,
         SuffixVerifierState {
             opening_point: root_challenges,
-            opening: root_next_opening,
+            opening: proof.root.next_w_eval(),
             witness: root_witness,
             basis: BasisMode::Lagrange,
             witness_len: root_step.output_witness_len,

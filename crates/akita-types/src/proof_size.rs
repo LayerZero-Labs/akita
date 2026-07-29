@@ -253,7 +253,6 @@ mod tests {
         SetupSumcheckProof {
             claim: F::zero(),
             setup_prefix_eval: F::zero(),
-            next_w_eval: F::zero(),
             sumcheck: akita_sumcheck::SumcheckProof {
                 round_polys: (0..rounds)
                     .map(|_| CompressedUniPoly {
@@ -557,7 +556,6 @@ mod tests {
                     let proof = dummy_stage3_proof::<F>(d, setup_ring_len, output_witness_len);
                     let serialized = proof.claim.serialized_size(Compress::No)
                         + proof.setup_prefix_eval.serialized_size(Compress::No)
-                        + proof.next_w_eval.serialized_size(Compress::No)
                         + proof.sumcheck.serialized_size(Compress::No);
                     assert_eq!(
                         stage3_setup_product_bytes(CHALLENGE_BITS, d, setup_ring_len, output_witness_len),
