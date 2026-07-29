@@ -482,7 +482,7 @@ impl RingRelationProver {
         // and validate the ring count under `d_b` (no-panic length gate).
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         #[cfg(feature = "compression-diagnostics")]
-        let mut commitment_group_ranges = Vec::with_capacity(num_groups);
+        let mut compression_b_sources: Vec<(usize, Vec<F>)> = Vec::with_capacity(num_groups);
         let commit_group_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -502,10 +502,8 @@ impl RingRelationProver {
                 ));
             }
             #[cfg(feature = "compression-diagnostics")]
-            let group_start = commitment_row_coeffs.len();
+            compression_b_sources.push((group_index, group_commitment.rows().coeffs().to_vec()));
             commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
-            #[cfg(feature = "compression-diagnostics")]
-            commitment_group_ranges.push((group_index, group_start..commitment_row_coeffs.len()));
         }
         for group_index in 0..num_groups {
             let group_hint = block_claims.group_hint(group_index)?;
@@ -655,36 +653,31 @@ impl RingRelationProver {
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
         #[cfg(feature = "compression-diagnostics")]
         {
-            let mut sources = commitment_group_ranges
+            let mut sources = compression_b_sources
                 .iter()
-                .map(|(group_index, range)| {
-                    Ok(CompressionDiagnosticSource {
-                        kind: CompressionDiagnosticSourceKind::Outer {
-                            group_index: *group_index,
-                        },
-                        coefficients: commitment_rows.coeffs().get(range.clone()).ok_or_else(
-                            || {
-                                AkitaError::InvalidSetup(
-                                    "compression B source range exceeds commitment rows".into(),
-                                )
-                            },
-                        )?,
-                    })
+                .map(|(group_index, coefficients)| CompressionDiagnosticSource {
+                    kind: CompressionDiagnosticSourceKind::Outer {
+                        group_index: *group_index,
+                    },
+                    coefficients: coefficients.as_slice(),
                 })
-                .collect::<Result<Vec<_>, AkitaError>>()?;
+                .collect::<Vec<_>>();
             if !v.coeffs().is_empty() {
                 sources.push(CompressionDiagnosticSource {
                     kind: CompressionDiagnosticSourceKind::Opening,
                     coefficients: v.coeffs(),
                 });
             }
-            let report = compute_shadow_compressed_commitments(ring_switch_ctx, &sources).map_err(
-                |err| {
-                    AkitaError::InvalidInput(format!(
-                        "compressed-commitment diagnostic failed: {err:?}"
-                    ))
-                },
-            )?;
+            let report = compute_shadow_compressed_commitments(
+                ring_switch_ctx,
+                lp.outer_commit_matrix.sis_modulus_profile(),
+                &sources,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "compressed-commitment diagnostic failed: {err:?}"
+                ))
+            })?;
             let cache_bytes_added = report
                 .cache_bytes_before
                 .zip(report.cache_bytes_after)
@@ -692,7 +685,6 @@ impl RingRelationProver {
             tracing::info!(
                 sources = report.sources,
                 maps = report.maps,
-                batches = report.groups.len(),
                 source_bytes = report.source_bytes,
                 terminal_bytes = report.terminal_bytes,
                 cache_bytes_before = report.cache_bytes_before,

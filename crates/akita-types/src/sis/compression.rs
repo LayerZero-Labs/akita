@@ -1,17 +1,13 @@
 //! Narrow SIS coverage for diagnostic compressed commitments.
 //!
 //! This coverage is deliberately separate from the production A/B/D matrix
-//! roles and schedule identity. It prices only the F/H matrices exercised by
-//! the shadow compression path.
+//! roles and schedule identity. It prices only the nine rank-one F/H cells
+//! exercised by the 1--16 KiB shadow compression path.
 
-use super::generated_compression_sis_table::sis_max_widths;
 use super::{SisModulusProfileId, SisSecurityPolicyId};
 
 /// Coefficient infinity norm of a negative-binary compression matrix.
 pub const COMPRESSION_SIS_COEFF_LINF_BOUND: u128 = 1;
-
-/// Largest module rank generated for diagnostic compression matrices.
-pub const COMPRESSION_SIS_MAX_MODULE_RANK: u32 = 1;
 
 /// One exact cell in the diagnostic compressed-commitment SIS surface.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,13 +16,22 @@ pub struct CompressionSisCell {
     pub modulus_profile: SisModulusProfileId,
     /// Ring dimension.
     pub ring_dimension: u32,
-    /// Coefficient infinity bound.
-    pub coeff_linf_bound: u128,
-    /// Largest generated module rank.
-    pub max_module_rank: u32,
-    /// Largest required input width.
-    pub required_max_width: u64,
+    /// Largest ADPS16-quantum-secure input width at rank one.
+    pub sis_max_width: u64,
 }
+
+/// Nine rank-one cells: `(profile, ring_dimension, sis_max_width)`.
+const COMPRESSION_SIS_CELLS: &[(SisModulusProfileId, u32, u64)] = &[
+    (SisModulusProfileId::Q128OffsetA7F7, 8, 508),
+    (SisModulusProfileId::Q128OffsetA7F7, 16, 7_077),
+    (SisModulusProfileId::Q128OffsetA7F7, 32, 4_096),
+    (SisModulusProfileId::Q64Offset59, 16, 254),
+    (SisModulusProfileId::Q64Offset59, 32, 3_538),
+    (SisModulusProfileId::Q64Offset59, 64, 2_048),
+    (SisModulusProfileId::Q32Offset99, 32, 127),
+    (SisModulusProfileId::Q32Offset99, 64, 1_769),
+    (SisModulusProfileId::Q32Offset99, 128, 1_024),
+];
 
 /// Return the exact diagnostic compression cell, if it is in scope.
 #[must_use]
@@ -38,28 +43,23 @@ pub fn compression_sis_cell(
     if coeff_linf_bound != COMPRESSION_SIS_COEFF_LINF_BOUND {
         return None;
     }
-    let required_max_width = match (modulus_profile, ring_dimension) {
-        (SisModulusProfileId::Q128OffsetA7F7, 32) => 4_096,
-        (SisModulusProfileId::Q128OffsetA7F7, 16) => 4_096,
-        (SisModulusProfileId::Q128OffsetA7F7, 8) => 256,
-        (SisModulusProfileId::Q64Offset59, 64) => 2_048,
-        (SisModulusProfileId::Q64Offset59, 32) => 2_048,
-        (SisModulusProfileId::Q64Offset59, 16) => 128,
-        (SisModulusProfileId::Q32Offset99, 128) => 1_024,
-        (SisModulusProfileId::Q32Offset99, 64) => 1_024,
-        (SisModulusProfileId::Q32Offset99, 32) => 64,
-        _ => return None,
-    };
-    Some(CompressionSisCell {
-        modulus_profile,
-        ring_dimension,
-        coeff_linf_bound,
-        max_module_rank: COMPRESSION_SIS_MAX_MODULE_RANK,
-        required_max_width,
-    })
+    COMPRESSION_SIS_CELLS
+        .iter()
+        .copied()
+        .find(|&(profile, dimension, _)| profile == modulus_profile && dimension == ring_dimension)
+        .map(
+            |(modulus_profile, ring_dimension, sis_max_width)| CompressionSisCell {
+                modulus_profile,
+                ring_dimension,
+                sis_max_width,
+            },
+        )
 }
 
 /// Minimum ADPS16-quantum-secure module rank for one compression matrix.
+///
+/// The diagnostic ladder is structurally rank one, so this returns `Some(1)`
+/// iff `width` is nonzero and at most the cell's SIS-certified max width.
 #[must_use]
 pub fn min_compression_secure_rank(
     policy: SisSecurityPolicyId,
@@ -68,15 +68,11 @@ pub fn min_compression_secure_rank(
     coeff_linf_bound: u128,
     width: u64,
 ) -> Option<usize> {
-    let cell = compression_sis_cell(modulus_profile, ring_dimension, coeff_linf_bound)?;
-    if width == 0 || width > cell.required_max_width {
+    if policy != SisSecurityPolicyId::Quantum128BitADPS16 {
         return None;
     }
-    sis_max_widths(policy, modulus_profile, ring_dimension, coeff_linf_bound)?
-        .iter()
-        .take(usize::try_from(cell.max_module_rank).ok()?)
-        .position(|&max_width| width <= max_width)
-        .map(|index| index + 1)
+    let cell = compression_sis_cell(modulus_profile, ring_dimension, coeff_linf_bound)?;
+    (width > 0 && width <= cell.sis_max_width).then_some(1)
 }
 
 #[cfg(test)]
@@ -87,14 +83,9 @@ mod tests {
 
     #[test]
     fn coverage_is_exactly_the_nine_rank_one_compression_cells() {
-        for (profile, supported) in [
-            (SisModulusProfileId::Q128OffsetA7F7, [8, 16, 32]),
-            (SisModulusProfileId::Q64Offset59, [16, 32, 64]),
-            (SisModulusProfileId::Q32Offset99, [32, 64, 128]),
-        ] {
-            for d in supported {
-                assert!(compression_sis_cell(profile, d, 1).is_some());
-            }
+        assert_eq!(COMPRESSION_SIS_CELLS.len(), 9);
+        for &(profile, d, _) in COMPRESSION_SIS_CELLS {
+            assert!(compression_sis_cell(profile, d, 1).is_some());
         }
 
         assert!(compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 64, 1).is_none());
@@ -104,45 +95,36 @@ mod tests {
         assert_eq!(
             compression_sis_cell(SisModulusProfileId::Q128OffsetA7F7, 16, 1)
                 .expect("first q128 map")
-                .required_max_width,
-            4_096
+                .sis_max_width,
+            7_077
         );
         assert_eq!(
             compression_sis_cell(SisModulusProfileId::Q32Offset99, 32, 1)
                 .expect("terminal q32 map")
-                .required_max_width,
-            64
+                .sis_max_width,
+            127
         );
     }
 
     #[test]
     fn every_reachable_width_has_a_rank_in_the_narrow_table() {
-        for (profile, d) in [
-            (SisModulusProfileId::Q128OffsetA7F7, 8),
-            (SisModulusProfileId::Q128OffsetA7F7, 16),
-            (SisModulusProfileId::Q128OffsetA7F7, 32),
-            (SisModulusProfileId::Q64Offset59, 16),
-            (SisModulusProfileId::Q64Offset59, 32),
-            (SisModulusProfileId::Q64Offset59, 64),
-            (SisModulusProfileId::Q32Offset99, 32),
-            (SisModulusProfileId::Q32Offset99, 64),
-            (SisModulusProfileId::Q32Offset99, 128),
-        ] {
-            let cell = compression_sis_cell(profile, d, 1).expect("cell");
+        for &(profile, d, sis_max_width) in COMPRESSION_SIS_CELLS {
+            assert_eq!(
+                min_compression_secure_rank(
+                    SisSecurityPolicyId::Quantum128BitADPS16,
+                    profile,
+                    d,
+                    1,
+                    sis_max_width
+                ),
+                Some(1)
+            );
             assert!(min_compression_secure_rank(
                 SisSecurityPolicyId::Quantum128BitADPS16,
                 profile,
                 d,
                 1,
-                cell.required_max_width
-            )
-            .is_some());
-            assert!(min_compression_secure_rank(
-                SisSecurityPolicyId::Quantum128BitADPS16,
-                profile,
-                d,
-                1,
-                cell.required_max_width + 1
+                sis_max_width + 1
             )
             .is_none());
         }
@@ -150,14 +132,42 @@ mod tests {
 
     #[test]
     fn reachable_negative_binary_widths_need_no_exactness_tail() {
+        use crate::{prepare_compression_ntt_cache, FlatMatrix};
+        use akita_algebra::CyclotomicRing;
+
+        // Dims that sit in both the protocol NTT band and the compression ladder.
         assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 32>(4_096, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 16>(4_096, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime128OffsetA7F7, 8>(256, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 64>(2_048, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 32>(2_048, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime64Offset59, 16>(128, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 128>(1_024, 1).unwrap());
         assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 64>(1_024, 1).unwrap());
-        assert!(!ntt_cache_requires_i16_tail::<Prime32Offset99, 32>(64, 1).unwrap());
+
+        // Compression-only dims must use the purpose-aware prep path.
+        let q128_d8 = FlatMatrix::from_ring_slice(&vec![
+            CyclotomicRing::<Prime128OffsetA7F7, 8>::zero();
+            256
+        ]);
+        let q128_cache =
+            prepare_compression_ntt_cache(q128_d8.ring_view::<8>(1, 256).expect("view"), 256)
+                .expect("q128/D8 cache");
+        assert!(!q128_cache.has_i16_tail());
+        assert!(!q128_cache.has_cyclic());
+
+        let q64_d16 =
+            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime64Offset59, 16>::zero(); 128]);
+        let q64_cache =
+            prepare_compression_ntt_cache(q64_d16.ring_view::<16>(1, 128).expect("view"), 128)
+                .expect("q64/D16 cache");
+        assert!(!q64_cache.has_i16_tail());
+        assert!(!q64_cache.has_cyclic());
+
+        let q32_d32 =
+            FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime32Offset99, 32>::zero(); 64]);
+        let q32_cache =
+            prepare_compression_ntt_cache(q32_d32.ring_view::<32>(1, 64).expect("view"), 64)
+                .expect("q32/D32 cache");
+        assert!(!q32_cache.has_i16_tail());
+        assert!(!q32_cache.has_cyclic());
     }
 }

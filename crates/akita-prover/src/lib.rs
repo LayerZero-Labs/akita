@@ -43,8 +43,9 @@ pub use compute::{
     RootTensorSource, RuntimeCommitBackendFor, RuntimeOpeningProveBackendFor,
     RuntimeProveBackendFor, RuntimeRecursiveWitnessProveBackend, RuntimeRingSwitchProveBackend,
     RuntimeRootCommitBackend, RuntimeRootCommitPoly, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    SparseRingCommitRowsPlan, SuffixOpeningProveBackend, SuffixTensorProveBackend, TensorBackendFor,
-    TensorCluster, TieredProveStacks, UniformProverStack, RECURSIVE_SUFFIX_RING_DIMENSIONS,
+    SparseRingCommitRowsPlan, SuffixOpeningProveBackend, SuffixTensorProveBackend,
+    TensorBackendFor, TensorCluster, TieredProveStacks, UniformProverStack,
+    RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use protocol::fold_grind::ProverTranscriptGrind;
 pub use protocol::sumcheck::{DigitRangeProver, RelationRangeImageProver};

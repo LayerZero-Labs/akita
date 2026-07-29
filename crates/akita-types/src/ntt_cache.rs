@@ -997,11 +997,9 @@ mod tests {
             Ok(ProtocolCrtNttParams::Q128(_))
         ));
         let flat = flat_zeros::<Prime128OffsetA7F7, 8>(1);
-        let cache = prepare_compression_ntt_cache(
-            flat.ring_view::<8>(1, 1).expect("matrix view"),
-            1,
-        )
-        .expect("compression-only D8 cache");
+        let cache =
+            prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"), 1)
+                .expect("compression-only D8 cache");
         assert!(!cache.has_cyclic());
         assert!(matches!(
             prepare_ntt_cache(

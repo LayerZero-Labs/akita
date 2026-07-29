@@ -28,7 +28,6 @@ pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
 pub mod fold_witness_grind;
-mod generated_compression_sis_table;
 mod generated_sis_table;
 pub mod norm_bound;
 

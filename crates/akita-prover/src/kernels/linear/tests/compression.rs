@@ -1,7 +1,9 @@
 use super::schoolbook_digit_mat_vec;
 use crate::kernels::linear::compression_rows;
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
+use akita_field::{
+    CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
+};
 use akita_types::layout::FlatMatrix;
 use akita_types::prepare_compression_ntt_cache;
 

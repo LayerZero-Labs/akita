@@ -36,14 +36,8 @@ pub struct CompressionDiagnosticMap {
 /// Complete shadow-compression plan for one B or D image.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompressionDiagnosticPlan {
-    /// Exact SIS modulus profile.
-    pub modulus_profile: SisModulusProfileId,
-    /// Canonical field bit length.
-    pub field_bits: usize,
     /// Canonical field byte length.
     pub field_bytes: usize,
-    /// Number of coefficients in the unsliced source image.
-    pub source_coefficients: usize,
     /// Selected negative-binary maps for the complete source image.
     pub maps: Vec<CompressionDiagnosticMap>,
 }
@@ -164,13 +158,7 @@ pub fn plan_compression_diagnostic(
         first_ring_dimension,
         source_coefficients,
     )?;
-    Ok(CompressionDiagnosticPlan {
-        modulus_profile,
-        field_bits,
-        field_bytes,
-        source_coefficients,
-        maps,
-    })
+    Ok(CompressionDiagnosticPlan { field_bytes, maps })
 }
 
 #[cfg(test)]

@@ -216,10 +216,10 @@ cargo run -p akita-sis-estimator --release --features parallel \
   --format rust-split --profile local-minimum --progress-every 500
 ```
 
-Regenerate the six diagnostic compressed-commitment cells. Each cap is the
-The compression certificate contains only the nine rank-one cells used by the
-1--16 KiB diagnostic ladder. The established six cells retain their exact
-rank-one boundaries; the three doubled-dimension cells stop at the largest
+Regenerate the nine diagnostic compressed-commitment cells. The compression
+certificate contains only the **nine rank-one cells** used by the
+**1--16 KiB diagnostic ladder**. The established six cells retain their exact
+rank-one SIS boundaries; the three doubled-dimension cells stop at the largest
 reachable width:
 
 ```bash
@@ -240,7 +240,7 @@ done
 The checked-in merged certificate is
 `scripts/sis_golden/compression_infinity_width_table.csv`; its compact runtime
 projection lives in
-`crates/akita-types/src/sis/generated_compression_sis_table.rs`. These
+`crates/akita-types/src/sis/compression.rs`. These
 supplemental cells do not change the production A/B/D SIS table or schedule
 identity.
 

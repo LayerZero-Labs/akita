@@ -671,9 +671,8 @@ where
         for digits in digit_vectors {
             validate_digit_row_request(1, digits.len(), total_ring_elements)?;
         }
-        prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
-            compression_rows(ntt, digit_vectors)
-        })
+        prepared
+            .with_compression_ntt::<D, _>(input_width, |ntt| compression_rows(ntt, digit_vectors))
     }
 }
 

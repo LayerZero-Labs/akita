@@ -7,9 +7,7 @@ use akita_planner::compression_diagnostic::{
     plan_compression_diagnostic, CompressionDiagnosticMap,
 };
 use akita_types::sis::SisModulusProfileId;
-use akita_types::{
-    dispatch_for_field, field_modulus, protocol_dispatch_tier, ProtocolRingDispatchTierId, RingVec,
-};
+use akita_types::{dispatch_for_field, field_modulus, RingVec};
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
@@ -36,20 +34,6 @@ pub(crate) struct CompressionDiagnosticReport {
     pub(crate) cache_bytes_before: Option<usize>,
     pub(crate) cache_bytes_after: Option<usize>,
     pub(crate) elapsed: Duration,
-    pub(crate) groups: Vec<CompressionDiagnosticGroupReport>,
-}
-
-/// One equal-shape compression batch measured by the diagnostic.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CompressionDiagnosticGroupReport {
-    pub(crate) map_index: usize,
-    pub(crate) ring_dimension: usize,
-    pub(crate) input_width: usize,
-    pub(crate) batch_size: usize,
-    pub(crate) input_bytes: usize,
-    pub(crate) output_bytes: usize,
-    pub(crate) digitization_elapsed: Duration,
-    pub(crate) kernel_elapsed: Duration,
 }
 
 struct WorkItem<F> {
@@ -57,21 +41,6 @@ struct WorkItem<F> {
     field_bytes: usize,
     maps: Vec<CompressionDiagnosticMap>,
     coefficients: Vec<F>,
-}
-
-fn modulus_profile<F: CanonicalField>() -> Result<SisModulusProfileId, AkitaError> {
-    let profile = match protocol_dispatch_tier::<F>() {
-        ProtocolRingDispatchTierId::Fp128 => SisModulusProfileId::Q128OffsetA7F7,
-        ProtocolRingDispatchTierId::Fp64 => SisModulusProfileId::Q64Offset59,
-        ProtocolRingDispatchTierId::Fp32 => SisModulusProfileId::Q32Offset99,
-    };
-    if !profile.matches_modulus(field_modulus::<F>()) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "compression diagnostic has no SIS profile for field modulus {}",
-            field_modulus::<F>()
-        )));
-    }
-    Ok(profile)
 }
 
 fn negative_binary_digits<F: CanonicalField, const D: usize>(
@@ -107,7 +76,7 @@ fn execute_group<F, B, const D: usize>(
     items: &mut [WorkItem<F>],
     item_indices: &[usize],
     map_index: usize,
-) -> Result<CompressionDiagnosticGroupReport, AkitaError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -176,23 +145,25 @@ where
             AkitaError::InvalidSetup("compression output byte total overflow".into())
         })
     })?;
-    Ok(CompressionDiagnosticGroupReport {
+    tracing::info!(
         map_index,
-        ring_dimension: D,
-        input_width: first_map.input_width,
-        batch_size: item_indices.len(),
+        ring_dimension = D,
+        input_width = first_map.input_width,
+        batch_size = item_indices.len(),
         input_bytes,
         output_bytes,
-        digitization_elapsed,
-        kernel_elapsed,
-    })
+        digitization_micros = duration_micros(digitization_elapsed),
+        kernel_micros = duration_micros(kernel_elapsed),
+        "shadow compressed-commitment batch"
+    );
+    Ok(())
 }
 
 fn execute_stage<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     items: &mut [WorkItem<F>],
     map_index: usize,
-) -> Result<Vec<CompressionDiagnosticGroupReport>, AkitaError>
+) -> Result<(), AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -206,31 +177,35 @@ where
                 .push(item_index);
         }
     }
-    groups
-        .into_iter()
-        .map(|((ring_dimension, _), item_indices)| {
-            dispatch_for_field!(
-                akita_types::ProtocolDispatchSlot::Compression,
-                F,
-                ring_dimension,
-                |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
-            )
-        })
-        .collect()
+    for ((ring_dimension, _), item_indices) in groups {
+        dispatch_for_field!(
+            akita_types::ProtocolDispatchSlot::Compression,
+            F,
+            ring_dimension,
+            |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
+        )?;
+    }
+    Ok(())
 }
 
 /// Compute compressed commitments for live B/D images and retain only metrics.
 pub(crate) fn compute_shadow_compressed_commitments<F, B>(
     ctx: &OperationCtx<'_, F, B>,
+    profile: SisModulusProfileId,
     sources: &[CompressionDiagnosticSource<'_, F>],
 ) -> Result<CompressionDiagnosticReport, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
 {
+    if !profile.matches_modulus(field_modulus::<F>()) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "compression diagnostic profile {profile:?} does not match field modulus {}",
+            field_modulus::<F>()
+        )));
+    }
     let diagnostic_started = Instant::now();
     let cache_bytes_before = ctx.backend().compression_cache_bytes(ctx.prepared());
-    let profile = modulus_profile::<F>()?;
     let mut items = Vec::new();
     for source in sources {
         if source.coefficients.is_empty() {
@@ -256,9 +231,8 @@ where
     })?;
     let map_count = items.iter().map(|item| item.maps.len()).sum();
     let max_maps = items.iter().map(|item| item.maps.len()).max().unwrap_or(0);
-    let mut groups = Vec::new();
     for map_index in 0..max_maps {
-        groups.extend(execute_stage(ctx, &mut items, map_index)?);
+        execute_stage(ctx, &mut items, map_index)?;
     }
     let terminal_bytes = items.iter().try_fold(0usize, |total, item| {
         let bytes = item
@@ -277,20 +251,6 @@ where
             .ok_or_else(|| AkitaError::InvalidSetup("terminal byte total overflow".into()))
     })?;
     let cache_bytes_after = ctx.backend().compression_cache_bytes(ctx.prepared());
-    let elapsed = diagnostic_started.elapsed();
-    for group in &groups {
-        tracing::info!(
-            map_index = group.map_index,
-            ring_dimension = group.ring_dimension,
-            input_width = group.input_width,
-            batch_size = group.batch_size,
-            input_bytes = group.input_bytes,
-            output_bytes = group.output_bytes,
-            digitization_micros = duration_micros(group.digitization_elapsed),
-            kernel_micros = duration_micros(group.kernel_elapsed),
-            "shadow compressed-commitment batch"
-        );
-    }
     Ok(CompressionDiagnosticReport {
         sources: items.len(),
         maps: map_count,
@@ -298,8 +258,7 @@ where
         terminal_bytes,
         cache_bytes_before,
         cache_bytes_after,
-        elapsed,
-        groups,
+        elapsed: diagnostic_started.elapsed(),
     })
 }
 
@@ -377,16 +336,16 @@ mod tests {
         matrix_row: &[CyclotomicRing<F, D>],
         digits: &[[i8; D]],
     ) -> CyclotomicRing<F, D> {
-        matrix_row
-            .iter()
-            .zip(digits.iter())
-            .fold(CyclotomicRing::<F, D>::zero(), |mut acc, (lhs, digit)| {
+        matrix_row.iter().zip(digits.iter()).fold(
+            CyclotomicRing::<F, D>::zero(),
+            |mut acc, (lhs, digit)| {
                 let rhs = CyclotomicRing::from_coefficients(std::array::from_fn(|k| {
                     F::from_i64(i64::from(digit[k]))
                 }));
                 acc += *lhs * rhs;
                 acc
-            })
+            },
+        )
     }
 
     fn compress_map_stage_against_schoolbook<F: FieldCore + CanonicalField, const D: usize>(
@@ -437,13 +396,16 @@ mod tests {
                 other => panic!("unexpected compression ring dimension {other}"),
             };
             assert_eq!(coefficients.len(), map.output_coefficients);
-            assert_eq!(coefficients.len() * field_bytes, match map_index + 1 == plan.maps.len() {
-                true => 128,
-                false if plan.maps.len() == 2 => 256,
-                false if plan.maps.len() == 3 && map_index == 0 => 512,
-                false if plan.maps.len() == 3 && map_index == 1 => 256,
-                false => panic!("unexpected intermediate size"),
-            });
+            assert_eq!(
+                coefficients.len() * field_bytes,
+                match map_index + 1 == plan.maps.len() {
+                    true => 128,
+                    false if plan.maps.len() == 2 => 256,
+                    false if plan.maps.len() == 3 && map_index == 0 => 512,
+                    false if plan.maps.len() == 3 && map_index == 1 => 256,
+                    false => panic!("unexpected intermediate size"),
+                }
+            );
         }
         assert_eq!(coefficients.len() * field_bytes, 128);
     }
