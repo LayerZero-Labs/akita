@@ -74,7 +74,7 @@ fn assert_span_mle_matches_dense(plan: &SetupContributionPlan<F>, rho: &[F], alp
     );
 }
 
-fn assert_plan_evaluator_matches_general_spans(
+fn assert_fixture_setup_index_mle_matches_dense(
     ownership_widths: &[usize],
     role_dims: CommitmentRingDims,
     outgoing_ring_dim: usize,
@@ -83,11 +83,7 @@ fn assert_plan_evaluator_matches_general_spans(
     let (_, _, _, plan, _, _, _) =
         structured_weight_fixture_with_outgoing(8, ownership_widths, role_dims, outgoing_ring_dim);
     let rho = rho_for_required(plan.required());
-    let required = plan.required();
-    let expected = plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap();
-    let evaluator = SetupIndexWeightEvaluator::new(plan, alpha).unwrap();
-    assert_eq!(evaluator.required(), required);
-    assert_eq!(evaluator.evaluate(&rho).unwrap(), expected);
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
 fn structured_slice_reference(
@@ -267,13 +263,25 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
 }
 
 #[test]
-fn uniform_setup_index_evaluator_matches_single_chunk_plan() {
-    assert_plan_evaluator_matches_general_spans(&[8], CommitmentRingDims::uniform(TEST_D), TEST_D);
+fn setup_index_term_count_tracks_chunk_fragmentation() {
+    let (_, _, _, one_chunk, _, _, _) =
+        structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
+    let (_, _, _, four_chunks, _, _, _) =
+        structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
+    assert!(
+        one_chunk.projection_geometry().setup_index_term_count()
+            < four_chunks.projection_geometry().setup_index_term_count()
+    );
 }
 
 #[test]
-fn uniform_setup_index_evaluator_matches_multi_chunk_plan() {
-    assert_plan_evaluator_matches_general_spans(
+fn uniform_setup_index_mle_matches_single_chunk_plan() {
+    assert_fixture_setup_index_mle_matches_dense(&[8], CommitmentRingDims::uniform(TEST_D), TEST_D);
+}
+
+#[test]
+fn uniform_setup_index_mle_matches_multi_chunk_plan() {
+    assert_fixture_setup_index_mle_matches_dense(
         &[2, 2, 2, 2],
         CommitmentRingDims::uniform(TEST_D),
         TEST_D,
@@ -281,8 +289,8 @@ fn uniform_setup_index_evaluator_matches_multi_chunk_plan() {
 }
 
 #[test]
-fn uniform_setup_index_evaluator_ignores_outgoing_repacking() {
-    assert_plan_evaluator_matches_general_spans(
+fn uniform_setup_index_mle_ignores_outgoing_repacking() {
+    assert_fixture_setup_index_mle_matches_dense(
         &[2, 2, 2, 2],
         CommitmentRingDims::uniform(TEST_D),
         TEST_D * 2,
@@ -290,14 +298,22 @@ fn uniform_setup_index_evaluator_ignores_outgoing_repacking() {
 }
 
 #[test]
-fn setup_index_evaluator_matches_mixed_role_plans() {
-    let role_dims = CommitmentRingDims {
-        inner: 64,
-        outer: 32,
-        opening: 32,
-    };
-    for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
-        assert_plan_evaluator_matches_general_spans(ownership_widths, role_dims, 16);
+fn setup_index_mle_matches_mixed_role_plans() {
+    for role_dims in [
+        CommitmentRingDims {
+            inner: 64,
+            outer: 32,
+            opening: 32,
+        },
+        CommitmentRingDims {
+            inner: 64,
+            outer: 16,
+            opening: 32,
+        },
+    ] {
+        for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
+            assert_fixture_setup_index_mle_matches_dense(ownership_widths, role_dims, 16);
+        }
     }
 }
 

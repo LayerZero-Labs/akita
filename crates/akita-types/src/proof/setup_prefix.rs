@@ -1214,9 +1214,10 @@ fn active_setup_projection_geometry(
             b_cols,
             d_active_cols,
             // Prefix sizing consumes only the physical footprint. Stage 3
-            // fills these work-only fields from the witness layout.
-            ownership_units: 0,
-            depth_fold: 0,
+            // fills these evaluation-only counts from its canonical spans.
+            d_span_count: 0,
+            b_span_count: 0,
+            a_span_count: 0,
         });
     }
     crate::SetupProjectionGeometry::from_groups(

@@ -14,8 +14,9 @@ pub(crate) struct SetupProjectionGroupGeometry {
     pub(crate) b_rows: usize,
     pub(crate) b_cols: usize,
     pub(crate) d_active_cols: usize,
-    pub(crate) ownership_units: usize,
-    pub(crate) depth_fold: usize,
+    pub(crate) d_span_count: usize,
+    pub(crate) b_span_count: usize,
+    pub(crate) a_span_count: usize,
 }
 
 /// Checked common-base geometry for the Stage 3 setup projection.
@@ -39,7 +40,7 @@ pub struct SetupProjectionGeometry {
     ring_bits: usize,
     rounds: usize,
     natural_field_len: usize,
-    evaluation_terms: usize,
+    setup_index_term_count: usize,
 }
 
 impl SetupProjectionGeometry {
@@ -108,40 +109,30 @@ impl SetupProjectionGeometry {
             d_footprint,
             required,
         )?;
-        let mut evaluation_terms = 0usize;
+        let mut setup_index_term_count = 0usize;
         for group in groups {
-            let a_ratio = ratio("A", group.role_dims.d_a())?;
-            let b_ratio = ratio("B", group.role_dims.d_b())?;
-            let d_terms = group
-                .d_active_cols
-                .checked_mul(d_rows)
-                .and_then(|terms| terms.checked_mul(d_ratio))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup D evaluation work overflow".into())
-                })?;
+            let d_terms = group.d_span_count.checked_mul(d_rows).ok_or_else(|| {
+                AkitaError::InvalidSetup("setup D evaluation work overflow".into())
+            })?;
             let b_terms = group
-                .b_cols
+                .b_span_count
                 .checked_mul(group.b_rows)
-                .and_then(|terms| terms.checked_mul(b_ratio))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("setup B evaluation work overflow".into())
                 })?;
             let a_terms = group
-                .a_cols
+                .a_span_count
                 .checked_mul(group.a_rows)
-                .and_then(|terms| terms.checked_mul(a_ratio))
-                .and_then(|terms| terms.checked_mul(group.ownership_units))
-                .and_then(|terms| terms.checked_mul(group.depth_fold))
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("setup A evaluation work overflow".into())
                 })?;
-            evaluation_terms = evaluation_terms
+            setup_index_term_count = setup_index_term_count
                 .checked_add(d_terms)
                 .and_then(|terms| terms.checked_add(b_terms))
                 .and_then(|terms| terms.checked_add(a_terms))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup evaluation work overflow".into()))?;
         }
-        geometry.evaluation_terms = evaluation_terms;
+        geometry.setup_index_term_count = setup_index_term_count;
         Ok(geometry)
     }
 
@@ -219,7 +210,7 @@ impl SetupProjectionGeometry {
             ring_bits,
             rounds,
             natural_field_len,
-            evaluation_terms: 0,
+            setup_index_term_count: 0,
         })
     }
 
@@ -326,16 +317,19 @@ impl SetupProjectionGeometry {
         self.natural_field_len
     }
 
+    /// Number of semantic span-row terms before compact recurrence coalescing.
     #[must_use]
-    pub const fn evaluation_terms(self) -> usize {
-        self.evaluation_terms
+    pub const fn setup_index_term_count(self) -> usize {
+        self.setup_index_term_count
     }
 
-    pub fn ensure_evaluation_budget(self) -> Result<(), AkitaError> {
-        if self.evaluation_terms > MAX_COMPACT_STRIDE_TERMS {
+    /// Reject a setup-index evaluation whose semantic term count exceeds the
+    /// verifier work budget.
+    pub fn ensure_setup_index_evaluation_budget(self) -> Result<(), AkitaError> {
+        if self.setup_index_term_count > MAX_COMPACT_STRIDE_TERMS {
             return Err(AkitaError::InvalidSize {
                 expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: self.evaluation_terms,
+                actual: self.setup_index_term_count,
             });
         }
         Ok(())
@@ -496,14 +490,18 @@ mod tests {
                 b_rows: 0,
                 b_cols: 0,
                 d_active_cols: 0,
-                ownership_units: 1,
-                depth_fold: 1,
+                d_span_count: 0,
+                b_span_count: 0,
+                a_span_count: MAX_COMPACT_STRIDE_TERMS,
             }],
         )
         .expect("geometry at cap");
-        assert_eq!(geometry_at_cap.evaluation_terms(), MAX_COMPACT_STRIDE_TERMS);
+        assert_eq!(
+            geometry_at_cap.setup_index_term_count(),
+            MAX_COMPACT_STRIDE_TERMS
+        );
         geometry_at_cap
-            .ensure_evaluation_budget()
+            .ensure_setup_index_evaluation_budget()
             .expect("cap accepted");
 
         let geometry_above_cap = SetupProjectionGeometry::from_groups(
@@ -517,13 +515,14 @@ mod tests {
                 b_rows: 0,
                 b_cols: 0,
                 d_active_cols: 0,
-                ownership_units: 1,
-                depth_fold: 1,
+                d_span_count: 0,
+                b_span_count: 0,
+                a_span_count: MAX_COMPACT_STRIDE_TERMS + 1,
             }],
         )
         .expect("geometry above cap");
         assert!(matches!(
-            geometry_above_cap.ensure_evaluation_budget(),
+            geometry_above_cap.ensure_setup_index_evaluation_budget(),
             Err(AkitaError::InvalidSize { .. })
         ));
     }
@@ -546,8 +545,9 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 1,
-                    ownership_units: 1,
-                    depth_fold: 1,
+                    d_span_count: 1,
+                    b_span_count: 1,
+                    a_span_count: 1,
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
@@ -560,8 +560,9 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 2,
-                    ownership_units: 1,
-                    depth_fold: 1,
+                    d_span_count: 1,
+                    b_span_count: 1,
+                    a_span_count: 1,
                 },
             ],
         )

@@ -1,8 +1,10 @@
 use super::*;
 use akita_algebra::{
     offset_eq::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm, MAX_COMPACT_STRIDE_TERMS},
-    ring::scalar_powers,
+    ring::{evaluate_power_sequence_mle, scalar_powers},
 };
+use akita_field::fft::field_pow;
+use std::collections::BTreeMap;
 
 struct GroupSetupIndexWeights<E> {
     projection_scales: [Vec<E>; 3],
@@ -27,8 +29,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .collect()
     }
 
-    /// Evaluate the packed setup-position weight polynomial at
-    /// `rho_setup_idx` directly from its canonical contribution spans.
+    /// Evaluate the packed setup-position weight polynomial from its canonical
+    /// contribution spans.
+    ///
+    /// For a role dimension `d_R`, let `q = d_R / base_ring_dim` and
+    /// `beta = alpha^base_ring_dim`. The `q` setup subrings and `q` relation
+    /// lanes carry the separable weight `beta^u * beta^v`. Their low Boolean
+    /// coordinates are evaluated once with [`evaluate_power_sequence_mle`],
+    /// leaving one compact term per semantic span and matrix row.
     pub fn evaluate_setup_index_weight_mle(
         &self,
         rho_setup_idx: &[E],
@@ -41,17 +49,76 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: rho_setup_idx.len(),
             });
         }
-        self.projection_geometry.ensure_evaluation_budget()?;
+        self.projection_geometry
+            .ensure_setup_index_evaluation_budget()?;
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        let mut terms = Vec::new();
+        let mut terms_by_projection_ratio =
+            BTreeMap::<usize, Vec<WeightedCompactPairTerm<E>>>::new();
         for group in &self.groups {
-            let scales = self.group_projection_scales(group, alpha);
-            let lane_powers = self.group_relation_lane_powers(group, alpha);
-            self.append_d_span_terms(group, &scales[2], &lane_powers[2], &mut terms)?;
-            self.append_b_span_terms(group, &scales[1], &lane_powers[1], &mut terms)?;
-            self.append_a_span_terms(group, &scales[0], &lane_powers[0], &mut terms)?;
+            self.append_d_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.d_ratio).or_default(),
+            )?;
+            self.append_b_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.b_ratio).or_default(),
+            )?;
+            self.append_a_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.a_ratio).or_default(),
+            )?;
         }
-        eval_weighted_compact_pair_eq(rho_setup_idx, &self.address_point, &terms)
+        let base_ring_dim = self.projection_geometry.base_ring_dim();
+        let base_ring_dim_u64 = u64::try_from(base_ring_dim).map_err(|_| {
+            AkitaError::InvalidSetup("setup base ring dimension does not fit u64".into())
+        })?;
+        let alpha_per_base_ring = field_pow(alpha, base_ring_dim_u64);
+        terms_by_projection_ratio
+            .into_iter()
+            .try_fold(E::zero(), |evaluation, (ratio, terms)| {
+                if ratio == 0 || !ratio.is_power_of_two() {
+                    return Err(AkitaError::InvalidSetup(
+                        "setup projection ratio must be a non-zero power of two".into(),
+                    ));
+                }
+                let low_variable_count = ratio.trailing_zeros() as usize;
+                let setup_low_point =
+                    rho_setup_idx
+                        .get(..low_variable_count)
+                        .ok_or(AkitaError::InvalidSize {
+                            expected: low_variable_count,
+                            actual: rho_setup_idx.len(),
+                        })?;
+                let setup_high_point =
+                    rho_setup_idx
+                        .get(low_variable_count..)
+                        .ok_or(AkitaError::InvalidSize {
+                            expected: low_variable_count,
+                            actual: rho_setup_idx.len(),
+                        })?;
+                let relation_low_point = self.address_point.get(..low_variable_count).ok_or(
+                    AkitaError::InvalidSize {
+                        expected: low_variable_count,
+                        actual: self.address_point.len(),
+                    },
+                )?;
+                let relation_high_point = self.address_point.get(low_variable_count..).ok_or(
+                    AkitaError::InvalidSize {
+                        expected: low_variable_count,
+                        actual: self.address_point.len(),
+                    },
+                )?;
+                let power_factor =
+                    evaluate_power_sequence_mle(alpha_per_base_ring, setup_low_point)
+                        * evaluate_power_sequence_mle(alpha_per_base_ring, relation_low_point);
+                Ok(evaluation
+                    + power_factor
+                        * eval_weighted_compact_pair_eq(
+                            setup_high_point,
+                            relation_high_point,
+                            &terms,
+                        )?)
+            })
     }
 
     fn group_projection_scales(
@@ -156,47 +223,40 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     fn append_d_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        scales: &[E],
-        lane_powers: &[E],
         terms: &mut Vec<WeightedCompactPairTerm<E>>,
     ) -> Result<(), AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(());
         }
         for span in &group.d_spans {
-            super::structured::ensure_lane_count(span, lane_powers)?;
+            ensure_span_lane_count(span, group.d_ratio)?;
             let setup_col = group
                 .d_col_range
                 .start
                 .checked_add(span.setup_column_start)
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-            let setup_stride = group
-                .d_ratio
-                .checked_mul(span.setup_column_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D stride overflow".into()))?;
+            let relation_start = divide_aligned(
+                span.relation_lane_start,
+                group.d_ratio,
+                "setup D relation address is not aligned to its projection ratio",
+            )?;
+            let relation_stride = divide_aligned(
+                span.relation_lane_stride,
+                group.d_ratio,
+                "setup D relation stride is not aligned to its projection ratio",
+            )?;
             for (row, &row_weight) in self.d_weights.iter().enumerate() {
-                for (lane, &scale) in scales.iter().enumerate() {
-                    let setup_index = projected_setup_offset(
-                        group.d_ratio,
-                        self.d_physical_cols,
-                        row,
-                        setup_col,
-                        lane,
-                    )?;
-                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        push_weighted_term(
-                            terms,
-                            WeightedCompactPairTerm {
-                                left_offset: setup_index,
-                                left_stride: setup_stride,
-                                right_offset: relation_lane_start(span, relation_lane)?,
-                                right_stride: span.relation_lane_stride,
-                                len: span.occurrence_count,
-                                weight: row_weight * scale * lane_power,
-                            },
-                        )?;
-                    }
-                }
+                push_weighted_term(
+                    terms,
+                    WeightedCompactPairTerm {
+                        left_offset: row_major_index(self.d_physical_cols, row, setup_col)?,
+                        left_stride: span.setup_column_stride,
+                        right_offset: relation_start,
+                        right_stride: relation_stride,
+                        len: span.occurrence_count,
+                        weight: row_weight,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -205,39 +265,32 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     fn append_b_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        scales: &[E],
-        lane_powers: &[E],
         terms: &mut Vec<WeightedCompactPairTerm<E>>,
     ) -> Result<(), AkitaError> {
         for span in &group.b_spans {
-            super::structured::ensure_lane_count(span, lane_powers)?;
-            let setup_stride = group
-                .b_ratio
-                .checked_mul(span.setup_column_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B stride overflow".into()))?;
+            ensure_span_lane_count(span, group.b_ratio)?;
+            let relation_start = divide_aligned(
+                span.relation_lane_start,
+                group.b_ratio,
+                "setup B relation address is not aligned to its projection ratio",
+            )?;
+            let relation_stride = divide_aligned(
+                span.relation_lane_stride,
+                group.b_ratio,
+                "setup B relation stride is not aligned to its projection ratio",
+            )?;
             for (row, &row_weight) in group.b_weights.iter().enumerate() {
-                for (lane, &scale) in scales.iter().enumerate() {
-                    let setup_index = projected_setup_offset(
-                        group.b_ratio,
-                        group.t_cols,
-                        row,
-                        span.setup_column_start,
-                        lane,
-                    )?;
-                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        push_weighted_term(
-                            terms,
-                            WeightedCompactPairTerm {
-                                left_offset: setup_index,
-                                left_stride: setup_stride,
-                                right_offset: relation_lane_start(span, relation_lane)?,
-                                right_stride: span.relation_lane_stride,
-                                len: span.occurrence_count,
-                                weight: row_weight * scale * lane_power,
-                            },
-                        )?;
-                    }
-                }
+                push_weighted_term(
+                    terms,
+                    WeightedCompactPairTerm {
+                        left_offset: row_major_index(group.t_cols, row, span.setup_column_start)?,
+                        left_stride: span.setup_column_stride,
+                        right_offset: relation_start,
+                        right_stride: relation_stride,
+                        len: span.occurrence_count,
+                        weight: row_weight,
+                    },
+                )?;
             }
         }
         Ok(())
@@ -246,43 +299,36 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     fn append_a_span_terms(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        scales: &[E],
-        lane_powers: &[E],
         terms: &mut Vec<WeightedCompactPairTerm<E>>,
     ) -> Result<(), AkitaError> {
         for span in &group.a_spans {
-            super::structured::ensure_lane_count(span, lane_powers)?;
+            ensure_span_lane_count(span, group.a_ratio)?;
             let fold = *group
                 .fold_gadget
                 .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
                 .ok_or(AkitaError::InvalidProof)?;
-            let setup_stride = group
-                .a_ratio
-                .checked_mul(span.setup_column_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup A stride overflow".into()))?;
+            let relation_start = divide_aligned(
+                span.relation_lane_start,
+                group.a_ratio,
+                "setup A relation address is not aligned to its projection ratio",
+            )?;
+            let relation_stride = divide_aligned(
+                span.relation_lane_stride,
+                group.a_ratio,
+                "setup A relation stride is not aligned to its projection ratio",
+            )?;
             for (row, &row_weight) in group.a_row_weights.iter().enumerate() {
-                for (lane, &scale) in scales.iter().enumerate() {
-                    let setup_index = projected_setup_offset(
-                        group.a_ratio,
-                        group.z_cols,
-                        row,
-                        span.setup_column_start,
-                        lane,
-                    )?;
-                    for (relation_lane, &lane_power) in lane_powers.iter().enumerate() {
-                        push_weighted_term(
-                            terms,
-                            WeightedCompactPairTerm {
-                                left_offset: setup_index,
-                                left_stride: setup_stride,
-                                right_offset: relation_lane_start(span, relation_lane)?,
-                                right_stride: span.relation_lane_stride,
-                                len: span.occurrence_count,
-                                weight: -(row_weight * scale * fold * lane_power),
-                            },
-                        )?;
-                    }
-                }
+                push_weighted_term(
+                    terms,
+                    WeightedCompactPairTerm {
+                        left_offset: row_major_index(group.z_cols, row, span.setup_column_start)?,
+                        left_stride: span.setup_column_stride,
+                        right_offset: relation_start,
+                        right_stride: relation_stride,
+                        len: span.occurrence_count,
+                        weight: -(row_weight * fold),
+                    },
+                )?;
             }
         }
         Ok(())
@@ -367,8 +413,13 @@ fn role_column_weight<E: FieldCore>(
     Ok(weight)
 }
 
-fn relation_lane_start(span: &SetupContributionSpan, lane: usize) -> Result<usize, AkitaError> {
-    checked_add_relation_lane(span.relation_lane_start, lane)
+fn ensure_span_lane_count(span: &SetupContributionSpan, ratio: usize) -> Result<(), AkitaError> {
+    if ratio == 0 || !ratio.is_power_of_two() || span.relation_lane_count != ratio {
+        return Err(AkitaError::InvalidSetup(
+            "setup span lane count disagrees with its projection ratio".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn checked_add_relation_lane(start: usize, lane: usize) -> Result<usize, AkitaError> {
@@ -377,22 +428,25 @@ fn checked_add_relation_lane(start: usize, lane: usize) -> Result<usize, AkitaEr
         .ok_or_else(|| AkitaError::InvalidSetup("setup contribution relation lane overflow".into()))
 }
 
-fn projected_setup_offset(
-    ratio: usize,
-    width: usize,
-    row: usize,
-    column: usize,
-    lane: usize,
+fn divide_aligned(
+    value: usize,
+    divisor: usize,
+    context: &'static str,
 ) -> Result<usize, AkitaError> {
-    if column >= width || lane >= ratio {
+    value
+        .checked_div(divisor)
+        .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
+}
+
+fn row_major_index(width: usize, row: usize, column: usize) -> Result<usize, AkitaError> {
+    if column >= width {
         return Err(AkitaError::InvalidSetup(
-            "setup projected address out of range".into(),
+            "setup row-major column out of range".into(),
         ));
     }
     width
         .checked_mul(row)
         .and_then(|base| base.checked_add(column))
-        .and_then(|logical| ratio.checked_mul(logical))
-        .and_then(|base| base.checked_add(lane))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup projected address overflow".into()))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup row-major index overflow".into()))
 }

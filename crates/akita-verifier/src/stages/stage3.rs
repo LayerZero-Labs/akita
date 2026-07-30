@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, SetupIndexWeightEvaluator, SetupSumcheckProof,
+    AkitaVerifierSetup, CommittedGroupParams, SetupContributionPlan, SetupSumcheckProof,
     SETUP_SUMCHECK_DEGREE,
 };
 
@@ -25,7 +25,7 @@ use akita_types::{
 /// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    setup_index_weight_evaluator: SetupIndexWeightEvaluator<E>,
+    setup_contribution_plan: SetupContributionPlan<E>,
     alpha: E,
     ring_bits: usize,
     rounds: usize,
@@ -62,10 +62,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 Ok,
             )?;
         let geometry = plan.projection_geometry();
-        let setup_index_weight_evaluator =
-            relation_matrix_evaluator.setup_index_weight_evaluator(plan, alpha)?;
         Ok(Self {
-            setup_index_weight_evaluator,
+            setup_contribution_plan: plan,
             alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
@@ -88,7 +86,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         let ring_d = self
-            .setup_index_weight_evaluator
+            .setup_contribution_plan
             .projection_geometry()
             .base_ring_dim();
         let setup_len = setup
@@ -135,7 +133,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if next_fold_level_params.setup_prefix.is_some() {
-            let geometry = self.setup_index_weight_evaluator.projection_geometry();
+            let geometry = self.setup_contribution_plan.projection_geometry();
             let natural_field_len = geometry.natural_field_len();
             ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
@@ -179,7 +177,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.setup_index_weight_evaluator.required();
+        let required = self.setup_contribution_plan.required();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -212,7 +210,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         };
         let setup_index_weight = {
             let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
-            self.setup_index_weight_evaluator.evaluate(rho_setup_idx)?
+            self.setup_contribution_plan
+                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
         };
         let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         let setup_term = setup_val * setup_index_weight * alpha_val;

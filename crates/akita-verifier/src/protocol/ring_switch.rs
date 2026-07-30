@@ -818,14 +818,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         Ok(())
     }
 
-    pub(crate) fn setup_index_weight_evaluator(
-        &self,
-        plan: SetupContributionPlan<E>,
-        alpha: E,
-    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError> {
-        akita_types::SetupIndexWeightEvaluator::new(plan, alpha)
-    }
-
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
         let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
         context

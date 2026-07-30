@@ -446,20 +446,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let projection_groups = dynamic_groups
             .iter()
-            .zip(groups)
-            .map(|(planned, group)| {
-                Ok(SetupProjectionGroupGeometry {
-                    role_dims: planned.role_dims,
-                    a_rows: planned.n_a,
-                    a_cols: planned.z_cols,
-                    b_rows: planned.n_b,
-                    b_cols: planned.t_cols,
-                    d_active_cols: planned.d_col_range.len(),
-                    ownership_units: witness_layout.units_for_group(group.group_id)?.len(),
-                    depth_fold: group.depth_fold,
-                })
+            .map(|planned| SetupProjectionGroupGeometry {
+                role_dims: planned.role_dims,
+                a_rows: planned.n_a,
+                a_cols: planned.z_cols,
+                b_rows: planned.n_b,
+                b_cols: planned.t_cols,
+                d_active_cols: planned.d_col_range.len(),
+                d_span_count: planned.d_spans.len(),
+                b_span_count: planned.b_spans.len(),
+                a_span_count: planned.a_spans.len(),
             })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
+            .collect::<Vec<_>>();
         let projection_geometry = crate::SetupProjectionGeometry::from_groups(
             relation_address_geometry.role_dims(),
             d_rows,

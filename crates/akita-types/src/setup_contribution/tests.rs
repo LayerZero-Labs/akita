@@ -762,11 +762,11 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         .fold(F::zero(), |acc, (index, weight)| {
             acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
-    let setup_weight_evaluator = SetupIndexWeightEvaluator::new(plan, alpha).unwrap();
     assert_eq!(
-        setup_weight_evaluator.evaluate(&rho_setup_idx).unwrap(),
+        plan.evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
+            .unwrap(),
         dense_mle,
-        "plan-owned setup-index MLE must match the full plan"
+        "multi-group setup-index MLE must match the full plan"
     );
     assert_eq!(
         deferred

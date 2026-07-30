@@ -7,8 +7,8 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupIndexWeightEvaluator,
-    SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
+    SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
+    MAX_WITNESS_CHUNKS,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -22,7 +22,7 @@ const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
     plan: SetupContributionPlan<F>,
-    setup_weight_evaluator: SetupIndexWeightEvaluator<F>,
+    setup_index_term_count: usize,
     dense_weights: Vec<F>,
     rho: Vec<F>,
     alpha: F,
@@ -219,18 +219,6 @@ fn make_case_with_shape(
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let alpha = test_scalar(3);
-    let deferred_plan = SetupContributionPlan::prepare_deferred::<F>(
-        &level_params,
-        &opening_batch,
-        eq_tau1.clone(),
-        &layout,
-        &groups,
-        &full_vec_randomness,
-        Some(&fold_gadget),
-        relation_address_geometry,
-        alpha,
-    )
-    .unwrap();
     let plan = SetupContributionPlan::prepare::<F>(
         &level_params,
         &opening_batch,
@@ -243,7 +231,6 @@ fn make_case_with_shape(
         alpha,
     )
     .unwrap();
-    let setup_weight_evaluator = SetupIndexWeightEvaluator::new(deferred_plan, alpha).unwrap();
     let rho_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
     let rho = (0..rho_bits)
         .map(|idx| test_scalar(901 + idx as u128))
@@ -261,11 +248,11 @@ fn make_case_with_shape(
         plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
         dense
     );
-    assert_eq!(setup_weight_evaluator.evaluate(&rho).unwrap(), dense);
+    let setup_index_term_count = plan.projection_geometry().setup_index_term_count();
 
     SetupIndexWeightBenchCase {
         plan,
-        setup_weight_evaluator,
+        setup_index_term_count,
         dense_weights,
         rho,
         alpha,
@@ -289,22 +276,12 @@ fn bench_setup_index_weight(c: &mut Criterion) {
             let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
                 BenchmarkId::new(
-                    format!("uniform/{layout}/uniform_intervals"),
+                    format!(
+                        "uniform/{layout}/semantic_spans/{}_terms",
+                        case.setup_index_term_count
+                    ),
                     num_live_blocks,
                 ),
-                &case,
-                |b, case| {
-                    b.iter(|| {
-                        black_box(
-                            case.setup_weight_evaluator
-                                .evaluate(black_box(&case.rho))
-                                .unwrap(),
-                        )
-                    })
-                },
-            );
-            group.bench_with_input(
-                BenchmarkId::new(format!("uniform/{layout}/general_spans"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -320,7 +297,13 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 },
             );
             group.bench_with_input(
-                BenchmarkId::new(format!("uniform/{layout}/dense"), num_live_blocks),
+                BenchmarkId::new(
+                    format!(
+                        "uniform/{layout}/dense/{}_terms",
+                        case.setup_index_term_count
+                    ),
+                    num_live_blocks,
+                ),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -346,9 +329,22 @@ fn bench_setup_index_weight(c: &mut Criterion) {
         outer: 32,
         opening: 32,
     };
+    let wider_mixed_dims = CommitmentRingDims {
+        inner: 64,
+        outer: 16,
+        opening: 32,
+    };
     for (shape, role_dims, outgoing_ring_dim, num_groups, blocks_per_chunk) in [
         ("mixed_d/single_group/single_chunk", mixed_dims, 16, 1, 1024),
         ("mixed_d/single_group/64_chunks", mixed_dims, 16, 1, 16),
+        (
+            "mixed_d/a64_b16_d32/single_chunk",
+            wider_mixed_dims,
+            16,
+            1,
+            1024,
+        ),
+        ("mixed_d/a64_b16_d32/64_chunks", wider_mixed_dims, 16, 1, 16),
         (
             "uniform/two_groups/single_chunk",
             CommitmentRingDims::uniform(D),
@@ -371,23 +367,14 @@ fn bench_setup_index_weight(c: &mut Criterion) {
             outgoing_ring_dim,
             num_groups,
         );
-        if role_dims == CommitmentRingDims::uniform(D) {
-            shape_group.bench_with_input(
-                BenchmarkId::new(format!("{shape}/uniform_intervals"), num_live_blocks),
-                &case,
-                |b, case| {
-                    b.iter(|| {
-                        black_box(
-                            case.setup_weight_evaluator
-                                .evaluate(black_box(&case.rho))
-                                .unwrap(),
-                        )
-                    })
-                },
-            );
-        }
         shape_group.bench_with_input(
-            BenchmarkId::new(format!("{shape}/general_spans"), num_live_blocks),
+            BenchmarkId::new(
+                format!(
+                    "{shape}/semantic_spans/{}_terms",
+                    case.setup_index_term_count
+                ),
+                num_live_blocks,
+            ),
             &case,
             |b, case| {
                 b.iter(|| {
