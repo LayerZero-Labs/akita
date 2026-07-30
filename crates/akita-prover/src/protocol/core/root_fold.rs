@@ -182,9 +182,13 @@ where
     // `claims.append_to_transcript` and to the former typed path; S2/S7 parity).
     claims.append_to_transcript::<T>(root_params, transcript)?;
 
+    let root_polys = claims.flat_polys();
     let prepared_fold =
         prepare_root::<F, E, T, P, C, O, TS, R>(stack, transcript, claims, root_params, basis)
             .map_err(|err| AkitaError::InvalidInput(format!("prepare root failed: {err:?}")))?;
+    for poly in root_polys {
+        poly.release_root_opening_storage();
+    }
 
     prove_fold::<F, E, T, C, O, TS, R, Cfg>(
         expanded,
