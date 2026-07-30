@@ -274,6 +274,27 @@ where
 }
 
 #[test]
+fn recursive_transition_supports_ci_and_profile_setup_capacities() {
+    type Root = fp128::D256OneHot;
+    type Mid = fp128::D128OneHot;
+    type Suffix = fp128::D64OneHot;
+    type Cfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix, 128, 64>;
+
+    let ci = <Cfg as CommitmentConfig>::max_setup_matrix_size(24, 3)
+        .expect("CI fixture envelope (24,3)");
+    let profile = <Cfg as CommitmentConfig>::max_setup_matrix_size(32, 4)
+        .expect("profile fixture envelope (32,4)");
+    assert!(
+        profile.max_setup_len >= ci.max_setup_len,
+        "profile capacity must cover at least the CI fixture envelope"
+    );
+    assert!(
+        <Cfg as CommitmentConfig>::max_setup_matrix_size(24, 4).is_err(),
+        "unsupported capacities must stay fail-closed"
+    );
+}
+
+#[test]
 fn recursive_transition_supports_dynamic_d128_setup_prefix() {
     let schedule = recursive_transition_schedule::<fp128::D64OneHot>();
     assert_eq!(

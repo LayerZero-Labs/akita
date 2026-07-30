@@ -311,12 +311,20 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        if max_num_vars != 24 || max_num_batched_polys != 3 {
-            return Err(AkitaError::InvalidSetup(
-                "recursive mixed-D profile fixes setup capacity at nv=24, np=3".into(),
-            ));
-        }
-        let pre_group = PolynomialGroupLayout::new(14, 1);
+        // Two known fixtures share this synthetic config:
+        // - CI e2e: 2×(14,1) pre + (24,1) final → setup_prover(24, 3)
+        // - profile/bench: 2×(16,1) pre + (32,2) final → setup_prover(32, 4)
+        let (pre_nv, final_nv, final_np) = match (max_num_vars, max_num_batched_polys) {
+            (24, 3) => (14, 24, 1),
+            (32, 4) => (16, 32, 2),
+            _ => {
+                return Err(AkitaError::InvalidSetup(
+                    "recursive mixed-D profile supports setup capacities (24,3) and (32,4) only"
+                        .into(),
+                ));
+            }
+        };
+        let pre_group = PolynomialGroupLayout::new(pre_nv, 1);
         let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(
             pre_group.num_vars(),
             pre_group.num_polynomials(),
@@ -328,7 +336,7 @@ where
             &pre_schedule.root.params.final_group.commitment,
         );
         let key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(24, 1),
+            final_group: PolynomialGroupLayout::new(final_nv, final_np),
             precommitteds: vec![descriptor, descriptor],
         };
         let schedule = recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
