@@ -23,6 +23,8 @@
 //! | `stack` | Per-fold [`LevelProveStacks`] + per-cluster [`OperationCtx`] / [`ProverComputeStack`] |
 
 mod backend;
+#[cfg(feature = "compression-diagnostics")]
+mod compression;
 mod cpu;
 pub mod delegating_cpu;
 mod dispatch;
@@ -36,6 +38,10 @@ mod stack;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
+};
+#[cfg(feature = "compression-diagnostics")]
+pub(crate) use compression::{
+    execute_compression_chains, CompressionExecutionInput, CompressionExecutionReport,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
