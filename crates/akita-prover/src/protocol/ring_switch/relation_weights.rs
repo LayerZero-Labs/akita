@@ -95,6 +95,8 @@ pub enum RelationWeightContribution {
     Constraint,
     /// D/B/A setup-matrix arithmetic replaceable by one offloaded setup claim.
     SetupMatrix,
+    /// Constraint and setup-matrix terms sharing one physical alpha interval.
+    ConstraintAndSetupMatrix,
 }
 
 /// One aligned consecutive-alpha contribution to the flat relation weight table.
@@ -217,7 +219,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             || !physical_start.is_multiple_of(coefficient_count)
             || physical_end > self.physical_field_len
             || alpha_exponent_end > self.inner_alpha_powers.len()
-            || (self.setup_is_deferred && contribution == RelationWeightContribution::SetupMatrix)
+            || (self.setup_is_deferred && contribution != RelationWeightContribution::Constraint)
         {
             return Err(AkitaError::InvalidSetup(
                 "relation event is unaligned or outside its checked domain".into(),
@@ -259,6 +261,54 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             scalar,
             contribution,
         )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_role_with_setup(
+        &mut self,
+        witness_column: usize,
+        role_subcolumn: usize,
+        role_ring_dimension: usize,
+        constraint_alpha_exponent_start: usize,
+        constraint_scalar: E,
+        setup_scalar: Option<E>,
+    ) -> Result<(), AkitaError> {
+        match setup_scalar {
+            Some(setup_scalar) if constraint_alpha_exponent_start == 0 => self.push_role(
+                witness_column,
+                role_subcolumn,
+                role_ring_dimension,
+                0,
+                constraint_scalar + setup_scalar,
+                RelationWeightContribution::ConstraintAndSetupMatrix,
+            ),
+            Some(setup_scalar) => {
+                self.push_role(
+                    witness_column,
+                    role_subcolumn,
+                    role_ring_dimension,
+                    constraint_alpha_exponent_start,
+                    constraint_scalar,
+                    RelationWeightContribution::Constraint,
+                )?;
+                self.push_role(
+                    witness_column,
+                    role_subcolumn,
+                    role_ring_dimension,
+                    0,
+                    setup_scalar,
+                    RelationWeightContribution::SetupMatrix,
+                )
+            }
+            None => self.push_role(
+                witness_column,
+                role_subcolumn,
+                role_ring_dimension,
+                constraint_alpha_exponent_start,
+                constraint_scalar,
+                RelationWeightContribution::Constraint,
+            ),
+        }
     }
 
     /// Semantic events in emission order. Overlaps are intentionally additive.
@@ -843,24 +893,14 @@ where
                         let setup_acc = d_setup_accs
                             .as_ref()
                             .map_or(E::zero(), |weights| weights[d_phys_col - d_setup_start]);
-                        relation_events.push_role(
+                        relation_events.push_role_with_setup(
                             witness_col,
                             role_subcol,
                             group_d_d,
                             role_subcol * group_d_d,
                             consistency_acc,
-                            RelationWeightContribution::Constraint,
+                            d_setup_accs.as_ref().map(|_| setup_acc),
                         )?;
-                        if d_setup_accs.is_some() {
-                            relation_events.push_role(
-                                witness_col,
-                                role_subcol,
-                                group_d_d,
-                                0,
-                                setup_acc,
-                                RelationWeightContribution::SetupMatrix,
-                            )?;
-                        }
                     }
                 }
                 for a_idx in 0..n_a {
@@ -896,24 +936,14 @@ where
                             let b_acc = b_setup_accs
                                 .as_ref()
                                 .map_or(E::zero(), |weights| weights[local_col]);
-                            relation_events.push_role(
+                            relation_events.push_role_with_setup(
                                 witness_col,
                                 role_subcol,
                                 group_d_b,
                                 role_subcol * group_d_b,
                                 a_acc,
-                                RelationWeightContribution::Constraint,
+                                b_setup_accs.as_ref().map(|_| b_acc),
                             )?;
-                            if b_setup_accs.is_some() {
-                                relation_events.push_role(
-                                    witness_col,
-                                    role_subcol,
-                                    group_d_b,
-                                    0,
-                                    b_acc,
-                                    RelationWeightContribution::SetupMatrix,
-                                )?;
-                            }
                         }
                     }
                 }
@@ -968,24 +998,16 @@ where
                             commit_digit,
                             fold_digit,
                         )?;
-                        relation_events.push_role(
+                        relation_events.push_role_with_setup(
                             witness_col,
                             0,
                             group_d_a,
                             0,
                             -(z_bases[phys_k].0 * fold),
-                            RelationWeightContribution::Constraint,
+                            setup_matrix
+                                .is_some()
+                                .then_some(-(z_bases[phys_k].1 * fold)),
                         )?;
-                        if setup_matrix.is_some() {
-                            relation_events.push_role(
-                                witness_col,
-                                0,
-                                group_d_a,
-                                0,
-                                -(z_bases[phys_k].1 * fold),
-                                RelationWeightContribution::SetupMatrix,
-                            )?;
-                        }
                     }
                 }
             }

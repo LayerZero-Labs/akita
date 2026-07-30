@@ -97,3 +97,49 @@ fn factorization_rejects_an_unaligned_alpha_reset() {
         Err(AkitaError::InvalidSetup(_))
     ));
 }
+
+#[test]
+fn shared_alpha_setup_terms_coalesce_without_changing_weights() {
+    let mut separate = mixed_dimension_events();
+    separate.events.clear();
+    separate
+        .push_role(
+            0,
+            0,
+            32,
+            0,
+            TestField::from_u64(2),
+            RelationWeightContribution::Constraint,
+        )
+        .unwrap();
+    separate
+        .push_role(
+            0,
+            0,
+            32,
+            0,
+            TestField::from_u64(3),
+            RelationWeightContribution::SetupMatrix,
+        )
+        .unwrap();
+
+    let mut coalesced = mixed_dimension_events();
+    coalesced.events.clear();
+    coalesced
+        .push_role_with_setup(
+            0,
+            0,
+            32,
+            0,
+            TestField::from_u64(2),
+            Some(TestField::from_u64(3)),
+        )
+        .unwrap();
+
+    assert_eq!(coalesced.events().len(), 1);
+    assert_eq!(
+        coalesced.events()[0].contribution(),
+        RelationWeightContribution::ConstraintAndSetupMatrix
+    );
+    assert_eq!(coalesced.materialize_dense(), separate.materialize_dense());
+}
