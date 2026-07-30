@@ -446,11 +446,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let SuffixFoldPrefix {
-        prepared_points,
-        trace_eval_target,
-        trace_claim_coefficients,
-    } = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -463,10 +459,11 @@ where
         )?;
         absorb_prepared_opening_points(&prepared_points, transcript);
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-        SuffixFoldPrefix {
+        FoldPrefix {
             prepared_points,
             trace_eval_target,
             trace_claim_coefficients: row_coefficients.clone(),
+            row_coefficients,
         }
     } else {
         let group_points = (0..opening_batch.num_groups())
@@ -476,7 +473,7 @@ where
             proof.extension_opening_reduction,
             &group_points,
             &openings,
-            &row_coefficients,
+            row_coefficients,
             &opening_batch,
             current_state.basis,
             lp,
@@ -526,20 +523,9 @@ where
         v: v_storage,
         opening_shape: opening_batch,
         commitment_rows,
-        row_coefficients,
-        group_ring_opening_points: prepared_points
-            .iter()
-            .map(|point| point.ring_opening_point.clone())
-            .collect(),
-        group_ring_multiplier_points: prepared_points
-            .iter()
-            .map(|point| point.ring_multiplier_point.clone())
-            .collect(),
+        prefix,
         w_len: witness_len,
         payload,
-        evaluation_trace_points: prepared_points,
-        evaluation_trace_claim: trace_eval_target,
-        evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: current_state.basis,
     })
 }
