@@ -17,7 +17,9 @@ use akita_types::{
     RelationRangeImagePlan,
 };
 
-pub(in crate::protocol::core) use extension_claim::prepare_extension_claim_fold;
+pub(in crate::protocol::core) use extension_claim::{
+    prepare_extension_claim_fold, ExtensionOpeningSource,
+};
 pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
