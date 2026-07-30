@@ -9,9 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, GroupSourceEncoding,
-    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedLevelParams,
+    CommittedGroupParams, CommittedGroupProfile, GroupSource, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -383,10 +382,6 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
-        .encoding
-        .serialize_with_mode(&mut writer, Compress::No)?;
-    params
-        .layout
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
@@ -430,7 +425,7 @@ fn serialize_precommitted_level_params<W: Write>(
         .num_digits_open
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .num_digits_fold_one
+        .num_digits_fold
         .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
@@ -441,16 +436,13 @@ fn deserialize_precommitted_level_params<R: Read>(
     validate: Validate,
 ) -> Result<PrecommittedLevelParams, SerializationError> {
     let version = u8::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    if version != CommittedGroupDescriptor::VERSION {
+    if version != CommittedGroupProfile::VERSION {
         return Err(SerializationError::InvalidData(format!(
             "unknown committed-group profile version {version}"
         )));
     }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let encoding =
-        GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
-    let source = GroupSource::from_encoding(encoding);
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -460,6 +452,11 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let inner_commit_matrix: InnerCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
+    // `source` is planner/prover staging metadata, not part of the verifier's
+    // accepted profile or wire identity. Decoded verifier-visible parameters
+    // receive a conservative non-semantic placeholder; verifier validation,
+    // sizing, and security pricing must use only the exact serialized facts.
+    let source = GroupSource::bounded(inner_commit_matrix.sis_modulus_profile().field_bits());
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let outer_commit_matrix: OuterCommitMatrixParams =
@@ -468,12 +465,11 @@ fn deserialize_precommitted_level_params<R: Read>(
     let challenge_count_pm1 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: CommittedGroupDescriptor {
+        layout: CommittedGroupProfile {
             version,
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
-            encoding,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -491,7 +487,7 @@ fn deserialize_precommitted_level_params<R: Read>(
             count_pm2: challenge_count_pm2,
         },
         num_digits_open,
-        num_digits_fold_one,
+        num_digits_fold,
     })
 }
 
@@ -506,7 +502,6 @@ fn precommitted_level_params_serialized_size(
             .group
             .num_polynomials()
             .serialized_size(compress)
-        + params.layout.encoding.serialized_size(Compress::No)
         + params
             .layout
             .num_live_ring_elements_per_claim
@@ -532,7 +527,7 @@ fn precommitted_level_params_serialized_size(
             .count_pm2
             .serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
-        + params.num_digits_fold_one.serialized_size(compress)
+        + params.num_digits_fold.serialized_size(compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -1308,10 +1303,9 @@ pub fn setup_prefix_precommitted_params(
                 prefix_params.outer_commit_matrix.ring_dimension(),
             );
             return Ok(PrecommittedLevelParams {
-                layout: CommittedGroupDescriptor {
-                    version: CommittedGroupDescriptor::VERSION,
+                layout: CommittedGroupProfile {
+                    version: CommittedGroupProfile::VERSION,
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                    encoding: prefix_params.source.encoding(),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,
@@ -1326,7 +1320,7 @@ pub fn setup_prefix_precommitted_params(
                 log_basis_open: prefix_params.log_basis_open,
                 fold_challenge_config: prefix_params.fold_challenge_config,
                 num_digits_open: prefix_params.num_digits_open,
-                num_digits_fold_one: prefix_params.num_digits_fold_one,
+                num_digits_fold: prefix_params.num_digits_fold,
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {

@@ -7,7 +7,7 @@ use crate::sis::{
 };
 use crate::transcript::AppendToTranscript;
 use crate::{
-    detect_field_modulus, CommittedGroupDescriptor, GroupSource, GroupSourceEncoding,
+    detect_field_modulus, CommittedGroupProfile, GroupSource, GroupSourceEncoding,
     GroupSourceRegistration, PolynomialGroupLayout,
 };
 
@@ -289,29 +289,29 @@ impl<F: FieldCore> Commitment<F> {
 
 /// Public commitment to one polynomial group together with its frozen contract.
 ///
-/// The descriptor is the exact schedule identity selected when the group was
+/// The profile is the exact commitment identity selected when the group was
 /// committed. Callers pass this object through claims so proving and
 /// verification never reconstruct group metadata from a bare layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroup<F: FieldCore> {
-    /// Exact group layout, source contract, and commitment geometry.
-    pub descriptor: CommittedGroupDescriptor,
+    /// Exact public algebraic profile and commitment geometry.
+    pub profile: CommittedGroupProfile,
     /// Outer SIS commitment rows.
     pub commitment: Commitment<F>,
 }
 
 impl<F: FieldCore> CommittedGroup<F> {
     /// Build a self-describing group commitment.
-    pub fn new(descriptor: CommittedGroupDescriptor, commitment: Commitment<F>) -> Self {
+    pub fn new(profile: CommittedGroupProfile, commitment: Commitment<F>) -> Self {
         Self {
-            descriptor,
+            profile,
             commitment,
         }
     }
 
-    /// Borrow the exact frozen descriptor.
-    pub fn descriptor(&self) -> &CommittedGroupDescriptor {
-        &self.descriptor
+    /// Borrow the exact frozen commitment profile.
+    pub fn profile(&self) -> &CommittedGroupProfile {
+        &self.profile
     }
 
     /// Borrow the underlying SIS commitment.
@@ -328,15 +328,15 @@ impl<F: FieldCore> CommittedGroup<F> {
 impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         let field_bits = 128 - (detect_field_modulus::<F>() - 1).leading_zeros();
-        self.descriptor
+        self.profile
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         self.commitment.check()?;
         let expected_coeffs = self
-            .descriptor
+            .profile
             .outer_commit_matrix
             .output_rank()
-            .checked_mul(self.descriptor.outer_commit_matrix.ring_dimension())
+            .checked_mul(self.profile.outer_commit_matrix.ring_dimension())
             .ok_or_else(|| {
                 SerializationError::InvalidData(
                     "committed-group coefficient count overflow".to_string(),
@@ -368,29 +368,26 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
         }
 
         self.check()?;
-        let descriptor = &self.descriptor;
-        descriptor
+        let profile = &self.profile;
+        profile
             .version
             .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, descriptor.group.num_vars())?;
-        write_usize(&mut writer, descriptor.group.num_polynomials())?;
-        descriptor
-            .encoding
-            .serialize_with_mode(&mut writer, Compress::No)?;
+        write_usize(&mut writer, profile.group.num_vars())?;
+        write_usize(&mut writer, profile.group.num_polynomials())?;
         for value in [
-            descriptor.num_live_ring_elements_per_claim,
-            descriptor.num_positions_per_block,
-            descriptor.num_live_blocks,
+            profile.num_live_ring_elements_per_claim,
+            profile.num_positions_per_block,
+            profile.num_live_blocks,
         ] {
             write_usize(&mut writer, value)?;
         }
-        descriptor
+        profile
             .log_basis_inner
             .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, descriptor.num_digits_inner)?;
+        write_usize(&mut writer, profile.num_digits_inner)?;
         for matrix in [
-            descriptor.inner_commit_matrix.sis_table_key(),
-            descriptor.outer_commit_matrix.sis_table_key(),
+            profile.inner_commit_matrix.sis_table_key(),
+            profile.outer_commit_matrix.sis_table_key(),
         ] {
             matrix
                 .modulus_profile
@@ -410,13 +407,13 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
                 .serialize_with_mode(&mut writer, Compress::No)?;
             let params = if matrix.role == SisMatrixRole::Inner {
                 (
-                    descriptor.inner_commit_matrix.output_rank(),
-                    descriptor.inner_commit_matrix.input_width(),
+                    profile.inner_commit_matrix.output_rank(),
+                    profile.inner_commit_matrix.input_width(),
                 )
             } else {
                 (
-                    descriptor.outer_commit_matrix.output_rank(),
-                    descriptor.outer_commit_matrix.input_width(),
+                    profile.outer_commit_matrix.output_rank(),
+                    profile.outer_commit_matrix.input_width(),
                 )
             };
             write_usize(&mut writer, params.0)?;
@@ -425,10 +422,10 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
                 .coeff_linf_bound
                 .serialize_with_mode(&mut writer, Compress::No)?;
             if matrix.role == SisMatrixRole::Inner {
-                descriptor
+                profile
                     .log_basis_outer
                     .serialize_with_mode(&mut writer, Compress::No)?;
-                write_usize(&mut writer, descriptor.num_digits_outer)?;
+                write_usize(&mut writer, profile.num_digits_outer)?;
             }
         }
         self.commitment.serialize_with_mode(&mut writer, compress)
@@ -437,7 +434,6 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
     fn serialized_size(&self, compress: Compress) -> usize {
         const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
         1 + 16
-            + 9
             + 24
             + 4
             + 8
@@ -515,15 +511,13 @@ where
         }
 
         let version = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        if version != CommittedGroupDescriptor::VERSION {
+        if version != CommittedGroupProfile::VERSION {
             return Err(SerializationError::InvalidData(format!(
                 "unknown committed-group profile version {version}"
             )));
         }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
-        let encoding =
-            GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
@@ -558,10 +552,9 @@ where
         )
         .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
 
-        let descriptor = CommittedGroupDescriptor {
+        let descriptor = CommittedGroupProfile {
             version,
             group: PolynomialGroupLayout::new(num_vars, num_polynomials),
-            encoding,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -670,12 +663,9 @@ mod committed_group_tests {
         )
         .expect("audited B profile");
         CommittedGroup::new(
-            CommittedGroupDescriptor {
-                version: CommittedGroupDescriptor::VERSION,
+            CommittedGroupProfile {
+                version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::new(11, 1),
-                encoding: GroupSourceEncoding::Bounded {
-                    coefficient_bits: 32,
-                },
                 num_live_ring_elements_per_claim: 32,
                 num_positions_per_block: 32,
                 num_live_blocks: 1,
@@ -712,7 +702,7 @@ mod committed_group_tests {
         assert_eq!(decoded, group);
 
         let mut unknown_version = bytes.clone();
-        unknown_version[0] = CommittedGroupDescriptor::VERSION + 1;
+        unknown_version[0] = CommittedGroupProfile::VERSION + 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
             unknown_version.as_slice(),
             Compress::Yes,
@@ -721,25 +711,7 @@ mod committed_group_tests {
         )
         .is_err());
 
-        let encoding_tag_offset = 1 + 2 * std::mem::size_of::<u64>();
-        let mut unknown_encoding = bytes.clone();
-        unknown_encoding[encoding_tag_offset] = 9;
-        assert!(CommittedGroup::<F>::deserialize_with_mode(
-            unknown_encoding.as_slice(),
-            Compress::Yes,
-            Validate::Yes,
-            &(),
-        )
-        .is_err());
-
-        let inner_matrix_role_offset = 1
-            + 2 * std::mem::size_of::<u64>()
-            + 1
-            + std::mem::size_of::<u64>()
-            + 3 * std::mem::size_of::<u64>()
-            + std::mem::size_of::<u32>()
-            + std::mem::size_of::<u64>()
-            + 2;
+        let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
         assert!(CommittedGroup::<F>::deserialize_with_mode(
@@ -749,15 +721,6 @@ mod committed_group_tests {
             &(),
         )
         .is_err());
-    }
-
-    #[test]
-    fn committed_group_rejects_dense_bound_above_field_width() {
-        let mut group = group();
-        group.descriptor.encoding = GroupSourceEncoding::Bounded {
-            coefficient_bits: 33,
-        };
-        assert!(group.check().is_err());
     }
 
     #[test]
@@ -772,7 +735,7 @@ mod committed_group_tests {
     #[test]
     fn committed_group_reaudits_unchecked_sis_descriptors() {
         let baseline = group();
-        let inner = baseline.descriptor.inner_commit_matrix;
+        let inner = baseline.profile.inner_commit_matrix;
         let malformed = [
             InnerCommitMatrixParams::new_unchecked(
                 inner.security_policy(),
@@ -805,7 +768,7 @@ mod committed_group_tests {
 
         for matrix in malformed {
             let mut candidate = baseline.clone();
-            candidate.descriptor.inner_commit_matrix = matrix;
+            candidate.profile.inner_commit_matrix = matrix;
             assert!(candidate.check().is_err());
             assert!(candidate
                 .serialize_with_mode(Vec::new(), Compress::Yes)

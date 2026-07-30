@@ -2,7 +2,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
-use crate::schedule::CommittedGroupDescriptor;
+use crate::schedule::CommittedGroupProfile;
 use crate::sis::InnerCommitMatrixParams;
 use crate::CommitmentRingDims;
 
@@ -12,10 +12,10 @@ use super::CommittedGroupParams;
 ///
 /// These fields mirror the group-local pieces of [`CommittedGroupParams`]. Widths are
 /// derived from the Ajtai keys and block geometry rather than stored twice.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into the multi-group root key.
-    pub layout: CommittedGroupDescriptor,
+    pub layout: CommittedGroupProfile,
     /// Planner-only source model used by the consuming schedule.
     pub source: crate::GroupSource,
     /// Opening basis used by the shared D matrix for fresh `e_hat` digits.
@@ -24,9 +24,21 @@ pub struct PrecommittedLevelParams {
     pub fold_challenge_config: SparseChallengeConfig,
     /// Gadget decomposition depth for fresh `e_hat` values.
     pub num_digits_open: usize,
-    /// Cached folded-witness digit count for a singleton group relation.
-    pub num_digits_fold_one: usize,
+    /// Exact folded-witness digit depth selected by this schedule row.
+    pub num_digits_fold: usize,
 }
+
+impl PartialEq for PrecommittedLevelParams {
+    fn eq(&self, other: &Self) -> bool {
+        self.layout == other.layout
+            && self.log_basis_open == other.log_basis_open
+            && self.fold_challenge_config == other.fold_challenge_config
+            && self.num_digits_open == other.num_digits_open
+            && self.num_digits_fold == other.num_digits_fold
+    }
+}
+
+impl Eq for PrecommittedLevelParams {}
 
 impl PrecommittedLevelParams {
     /// This group's A/B dimensions completed with the consuming level's shared
@@ -48,23 +60,14 @@ impl PrecommittedLevelParams {
             .sis_modulus_profile()
             .field_bits();
         self.layout.validate(field_bits)?;
-        self.source.validate_for_ring_dimension(
-            field_bits,
-            self.layout.inner_commit_matrix.ring_dimension(),
-        )?;
-        if self.source.encoding() != self.layout.encoding {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted source encoding does not match frozen layout".to_string(),
-            ));
-        }
         if self.fold_challenge_config.weight() != 0 {
             self.fold_challenge_config
                 .validate_for_ring_dim(self.layout.inner_commit_matrix.ring_dimension())
                 .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
         }
-        if self.log_basis_open == 0 || self.num_digits_open == 0 || self.num_digits_fold_one == 0 {
+        if self.log_basis_open == 0 || self.num_digits_open == 0 || self.num_digits_fold == 0 {
             return Err(AkitaError::InvalidSetup(
-                "precommitted semantic bases and digit depths must be nonzero".to_string(),
+                "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
         }
         if self.log_basis_open < self.layout.log_basis_inner
@@ -145,14 +148,13 @@ impl PrecommittedLevelParams {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         self.layout.append_descriptor_bytes(bytes);
-        self.source.append_descriptor_bytes(bytes);
         crate::descriptor_bytes::push_u32(bytes, self.log_basis_open);
         super::append_schedule_sparse_challenge_descriptor_bytes(
             bytes,
             &self.fold_challenge_config,
         );
         push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.num_digits_fold_one);
+        push_usize(bytes, self.num_digits_fold);
     }
 }
 
@@ -177,7 +179,8 @@ pub trait LevelParamsLike {
     fn num_digits_inner(&self) -> usize;
     fn num_digits_outer(&self) -> usize;
     fn num_digits_open(&self) -> usize;
-    fn num_digits_fold_one(&self) -> usize;
+    fn num_digits_fold(&self) -> usize;
+    fn num_fold_claims(&self) -> usize;
     fn log_basis_inner(&self) -> u32;
     fn log_basis_outer(&self) -> u32;
     fn log_basis_open(&self) -> u32;
@@ -248,8 +251,12 @@ impl LevelParamsLike for CommittedGroupParams {
         self.num_digits_open
     }
 
-    fn num_digits_fold_one(&self) -> usize {
-        self.num_digits_fold_one
+    fn num_digits_fold(&self) -> usize {
+        self.num_digits_fold
+    }
+
+    fn num_fold_claims(&self) -> usize {
+        self.num_fold_claims
     }
 
     fn log_basis_outer(&self) -> u32 {
@@ -333,8 +340,12 @@ impl LevelParamsLike for PrecommittedLevelParams {
         self.num_digits_open
     }
 
-    fn num_digits_fold_one(&self) -> usize {
-        self.num_digits_fold_one
+    fn num_digits_fold(&self) -> usize {
+        self.num_digits_fold
+    }
+
+    fn num_fold_claims(&self) -> usize {
+        self.layout.group.num_polynomials()
     }
 
     fn log_basis_outer(&self) -> u32 {

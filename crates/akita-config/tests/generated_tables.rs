@@ -80,6 +80,12 @@ fn generated_entry_rejects_root_source_policy_mismatch() {
             .iter()
             .map(|group| group.descriptor)
             .collect(),
+        precommitted_sources: entry
+            .root
+            .precommitted_groups
+            .iter()
+            .map(|group| group.source)
+            .collect(),
     };
     let err = validate_generated_schedule_entry(
         &entry,

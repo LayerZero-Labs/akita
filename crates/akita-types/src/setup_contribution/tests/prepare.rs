@@ -80,8 +80,8 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         1,
         64,
     );
-    lp.cached_num_digits_block_claims = 2;
-    lp.cached_num_digits_fold_value = 2;
+    lp.num_fold_claims = 2;
+    lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())

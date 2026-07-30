@@ -134,7 +134,7 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
                     .enumerate()
                     .find(|(_, group)| {
                         group.descriptor.group == *key
-                            && group.descriptor.encoding == source.encoding()
+                            && group.source.encoding() == source.encoding()
                     })
             else {
                 continue;
@@ -171,7 +171,7 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
             params.num_digits_inner = group.layout.num_digits_inner;
             params.num_digits_outer = group.layout.num_digits_outer;
             params.num_digits_open = group.num_digits_open;
-            params.num_digits_fold_one = group.num_digits_fold_one;
+            params.num_digits_fold = group.num_digits_fold;
             params.precommitted_groups.clear();
             return Ok(params);
         }

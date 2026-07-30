@@ -1,6 +1,6 @@
 //! Shared commitment-scheme API contracts.
 
-use crate::{BasisMode, OpeningClaims};
+use crate::{BasisMode, GroupBatchStatement};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use std::borrow::Cow;
@@ -45,7 +45,7 @@ where
         proof: &Self::BatchedProof,
         setup: &Self::VerifierSetup,
         transcript: &mut T,
-        claims: OpeningClaims<'_, Self::ExtField, &Self::Commitment>,
+        statement: GroupBatchStatement<'_, Self::ExtField, F>,
         basis: BasisMode,
     ) -> Result<(), AkitaError>;
 

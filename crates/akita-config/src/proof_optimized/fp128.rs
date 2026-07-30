@@ -22,7 +22,7 @@ pub struct D64OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D64OneHotK16;
 
-/// Binary onehot `D=128` preset for planner-backed experiments.
+/// Binary onehot `D=128`, `K=256` preset for planner-backed experiments.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D128OneHot;
 
@@ -65,6 +65,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
+    1,
     schedules = (
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
@@ -79,6 +80,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
+    256,
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -93,6 +95,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
+    1,
     schedules = (
         "schedules-fp128-d64-dense",
         "fp128_d64_dense",

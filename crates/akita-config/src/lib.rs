@@ -105,6 +105,7 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
+pub use akita_schedules::ResolvedScheduleRow;
 pub use precommitted_commitment::{committed_group_params, PrecommittedCommitmentConfig};
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
@@ -345,6 +346,52 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         Self::validate_sis_modulus_profile()?;
         akita_schedules::resolve_group_batch_schedule(
             &key,
+            &policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog(),
+        )
+    }
+
+    /// Select the generated row accepted for exact committed profiles.
+    ///
+    /// This is an honest-prover operation. Verification must instead resolve
+    /// the explicit public selection through [`Self::resolve_schedule_selection`].
+    fn select_schedule_for_profiles(
+        profiles: &akita_types::CommittedGroupBatchProfile,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
+        profiles.validate(Self::decomposition().field_bits())?;
+        let row = akita_schedules::select_generated_schedule_row(
+            &AkitaScheduleLookupKey {
+                final_group: profiles.final_group.group,
+                final_source: Self::group_source(),
+                precommitteds: profiles.precommitteds.clone(),
+                precommitted_sources: Vec::new(),
+            },
+            &policy_of::<Self>(),
+            Self::ring_challenge_config,
+            Self::fold_challenge_shape_at_level,
+            Self::schedule_catalog(),
+        )?;
+        if row.profiles() != profiles {
+            return Err(AkitaError::UnsupportedSchedule(
+                "resolved schedule does not match the exact committed profiles".to_string(),
+            ));
+        }
+        Ok(row)
+    }
+
+    /// Resolve one explicit public selection in this config's generated catalog.
+    ///
+    /// This is the verifier boundary: it performs identity/digest lookup only
+    /// and never reconstructs a runtime key or invokes planner search.
+    fn resolve_schedule_selection(
+        selection: akita_types::OpeningScheduleSelection,
+    ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
+        Self::validate_sis_modulus_profile()?;
+        akita_schedules::resolve_generated_schedule_selection(
+            selection,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
@@ -690,7 +737,7 @@ mod precommit_tests {
                 &singleton,
             )
             .expect("precommitted group params");
-        let precommitted = akita_types::CommittedGroupDescriptor::from_params(group, &params);
+        let precommitted = akita_types::CommittedGroupProfile::from_params(group, &params);
         let mut policy = policy_of::<fp128::D64OneHot>();
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();
@@ -705,7 +752,7 @@ mod precommit_tests {
 
         assert_eq!(
             precommitted,
-            akita_types::CommittedGroupDescriptor::from_params(group, root)
+            akita_types::CommittedGroupProfile::from_params(group, root)
         );
         let root_basis = fp128::D64OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);

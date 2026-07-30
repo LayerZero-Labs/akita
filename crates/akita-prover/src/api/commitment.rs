@@ -1,5 +1,6 @@
 //! Prover-owned commitment kernels.
 
+use crate::api::WholeGroupSourceProvider;
 use crate::compute::{
     tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource,
     RootPolyMeta, RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
@@ -14,7 +15,7 @@ use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, Rando
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommittedGroup, CommittedGroupDescriptor, CommittedGroupParams, DigitBlocks,
+    Commitment, CommittedGroup, CommittedGroupParams, CommittedGroupProfile, DigitBlocks,
     FpExtEncoding, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
@@ -543,7 +544,7 @@ where
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
     let group = opening_batch.root_final_group_layout()?;
-    let descriptor = CommittedGroupDescriptor::from_params(group, &params);
+    let descriptor = CommittedGroupProfile::from_params(group, &params);
     Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
@@ -610,7 +611,7 @@ where
     ))
 }
 
-/// Commit one standalone commitment group with the exact fixed-root layout.
+/// Commit one provider-validated standalone group with the exact fixed-root layout.
 ///
 /// Grouped proving is still guarded until the opening phase lands; this API only
 /// produces the precommit metadata and commitment object required by that later
@@ -618,13 +619,13 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if the group is empty, unsupported by the setup, or cannot
-/// be planned under the precommitment policy.
-pub fn commit_group<Cfg, P, B>(
+/// Returns an error if provider validation fails, the group is unsupported by
+/// the setup, or no exact generated row supports it.
+pub fn commit_group<Cfg, P, B, S>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-    source: GroupSource,
+    provider: &S,
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -633,14 +634,16 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+    S: WholeGroupSourceProvider<Cfg::Field, P>,
 {
+    let prepared_group = provider.prepare_group(polys)?;
+    let polys = prepared_group.polynomials();
+    let source = prepared_group.planning_source();
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
-    source.validate(Cfg::decomposition().field_bits())?;
     let params = akita_config::committed_group_params::<Cfg>(&key, source)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     let (commitment, hint) =
         if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a()) {
             // A-role tensor-projection operation at the group layout's ring
@@ -659,14 +662,14 @@ where
         } else {
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
-    let descriptor = CommittedGroupDescriptor::from_params(key, &params);
+    let descriptor = CommittedGroupProfile::from_params(key, &params);
     Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
 fn final_group_key_from_polys<Cfg, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<Cfg::Field>,
-    precommitteds: Vec<CommittedGroupDescriptor>,
+    precommitteds: Vec<CommittedGroupProfile>,
     final_source: GroupSource,
 ) -> Result<AkitaScheduleLookupKey, AkitaError>
 where
@@ -686,6 +689,10 @@ where
             opening_batch.num_total_polynomials(),
         ),
         final_source,
+        // Generated lookup is profile-exact for already-committed groups.
+        // Never synthesize their honest provider models from the final
+        // provider; dynamic planning must receive those models explicitly.
+        precommitted_sources: Vec::new(),
         precommitteds,
     };
     key.validate(Cfg::decomposition().field_bits())?;
@@ -720,12 +727,12 @@ where
 ///
 /// Returns an error if input validation, multi-group parameter selection, or
 /// commitment execution fails.
-pub fn commit_final_group<Cfg, P, B>(
+pub fn commit_final_group<Cfg, P, B, S>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-    precommitteds: Vec<CommittedGroupDescriptor>,
-    final_source: GroupSource,
+    precommitteds: Vec<CommittedGroupProfile>,
+    final_provider: &S,
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -734,7 +741,11 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+    S: WholeGroupSourceProvider<Cfg::Field, P>,
 {
+    let prepared_group = final_provider.prepare_group(polys)?;
+    let polys = prepared_group.polynomials();
+    let final_source = prepared_group.planning_source();
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let schedule_key =
@@ -743,7 +754,6 @@ where
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
     let params = schedule.root_fold().params.final_group.commitment.clone();
-    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     let (commitment, hint) =
         if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())?
@@ -762,7 +772,7 @@ where
         } else {
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
         }?;
-    let descriptor = CommittedGroupDescriptor::from_params(schedule_key.final_group, &params);
+    let descriptor = CommittedGroupProfile::from_params(schedule_key.final_group, &params);
     Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
@@ -814,7 +824,7 @@ where
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
     let group = opening_batch.root_final_group_layout()?;
-    let descriptor = CommittedGroupDescriptor::from_params(group, &params);
+    let descriptor = CommittedGroupProfile::from_params(group, &params);
     Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 

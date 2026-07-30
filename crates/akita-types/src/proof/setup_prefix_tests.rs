@@ -1,8 +1,8 @@
 use super::*;
 use crate::{
-    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, GroupSourceEncoding,
-    GroupSourceRegistration, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedLevelParams, SisModulusProfileId,
+    CommittedGroupParams, CommittedGroupProfile, GroupSource, GroupSourceRegistration,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
 use std::collections::BTreeMap;
@@ -63,12 +63,9 @@ fn valid_setup_prefix_params() -> PrecommittedLevelParams {
     )
     .expect("audited prefix B matrix");
     PrecommittedLevelParams {
-        layout: CommittedGroupDescriptor {
-            version: CommittedGroupDescriptor::VERSION,
+        layout: CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::singleton(6),
-            encoding: GroupSourceEncoding::Bounded {
-                coefficient_bits: 32,
-            },
             num_live_ring_elements_per_claim: 1,
             num_positions_per_block: 1,
             num_live_blocks: 1,
@@ -83,7 +80,7 @@ fn valid_setup_prefix_params() -> PrecommittedLevelParams {
         log_basis_open: 1,
         fold_challenge_config: SparseChallengeConfig::pm1_only(0),
         num_digits_open: 1,
-        num_digits_fold_one: 1,
+        num_digits_fold: 1,
     }
 }
 
@@ -201,12 +198,12 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: CommittedGroupDescriptor::from_params(group, params),
+        layout: CommittedGroupProfile::from_params(group, params),
         source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
-        num_digits_fold_one: params.num_digits_fold_one,
+        num_digits_fold: params.num_digits_fold,
     }
 }
 
@@ -405,9 +402,11 @@ fn setup_prefix_slot_identity_erases_provider_registration() {
     let mut downstream = builtin.clone();
     downstream.commitment_params.source = GroupSource::registered(
         GroupSourceRegistration::new(*b"downstream/test\0", [7; 16]),
-        builtin.commitment_params.source.encoding(),
+        GroupSource::one_hot(16).encoding(),
     );
-    downstream.check().expect("registered provider is valid");
+    downstream
+        .check()
+        .expect("provider metadata is outside verifier acceptance");
 
     assert_ne!(
         builtin.commitment_params.source,
@@ -442,6 +441,11 @@ fn setup_prefix_slot_identity_erases_provider_registration() {
     .expect("deserialize provider-independent slot id");
     assert_eq!(decoded, builtin);
     assert_eq!(decoded, downstream);
+    assert_eq!(
+        decoded.commitment_params.source,
+        GroupSource::bounded(32),
+        "wire decode uses a non-semantic conservative staging placeholder"
+    );
 
     let mut map = BTreeMap::new();
     assert_eq!(map.insert(builtin, 1), None);
@@ -450,20 +454,16 @@ fn setup_prefix_slot_identity_erases_provider_registration() {
 }
 
 #[test]
-fn setup_prefix_slot_rejects_source_layout_encoding_mismatch() {
+fn setup_prefix_slot_acceptance_ignores_staging_source_contract() {
     let mut commitment_params = valid_setup_prefix_params();
-    commitment_params.layout.encoding = match commitment_params.source.encoding() {
-        GroupSourceEncoding::Bounded { coefficient_bits } if coefficient_bits > 1 => {
-            GroupSourceEncoding::Bounded {
-                coefficient_bits: coefficient_bits - 1,
-            }
-        }
-        _ => GroupSourceEncoding::SparseBinary { chunk_size: 64 },
-    };
-    assert!(commitment_params.validate().is_err());
+    commitment_params.source = GroupSource::bounded(33);
+    commitment_params
+        .validate()
+        .expect("staging source is not verifier input");
 
     let id = setup_prefix_slot_id(64, 1, commitment_params);
-    assert!(id.serialize_with_mode(Vec::new(), Compress::Yes).is_err());
+    id.serialize_with_mode(Vec::new(), Compress::Yes)
+        .expect("staging source is not serialized");
 }
 
 #[test]

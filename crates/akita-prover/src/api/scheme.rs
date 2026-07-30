@@ -7,13 +7,14 @@ use crate::compute::{
 };
 use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
+use crate::WholeGroupSourceProvider;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, CommittedGroupDescriptor, FpExtEncoding, GroupSource};
+use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -105,19 +106,20 @@ where
     ///
     /// Returns an error if input validation, multi-group layout selection, or
     /// commitment execution fails.
-    fn commit_final_group<P, B>(
+    fn commit_final_group<P, B, S>(
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-        precommitteds: Vec<CommittedGroupDescriptor>,
-        final_source: GroupSource,
+        precommitteds: Vec<CommittedGroupProfile>,
+        final_provider: &S,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         Self::ExtField: FpExtEncoding<F>,
         P: RuntimeRootCommitPoly<F>,
-        B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
+        B: RuntimeRootCommitBackend<F, P, Self::ExtField>,
+        S: WholeGroupSourceProvider<F, P>;
 
     /// Produce a fused batched opening proof over ordered commitment groups.
     ///

@@ -128,13 +128,41 @@ fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
 }
 
 #[test]
-fn small_field_onehot_presets_use_the_profiled_k256_chunk_contract() {
+fn onehot_presets_use_the_profiled_k256_chunk_contract() {
+    assert_eq!(fp128::D64OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp128::D128OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp128::D256OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp128::D512OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp32::D64OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp32::D128OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp32::D256OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp64::D64OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp64::D128OneHot::onehot_chunk_size(), 256);
     assert_eq!(fp64::D256OneHot::onehot_chunk_size(), 256);
+}
+
+#[cfg(feature = "schedules-default")]
+#[test]
+fn fp128_d128_onehot_catalog_is_generated_for_k256() {
+    let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
+    assert_eq!(table.identity.onehot_chunk_size, 256);
+    assert!(table.entries.iter().all(|entry| {
+        entry.root.final_group.source
+            == akita_types::GroupSource::one_hot(fp128::D128OneHot::onehot_chunk_size())
+    }));
+    let first = table
+        .entries
+        .first()
+        .expect("nonempty D128 one-hot catalog");
+    let schedule = fp128::D128OneHot::runtime_schedule(first.to_runtime_lookup_key())
+        .expect("resolve D128 one-hot row");
+    let root = &schedule.root.params.final_group.commitment;
+    assert_eq!(root.source.sparse_chunk_size(), 256);
+    assert_eq!(
+        root.fold_witness_norms().l1_norm(),
+        1,
+        "K=256 at D=128 must price one nonzero per ring element, not the conservative K=1 bound"
+    );
 }
 
 #[cfg(feature = "schedules-default")]

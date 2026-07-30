@@ -619,12 +619,9 @@ mod tests {
         )
         .expect("audited prefix B matrix");
         crate::PrecommittedLevelParams {
-            layout: crate::CommittedGroupDescriptor {
-                version: crate::CommittedGroupDescriptor::VERSION,
+            layout: crate::CommittedGroupProfile {
+                version: crate::CommittedGroupProfile::VERSION,
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
-                encoding: crate::GroupSourceEncoding::Bounded {
-                    coefficient_bits: 128,
-                },
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,
@@ -639,7 +636,7 @@ mod tests {
             log_basis_open: 1,
             fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         }
     }
 

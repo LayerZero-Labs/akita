@@ -82,7 +82,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
 }
 
 fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::CommittedGroupDescriptor;
+    use crate::schedule::CommittedGroupProfile;
     let mut lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
@@ -108,7 +108,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         precommit_lp.d_a(),
     );
     let mut layout =
-        CommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
     layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,
@@ -116,7 +116,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         log_basis_open: precommit_lp.log_basis_open,
         fold_challenge_config: precommit_lp.fold_challenge_config,
         num_digits_open: precommit_lp.num_digits_open,
-        num_digits_fold_one: precommit_lp.num_digits_fold_one,
+        num_digits_fold: precommit_lp.num_digits_fold,
     };
     let mut grouped = lp;
     grouped.precommitted_groups = vec![precommit];
@@ -139,9 +139,6 @@ fn grouped_fold_witness_norms_use_each_groups_source() {
     let (mut grouped, batch) = sample_multi_group_root_params();
     grouped.source = crate::GroupSource::one_hot(16);
     grouped.precommitted_groups[0].source = crate::GroupSource::bounded(32);
-    grouped.precommitted_groups[0].layout.encoding = crate::GroupSourceEncoding::Bounded {
-        coefficient_bits: 32,
-    };
 
     let precommitted = grouped
         .group_params(&batch, 0)

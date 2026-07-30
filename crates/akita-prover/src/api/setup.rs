@@ -287,7 +287,7 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupDescriptor, DigitBlocks,
+            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, DigitBlocks,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -329,12 +329,9 @@ mod tests {
         .expect("audited prefix B matrix");
         let commitment_rows = outer_commit_matrix.output_rank();
         let commitment_params = PrecommittedLevelParams {
-            layout: CommittedGroupDescriptor {
-                version: CommittedGroupDescriptor::VERSION,
+            layout: CommittedGroupProfile {
+                version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(6),
-                encoding: akita_types::GroupSourceEncoding::Bounded {
-                    coefficient_bits: 128,
-                },
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
@@ -349,7 +346,7 @@ mod tests {
             log_basis_open: 1,
             fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         };
         setup
             .prefix_slots

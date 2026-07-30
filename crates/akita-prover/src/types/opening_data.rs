@@ -4,19 +4,20 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, AkitaScheduleLookupKey, Commitment, CommittedGroup,
-    CommittedGroupDescriptor, CommittedGroupParams, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
+    AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupBatchProfile,
+    CommittedGroupParams, CommittedGroupProfile, OpeningClaims, OpeningClaimsLayout,
+    OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    SetupPrefixSlot,
 };
 
-fn schedule_key_from_committed_claims<F: Clone, CommitF: FieldCore>(
+fn batch_profile_from_committed_claims<F: Clone, CommitF: FieldCore>(
     claims: &OpeningClaims<'_, F, CommittedGroup<CommitF>>,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
+) -> Result<CommittedGroupBatchProfile, AkitaError> {
     let (final_group, precommitteds) = claims
         .groups()
         .split_last()
         .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?;
-    let final_descriptor = *final_group.commitment().descriptor();
+    let final_descriptor = *final_group.commitment().profile();
     if final_descriptor.group.num_polynomials() != final_group.num_evaluations()
         || final_descriptor.group.num_vars() != final_group.num_vars()
     {
@@ -25,7 +26,7 @@ fn schedule_key_from_committed_claims<F: Clone, CommitF: FieldCore>(
         ));
     }
     for group in precommitteds {
-        let descriptor = group.commitment().descriptor();
+        let descriptor = group.commitment().profile();
         if descriptor.group.num_polynomials() != group.num_evaluations()
             || descriptor.group.num_vars() != group.num_vars()
         {
@@ -34,23 +35,22 @@ fn schedule_key_from_committed_claims<F: Clone, CommitF: FieldCore>(
             ));
         }
     }
-    let key = AkitaScheduleLookupKey {
-        final_group: final_descriptor.group,
-        final_source: akita_types::GroupSource::from_encoding(final_descriptor.encoding),
+    Ok(CommittedGroupBatchProfile {
+        final_group: final_descriptor,
         precommitteds: precommitteds
             .iter()
-            .map(|group| *group.commitment().descriptor())
+            .map(|group| *group.commitment().profile())
             .collect(),
-    };
-    Ok(key)
+    })
 }
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
+    selection: Option<OpeningScheduleSelection>,
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
-    schedule_key: Option<AkitaScheduleLookupKey>,
-    final_descriptor: Option<CommittedGroupDescriptor>,
+    batch_profile: Option<CommittedGroupBatchProfile>,
+    final_descriptor: Option<CommittedGroupProfile>,
     hints: Vec<AkitaCommitmentHint<CommitF>>,
     polynomials: Vec<&'a [&'a P]>,
 }
@@ -62,8 +62,9 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
         let data = Self {
+            selection: None,
             opening_claims,
-            schedule_key: None,
+            batch_profile: None,
             final_descriptor: None,
             hints,
             polynomials,
@@ -74,11 +75,12 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
 
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
+        selection: OpeningScheduleSelection,
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
-        let schedule_key = schedule_key_from_committed_claims(&opening_claims)?;
+        let batch_profile = batch_profile_from_committed_claims(&opening_claims)?;
         let raw_groups = opening_claims
             .groups()
             .iter()
@@ -95,10 +97,11 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
             .last()
             .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?
             .commitment()
-            .descriptor();
+            .profile();
         let data = Self {
+            selection: Some(selection),
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
-            schedule_key: Some(schedule_key),
+            batch_profile: Some(batch_profile),
             final_descriptor: Some(final_descriptor),
             hints,
             polynomials,
@@ -164,15 +167,22 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         &self.opening_claims
     }
 
-    /// Exact ordered schedule key carried by the committed groups.
-    pub fn schedule_key(&self) -> Result<AkitaScheduleLookupKey, AkitaError> {
-        self.schedule_key.clone().ok_or_else(|| {
-            AkitaError::InvalidInput("top-level opening data requires committed descriptors".into())
+    /// Explicit v1 catalog row selected for this top-level opening.
+    pub fn selection(&self) -> Result<OpeningScheduleSelection, AkitaError> {
+        self.selection.ok_or_else(|| {
+            AkitaError::InvalidInput("top-level opening data requires a schedule selection".into())
+        })
+    }
+
+    /// Exact ordered public profiles carried by the committed groups.
+    pub fn batch_profile(&self) -> Result<CommittedGroupBatchProfile, AkitaError> {
+        self.batch_profile.clone().ok_or_else(|| {
+            AkitaError::InvalidInput("top-level opening data requires committed profiles".into())
         })
     }
 
     /// Exact frozen descriptor returned with the final public commitment.
-    pub fn final_descriptor(&self) -> Result<CommittedGroupDescriptor, AkitaError> {
+    pub fn final_descriptor(&self) -> Result<CommittedGroupProfile, AkitaError> {
         self.final_descriptor.ok_or_else(|| {
             AkitaError::InvalidInput("top-level opening data requires a final descriptor".into())
         })
@@ -359,8 +369,9 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
             ));
         }
         let data = ProverOpeningData {
+            selection: self.selection,
             opening_claims: self.opening_claims,
-            schedule_key: self.schedule_key,
+            batch_profile: self.batch_profile,
             final_descriptor: self.final_descriptor,
             hints: self.hints,
             polynomials: regrouped,
@@ -514,7 +525,7 @@ mod tests {
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{CommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId};
+    use akita_types::{CommittedGroupProfile, PrecommittedLevelParams, SisModulusProfileId};
 
     type F = Fp32<251>;
 
@@ -588,12 +599,12 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: CommittedGroupDescriptor::from_params(pre_layout, &pre),
+            layout: CommittedGroupProfile::from_params(pre_layout, &pre),
             source: pre.source,
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
             num_digits_open: pre.num_digits_open,
-            num_digits_fold_one: pre.num_digits_fold_one,
+            num_digits_fold: pre.num_digits_fold,
         });
         root
     }

@@ -16,7 +16,7 @@ use super::decomposition_digits::{
     balanced_digit_abs_max, balanced_digit_max, num_digits_for_bound,
 };
 use crate::layout::digit_math::isqrt_ceil;
-use crate::{DecompositionParams, FoldLinfProtocolBinding};
+use crate::FoldLinfProtocolBinding;
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
@@ -95,13 +95,14 @@ pub fn max_response_linf_for_role_a_collision(
     collision_linf_capacity.checked_div(price_per_unit)
 }
 
-/// A-role committed-level coefficient-`L∞` collision bucket.
+/// A-role committed-level coefficient-`L∞` collision bucket for one exact
+/// verifier-accepted fold digit depth.
 ///
 /// Prices the folded witness sum `z = Σ c_i·s_i` in the L∞ MSIS table. Lemma 7
 /// bounds the extracted kernel by challenge mass; stage-1 digit membership
 /// accepts every balanced `δ_fold`-digit string, whose absolute coefficient
-/// envelope is [`balanced_digit_abs_max`] at the `δ_fold` depth
-/// induced by [`fold_witness_digit_plan`]. MSIS accounting prices the
+/// envelope is [`balanced_digit_abs_max`] at the selected `δ_fold` depth.
+/// MSIS accounting prices the
 /// weak-binding collision `2 · c_bar · z_bar · nu`, where the challenge slack
 /// is `c_bar = 2 · challenge.l1_norm` and the digit envelope is
 /// `z_bar = 2 · balanced_digit_abs_max`, then rounds up to the audited
@@ -116,42 +117,16 @@ pub fn rounded_up_role_a_inf_norm(
     table_digest: SisTableDigest,
     sis_modulus_profile: SisModulusProfileId,
     d: usize,
-    witness_decomposition: DecompositionParams,
     log_basis_response: u32,
     fold_challenge_config: &SparseChallengeConfig,
     fold_shape: TensorChallengeShape,
-    is_root: bool,
-    onehot_chunk_size: usize,
+    fold_decomposed_digits: usize,
     ring_subfield_norm_bound: u32,
-    num_live_blocks: usize,
-    num_claims: usize,
-    inner_width: u64,
 ) -> Option<u128> {
     let challenge = FoldChallengeNorms::new(fold_challenge_config, fold_shape);
-    let is_onehot = is_root && witness_decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-    let witness = FoldWitnessNorms::new(
-        witness_decomposition.log_basis,
-        d,
-        onehot_chunk_size,
-        is_onehot,
-    );
-    let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        fold_challenge_config,
-        fold_shape,
-        d,
-        inner_width as usize,
-    )
-    .ok()?;
-    let (fold_decomposed_digits, _) = fold_witness_digit_plan(
-        num_live_blocks,
-        num_claims,
-        witness_decomposition.field_bits(),
-        log_basis_response,
-        challenge,
-        witness,
-        &cap_config,
-    )
-    .ok()?;
+    if log_basis_response == 0 || fold_decomposed_digits == 0 {
+        return None;
+    }
     let recomposed_inf_norm_bound =
         balanced_digit_abs_max(log_basis_response, fold_decomposed_digits);
     let collision_linf = weak_binding_inf_norm(
@@ -540,16 +515,11 @@ mod tests {
                 SisTableDigest::CURRENT,
                 SisModulusProfileId::Q32Offset99,
                 d,
-                decomposition,
                 decomposition.log_basis,
                 &fold_challenge_config,
                 fold_shape,
-                is_root,
-                onehot_chunk_size,
+                delta_fold,
                 subfield,
-                num_live_blocks,
-                num_claims,
-                inner_width,
             )
             .unwrap(),
             envelope,
@@ -611,16 +581,11 @@ mod tests {
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q64Offset59,
             d,
-            decomposition,
             decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
-            is_root,
-            onehot_chunk_size,
+            delta_fold,
             subfield,
-            num_live_blocks,
-            num_claims,
-            inner_width,
         )
         .unwrap();
         let cap_priced = ceil_supported_linf_bound(
@@ -753,16 +718,11 @@ mod tests {
             SisTableDigest::CURRENT,
             SisModulusProfileId::Q32Offset99,
             d,
-            decomposition,
             decomposition.log_basis,
             &fold_challenge_config,
             fold_shape,
-            is_root,
-            onehot_chunk_size,
+            delta_fold,
             subfield,
-            num_live_blocks,
-            num_claims,
-            inner_width,
         )
         .unwrap();
         assert_eq!(

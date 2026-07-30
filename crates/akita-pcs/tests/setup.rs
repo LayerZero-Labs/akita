@@ -143,7 +143,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -161,14 +161,14 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
 }
 
-/// Onehot variant of [`run_dense_e2e`].  `K` is the onehot chunk size; in
-/// practice we set `K = D` so `(total_ring * K) == 2^poly_nv`.
+/// Onehot variant of [`run_dense_e2e`]. `K` is the onehot chunk size selected
+/// by the config; standard one-hot presets use `K = 256`.
 fn run_onehot_e2e<Cfg, const D: usize>(setup_nv: usize, setup_polys: usize, poly_nv: usize)
 where
     Cfg: CommitmentConfig<Field = F, ExtField = F>,
@@ -182,7 +182,7 @@ where
     .expect("layout");
     // The committed poly's one-hot chunk size must match the config's required
     // `onehot_chunk_size` (e.g. 256 for D64OneHot); configs with no constraint
-    // (`<= 1`) use the K = D one-chunk-per-ring-element representation.
+    // (`<= 1`) retain the legacy K = D test fallback.
     let source_chunk_size = layout.source.sparse_chunk_size();
     let k = if source_chunk_size > 1 {
         source_chunk_size
@@ -227,7 +227,7 @@ where
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -245,7 +245,7 @@ where
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -264,7 +264,7 @@ where
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("tampering predecessor-bound terminal t must be rejected");
@@ -279,7 +279,7 @@ where
         &wrong_binding,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect_err("schedule/proof binding mismatch must reject without panic");
@@ -338,7 +338,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-dense");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -356,7 +356,7 @@ fn run_dense_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched verify");
@@ -431,7 +431,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let mut prover_transcript = AkitaTranscript::<F>::new(b"setup-tests/batched-onehot");
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove::<_, _, _>(
         &setup,
-        prove_input(
+        prove_input::<Cfg, _>(
             &pt[..],
             &poly_refs[..],
             &commitments[0],
@@ -449,7 +449,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&pt[..], opening_groups[0], &commitments[0]),
+        verify_input::<Cfg>(&pt[..], opening_groups[0], &commitments[0]),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

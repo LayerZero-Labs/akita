@@ -8,7 +8,7 @@ use akita_planner::{
     RingDimensionSearchDomain,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupDescriptor, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
 
 fn dims(d_a: usize, d_b: usize, d_d: usize) -> CommitmentRingDims {
@@ -142,7 +142,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
         D64OneHot::ring_challenge_config,
         D64OneHot::fold_challenge_shape_at_level,
     )?;
-    let descriptor = CommittedGroupDescriptor::from_params(
+    let descriptor = CommittedGroupProfile::from_params(
         precommit_layout,
         &precommit.schedule.root.params.final_group.commitment,
     );
@@ -150,6 +150,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
         final_group: PolynomialGroupLayout::new(32, 2),
         final_source: D64OneHot::group_source(),
         precommitteds: vec![descriptor, descriptor],
+        precommitted_sources: vec![D64OneHot::group_source(), D64OneHot::group_source()],
     };
     let preserved = find_group_batch_schedule(
         &recursive_key,

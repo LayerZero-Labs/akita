@@ -104,14 +104,17 @@ pub struct CommittedGroupParams {
     pub num_digits_open: usize,
     /// Level-static fold-linf cap inputs for [`crate::sis::fold_witness_digit_plan`].
     pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
-    /// Cached [`Self::num_digits_fold`] at `num_claims = 1` for the preset
-    /// field width used by the planner and setup envelope scan.
-    pub num_digits_fold_one: usize,
-    /// Field bit width used to populate [`Self::num_digits_fold_one`]; `0` means 128.
+    /// Exact folded-witness digit depth selected by this schedule row.
+    pub num_digits_fold: usize,
+    /// Planner-side claim count retained only to rebuild the exact fold depth
+    /// when a candidate's challenge shape or decomposition is changed.
+    ///
+    /// This is not verifier input and is intentionally absent from canonical
+    /// descriptor bytes. Runtime consumers use [`Self::num_digits_fold`]
+    /// directly; group arity comes from the opening layout/profile.
+    pub num_fold_claims: usize,
+    /// Field bit width used to populate [`Self::num_digits_fold`]; `0` means 128.
     pub field_bits_hint: u32,
-    /// Optional cached [`Self::num_digits_fold`] for a batched root `num_claims > 1`.
-    pub cached_num_digits_block_claims: usize,
-    pub cached_num_digits_fold_value: usize,
     /// Multi-chunk witness layout for this level (default: single-chunk).
     ///
     /// The planner populates this from `policy.witness_chunk` and the level's
@@ -211,10 +214,9 @@ impl CommittedGroupParams {
             num_digits_outer: 0,
             num_digits_open: 0,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
+            num_fold_claims: 1,
             field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
             witness_chunk: crate::witness::ChunkedWitnessCfg::default_non_chunked(),
             precommitted_groups: Vec::new(),
             setup_prefix: None,
@@ -386,7 +388,13 @@ impl CommittedGroupParams {
         field_bits: u32,
         root_num_claims: usize,
     ) -> Result<Self, AkitaError> {
+        if root_num_claims == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "selected schedule row requires at least one fold claim".to_string(),
+            ));
+        }
         self.field_bits_hint = field_bits;
+        self.num_fold_claims = root_num_claims;
         self.fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &self.fold_challenge_config,
             self.fold_challenge_shape,
@@ -398,32 +406,16 @@ impl CommittedGroupParams {
             self.fold_challenge_shape,
         );
         let witness = self.fold_witness_norms();
-        let (num_digits_fold_one, _) = crate::sis::fold_witness_digit_plan(
+        let (num_digits_fold, _) = crate::sis::fold_witness_digit_plan(
             self.num_live_blocks,
-            1,
+            root_num_claims,
             field_bits,
             self.log_basis_open,
             challenge,
             witness,
             &self.fold_linf_cap_config,
         )?;
-        self.num_digits_fold_one = num_digits_fold_one;
-        if root_num_claims > 1 {
-            self.cached_num_digits_block_claims = root_num_claims;
-            let (cached_value, _) = crate::sis::fold_witness_digit_plan(
-                self.num_live_blocks,
-                root_num_claims,
-                field_bits,
-                self.log_basis_open,
-                challenge,
-                witness,
-                &self.fold_linf_cap_config,
-            )?;
-            self.cached_num_digits_fold_value = cached_value;
-        } else {
-            self.cached_num_digits_block_claims = 0;
-            self.cached_num_digits_fold_value = self.num_digits_fold_one;
-        }
+        self.num_digits_fold = num_digits_fold;
         Ok(self)
     }
 
@@ -434,7 +426,7 @@ impl CommittedGroupParams {
     ///
     /// Propagates [`crate::sis::fold_witness_digit_plan`] setup errors.
     pub fn fold_witness_linf_cap_for_claims(&self, num_claims: usize) -> Result<u128, AkitaError> {
-        let (_delta_fold, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
+        let (_, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
             self.num_live_blocks,
             num_claims,
             self.field_bits_for_cache(),
@@ -497,6 +489,38 @@ impl CommittedGroupParams {
         crate::sis::FoldWitnessGrindBatchContract::new(contracts, max_grind_attempts)
     }
 
+    /// Validate the shared fold nonce from schedule-owned challenge policies.
+    ///
+    /// This verifier boundary deliberately does not reconstruct an honest
+    /// source model or an honest folded-response cap. Those values guide the
+    /// prover's search only; nonce admission is fixed by each selected
+    /// group's challenge family, shape, and native A dimension.
+    pub fn validate_fold_grind_nonce(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        max_grind_attempts: u32,
+        fold_grind_nonce: u32,
+    ) -> Result<(), AkitaError> {
+        self.validate_opening_batch(opening_batch)?;
+        if max_grind_attempts == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "fold grind attempt budget must be positive".to_string(),
+            ));
+        }
+        for group_index in 0..opening_batch.num_groups() {
+            let params = self.group_params(opening_batch, group_index)?;
+            let policy = crate::sis::fold_witness_linf_cap_policy(
+                &params.fold_challenge_config(),
+                params.fold_challenge_shape(),
+                params.inner_commit_matrix_params().ring_dimension(),
+            );
+            if fold_grind_nonce >= policy.max_nonce_exclusive(max_grind_attempts) {
+                return Err(AkitaError::InvalidProof);
+            }
+        }
+        Ok(())
+    }
+
     /// Domain-separated preview absorb payload for one fold-level grind search.
     pub fn fold_grind_probe_order_absorb_buf(&self, num_claims: usize) -> Vec<u8> {
         let num_claims = u32::try_from(num_claims).unwrap_or(u32::MAX);
@@ -546,29 +570,13 @@ impl CommittedGroupParams {
     /// Propagates [`crate::sis::fold_witness_digit_plan`]'s rejection of a
     /// degenerate fold bound (`num_live_blocks == 0` or `β` overflow).
     #[inline]
-    pub fn num_digits_fold(&self, num_claims: usize, field_bits: u32) -> Result<usize, AkitaError> {
-        if num_claims == 1 {
-            return Ok(self.num_digits_fold_one);
-        }
-        if num_claims == self.cached_num_digits_block_claims
-            && self.cached_num_digits_block_claims > 1
-        {
-            return Ok(self.cached_num_digits_fold_value);
-        }
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &self.fold_challenge_config,
-            self.fold_challenge_shape(),
-        );
-        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            self.num_live_blocks,
-            num_claims,
-            field_bits,
-            self.log_basis_open,
-            challenge,
-            self.fold_witness_norms(),
-            &self.fold_linf_cap_config,
-        )?;
-        Ok(decomposed_fold_digits)
+    pub fn num_digits_fold(
+        &self,
+        num_claims: usize,
+        _field_bits: u32,
+    ) -> Result<usize, AkitaError> {
+        let _ = num_claims;
+        Ok(self.num_digits_fold)
     }
 
     /// Gadget depth for a root group using group-local geometry, fresh-opening
@@ -577,26 +585,10 @@ impl CommittedGroupParams {
         &self,
         params: &(impl LevelParamsLike + ?Sized),
         num_claims: usize,
-        field_bits: u32,
+        _field_bits: u32,
     ) -> Result<usize, AkitaError> {
-        if num_claims == 1 {
-            return Ok(params.num_digits_fold_one());
-        }
-        let challenge = crate::sis::FoldChallengeNorms::new(
-            &params.fold_challenge_config(),
-            params.fold_challenge_shape(),
-        );
-        let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
-        let (decomposed_fold_digits, _) = crate::sis::fold_witness_digit_plan(
-            params.num_live_blocks(),
-            num_claims,
-            field_bits,
-            params.log_basis_open(),
-            challenge,
-            self.fold_witness_norms_for_params(params),
-            &cap_config,
-        )?;
-        Ok(decomposed_fold_digits)
+        let _ = num_claims;
+        Ok(params.num_digits_fold())
     }
 
     /// Honest-prover per-coefficient folded-response cap for a root group using
@@ -605,17 +597,17 @@ impl CommittedGroupParams {
         &self,
         params: &(impl LevelParamsLike + ?Sized),
         num_claims: usize,
-        field_bits: u32,
+        _field_bits: u32,
     ) -> Result<u128, AkitaError> {
         let challenge = crate::sis::FoldChallengeNorms::new(
             &params.fold_challenge_config(),
             params.fold_challenge_shape(),
         );
         let cap_config = self.fold_witness_linf_cap_config_for_params(params)?;
-        let (_decomposed_fold_digits, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
+        let (_, inf_norm_bound) = crate::sis::fold_witness_digit_plan(
             params.num_live_blocks(),
             num_claims,
-            field_bits,
+            self.field_bits_for_cache(),
             params.log_basis_open(),
             challenge,
             self.fold_witness_norms_for_params(params),
@@ -683,8 +675,8 @@ impl CommittedGroupParams {
     ) -> Result<Self, AkitaError> {
         self.fold_challenge_shape = shape;
         let field_bits = self.field_bits_for_cache();
-        let root_num_claims = self.cached_num_digits_block_claims;
-        self.with_fold_linf_cap_config(field_bits, root_num_claims)
+        let num_fold_claims = self.num_fold_claims;
+        self.with_fold_linf_cap_config(field_bits, num_fold_claims)
     }
 
     /// Number of Boolean coordinates in the block-index domain.
@@ -789,7 +781,7 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
-        self.source.append_descriptor_bytes(bytes);
+        push_usize(bytes, self.num_digits_fold);
         // Chunk binding is appended only when the level is chunked, so
         // single-chunk descriptors stay byte-for-byte identical to the historical
         // layout (the flag-off no-op invariant). When chunked, bind the chunk
@@ -1340,10 +1332,9 @@ impl CommittedGroupParams {
             num_digits_outer,
             num_digits_open,
             fold_linf_cap_config: self.fold_linf_cap_config,
-            num_digits_fold_one: self.num_digits_fold_one,
+            num_digits_fold: self.num_digits_fold,
+            num_fold_claims: self.num_fold_claims,
             field_bits_hint: self.field_bits_hint,
-            cached_num_digits_block_claims: self.cached_num_digits_block_claims,
-            cached_num_digits_fold_value: self.cached_num_digits_fold_value,
             // `with_decomp` recomputes only the A/B/D widths; the chunk layout is
             // a property of the witness this level commits, so preserve it.
             witness_chunk: self.witness_chunk,
@@ -1351,7 +1342,7 @@ impl CommittedGroupParams {
             setup_prefix: self.setup_prefix.clone(),
         };
         let field_bits = self.field_bits_for_cache();
-        rebuilt.with_fold_linf_cap_config(field_bits, self.cached_num_digits_block_claims)
+        rebuilt.with_fold_linf_cap_config(field_bits, self.num_fold_claims)
     }
 
     /// Build a new `CommittedGroupParams` that keeps rank/ring/SIS-bucket info
@@ -1414,17 +1405,16 @@ impl CommittedGroupParams {
             num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
+            num_fold_claims: other.num_fold_claims,
             field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
             // The chunk layout is a property of the committed witness, sized with
             // the ranks, so it stays with `self` like the SIS buckets.
             witness_chunk: self.witness_chunk,
             precommitted_groups: self.precommitted_groups.clone(),
             setup_prefix: self.setup_prefix.clone(),
         }
-        .with_fold_linf_cap_config(field_bits, 0)
+        .with_fold_linf_cap_config(field_bits, other.num_fold_claims)
     }
 }
 

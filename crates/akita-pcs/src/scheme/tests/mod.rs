@@ -6,7 +6,10 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, MultilinearPolynomial, OneHotPoly, ProverOpeningData};
+use akita_prover::{
+    DenseGroupProvider, DensePoly, MultilinearPolynomial, OneHotGroupProvider, OneHotPoly,
+    ProverOpeningData, WholeGroupSourceProvider,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
@@ -21,7 +24,8 @@ use akita_types::{
     TerminalLevelProofShape,
 };
 use akita_types::{
-    AkitaCommitmentHint, CommittedGroup, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    AkitaCommitmentHint, CommittedGroup, CommittedGroupBatchProfile, GroupBatchStatement,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -51,6 +55,59 @@ mod layout;
 mod mixed_source;
 mod onehot;
 mod single;
+
+fn selected_prover_data<'a, C, P>(
+    claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
+    hints: Vec<AkitaCommitmentHint<C::Field>>,
+    polynomials: Vec<&'a [&'a P]>,
+) -> Result<ProverOpeningData<'a, C::ExtField, P, C::Field>, AkitaError>
+where
+    C: CommitmentConfig,
+{
+    let profiles = batch_profiles::<C>(&claims)?;
+    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    ProverOpeningData::new(selection, claims, hints, polynomials)
+}
+
+fn selected_statement<'a, C>(
+    claims: OpeningClaims<'a, C::ExtField, &'a CommittedGroup<C::Field>>,
+) -> Result<GroupBatchStatement<'a, C::ExtField, C::Field>, AkitaError>
+where
+    C: CommitmentConfig,
+{
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or_else(|| AkitaError::InvalidInput("opening statement requires a group".into()))?;
+    let profiles = CommittedGroupBatchProfile {
+        final_group: *final_group.commitment().profile(),
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().profile())
+            .collect(),
+    };
+    let selection = C::select_schedule_for_profiles(&profiles)?.selection();
+    GroupBatchStatement::new(selection, claims)
+}
+
+fn batch_profiles<C>(
+    claims: &OpeningClaims<'_, C::ExtField, CommittedGroup<C::Field>>,
+) -> Result<CommittedGroupBatchProfile, AkitaError>
+where
+    C: CommitmentConfig,
+{
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or_else(|| AkitaError::InvalidInput("opening data requires a group".into()))?;
+    Ok(CommittedGroupBatchProfile {
+        final_group: *final_group.commitment().profile(),
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().profile())
+            .collect(),
+    })
+}
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
     let num_ring_elems = output_witness_len / level_d;
@@ -154,35 +211,36 @@ fn expected_same_point_batched_shape(
     }
 }
 
-fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
-    point: &'a [E],
+fn prover_claims<'a, P>(
+    point: &'a [F],
     polynomials: &'a [&'a P],
-    commitment: &'a CommittedGroup<CommitF>,
-    hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningData<'a, E, P, CommitF> {
+    commitment: &'a CommittedGroup<F>,
+    hint: AkitaCommitmentHint<F>,
+) -> ProverOpeningData<'a, F, P, F> {
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![E::zero(); polynomials.len()],
+        vec![F::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+    selected_prover_data::<Cfg, _>(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
 
-fn verifier_claims<'a, E: FieldCore, C>(
-    point: &[E],
-    openings: &[E],
-    commitment: &'a C,
-) -> OpeningClaims<'static, E, &'a C> {
-    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+fn verifier_claims<'a>(
+    point: &[F],
+    openings: &[F],
+    commitment: &'a CommittedGroup<F>,
+) -> GroupBatchStatement<'a, F, F> {
+    let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
         openings.to_vec(),
         commitment,
     )
     .expect("valid verifier claims group")])
-    .expect("valid verifier claims")
+    .expect("valid verifier claims");
+    selected_statement::<Cfg>(claims).expect("valid verifier statement")
 }
 
 fn make_dense_poly(num_vars: usize) -> (DensePoly<F>, Vec<F>) {

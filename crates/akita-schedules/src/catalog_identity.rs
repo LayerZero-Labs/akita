@@ -12,7 +12,10 @@ use std::sync::{LazyLock, Mutex};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
-use akita_types::{AkitaScheduleInputs, CommittedGroupDescriptor, PolynomialGroupLayout};
+use akita_types::{
+    AkitaScheduleInputs, CatalogIdentity, CommittedGroupProfile, PolynomialGroupLayout,
+    ScheduleRowDigest,
+};
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
@@ -23,6 +26,8 @@ use crate::PlannerPolicy;
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+const SCHEDULE_CATALOG_DOMAIN_V1: &[u8] = b"akita/schedule-catalog/v1";
 
 fn lock_validated_catalogs(
 ) -> Result<std::sync::MutexGuard<'static, HashSet<CatalogValidationCacheKey>>, AkitaError> {
@@ -108,6 +113,113 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
+}
+
+/// Cryptographic public identity of one generated catalog and its exact rows.
+///
+/// Row digests are sorted before hashing so generated source-file ordering is
+/// not protocol identity. Provider/source policy is deliberately absent: any
+/// provider that lowers to the same exact profiles and expanded rows reuses
+/// the same catalog identity.
+pub fn selection_catalog_identity(
+    identity: &GeneratedScheduleCatalogIdentity,
+    row_digests: &[ScheduleRowDigest],
+) -> Result<CatalogIdentity, AkitaError> {
+    fn push_usize(bytes: &mut Vec<u8>, value: usize, field: &str) -> Result<(), AkitaError> {
+        let value = u64::try_from(value).map_err(|_| {
+            AkitaError::InvalidSetup(format!("catalog identity {field} does not fit u64"))
+        })?;
+        bytes.extend_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
+    let mut rows = row_digests.to_vec();
+    rows.sort_unstable();
+    for pair in rows.windows(2) {
+        if pair[0] == pair[1] {
+            return Err(AkitaError::InvalidSetup(
+                "schedule catalog contains duplicate full-row identities".to_string(),
+            ));
+        }
+    }
+
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(SCHEDULE_CATALOG_DOMAIN_V1);
+    bytes.push(1);
+    push_usize(&mut bytes, identity.family_name.len(), "family name length")?;
+    bytes.extend_from_slice(identity.family_name.as_bytes());
+    bytes.extend_from_slice(&identity.protocol_epoch.to_le_bytes());
+    bytes.extend_from_slice(&identity.cost_model.tag().to_le_bytes());
+    bytes.extend_from_slice(&identity.selection_policy.tag().to_le_bytes());
+    push_usize(
+        &mut bytes,
+        identity.max_setup_envelope_field_elements,
+        "setup envelope",
+    )?;
+    push_usize(
+        &mut bytes,
+        identity.min_offloaded_witness_contraction,
+        "offload contraction",
+    )?;
+    bytes.push(sis_modulus_profile_tag(identity.sis_modulus_profile) as u8);
+    bytes.push(identity.sis_security_policy.tag());
+    bytes.extend_from_slice(&identity.sis_table_digest.0);
+    push_usize(&mut bytes, identity.ring_dimension, "ring dimension")?;
+    bytes.extend_from_slice(&identity.decomposition.log_basis.to_le_bytes());
+    bytes.extend_from_slice(&identity.decomposition.log_commit_bound.to_le_bytes());
+    match identity.decomposition.log_open_bound {
+        Some(value) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+        None => bytes.push(0),
+    }
+    bytes.extend_from_slice(&identity.ring_subfield_norm_bound.to_le_bytes());
+    push_usize(
+        &mut bytes,
+        identity.claim_ext_degree,
+        "claim extension degree",
+    )?;
+    push_usize(
+        &mut bytes,
+        identity.chal_ext_degree,
+        "challenge extension degree",
+    )?;
+    bytes.extend_from_slice(&identity.basis_range.0.to_le_bytes());
+    bytes.extend_from_slice(&identity.basis_range.1.to_le_bytes());
+    push_usize(
+        &mut bytes,
+        identity.witness_chunk.num_chunks,
+        "witness chunk count",
+    )?;
+    push_usize(
+        &mut bytes,
+        identity.witness_chunk.num_activated_levels,
+        "witness chunk activation depth",
+    )?;
+    bytes.push(u8::from(identity.recursive_setup_planning));
+    match identity.root_fold_shape {
+        TensorChallengeShape::Flat => bytes.push(0),
+        TensorChallengeShape::Tensor { fold_low_len } => {
+            bytes.push(1);
+            push_usize(&mut bytes, fold_low_len, "root tensor low length")?;
+        }
+    }
+    push_usize(
+        &mut bytes,
+        identity.ring_dimensions.len(),
+        "ring-dimension count",
+    )?;
+    for &dimension in identity.ring_dimensions {
+        push_usize(&mut bytes, dimension, "catalog ring dimension")?;
+    }
+    push_usize(&mut bytes, rows.len(), "row count")?;
+    for row in rows {
+        bytes.extend_from_slice(row.as_bytes());
+    }
+    Ok(CatalogIdentity::from_bytes(
+        akita_types::instance_descriptor::digest_descriptor_bytes(&bytes),
+    ))
 }
 
 fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
@@ -542,7 +654,7 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
     h.write_u64(key.num_polynomials() as u64);
 }
 
-fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupDescriptor) {
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupProfile) {
     h.write_bytes(&key.canonical_descriptor_bytes());
 }
 

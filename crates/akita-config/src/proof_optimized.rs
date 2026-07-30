@@ -146,6 +146,12 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
                     .iter()
                     .map(|group| group.descriptor)
                     .collect(),
+                precommitted_sources: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.source)
+                    .collect(),
             };
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 continue;
@@ -378,12 +384,6 @@ fn matrix_coefficient_len(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
-    (@onehot_chunk_size $onehot_chunk_size:expr) => {
-        $onehot_chunk_size
-    };
-    (@onehot_chunk_size) => {
-        1
-    };
     (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -396,12 +396,6 @@ macro_rules! impl_proof_optimized_preset {
                 None
             }
         }
-    };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, none);
-    };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, 1, table, $feat, $family_name, $table);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
         impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, none);

@@ -52,7 +52,9 @@ pub struct GeneratedRootFinalGroup {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
-    pub descriptor: akita_types::CommittedGroupDescriptor,
+    pub descriptor: akita_types::CommittedGroupProfile,
+    pub source: akita_types::GroupSource,
+    pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -110,6 +112,12 @@ impl GeneratedFoldScheduleEntry {
                 .iter()
                 .map(|group| group.descriptor)
                 .collect(),
+            precommitted_sources: self
+                .root
+                .precommitted_groups
+                .iter()
+                .map(|group| group.source)
+                .collect(),
         }
     }
 }
@@ -159,7 +167,7 @@ pub use crate::{
     SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
-    CommittedGroupDescriptor, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
+    CommittedGroupProfile, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
     InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
@@ -176,12 +184,11 @@ pub fn table_entry(
     table: GeneratedScheduleTable,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> Option<&'static GeneratedFoldScheduleEntry> {
-    debug_assert!(catalog_entries_sorted_for_lookup(table.entries));
-    table
+    let index = table
         .entries
         .binary_search_by(|entry| generated_schedule_key_cmp_runtime(entry, key))
-        .ok()
-        .map(|idx| &table.entries[idx])
+        .ok()?;
+    table.entries.get(index)
 }
 
 pub fn generated_schedule_key_cmp(
@@ -300,7 +307,7 @@ pub fn runtime_schedule_key_cmp(
         })
 }
 
-fn precommitted_group_sort_key(key: &akita_types::CommittedGroupDescriptor) -> Vec<u8> {
+fn precommitted_group_sort_key(key: &akita_types::CommittedGroupProfile) -> Vec<u8> {
     key.canonical_descriptor_bytes()
 }
 
@@ -320,8 +327,8 @@ fn schedule_key_eq(
 }
 
 fn precommitted_group_key_eq(
-    generated: &akita_types::CommittedGroupDescriptor,
-    layout: &akita_types::CommittedGroupDescriptor,
+    generated: &akita_types::CommittedGroupProfile,
+    layout: &akita_types::CommittedGroupProfile,
 ) -> bool {
     generated == layout
 }
@@ -330,17 +337,14 @@ fn precommitted_group_key_eq(
 mod mixed_dimension_key_tests {
     use super::{precommitted_group_key_eq, precommitted_group_sort_key};
     use akita_types::{
-        CommittedGroupDescriptor, GroupSourceEncoding, InnerCommitMatrixParams,
-        OuterCommitMatrixParams, PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
+        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, SisModulusProfileId, SisTableDigest,
     };
 
-    fn descriptor() -> CommittedGroupDescriptor {
-        CommittedGroupDescriptor {
-            version: CommittedGroupDescriptor::VERSION,
+    fn descriptor() -> CommittedGroupProfile {
+        CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::new(12, 1),
-            encoding: GroupSourceEncoding::Bounded {
-                coefficient_bits: 128,
-            },
             num_live_ring_elements_per_claim: 32,
             num_positions_per_block: 8,
             num_live_blocks: 4,

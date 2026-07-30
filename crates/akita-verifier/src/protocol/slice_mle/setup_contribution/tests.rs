@@ -160,9 +160,10 @@ impl SetupContributionFixture {
                 TEST_RING_DIM,
             );
         }
-        shape.depth_fold = lp
-            .num_digits_fold(shape.num_claims, lp.field_bits_for_cache())
-            .expect("setup contribution fixture fold depth");
+        lp = lp
+            .with_fold_linf_cap_config(TestField::modulus_bits(), shape.num_claims)
+            .expect("setup contribution fixture fold row");
+        shape.depth_fold = lp.num_digits_fold;
         let opening_batch = OpeningClaimsLayout::from_group_sizes(0, &shape.num_polys_per_group)
             .expect("setup contribution fixture opening batch");
         let layout = WitnessLayout::new(&lp, &opening_batch, 1, 0, 1)

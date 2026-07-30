@@ -5,7 +5,7 @@
 //!
 //! Two polynomial representations are covered:
 //!
-//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = D).
+//! * **One-hot** — `fp128::D64OneHot` (D = 64, K = 256).
 //! * **Dense**   — `fp128::D128Dense`   (D = 128, arbitrary field coefficients).
 //!
 //! Variable counts:
@@ -69,7 +69,7 @@ fn run_single_onehot(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -97,7 +97,7 @@ fn run_single_onehot(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -153,7 +153,7 @@ fn run_single_dense(nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<DenseCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -181,7 +181,7 @@ fn run_single_dense(nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<DenseCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(
@@ -289,7 +289,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/onehot_oversized");
         let proof = AkitaCommitmentScheme::<OneHotCfg>::batched_prove::<_, _, _>(
             &setup,
-            prove_input(
+            prove_input::<OneHotCfg, _>(
                 &pt[..],
                 &poly_refs[..],
                 &commitments[0],
@@ -318,7 +318,7 @@ fn run_single_onehot_oversized_setup(setup_nv: usize, poly_nv: usize) {
             &decoded,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&pt[..], opening_groups[0], &commitments[0]),
+            verify_input::<OneHotCfg>(&pt[..], opening_groups[0], &commitments[0]),
             BasisMode::Lagrange,
         );
         assert!(

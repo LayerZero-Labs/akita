@@ -131,21 +131,42 @@ pub fn optimal_block_geometry_split(
         else {
             continue;
         };
+        let fold_cap_config = match FoldWitnessLinfCapConfig::for_fold_level(
+            fold_challenge_config,
+            fold_challenge_shape,
+            d as usize,
+            inner_width,
+        ) {
+            Ok(config) => config,
+            Err(_) => continue,
+        };
+        let witness_norms = FoldWitnessNorms::new(
+            decomposition.log_basis,
+            d as usize,
+            onehot_chunk_size,
+            log_commit_bound == 1 && onehot_chunk_size > 0,
+        );
+        let Ok((fold_digit_depth, _)) = fold_witness_digit_plan(
+            num_live_blocks,
+            num_claims,
+            field_bits,
+            decomposition.log_basis,
+            FoldChallengeNorms::new(fold_challenge_config, fold_challenge_shape),
+            witness_norms,
+            &fold_cap_config,
+        ) else {
+            continue;
+        };
         let Some(a_collision) = rounded_up_role_a_inf_norm(
             policy,
             crate::sis::SisTableDigest::CURRENT,
             sis_modulus_profile,
             d as usize,
-            decomposition,
             decomposition.log_basis,
             fold_challenge_config,
             fold_challenge_shape,
-            log_commit_bound == 1,
-            onehot_chunk_size,
+            fold_digit_depth,
             ring_subfield_norm_bound,
-            num_live_blocks,
-            num_claims,
-            inner_width as u64,
         ) else {
             continue;
         };

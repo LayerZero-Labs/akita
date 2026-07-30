@@ -558,11 +558,10 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupDescriptor,
-                    DigitBlocks, InnerCommitMatrixParams, OuterCommitMatrixParams,
-                    PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
-                    SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
-                    SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
+                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, DigitBlocks,
+                    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+                    PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
+                    SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -596,10 +595,9 @@ mod tests {
                 .expect("audited prefix B matrix");
                 let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: CommittedGroupDescriptor {
-                        version: CommittedGroupDescriptor::VERSION,
+                    layout: CommittedGroupProfile {
+                        version: CommittedGroupProfile::VERSION,
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                        encoding: Cfg::group_source().encoding(),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,
@@ -614,7 +612,7 @@ mod tests {
                     log_basis_open: 1,
                     fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
                     num_digits_open: 1,
-                    num_digits_fold_one: 1,
+                    num_digits_fold: 1,
                 };
                 let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
                 // One block of zero planes at the setup ring dimension.

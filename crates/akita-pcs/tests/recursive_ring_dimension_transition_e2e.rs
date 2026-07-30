@@ -24,16 +24,16 @@ use akita_pcs::test_support::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
-    ProverOpeningData,
+    commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotGroupProvider, OneHotIndex,
+    OneHotPoly,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
-    CommittedGroupDescriptor, FoldSchedule, NttCacheKey, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
+    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, NttCacheKey, OpeningClaims,
+    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -164,11 +164,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
             )
             .expect("precommit params");
-        let pre_frozen = CommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             final_source: ProofCfg::group_source(),
             precommitteds: vec![pre_frozen, pre_frozen],
+            precommitted_sources: vec![ProofCfg::group_source(), ProofCfg::group_source()],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
 
@@ -242,11 +243,8 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             &setup,
             &final_polys,
             &stack,
-            pre_commitments
-                .iter()
-                .map(|group| group.descriptor)
-                .collect(),
-            ProofCfg::group_source(),
+            pre_commitments.iter().map(|group| group.profile).collect(),
+            &OneHotGroupProvider::new(ProofCfg::onehot_chunk_size()),
         )
         .expect("final mixed commitment");
 
@@ -299,12 +297,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         let mut prover_hints = pre_hints;
         prover_hints.push(final_hint);
 
-        let prover_claims = ProverOpeningData::new(
+        let prover_claims = selected_prover_data::<ProofCfg, _>(
             OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
-        )
-        .expect("mixed recursive prover data");
+        );
+        let selection = prover_claims.selection().expect("selected schedule");
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Scheme::<ProofCfg>::batched_prove(
@@ -348,7 +346,8 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
                     .expect("final verifier group"),
             );
-            OpeningClaims::from_groups(verifier_groups).expect("verifier claims")
+            let claims = OpeningClaims::from_groups(verifier_groups).expect("verifier claims");
+            GroupBatchStatement::new(selection, claims).expect("verifier statement")
         };
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
@@ -394,11 +393,12 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
                 &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
             )
             .expect("precommit params");
-        let descriptor = CommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let descriptor = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
             final_source: PlainCfg::group_source(),
             precommitteds: vec![descriptor, descriptor],
+            precommitted_sources: vec![PlainCfg::group_source(), PlainCfg::group_source()],
         })
         .expect("mixed recursive schedule");
         let prefix = schedule.recursive_folds[0]

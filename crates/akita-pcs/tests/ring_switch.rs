@@ -112,7 +112,8 @@ mod tests {
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
         r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
-        OpeningClaims, PolynomialGroupClaims, RingMultiplierOpeningPoint, RingVec,
+        CommittedGroup, CommittedGroupBatchProfile, OpeningClaims, PolynomialGroupClaims,
+        RingMultiplierOpeningPoint, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -121,20 +122,27 @@ mod tests {
 
     use akita_pcs::{FieldCore, FromPrimitiveInt, RandomSampling};
 
-    fn prover_block_claims<'a, F: FieldCore + Clone, P>(
-        point: &'a [F],
+    fn prover_block_claims<'a, Cfg: CommitmentConfig, P>(
+        point: &'a [Cfg::ExtField],
         polynomials: &'a [&'a P],
-        commitment: &'a Commitment<F>,
-        hint: AkitaCommitmentHint<F>,
-    ) -> ProverOpeningData<'a, F, P, F> {
+        commitment: &'a CommittedGroup<Cfg::Field>,
+        hint: AkitaCommitmentHint<Cfg::Field>,
+    ) -> ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field> {
         let group = PolynomialGroupClaims::new(
             point.to_vec(),
-            vec![F::zero(); polynomials.len()],
+            vec![Cfg::ExtField::zero(); polynomials.len()],
             commitment.clone(),
         )
         .expect("valid prover claims group");
         let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+        let profiles = CommittedGroupBatchProfile {
+            final_group: *commitment.profile(),
+            precommitteds: Vec::new(),
+        };
+        let selection = Cfg::select_schedule_for_profiles(&profiles)
+            .expect("select prover schedule")
+            .selection();
+        ProverOpeningData::new(selection, opening_claims, vec![hint], vec![polynomials])
             .expect("valid prover opening data")
     }
 
@@ -346,7 +354,8 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims =
+            prover_block_claims::<Cfg, _>(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -483,7 +492,8 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims =
+            prover_block_claims::<Cfg, _>(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -631,7 +641,8 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims =
+            prover_block_claims::<Cfg, _>(&point, &poly_refs, &commitment, batched_hint);
         let (instance, _witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -822,7 +833,8 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims =
+            prover_block_claims::<Cfg, _>(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,
@@ -1153,7 +1165,8 @@ mod tests {
             akita_prover::OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
                 .expect("operation ctx");
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
-        let block_claims = prover_block_claims(&point, &poly_refs, &commitment, batched_hint);
+        let block_claims =
+            prover_block_claims::<Cfg, _>(&point, &poly_refs, &commitment, batched_hint);
         let (instance, witness) =
             RingRelationProver::new::<F, F, _, DensePoly<F>, CpuBackend, CpuBackend>(
                 &op_ctx,

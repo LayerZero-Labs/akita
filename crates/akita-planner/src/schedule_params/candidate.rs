@@ -60,21 +60,35 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
+    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
+        ring_challenge_cfg,
+        fold_challenge_shape,
+        dimensions.d_a(),
+        width_s,
+    ) else {
+        return Ok(None);
+    };
+    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+        num_live_blocks,
+        1,
+        policy.decomposition.field_bits(),
+        decomp.log_basis,
+        FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
+        FoldWitnessNorms::new(decomp.log_basis, dimensions.d_a(), 1, false),
+        &fold_cap_config,
+    ) else {
+        return Ok(None);
+    };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         dimensions.d_a(),
-        decomp,
         decomp.log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
-        false,
-        policy.onehot_chunk_size,
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        num_live_blocks,
-        1,
-        width_s as u64,
     ) else {
         return Ok(None);
     };
@@ -160,10 +174,9 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
+        num_digits_fold: 1,
+        num_fold_claims: 1,
         field_bits_hint: 0,
-        cached_num_digits_block_claims: 0,
-        cached_num_digits_fold_value: 1,
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
@@ -294,7 +307,7 @@ fn grouped_setup_prefix_next_witness_len(
             group.layout.num_digits_inner,
             group.layout.num_digits_outer,
             group.num_digits_open,
-            group.num_digits_fold_one,
+            group.num_digits_fold,
         )?;
         total = total
             .checked_add(group_rings)
@@ -395,21 +408,32 @@ pub(super) fn derive_setup_prefix_group(
         else {
             continue;
         };
+        let Ok(fold_cap_config) =
+            FoldWitnessLinfCapConfig::for_fold_level(ring_challenge_cfg, fold_shape, d, width_s)
+        else {
+            continue;
+        };
+        let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+            num_live_blocks,
+            1,
+            policy.decomposition.field_bits(),
+            log_basis_open,
+            FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
+            FoldWitnessNorms::new(inner_decomp.log_basis, d, 1, false),
+            &fold_cap_config,
+        ) else {
+            continue;
+        };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
             family,
             d,
-            inner_decomp,
             log_basis_open,
             ring_challenge_cfg,
             fold_shape,
-            false,
-            0,
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            width_s as u64,
         ) else {
             continue;
         };
@@ -459,7 +483,7 @@ pub(super) fn derive_setup_prefix_group(
             infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
             l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
         };
-        let (num_digits_fold_one, _) = fold_witness_digit_plan(
+        let (num_digits_fold, _) = fold_witness_digit_plan(
             num_live_blocks,
             1,
             policy.decomposition.field_bits(),
@@ -468,12 +492,9 @@ pub(super) fn derive_setup_prefix_group(
             FoldWitnessNorms::new(log_basis_inner, d, 1, false),
             &fold_linf_cap_config,
         )?;
-        let layout = CommittedGroupDescriptor {
-            version: CommittedGroupDescriptor::VERSION,
+        let layout = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            encoding: akita_types::GroupSourceEncoding::Bounded {
-                coefficient_bits: policy.decomposition.field_bits(),
-            },
             num_live_ring_elements_per_claim: ring_slots,
             num_positions_per_block,
             num_live_blocks,
@@ -490,7 +511,7 @@ pub(super) fn derive_setup_prefix_group(
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
-            num_digits_fold_one,
+            num_digits_fold,
         };
         let physical_width = grouped_segment_rings(
             1,
@@ -501,7 +522,7 @@ pub(super) fn derive_setup_prefix_group(
             num_digits_inner,
             num_digits_outer,
             num_digits_open_val,
-            num_digits_fold_one,
+            num_digits_fold,
         )?;
         let score =
             layout_candidate_score(physical_width, num_live_blocks, num_chunks, fold_shape)?;
@@ -964,21 +985,41 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
+    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
+        ring_challenge_cfg,
+        fold_challenge_shape,
+        dimensions.d_a(),
+        width_s,
+    ) else {
+        return Ok(None);
+    };
+    let root_is_onehot = witness_decomp.log_commit_bound == 1 && policy.onehot_chunk_size > 0;
+    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+        num_live_blocks,
+        num_claims,
+        policy.decomposition.field_bits(),
+        log_basis,
+        FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
+        FoldWitnessNorms::new(
+            witness_decomp.log_basis,
+            dimensions.d_a(),
+            policy.onehot_chunk_size,
+            root_is_onehot,
+        ),
+        &fold_cap_config,
+    ) else {
+        return Ok(None);
+    };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         dimensions.d_a(),
-        witness_decomp,
         log_basis,
         ring_challenge_cfg,
         fold_challenge_shape,
-        true,
-        policy.onehot_chunk_size,
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        num_live_blocks,
-        num_claims,
-        width_s as u64,
     ) else {
         return Ok(None);
     };
@@ -1067,10 +1108,9 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_outer: num_digits_open,
         num_digits_open,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
+        num_digits_fold: 1,
+        num_fold_claims: num_claims,
         field_bits_hint: 0,
-        cached_num_digits_block_claims: 0,
-        cached_num_digits_fold_value: 1,
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
@@ -1110,7 +1150,7 @@ mod tests {
         .with_decomp(2, 2, 2, 2, 2)
         .expect("precommitted params");
         params.precommitted_groups = vec![PrecommittedLevelParams {
-            layout: CommittedGroupDescriptor::from_params(
+            layout: CommittedGroupProfile::from_params(
                 PolynomialGroupLayout::new(6, 1),
                 &precommitted,
             ),
@@ -1118,7 +1158,7 @@ mod tests {
             log_basis_open: precommitted.log_basis_open,
             fold_challenge_config: precommitted.fold_challenge_config,
             num_digits_open: precommitted.num_digits_open,
-            num_digits_fold_one: precommitted.num_digits_fold_one,
+            num_digits_fold: precommitted.num_digits_fold,
         }];
         params
     }

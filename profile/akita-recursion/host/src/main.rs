@@ -146,11 +146,14 @@ fn strict_host_preflight(blob: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("strict input decode failed: {err}"))?;
     let mut transcript = AkitaTranscript::<F>::unbound_verifier(&decoded.transcript_domain);
     let openings = [decoded.opening];
+    let statement = decoded
+        .verifier_statement(&openings)
+        .map_err(|err| format!("strict input statement failed: {err}"))?;
     batched_verify::<Cfg, _>(
         &decoded.proof,
         &decoded.verifier_setup,
         &mut transcript,
-        decoded.verifier_opening_batch(&openings),
+        statement,
         BasisMode::Lagrange,
     )
     .map_err(|err| format!("strict host verifier rejected input blob: {err}"))?;

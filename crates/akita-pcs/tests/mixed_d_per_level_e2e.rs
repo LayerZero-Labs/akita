@@ -26,8 +26,8 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     setup_matrix_envelope_for_schedule, validate_schedule_ring_dims, AkitaBatchedProof,
-    AkitaScheduleLookupKey, FoldSchedule, NextWitnessBinding, OpeningClaimsLayout,
-    PolynomialGroupLayout, RingVec,
+    AkitaScheduleLookupKey, FoldSchedule, GroupBatchStatement, NextWitnessBinding,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
 };
 use common::*;
 
@@ -188,7 +188,7 @@ fn prove_mixed_fixture() -> MixedDFixture {
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     let proof = Scheme::batched_prove(
         &setup,
-        prove_input(&point, &poly_refs, &commitment, hint),
+        prove_input::<MixedD128To64, _>(&point, &poly_refs, &commitment, hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -220,7 +220,7 @@ fn verify_mixed(
         proof,
         &fixture.verifier_setup,
         &mut verifier_transcript,
-        verify_input(&fixture.point, &fixture.openings, commitment),
+        verify_input::<MixedD128To64>(&fixture.point, &fixture.openings, commitment),
         BasisMode::Lagrange,
     )
 }
@@ -486,7 +486,7 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, empty_hint),
+            prove_input::<MixedD128To64, _>(&point, &poly_refs, &commitment, empty_hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -501,7 +501,7 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, wrong_dim_hint),
+            prove_input::<MixedD128To64, _>(&point, &poly_refs, &commitment, wrong_dim_hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -537,30 +537,61 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
         let (commitment, hint) =
             BadScheme::commit(&setup, std::slice::from_ref(&poly), &stack).expect("commit");
 
-        // Prover entry must reject the schedule (level dim 96 does not
-        // divide gen_ring_dim 128) with an error, not a panic.
+        let malformed_schedule =
+            MixedDBadLevelDim::get_params_for_prove(&opening_batch).expect("malformed schedule");
+        validate_schedule_ring_dims(&malformed_schedule, setup.expanded.seed())
+            .expect_err("level dim 96 must not divide gen_ring_dim 128");
+
+        // An invalid schedule cannot be materialized as an audited resolved
+        // row. Exercise both public entries with an unresolved selection and
+        // require an error rather than a panic.
+        let unresolved_selection = OpeningScheduleSelection::default();
         let poly_refs = [&poly];
+        let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            vec![opening],
+            commitment.clone(),
+        )
+        .expect("prover claims group")])
+        .expect("prover claims");
+        let prover_data = ProverOpeningData::new(
+            unresolved_selection,
+            prover_claims,
+            vec![hint],
+            vec![&poly_refs],
+        )
+        .expect("prover opening data");
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         BadScheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, hint),
+            prover_data,
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
-        .expect_err("prove must reject a level dim that does not divide gen_ring_dim");
+        .expect_err("prove must reject an unresolved malformed schedule");
 
-        // Verifier entry must reject the same schedule for any proof bytes.
+        // Verifier entry must reject the same unresolved selection for any
+        // proof bytes.
         let good = prove_mixed_fixture();
         let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         let openings = [opening];
+        let verifier_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+            point.clone(),
+            openings.to_vec(),
+            &commitment,
+        )
+        .expect("verifier claims group")])
+        .expect("verifier claims");
+        let statement = GroupBatchStatement::new(unresolved_selection, verifier_claims)
+            .expect("verifier statement");
         BadScheme::batched_verify(
             &good.proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point, &openings, &commitment),
+            statement,
             BasisMode::Lagrange,
         )
-        .expect_err("verify must reject a level dim that does not divide gen_ring_dim");
+        .expect_err("verify must reject an unresolved malformed schedule");
     });
 }

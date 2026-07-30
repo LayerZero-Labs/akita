@@ -12,7 +12,7 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
     FoldSchedule, GroupSource, GroupSourceEncoding, OpenCommitMatrixParams, PolynomialGroupLayout,
     RootFinalChallenge, SetupPrefixSlotId, WitnessPartition,
 };
@@ -126,6 +126,8 @@ fn generated_entry(
         .zip(&root_fold.precommitted_groups)
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
+            source: group.commitment.source,
+            num_digits_fold: group.commitment.num_digits_fold as u32,
             commitment: GeneratedCommittedGroup {
                 geometry: GeneratedBlockGeometry {
                     live_ring_elements_per_claim: group
@@ -177,7 +179,7 @@ fn generated_entry(
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup {
                 layout: key.final_group,
-                source: root_fold.final_group.source,
+                source: root_fold.final_group.commitment.source,
                 challenge,
                 commitment: committed_group(root_params),
             },
@@ -222,11 +224,10 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
     )
 }
 
-fn emit_precommitted_group_key(layout: &CommittedGroupDescriptor) -> String {
+fn emit_precommitted_group_key(layout: &CommittedGroupProfile) -> String {
     format!(
-        "CommittedGroupDescriptor {{ version: CommittedGroupDescriptor::VERSION, group: {}, encoding: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
+        "CommittedGroupProfile {{ version: CommittedGroupProfile::VERSION, group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
-        emit_group_source_encoding(layout.encoding),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
@@ -247,17 +248,6 @@ fn emit_precommitted_group_key(layout: &CommittedGroupDescriptor) -> String {
             layout.outer_commit_matrix.sis_table_key(),
         ),
     )
-}
-
-fn emit_group_source_encoding(encoding: GroupSourceEncoding) -> String {
-    match encoding {
-        GroupSourceEncoding::Bounded { coefficient_bits } => {
-            format!("GroupSourceEncoding::Bounded {{ coefficient_bits: {coefficient_bits} }}")
-        }
-        GroupSourceEncoding::SparseBinary { chunk_size } => {
-            format!("GroupSourceEncoding::SparseBinary {{ chunk_size: {chunk_size} }}")
-        }
-    }
 }
 
 fn emit_profile_matrix(
@@ -392,8 +382,10 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, commitment: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, source: {}, num_digits_fold: {}, commitment: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
+                emit_group_source(group.source),
+                group.num_digits_fold,
                 emit_committed_group(group.commitment),
             )
             .map_err(|e| e.to_string())?;
@@ -662,7 +654,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          GroupSource, GroupSourceEncoding, GroupSourceRegistration, PlannerCostModelId, \
-         PolynomialGroupLayout, CommittedGroupDescriptor, InnerCommitMatrixParams, \
+         PolynomialGroupLayout, CommittedGroupProfile, InnerCommitMatrixParams, \
          OuterCommitMatrixParams, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"

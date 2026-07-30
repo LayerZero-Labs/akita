@@ -21,7 +21,7 @@ use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, Plann
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
     FoldSchedule, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
@@ -268,13 +268,13 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
                 else {
                     continue;
                 };
-                let precommitted =
-                    CommittedGroupDescriptor::from_params(precommitted_group, &params);
+                let precommitted = CommittedGroupProfile::from_params(precommitted_group, &params);
                 for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
                     let candidate = AkitaScheduleLookupKey {
                         final_group: main,
                         final_source: Cfg::group_source(),
                         precommitteds: vec![precommitted; num_precommitted],
+                        precommitted_sources: vec![Cfg::group_source(); num_precommitted],
                     };
                     candidates.push(candidate);
                 }
@@ -326,12 +326,12 @@ fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
     let precommitted_params =
         planner_committed_group_params::<BaseCfg>(&precommitted_group, BaseCfg::group_source())?;
-    let precommitted =
-        CommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
+    let precommitted = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         final_source: BaseCfg::group_source(),
         precommitteds: vec![precommitted, precommitted],
+        precommitted_sources: vec![BaseCfg::group_source(), BaseCfg::group_source()],
     }])
 }
 
@@ -347,9 +347,10 @@ fn heterogeneous_d64_onehot_catalog_key<Cfg: CommitmentConfig>(
         final_group: PolynomialGroupLayout::new(16, 1),
         final_source: GroupSource::one_hot(256),
         precommitteds: vec![
-            CommittedGroupDescriptor::from_params(onehot_group, &onehot_params),
-            CommittedGroupDescriptor::from_params(dense_group, &dense_params),
+            CommittedGroupProfile::from_params(onehot_group, &onehot_params),
+            CommittedGroupProfile::from_params(dense_group, &dense_params),
         ],
+        precommitted_sources: vec![onehot_source, dense_source],
     })
 }
 
@@ -406,6 +407,12 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
                     .precommitted_groups
                     .iter()
                     .map(|group| group.descriptor)
+                    .collect(),
+                precommitted_sources: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.source)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {

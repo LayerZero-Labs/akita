@@ -27,7 +27,8 @@ use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    CommittedGroupBatchProfile, CommittedGroupParams, GroupBatchStatement, OpeningClaims,
+    OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
@@ -186,13 +187,13 @@ fn verify_proof(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: OpeningClaims<'_, Claim, &akita_types::CommittedGroup<F>>,
+    statement: GroupBatchStatement<'_, Claim, F>,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _>(
         proof,
         verifier_setup,
         transcript,
-        claims,
+        statement,
         BasisMode::Lagrange,
     )
     .map_err(|err| format!("verifier rejected proof: {err}"))
@@ -312,6 +313,13 @@ fn run() -> Result<(), String> {
 
     let poly_refs: [&OneHotPoly<F, u8>; 1] = [&onehot_poly];
     let openings = [opening];
+    let schedule_selection =
+        Cfg::select_schedule_for_profiles(&CommittedGroupBatchProfile {
+            final_group: *commitment.profile(),
+            precommitteds: Vec::new(),
+        })
+        .map_err(|err| format!("schedule selection failed: {err}"))?
+        .selection();
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
@@ -319,6 +327,7 @@ fn run() -> Result<(), String> {
         PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
             .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = ProverOpeningData::new(
+        schedule_selection,
         OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
@@ -345,13 +354,17 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-            opening_point.clone(),
-            openings.to_vec(),
-            &commitment,
+        GroupBatchStatement::new(
+            schedule_selection,
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                opening_point.clone(),
+                openings.to_vec(),
+                &commitment,
+            )
+            .map_err(|err| format!("invalid verifier opening group: {err}"))?])
+            .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
         )
-        .map_err(|err| format!("invalid verifier opening group: {err}"))?])
-        .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
+        .map_err(|err| format!("invalid verifier statement: {err}"))?,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;
     tracing::info!(
@@ -365,6 +378,7 @@ fn run() -> Result<(), String> {
         num_vars: nv as u64,
         opening_point,
         opening,
+        schedule_selection,
         commitment,
         verifier_setup,
         proof_shape,
@@ -385,7 +399,9 @@ fn run() -> Result<(), String> {
         &decoded.proof,
         &decoded.verifier_setup,
         &mut roundtrip_transcript,
-        decoded.verifier_opening_batch(&openings_rt),
+        decoded
+            .verifier_statement(&openings_rt)
+            .map_err(|err| format!("decoded verifier statement failed: {err}"))?,
     )
     .map_err(|err| format!("decoded blob verify failed: {err}"))?;
     tracing::info!("decoded-blob verify OK");

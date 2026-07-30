@@ -4,6 +4,7 @@ use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupSeed;
+use crate::{CommittedGroup, OpeningScheduleSelection};
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
@@ -373,6 +374,46 @@ impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpeningClaims<'a, F: Clone, C = ()> {
     groups: Vec<PolynomialGroupClaims<'a, F, C>>,
+}
+
+/// Public opening statement bound to one exact verifier-approved schedule row.
+///
+/// The schedule selection is batch-level. Individual commitments remain
+/// reusable and carry only their exact algebraic profiles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GroupBatchStatement<'a, E: Clone, F: FieldCore> {
+    selection: OpeningScheduleSelection,
+    claims: OpeningClaims<'a, E, &'a CommittedGroup<F>>,
+}
+
+impl<'a, E: Clone, F: FieldCore> GroupBatchStatement<'a, E, F> {
+    /// Bind ordered self-describing claims to an approved schedule row.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the claim set is empty or structurally malformed.
+    pub fn new(
+        selection: OpeningScheduleSelection,
+        claims: OpeningClaims<'a, E, &'a CommittedGroup<F>>,
+    ) -> Result<Self, AkitaError> {
+        claims.check()?;
+        Ok(Self { selection, claims })
+    }
+
+    /// Exact catalog and row identity selected for this batch.
+    pub const fn selection(&self) -> OpeningScheduleSelection {
+        self.selection
+    }
+
+    /// Ordered public opening claims.
+    pub fn claims(&self) -> &OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+        &self.claims
+    }
+
+    /// Consume the statement into its ordered public claims.
+    pub fn into_claims(self) -> OpeningClaims<'a, E, &'a CommittedGroup<F>> {
+        self.claims
+    }
 }
 
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {

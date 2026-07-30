@@ -20,12 +20,11 @@ use akita_types::sis::{
 use akita_types::{
     extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
     level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupDescriptor, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, GroupSource, OpeningClaimsLayout, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep,
-    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessLayout, WitnessPartition,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
+    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -276,7 +275,6 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: GroupSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {

@@ -49,7 +49,7 @@ fn verify_with(
         proof,
         verifier_setup,
         &mut transcript,
-        verify_input(point, openings, commitment),
+        verify_input::<Cfg>(point, openings, commitment),
         BasisMode::Lagrange,
     )
 }
@@ -120,7 +120,7 @@ fn ring_dimension_transition_proves_verifies_and_rejects_tamper() {
         let mut prover_transcript = AkitaTranscript::<F>::new(LABEL);
         let proof = Scheme::batched_prove(
             &setup,
-            prove_input(&point, &poly_refs, &commitment, hint),
+            prove_input::<Cfg, _>(&point, &poly_refs, &commitment, hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,

@@ -26,10 +26,10 @@ use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    DecompositionParams, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    CommittedGroupBatchProfile, DecompositionParams, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -109,12 +109,12 @@ fn precommitted_group_params(
     group: PolynomialGroupLayout,
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
-        layout: CommittedGroupDescriptor::from_params(group, params),
+        layout: CommittedGroupProfile::from_params(group, params),
         source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
-        num_digits_fold_one: params.num_digits_fold_one,
+        num_digits_fold: params.num_digits_fold,
     }
 }
 
@@ -141,7 +141,6 @@ fn recursive_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: GroupSource::bounded(128),
                     challenge: RootFinalChallenge::Flat,
                     commitment: predecessor.clone(),
                 },
@@ -233,22 +232,6 @@ fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
         ),
         GroupSource::one_hot(256)
     );
-}
-
-#[test]
-fn schedule_rejects_root_source_that_disagrees_with_commitment_bounds() {
-    let mut schedule = recursive_schedule(64, 64, false);
-    schedule.root.params.final_group.source = GroupSource::one_hot(256);
-    assert!(matches!(
-        schedule.validate_structure(),
-        Err(AkitaError::InvalidSetup(_))
-    ));
-
-    schedule.root.params.final_group.source = GroupSource::bounded(32);
-    assert!(matches!(
-        schedule.validate_structure(),
-        Err(AkitaError::InvalidSetup(_))
-    ));
 }
 
 #[test]
@@ -450,6 +433,8 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         fold_challenge_config,
     )
     .with_decomp(4, 32, 2, 2, 2)
+    .unwrap()
+    .with_fold_linf_cap_config(128, 3)
     .unwrap();
     let field_bits = 128u32;
     let num_poly = 3usize;
@@ -672,6 +657,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             fold_challenge_config,
         )
         .with_decomp(1, 1, 1, 1, 1)
+        .unwrap()
+        .with_fold_linf_cap_config(F::modulus_bits(), num_claims)
         .unwrap();
 
         let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
@@ -843,7 +830,7 @@ fn validate_rejects_zero_dimensions() {
     .is_ok());
 }
 
-fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
+fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
     let num_live_blocks = 1usize << (num_vars - 10);
     let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
         crate::SisTableKey {
@@ -858,12 +845,9 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
     )
     .expect("audited precommitted A matrix");
     let outer_width = inner_commit_matrix.output_rank() * num_live_blocks;
-    CommittedGroupDescriptor {
-        version: CommittedGroupDescriptor::VERSION,
+    CommittedGroupProfile {
+        version: CommittedGroupProfile::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
-        encoding: GroupSourceEncoding::Bounded {
-            coefficient_bits: 128,
-        },
         num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
         num_positions_per_block: 16,
         num_live_blocks,
@@ -893,6 +877,7 @@ fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
         final_group: PolynomialGroupLayout::new(14, 3),
         final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
+        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -921,6 +906,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
         final_group: PolynomialGroupLayout::new(20, 3),
         final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(12)],
+        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -934,6 +920,7 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
         final_group: PolynomialGroupLayout::new(20, 3),
         final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
+        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -965,6 +952,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
             .expect("audited multi-polynomial B matrix");
             descriptor
         }],
+        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -978,16 +966,13 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 
 #[test]
 fn group_batch_key_identity_binds_ordered_source_contracts() {
-    let mut first = precommitted_descriptor(12);
-    first.encoding = GroupSourceEncoding::SparseBinary { chunk_size: 16 };
-    let mut second = precommitted_descriptor(14);
-    second.encoding = GroupSourceEncoding::Bounded {
-        coefficient_bits: 32,
-    };
+    let first = precommitted_descriptor(12);
+    let second = precommitted_descriptor(14);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         final_source: GroupSource::one_hot(256),
         precommitteds: vec![first, second],
+        precommitted_sources: vec![GroupSource::one_hot(16), GroupSource::bounded(32)],
     };
 
     let mut reordered = key.clone();
@@ -999,8 +984,7 @@ fn group_batch_key_identity_binds_ordered_source_contracts() {
     );
 
     let mut changed_pre_source = key.clone();
-    changed_pre_source.precommitteds[0].encoding =
-        GroupSourceEncoding::SparseBinary { chunk_size: 256 };
+    changed_pre_source.precommitted_sources[0] = GroupSource::one_hot(256);
     assert_ne!(
         key.canonical_descriptor_bytes(),
         changed_pre_source.canonical_descriptor_bytes()
@@ -1044,4 +1028,35 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         .validate_frozen_precommit(128)
         .expect_err("geometry must match num_vars");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
+}
+
+#[test]
+fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
+    let schedule = recursive_schedule(64, 64, false);
+    let profiles = CommittedGroupBatchProfile {
+        final_group: CommittedGroupProfile::from_params(
+            PolynomialGroupLayout::singleton(8),
+            &schedule.root.params.final_group.commitment,
+        ),
+        precommitteds: Vec::new(),
+    };
+    let digest = crate::schedule_row_digest(&profiles, &schedule).expect("row digest");
+    assert_eq!(
+        digest,
+        crate::schedule_row_digest(&profiles, &schedule).expect("stable row digest")
+    );
+
+    let mut changed_profiles = profiles.clone();
+    changed_profiles.final_group.group = PolynomialGroupLayout::new(8, 2);
+    assert_ne!(
+        digest,
+        crate::schedule_row_digest(&changed_profiles, &schedule).expect("changed-profile digest")
+    );
+
+    let mut changed_schedule = schedule;
+    changed_schedule.terminal.input_witness_len += 1;
+    assert_ne!(
+        digest,
+        crate::schedule_row_digest(&profiles, &changed_schedule).expect("changed-row digest")
+    );
 }

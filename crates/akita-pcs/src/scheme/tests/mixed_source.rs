@@ -3,6 +3,24 @@ use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
 
 type MixedPoly = MultilinearPolynomial<OneHotF, u8>;
 
+struct DownstreamK16Provider;
+
+impl WholeGroupSourceProvider<OneHotF, MixedPoly> for DownstreamK16Provider {
+    fn planning_source(&self) -> GroupSource {
+        GroupSource::registered(
+            akita_types::GroupSourceRegistration::new(*b"downstream/k016\0", [16; 16]),
+            akita_types::GroupSourceEncoding::SparseBinary { chunk_size: 16 },
+        )
+    }
+
+    fn validate_group(&self, polynomials: &[MixedPoly]) -> Result<(), AkitaError> {
+        for poly in polynomials {
+            akita_prover::RootPolyMeta::validate_group_source(poly, self.planning_source())?;
+        }
+        Ok(())
+    }
+}
+
 #[test]
 fn heterogeneous_group_sources_round_trip_with_group_local_points() {
     const ONEHOT_PRE_NV: usize = 14;
@@ -24,11 +42,17 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
     )
     .expect("K=16 precommitted polynomial");
     let onehot_pre_wrapped = MixedPoly::onehot(onehot_pre.clone());
+    let downstream_provider = DownstreamK16Provider;
+    assert_ne!(
+        downstream_provider.planning_source().registration(),
+        GroupSource::one_hot(16).registration(),
+        "fixture must exercise downstream provider identity in a curated group batch"
+    );
     let (onehot_pre_commitment, onehot_pre_hint) = OneHotScheme::commit_group(
         &setup,
         std::slice::from_ref(&onehot_pre_wrapped),
         &stack,
-        GroupSource::one_hot(16),
+        &downstream_provider,
     )
     .expect("K=16 precommit");
 
@@ -43,9 +67,8 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
     let dense_b = DensePoly::from_field_evals(DENSE_PRE_NV, ONEHOT_D, &dense_evals_b)
         .expect("second bounded dense polynomial");
     let dense_group = [MixedPoly::dense(dense_a), MixedPoly::dense(dense_b)];
-    let dense_source = GroupSource::bounded(32);
     let (dense_commitment, dense_hint) =
-        OneHotScheme::commit_group(&setup, &dense_group, &stack, dense_source)
+        OneHotScheme::commit_group(&setup, &dense_group, &stack, &DenseGroupProvider::new(32))
             .expect("32-bit dense precommit");
 
     let final_onehot = OneHotPoly::<OneHotF, u8>::new(
@@ -61,21 +84,16 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
         &setup,
         std::slice::from_ref(&final_wrapped),
         &stack,
-        vec![
-            onehot_pre_commitment.descriptor,
-            dense_commitment.descriptor,
-        ],
-        GroupSource::one_hot(256),
+        vec![onehot_pre_commitment.profile, dense_commitment.profile],
+        &OneHotGroupProvider::new(256),
     )
     .expect("mixed-source final commit");
 
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
         final_source: GroupSource::one_hot(256),
-        precommitteds: vec![
-            onehot_pre_commitment.descriptor,
-            dense_commitment.descriptor,
-        ],
+        precommitteds: vec![onehot_pre_commitment.profile, dense_commitment.profile],
+        precommitted_sources: vec![GroupSource::one_hot(16), GroupSource::bounded(32)],
     };
     let schedule = OneHotCfg::runtime_schedule(key).expect("curated mixed schedule");
     let onehot_pre_params = akita_config::committed_group_params::<OneHotCfg>(
@@ -104,7 +122,7 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
     let onehot_refs = [&onehot_pre_wrapped];
     let dense_refs = [&dense_group[0], &dense_group[1]];
     let final_refs = [&final_wrapped];
-    let prover_data = ProverOpeningData::new(
+    let prover_data = selected_prover_data::<OneHotCfg, _>(
         OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(
                 onehot_pre_point.clone(),
@@ -130,6 +148,7 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
         vec![&onehot_refs, &dense_refs, &final_refs],
     )
     .expect("mixed prover opening data");
+    let selection = prover_data.selection().expect("mixed-source selection");
 
     const DOMAIN: &[u8] = b"test/heterogeneous-group-sources";
     let mut prover_transcript = AkitaTranscript::new(DOMAIN);
@@ -161,7 +180,7 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims,
+        GroupBatchStatement::new(selection, verifier_claims).expect("mixed-source statement"),
         BasisMode::Lagrange,
     )
     .expect("mixed-source verification");

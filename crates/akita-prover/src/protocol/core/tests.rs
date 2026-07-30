@@ -6,7 +6,7 @@ use akita_config::{
 use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupDescriptor, OpeningClaims, OpeningClaimsLayout,
+    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
@@ -64,11 +64,12 @@ fn proof_schedule_from_layout_includes_entire_batch() {
         PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
             .expect("precommit params");
     let precommitted =
-        CommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
+        CommittedGroupProfile::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
     let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
         final_source: D64OneHot::group_source(),
         precommitteds: vec![precommitted, precommitted],
+        precommitted_sources: vec![D64OneHot::group_source(), D64OneHot::group_source()],
     })
     .expect("multi-group schedule");
     let root_params = schedule.root.params.final_group.commitment.clone();

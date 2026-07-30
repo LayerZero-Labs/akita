@@ -12,15 +12,15 @@ use akita_prover::compute::{
 };
 use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
-use akita_prover::{AkitaProverSetup, CommittedGroupWithHint};
+use akita_prover::{AkitaProverSetup, CommittedGroupWithHint, WholeGroupSourceProvider};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
+use akita_types::AkitaVerifierSetup;
 use akita_types::{
     dispatch_for_field, validate_ring_subfield_role, BasisMode, CommittedGroup,
-    CommittedGroupDescriptor, FpExtEncoding, GroupSource,
+    CommittedGroupProfile, FpExtEncoding, GroupBatchStatement,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint};
-use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
@@ -155,27 +155,29 @@ where
         akita_prover::batched_commit::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
     }
 
-    /// Commit one standalone one-hot commitment group.
+    /// Commit one standalone provider-validated commitment group.
     ///
     /// # Errors
     ///
-    /// Returns an error if the group is empty, dense, exceeds setup capacity, or cannot be planned.
+    /// Returns an error if provider validation fails, the group exceeds setup
+    /// capacity, or no exact generated row supports it.
     #[allow(clippy::type_complexity)]
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_group")]
-    pub fn commit_group<P, B>(
+    pub fn commit_group<P, B, S>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        source: GroupSource,
+        provider: &S,
     ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+        S: WholeGroupSourceProvider<Cfg::Field, P>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, source)
+        akita_prover::commit_group::<Cfg, P, B, S>(polys, setup.expanded.as_ref(), stack, provider)
     }
 
     /// Commit the final polynomial bundle for a multi-group root commitment.
@@ -185,26 +187,27 @@ where
     /// Returns an error if input validation, multi-group layout selection, or
     /// commitment execution fails.
     #[tracing::instrument(skip_all, name = "AkitaCommitmentScheme::commit_final_group")]
-    pub fn commit_final_group<P, B>(
+    pub fn commit_final_group<P, B, S>(
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        precommitteds: Vec<CommittedGroupDescriptor>,
-        final_source: GroupSource,
+        precommitteds: Vec<CommittedGroupProfile>,
+        final_provider: &S,
     ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
         P: RuntimeRootCommitPoly<Cfg::Field>,
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
+        S: WholeGroupSourceProvider<Cfg::Field, P>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit_final_group::<Cfg, P, B>(
+        akita_prover::commit_final_group::<Cfg, P, B, S>(
             polys,
             setup.expanded.as_ref(),
             stack,
             precommitteds,
-            final_source,
+            final_provider,
         )
     }
 
@@ -269,11 +272,11 @@ where
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
         transcript: &mut T,
-        claims: OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
+        statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
-        batched_verify_inner::<Cfg, T>(proof, setup, transcript, claims, basis)
+        batched_verify_inner::<Cfg, T>(proof, setup, transcript, statement, basis)
     }
 
     /// Protocol identifier.
@@ -287,7 +290,7 @@ fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
+    statement: GroupBatchStatement<'_, Cfg::ExtField, Cfg::Field>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where
@@ -306,7 +309,7 @@ where
     T: Transcript<Cfg::Field>,
 {
     let t_verify_akita = Instant::now();
-    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, claims, basis)?;
+    akita_verifier::batched_verify::<Cfg, T>(proof, setup, transcript, statement, basis)?;
 
     tracing::info!(
         levels = proof.num_fold_levels(),

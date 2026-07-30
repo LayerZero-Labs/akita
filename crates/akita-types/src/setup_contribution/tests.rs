@@ -195,14 +195,13 @@ fn test_inputs_for_group_sizes(
             TEST_D,
         );
     }
-    lp.num_digits_fold_one = depth_fold;
-    lp.cached_num_digits_block_claims = num_claims;
-    lp.cached_num_digits_fold_value = depth_fold;
+    lp.num_digits_fold = depth_fold;
+    lp.num_fold_claims = num_claims;
     if group_sizes.len() > 1 {
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let mut layout = crate::CommittedGroupDescriptor::from_params(
+                let mut layout = crate::CommittedGroupProfile::from_params(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );
@@ -229,7 +228,7 @@ fn test_inputs_for_group_sizes(
                     log_basis_open: lp.log_basis_open,
                     fold_challenge_config: lp.fold_challenge_config,
                     num_digits_open: lp.num_digits_open,
-                    num_digits_fold_one: depth_fold,
+                    num_digits_fold: depth_fold,
                 }
             })
             .collect();

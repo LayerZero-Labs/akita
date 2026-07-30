@@ -13,11 +13,12 @@ pub use akita_types::{
 };
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
-    ring_challenge_config_digest, validate_catalog_identity,
+    ring_challenge_config_digest, selection_catalog_identity, validate_catalog_identity,
 };
 pub use generated::*;
 pub use resolve::{
-    estimate_proof_bytes, resolve_group_batch_schedule, resolve_schedule, schedule_from_entry,
+    estimate_proof_bytes, resolve_generated_schedule_selection, resolve_group_batch_schedule,
+    resolve_schedule, schedule_from_entry, select_generated_schedule_row, ResolvedScheduleRow,
 };
 pub use runtime::{
     default_sis_security_policy, suffix_opening_layout, PlannerCostModelId, PlannerPolicy,

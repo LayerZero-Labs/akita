@@ -10,7 +10,7 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
     DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
     PrecommittedLevelParams, WitnessLayout,
 };
@@ -39,7 +39,8 @@ fn sis_key(
 
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
-    layout: CommittedGroupDescriptor,
+    layout: CommittedGroupProfile,
+    source: akita_types::GroupSource,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
 }
@@ -49,14 +50,15 @@ struct PrecommittedGroupSeed {
 /// multi-group root opening basis: `log_basis_open` is selected later by the
 /// root candidate search.
 fn freeze_precommitted_group_layout(
-    layout: &CommittedGroupDescriptor,
+    layout: &CommittedGroupProfile,
+    source: akita_types::GroupSource,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
     layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
 
     let d_a = layout.inner_commit_matrix.ring_dimension();
     let d_b = layout.outer_commit_matrix.ring_dimension();
-    let source = akita_types::GroupSource::from_encoding(layout.encoding);
+    source.validate_for_ring_dimension(policy.decomposition.field_bits(), d_a)?;
     let witness_decomp = source.decomposition(DecompositionParams {
         log_basis: layout.log_basis_inner,
         ..policy.decomposition
@@ -111,6 +113,7 @@ fn freeze_precommitted_group_layout(
 
     Ok(PrecommittedGroupSeed {
         layout: *layout,
+        source,
         inner_commit_matrix,
         outer_commit_matrix,
     })
@@ -138,7 +141,7 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let source = akita_types::GroupSource::from_encoding(group.layout.encoding);
+    let source = group.source;
     let onehot_chunk_size = source.sparse_chunk_size();
     let challenge_shape = TensorChallengeShape::Flat;
     let challenge = FoldChallengeNorms {
@@ -161,34 +164,26 @@ fn materialize_precommitted_group_for_open_basis(
         group.layout.inner_commit_matrix.ring_dimension(),
         group.inner_commit_matrix.input_width(),
     )?;
-    let (num_digits_fold_one, _) = fold_witness_digit_plan(
+    let group_claims = group.layout.group.num_polynomials();
+    let (num_digits_fold, _) = fold_witness_digit_plan(
         group.layout.num_live_blocks,
-        group.layout.group.num_polynomials(),
+        group_claims,
         policy.decomposition.field_bits(),
         log_basis_open,
         challenge,
         witness,
         &cap_config,
     )?;
-    let witness_decomposition = source.decomposition(DecompositionParams {
-        log_basis: group.layout.log_basis_inner,
-        ..policy.decomposition
-    });
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         policy.sis_modulus_profile,
         group.layout.inner_commit_matrix.ring_dimension(),
-        witness_decomposition,
         log_basis_open,
         ring_challenge_cfg,
         challenge_shape,
-        true,
-        onehot_chunk_size,
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        group.layout.num_live_blocks,
-        group.layout.group.num_polynomials(),
-        group.inner_commit_matrix.input_width() as u64,
     )
     .ok_or_else(|| AkitaError::InvalidSetup("no precommitted A-role norm".to_string()))?;
     if required_a_bound > group.inner_commit_matrix.coeff_linf_bound() {
@@ -215,7 +210,7 @@ fn materialize_precommitted_group_for_open_basis(
         log_basis_open,
         fold_challenge_config: *ring_challenge_cfg,
         num_digits_open,
-        num_digits_fold_one,
+        num_digits_fold,
     })
 }
 
@@ -235,10 +230,17 @@ fn multi_group_root_precommitted_group_seeds(
             "multi-group root params require at least one precommitted group".to_string(),
         ));
     }
+    if key.precommitted_sources.len() != key.precommitteds.len() {
+        return Err(AkitaError::InvalidSetup(
+            "group-batch planning requires one honest source model per precommitted profile"
+                .to_string(),
+        ));
+    }
 
     key.precommitteds
         .iter()
-        .map(|layout| freeze_precommitted_group_layout(layout, policy))
+        .zip(&key.precommitted_sources)
+        .map(|(layout, source)| freeze_precommitted_group_layout(layout, *source, policy))
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -424,21 +426,41 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
+    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
+        ctx.ring_challenge_cfg,
+        fold_challenge_shape,
+        d,
+        width_s,
+    ) else {
+        return Ok(None);
+    };
+    let onehot_chunk_size = source.sparse_chunk_size();
+    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+        num_live_blocks,
+        main_num_polys,
+        policy.decomposition.field_bits(),
+        log_basis,
+        FoldChallengeNorms::new(ctx.ring_challenge_cfg, fold_challenge_shape),
+        FoldWitnessNorms::new(
+            witness_decomp.log_basis,
+            d,
+            onehot_chunk_size,
+            onehot_chunk_size > 0,
+        ),
+        &fold_cap_config,
+    ) else {
+        return Ok(None);
+    };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
         family,
         d,
-        witness_decomp,
         log_basis,
         ctx.ring_challenge_cfg,
         fold_challenge_shape,
-        true,
-        source.sparse_chunk_size(),
+        num_digits_fold,
         policy.ring_subfield_norm_bound,
-        num_live_blocks,
-        main_num_polys,
-        width_s as u64,
     ) else {
         return Ok(None);
     };
@@ -512,10 +534,9 @@ fn multi_group_root_main_level_params_candidate(
         num_digits_outer,
         num_digits_open,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold_one: 1,
+        num_digits_fold: 1,
+        num_fold_claims: main_num_polys,
         field_bits_hint: 0,
-        cached_num_digits_block_claims: 0,
-        cached_num_digits_fold_value: 1,
         // Multi-group root folds use the ordinary single-chunk precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),

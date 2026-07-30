@@ -141,7 +141,7 @@ mod tests {
     use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, CommittedGroupDescriptor, PolynomialGroupLayout,
+        r_decomp_levels, shared_setup_fold_gadget, CommittedGroupProfile, PolynomialGroupLayout,
         RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
         WitnessLayout,
     };
@@ -171,11 +171,12 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let descriptor = CommittedGroupDescriptor::from_params(precommitted, &params);
+        let descriptor = CommittedGroupProfile::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             final_source: Cfg::group_source(),
             precommitteds: vec![descriptor, descriptor],
+            precommitted_sources: vec![Cfg::group_source(), Cfg::group_source()],
         };
         let layout = key.opening_layout().expect("profile opening layout");
         let schedule = Cfg::runtime_schedule(key).expect("recursive profile schedule");
@@ -192,11 +193,12 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let expected = CommittedGroupDescriptor::from_params(precommitted, &params);
+        let expected = CommittedGroupProfile::from_params(precommitted, &params);
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group,
             final_source: Cfg::group_source(),
             precommitteds: vec![expected, expected],
+            precommitted_sources: vec![Cfg::group_source(), Cfg::group_source()],
         })
         .expect("recursive schedule");
 

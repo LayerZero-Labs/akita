@@ -145,6 +145,12 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
                     .iter()
                     .map(|group| group.descriptor)
                     .collect(),
+                precommitted_sources: entry
+                    .root
+                    .precommitted_groups
+                    .iter()
+                    .map(|group| group.source)
+                    .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
                 push_unique_schedule_key(&mut keys, candidate);
@@ -162,8 +168,7 @@ mod tests {
     use crate::proof_optimized::fp128;
     use crate::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
     use akita_types::{
-        AkitaScheduleLookupKey, CommittedGroupDescriptor, OpeningClaimsLayout,
-        PolynomialGroupLayout,
+        AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
     };
 
     type SetupCfg = RecursiveCommitmentConfig<fp128::D64OneHot>;
@@ -177,11 +182,12 @@ mod tests {
                 &singleton,
             )
             .expect("precommit params");
-        let precommitted = CommittedGroupDescriptor::from_params(pre, &pre_params);
+        let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             final_source: SetupCfg::group_source(),
             precommitteds: vec![precommitted, precommitted],
+            precommitted_sources: vec![SetupCfg::group_source(), SetupCfg::group_source()],
         }
     }
 

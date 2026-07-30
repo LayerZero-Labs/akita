@@ -24,7 +24,7 @@ fn precommit_config_commit_returns_exact_frozen_layout() {
             .expect("stack");
     let (commitment, _hint) =
         PrecommitCommitter::commit(&setup, &polys, &stack).expect("precommit");
-    let frozen_layout = akita_types::CommittedGroupDescriptor::from_params(key, &layout);
+    let frozen_layout = akita_types::CommittedGroupProfile::from_params(key, &layout);
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -98,9 +98,9 @@ fn precommit_config_allows_independent_precommitted_groups() {
         let (pre_b_commitment, _pre_b_hint) =
             PrecommitCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
         let pre_a_frozen =
-            akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
+            akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
-            akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+            akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
@@ -143,13 +143,14 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_layout =
         PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
             .expect("precommit C layout");
-    let pre_a_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
-    let pre_c_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_c_key, &pre_c_layout);
+    let pre_a_frozen = akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen = akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
+    let pre_c_frozen = akita_types::CommittedGroupProfile::from_params(pre_c_key, &pre_c_layout);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
         final_source: OneHotCfg::group_source(),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
+        precommitted_sources: vec![OneHotCfg::group_source(); 3],
     };
 
     let schedule =
@@ -208,12 +209,13 @@ fn group_batch_commits_independent_arity_precommitteds() {
         PrecommitCommitter::commit::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
     let (pre_b_commitment, _pre_b_hint) =
         PrecommitCommitter::commit::<_, _>(&setup, &pre_b_polys, &stack).expect("precommit B");
-    let pre_a_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+    let pre_a_frozen = akita_types::CommittedGroupProfile::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen = akita_types::CommittedGroupProfile::from_params(pre_b_key, &pre_b_layout);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         final_source: OneHotCfg::group_source(),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
+        precommitted_sources: vec![OneHotCfg::group_source(); 2],
     };
 
     let multi_group_schedule =
@@ -225,12 +227,12 @@ fn group_batch_commits_independent_arity_precommitteds() {
         debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7003),
         debug_make_onehot_poly(main_params, 0x0bee_fcaf_9a77_7004),
     ];
-    let (final_commitment, final_hint) = OneHotScheme::commit_final_group::<_, _>(
+    let (final_commitment, final_hint) = OneHotScheme::commit_final_group(
         &setup,
         &final_polys,
         &stack,
-        vec![pre_a_commitment.descriptor, pre_b_commitment.descriptor],
-        OneHotCfg::group_source(),
+        vec![pre_a_commitment.profile, pre_b_commitment.profile],
+        &OneHotGroupProvider::new(OneHotCfg::onehot_chunk_size()),
     )
     .expect("final multi-group commitment");
 
@@ -290,10 +292,14 @@ fn commit_group_returns_frozen_exact_layout() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let (commitment, _hint) =
-        OneHotScheme::commit_group::<_, _>(&setup, &polys, &stack, OneHotCfg::group_source())
-            .expect("commit group");
-    let frozen_layout = commitment.descriptor;
+    let (commitment, _hint) = OneHotScheme::commit_group(
+        &setup,
+        &polys,
+        &stack,
+        &OneHotGroupProvider::new(OneHotCfg::onehot_chunk_size()),
+    )
+    .expect("commit group");
+    let frozen_layout = commitment.profile;
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -349,6 +355,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
     let source = akita_types::GroupSource::one_hot(BENCH_ONEHOT_K);
+    let provider = OneHotGroupProvider::new(BENCH_ONEHOT_K);
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
         let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
         let layout = akita_config::committed_group_params::<ProtocolCfg>(&key, source)
@@ -362,9 +369,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             })
             .collect();
         let (commitment, hint) =
-            AkitaCommitmentScheme::<ProtocolCfg>::commit_group(&setup, &polys, &stack, source)
+            AkitaCommitmentScheme::<ProtocolCfg>::commit_group(&setup, &polys, &stack, &provider)
                 .expect("precommit");
-        pre_frozen.push(commitment.descriptor);
+        pre_frozen.push(commitment.profile);
         pre_keys.push(key);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
@@ -376,6 +383,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
         final_source: source,
         precommitteds: pre_frozen,
+        precommitted_sources: vec![source; pre_sizes.len()],
     };
     let opening_layout = multi_group_key
         .opening_layout()
@@ -432,11 +440,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         &setup,
         &final_polys,
         &stack,
-        pre_commitments
-            .iter()
-            .map(|group| group.descriptor)
-            .collect(),
-        source,
+        pre_commitments.iter().map(|group| group.profile).collect(),
+        &provider,
     )
     .expect("final multi-group commitment");
 
@@ -492,12 +497,13 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut prover_hints = pre_hints;
     prover_hints.push(final_hint);
 
-    let prover_claims = ProverOpeningData::new(
+    let prover_claims = selected_prover_data::<ProtocolCfg, _>(
         OpeningClaims::from_groups(prover_groups).expect("prover claims"),
         prover_hints,
         prover_polys,
     )
     .expect("multi-group prover data");
+    let selection = prover_claims.selection().expect("multi-group selection");
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     let proof = AkitaCommitmentScheme::<ProtocolCfg>::batched_prove(
@@ -563,7 +569,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_claims,
+        GroupBatchStatement::new(selection, verify_claims).expect("multi-group statement"),
         BasisMode::Lagrange,
     )
     .expect("multi-group verify");
@@ -591,7 +597,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
                 &decoded,
                 &verifier_setup,
                 &mut swapped_transcript,
-                swapped_claims,
+                GroupBatchStatement::new(selection, swapped_claims)
+                    .expect("swapped-group statement"),
                 BasisMode::Lagrange,
             )
             .is_err(),
@@ -613,7 +620,8 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
                 &decoded,
                 &verifier_setup,
                 &mut tampered_transcript,
-                tampered_claims,
+                GroupBatchStatement::new(selection, tampered_claims)
+                    .expect("tampered-opening statement"),
                 BasisMode::Lagrange,
             )
             .is_err(),
@@ -663,10 +671,11 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
     let key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
         final_source: ProtocolCfg::group_source(),
-        precommitteds: vec![akita_types::CommittedGroupDescriptor::from_params(
+        precommitteds: vec![akita_types::CommittedGroupProfile::from_params(
             akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
             &pre_params,
         )],
+        precommitted_sources: vec![ProtocolCfg::group_source()],
     };
     let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
     let root = multi_group_root_params(&schedule);
@@ -730,14 +739,20 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
     let hints = vec![hint];
 
     let mut prover_transcript = AkitaTranscript::<OneHotF>::new(b"test/batched-onehot-shape");
+    let prover_group = PolynomialGroupClaims::new(
+        point.clone(),
+        vec![OneHotF::zero(); poly_refs.len()],
+        commitments[0].clone(),
+    )
+    .expect("valid one-hot prover group");
     let proof = OneHotScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(
-            &point[..],
-            &poly_refs[..],
-            &commitments[0],
-            hints.into_iter().next().unwrap(),
-        ),
+        selected_prover_data::<OneHotCfg, _>(
+            OpeningClaims::from_groups(vec![prover_group]).expect("valid one-hot prover claims"),
+            hints,
+            vec![&poly_refs[..]],
+        )
+        .expect("valid one-hot prover opening data"),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -785,7 +800,16 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
         &decoded,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point[..], &openings[..], &commitments[0]),
+        selected_statement::<OneHotCfg>(
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                point,
+                openings,
+                &commitments[0],
+            )
+            .expect("valid one-hot verifier group")])
+            .expect("valid one-hot verifier claims"),
+        )
+        .expect("valid one-hot verifier statement"),
         BasisMode::Lagrange,
     )
     .expect("batched onehot verify");

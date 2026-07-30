@@ -36,13 +36,11 @@ pub enum NextWitnessBindingPolicy {
 
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CommittedGroupDescriptor {
+pub struct CommittedGroupProfile {
     /// Version of the canonical committed-profile encoding.
     pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
-    /// Closed protocol encoding; provider registration is intentionally erased.
-    pub encoding: GroupSourceEncoding,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
@@ -63,7 +61,7 @@ pub struct CommittedGroupDescriptor {
     pub outer_commit_matrix: OuterCommitMatrixParams,
 }
 
-impl CommittedGroupDescriptor {
+impl CommittedGroupProfile {
     /// Current committed-profile format.
     pub const VERSION: u8 = 1;
 
@@ -72,7 +70,6 @@ impl CommittedGroupDescriptor {
         Self {
             version: Self::VERSION,
             group,
-            encoding: params.source.encoding(),
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
@@ -96,16 +93,6 @@ impl CommittedGroupDescriptor {
         bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
-        match self.encoding {
-            GroupSourceEncoding::Bounded { coefficient_bits } => {
-                bytes.push(0);
-                push_u32(bytes, coefficient_bits);
-            }
-            GroupSourceEncoding::SparseBinary { chunk_size } => {
-                bytes.push(1);
-                push_usize(bytes, chunk_size);
-            }
-        }
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
@@ -130,8 +117,6 @@ impl CommittedGroupDescriptor {
         self.outer_commit_matrix.validate()?;
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
-        GroupSource::from_encoding(self.encoding)
-            .validate_for_ring_dimension(field_bits, inner_ring_dimension)?;
         if !inner_ring_dimension.is_power_of_two()
             || !outer_ring_dimension.is_power_of_two()
             || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
@@ -240,7 +225,12 @@ pub struct AkitaScheduleLookupKey {
     /// Exact coefficient class requested for the final group.
     pub final_source: GroupSource,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<CommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
+    /// Planner-only honest source models for `precommitteds`.
+    ///
+    /// Runtime catalog resolution may leave this empty because generated rows
+    /// carry their already-certified exact consuming parameters.
+    pub precommitted_sources: Vec<GroupSource>,
 }
 
 impl AkitaScheduleLookupKey {
@@ -250,6 +240,7 @@ impl AkitaScheduleLookupKey {
             final_group,
             final_source,
             precommitteds: Vec::new(),
+            precommitted_sources: Vec::new(),
         }
     }
 
@@ -262,6 +253,10 @@ impl AkitaScheduleLookupKey {
         push_usize(&mut bytes, self.precommitteds.len());
         for descriptor in &self.precommitteds {
             descriptor.append_descriptor_bytes(&mut bytes);
+        }
+        push_usize(&mut bytes, self.precommitted_sources.len());
+        for source in &self.precommitted_sources {
+            source.append_descriptor_bytes(&mut bytes);
         }
         bytes
     }
@@ -322,6 +317,13 @@ impl AkitaScheduleLookupKey {
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.final_group.validate()?;
         self.final_source.validate(field_bits)?;
+        if !self.precommitted_sources.is_empty()
+            && self.precommitted_sources.len() != self.precommitteds.len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "planner precommitted source count does not match committed profiles".to_string(),
+            ));
+        }
         if self.final_group.num_vars() == 0 {
             return Err(AkitaError::InvalidSetup(
                 "schedule lookup key dimensions must be at least 1".to_string(),
@@ -330,6 +332,40 @@ impl AkitaScheduleLookupKey {
         for layout in &self.precommitteds {
             layout.group.validate()?;
             layout.validate(field_bits)?;
+        }
+        for source in &self.precommitted_sources {
+            source.validate(field_bits)?;
+        }
+        Ok(())
+    }
+}
+
+/// Exact ordered committed profiles used to resolve a verifier-approved row.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommittedGroupBatchProfile {
+    /// Final/new commitment group.
+    pub final_group: CommittedGroupProfile,
+    /// Earlier commitments in transcript order.
+    pub precommitteds: Vec<CommittedGroupProfile>,
+}
+
+impl CommittedGroupBatchProfile {
+    /// Build the corresponding public opening layout.
+    pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
+        let mut groups = self
+            .precommitteds
+            .iter()
+            .map(|profile| profile.group)
+            .collect::<Vec<_>>();
+        groups.push(self.final_group.group);
+        OpeningClaimsLayout::from_groups(groups)
+    }
+
+    /// Validate all frozen profiles.
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
+        self.final_group.validate_frozen_precommit(field_bits)?;
+        for profile in &self.precommitteds {
+            profile.validate_frozen_precommit(field_bits)?;
         }
         Ok(())
     }
@@ -734,28 +770,13 @@ impl WitnessPartition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootFinalGroupParams {
-    pub source: GroupSource,
     pub challenge: RootFinalChallenge,
     pub commitment: CommittedGroupParams,
 }
 
-impl RootFinalGroupParams {
-    /// Validate that source metadata and commitment bounds describe one root.
-    pub fn validate(&self) -> Result<(), AkitaError> {
-        let expected = GroupSource::from_commitment(&self.commitment);
-        if self.source != expected {
-            return Err(AkitaError::InvalidSetup(format!(
-                "root source {:?} disagrees with commitment source {expected:?}",
-                self.source
-            )));
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPrecommittedGroupParams {
-    pub descriptor: CommittedGroupDescriptor,
+    pub descriptor: CommittedGroupProfile,
     pub commitment: crate::PrecommittedLevelParams,
 }
 
@@ -1016,7 +1037,6 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        self.root.params.final_group.validate()?;
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "root fold witness lengths must be nonzero".to_string(),
@@ -1123,11 +1143,6 @@ impl FoldSchedule {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(1);
-        self.root
-            .params
-            .final_group
-            .source
-            .append_descriptor_bytes(bytes);
         match self.root.params.final_group.challenge {
             RootFinalChallenge::Flat => bytes.push(0),
             RootFinalChallenge::Tensor { fold_low_len } => {

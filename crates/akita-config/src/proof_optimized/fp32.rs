@@ -38,7 +38,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
-    32
+    32,
+    1
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -57,7 +58,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     128,
     32,
-    32
+    32,
+    1
 );
 impl_proof_optimized_preset!(
     D128OneHot,
@@ -81,7 +83,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     256,
     32,
-    32
+    32,
+    1
 );
 impl_proof_optimized_preset!(
     D256OneHot,

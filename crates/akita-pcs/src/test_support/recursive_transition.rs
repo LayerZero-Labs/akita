@@ -91,8 +91,6 @@ where
                 root_bd_ring_dim,
                 root_bd_ring_dim,
             )?;
-            root.params.final_group.source =
-                GroupSource::from_commitment(&root.params.final_group.commitment);
             root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
             let root_out = outgoing_witness_field_len(
                 field_bits,
@@ -326,7 +324,7 @@ where
             ROOT_BD_RING_DIM,
             ROOT_BD_RING_DIM,
         )?;
-        let descriptor = akita_types::CommittedGroupDescriptor::from_params(
+        let descriptor = akita_types::CommittedGroupProfile::from_params(
             pre_group,
             &pre_schedule.root.params.final_group.commitment,
         );
@@ -334,6 +332,7 @@ where
             final_group: PolynomialGroupLayout::new(final_nv, final_np),
             final_source: Self::group_source(),
             precommitteds: vec![descriptor, descriptor],
+            precommitted_sources: vec![Self::group_source(), Self::group_source()],
         };
         let schedule = recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
             &key,
@@ -355,7 +354,7 @@ where
         ChunkCfg::chunked_witness_cfg()
     }
 
-    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+    fn runtime_schedule(mut key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         if key.precommitteds.is_empty() {
             return per_matrix_ring_dims_root_schedule::<Root>(
                 key.final_group.num_vars(),
@@ -364,11 +363,29 @@ where
                 ROOT_BD_RING_DIM,
             );
         }
+        if key.precommitted_sources.is_empty() {
+            key.precommitted_sources = vec![Root::group_source(); key.precommitteds.len()];
+        }
         recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
             &key,
             ROOT_BD_RING_DIM,
             L1_BD_RING_DIM,
         )
+    }
+
+    fn select_schedule_for_profiles(
+        profiles: &CommittedGroupBatchProfile,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        select_synthetic_schedule_row::<Self>(
+            profiles,
+            synthetic_schedule_key(profiles, Root::group_source(), Root::group_source()),
+        )
+    }
+
+    fn resolve_schedule_selection(
+        selection: OpeningScheduleSelection,
+    ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
+        resolve_synthetic_schedule_row::<Self>(selection)
     }
 
     fn get_params_for_prove(
@@ -384,7 +401,7 @@ where
                     group,
                     Self::group_source(),
                 ))?;
-                Ok(akita_types::CommittedGroupDescriptor::from_params(
+                Ok(akita_types::CommittedGroupProfile::from_params(
                     group,
                     &schedule.root.params.final_group.commitment,
                 ))
@@ -393,6 +410,7 @@ where
         Self::runtime_schedule(AkitaScheduleLookupKey {
             final_group: opening_batch.root_final_group_layout()?,
             final_source: Self::group_source(),
+            precommitted_sources: vec![Self::group_source(); precommitteds.len()],
             precommitteds,
         })
     }

@@ -61,7 +61,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
     let mut prover_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
     let proof = Scheme::batched_prove::<_, _, _>(
         &setup,
-        prove_input(&point, &[&poly], &commitment, hint),
+        prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -73,7 +73,7 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&point, &[opening], &commitment),
+        verify_input::<OneHotCfg>(&point, &[opening], &commitment),
         BasisMode::Lagrange,
     )
     .expect("verify");
@@ -121,7 +121,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             &roundtrip,
             &fixture.verifier_setup,
             &mut verifier_transcript,
-            verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
+            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
         )
         .expect("deserialized proof must verify");
@@ -134,7 +134,7 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             &roundtrip,
             &fixture.verifier_setup,
             &mut verifier_transcript,
-            verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
+            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
         )
         .expect_err("oversized grind nonce must be rejected");
@@ -159,7 +159,7 @@ fn fold_recursive_handle_tamper_rejected() {
             &malformed,
             &fixture.verifier_setup,
             &mut verifier_transcript,
-            verify_input(&fixture.point, &[fixture.opening], &fixture.commitment),
+            verify_input::<OneHotCfg>(&fixture.point, &[fixture.opening], &fixture.commitment),
             BasisMode::Lagrange,
         );
         assert_invalid_proof("tampered recursive fold handle", result);
@@ -207,7 +207,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             LoggingTranscript::wrap(AkitaTranscript::<F>::new(b"fold-linf/logging"));
         let proof = Scheme::batched_prove::<_, _, _>(
             &setup,
-            prove_input(&point, &[&poly], &commitment, hint),
+            prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
             &stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
@@ -222,7 +222,7 @@ fn logging_transcript_event_stream_equality_tail_bound_with_grind() {
             &proof,
             &verifier_setup,
             &mut verifier_transcript,
-            verify_input(&point, &[opening], &commitment),
+            verify_input::<OneHotCfg>(&point, &[opening], &commitment),
             BasisMode::Lagrange,
         )
         .expect("verify");

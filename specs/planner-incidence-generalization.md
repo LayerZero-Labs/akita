@@ -57,7 +57,7 @@ After the opening-claims cutover, the main schedule-facing projection is
 ```rust
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<CommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupProfile>,
 }
 ```
 
@@ -223,7 +223,7 @@ Current superseded schedule-key status:
   its `PolynomialGroupLayout`, and call `AkitaScheduleLookupKey::single` with
   the explicit group source.
 - Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
-  `CommittedGroupDescriptor` for earlier groups, as specified in
+  `CommittedGroupProfile` for earlier groups, as specified in
   [`multi-group-batching.md`](multi-group-batching.md).
 - The older incidence-derived schedule-key plan in this file should not be
   continued directly for production paths.
@@ -304,7 +304,7 @@ Generated rows inline the runtime lookup-key fields:
 ```rust
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [CommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupProfile],
     pub steps: &'static [GeneratedStep],
 }
 ```

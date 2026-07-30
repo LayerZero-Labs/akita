@@ -88,30 +88,37 @@ where
     let opening_claims = claims.opening_claims();
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
-    let schedule_key = claims.schedule_key()?;
+    let batch_profile = claims.batch_profile()?;
+    let selection = claims.selection()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
-    let schedule =
-        effective_batched_schedule::<Cfg>(&schedule_key, &opening_batch, final_group_point)?;
+    let resolved = Cfg::resolve_schedule_selection(selection)?;
+    let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
+    if resolved.profiles() != &batch_profile {
+        return Err(AkitaError::InvalidInput(
+            "committed-group profiles do not match the selected schedule row".to_string(),
+        ));
+    }
+    let schedule = resolved.schedule();
     let root_params = &schedule.root_fold().params;
     let final_descriptor = claims.final_descriptor()?;
     if final_descriptor
-        != akita_types::CommittedGroupDescriptor::from_params(
-            schedule_key.final_group,
+        != akita_types::CommittedGroupProfile::from_params(
+            batch_profile.final_group.group,
             &root_params.final_group.commitment,
         )
-        || root_params.precommitted_groups.len() != schedule_key.precommitteds.len()
+        || root_params.precommitted_groups.len() != batch_profile.precommitteds.len()
         || root_params
             .precommitted_groups
             .iter()
-            .zip(&schedule_key.precommitteds)
+            .zip(&batch_profile.precommitteds)
             .any(|(params, descriptor)| params.commitment.layout != *descriptor)
     {
         return Err(AkitaError::InvalidInput(
             "committed-group descriptors do not match the resolved schedule".to_string(),
         ));
     }
-    validate_schedule_ring_dims(&schedule, expanded.seed())?;
-    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
+    validate_schedule_ring_dims(schedule, expanded.seed())?;
+    ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
     schedule.validate_structure()?;
     let root_step = schedule.root_fold();
     for (group_index, group) in root_step.params.precommitted_groups.iter().enumerate() {
@@ -141,7 +148,8 @@ where
             bind_transcript_instance_descriptor::<Cfg::Field, T, GEN_D, Cfg>(
                 expanded.as_ref(),
                 &opening_batch,
-                &schedule,
+                selection,
+                schedule,
                 basis,
                 transcript,
             )
@@ -154,7 +162,7 @@ where
         stacks,
         transcript,
         claims,
-        &schedule,
+        schedule,
         basis,
     )
     .map(|(proof, _total_levels)| proof)

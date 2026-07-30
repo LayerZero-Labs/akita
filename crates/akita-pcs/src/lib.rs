@@ -62,13 +62,14 @@ pub use akita_field::{
 pub use akita_prover::{
     CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
     CyclicRowsComputeBackend, DecomposeFoldWitness, DenseCommitInput, DenseCommitRowsPlan,
-    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry, OneHotCommitBlocks,
-    OneHotCommitRowsPlan, OpeningProveBackendFor, OperationCtx, ProveBackendFor, ProverOpeningData,
-    RecursiveProveBackend, RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend,
-    RingSwitchQuotientRowsPlan, RingSwitchRelationRows, RingSwitchRelationRowsPlan,
-    RootCommitBackend, RootCommitSource, RootOpeningSource, RootPolyShape, RootProveBackend,
-    RootProvePoly, RootTensorSource, SingleChunkEntry, SparseRingBlockEntry,
-    SparseRingCommitRowsPlan, TensorBackendFor, TieredProveStacks, UniformProverStack,
+    DenseGroupProvider, DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, MultiChunkEntry,
+    OneHotCommitBlocks, OneHotCommitRowsPlan, OneHotGroupProvider, OpeningProveBackendFor,
+    OperationCtx, PreparedGroup, ProveBackendFor, ProverOpeningData, RecursiveProveBackend,
+    RecursiveWitnessCommitRowsPlan, RingSwitchComputeBackend, RingSwitchQuotientRowsPlan,
+    RingSwitchRelationRows, RingSwitchRelationRowsPlan, RootCommitBackend, RootCommitSource,
+    RootOpeningSource, RootPolyShape, RootProveBackend, RootProvePoly, RootTensorSource,
+    SingleChunkEntry, SparseRingBlockEntry, SparseRingCommitRowsPlan, TensorBackendFor,
+    TieredProveStacks, UniformProverStack, WholeGroupSourceProvider,
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use akita_serialization::{AkitaDeserialize, AkitaSerialize};

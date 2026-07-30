@@ -25,6 +25,7 @@ pub mod opening_claims;
 pub mod proof;
 pub mod proof_size;
 pub mod schedule;
+pub mod schedule_selection;
 pub mod setup_contribution;
 pub mod sis;
 pub mod tail_golomb_rice_low_bits;
@@ -107,17 +108,18 @@ pub use proof::{
     AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment,
     CommitmentVerifier, CommittedGroup, DigitBlockIter, DigitBlocks, DummyProof,
     ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
-    FoldOpeningKind, LevelProofShape, NextWitnessBinding, NextWitnessBindingShape, OpeningClaims,
-    OpeningClaimsLayout, OpeningPoints, PolynomialGroupClaims, PolynomialGroupLayout,
-    PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixSeed, RelationAddressGeometry,
-    RelationGroupRows, RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout,
-    RingCommitment, RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    FoldOpeningKind, GroupBatchStatement, LevelProofShape, NextWitnessBinding,
+    NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
+    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
+    PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
+    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
@@ -127,13 +129,16 @@ pub use schedule::{
     detect_field_modulus, intermediate_w_ring_element_count_for_chunks,
     intermediate_w_ring_element_count_with_counts,
     intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, FoldSchedule,
-    FoldScheduleEstimate, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
+    FoldSchedule, FoldScheduleEstimate, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
     NextWitnessBindingPolicy, PlannedFoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
     RegisteredGroupSource, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseLinfPolicy, WitnessPartition,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
+};
+pub use schedule_selection::{
+    schedule_row_digest, CatalogIdentity, OpeningScheduleSelection, ScheduleRowDigest,
 };
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,

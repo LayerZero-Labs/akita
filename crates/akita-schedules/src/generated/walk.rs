@@ -87,6 +87,7 @@ pub(crate) fn walk_generated_schedule_entry(
         let (precommitted_groups, precommitted_d_width) =
             multi_group_root_precommitted_groups_for_open_basis(
                 key,
+                entry.root.precommitted_groups,
                 policy,
                 ring_challenge_config,
                 entry.root.open_commit_matrix.log_basis,

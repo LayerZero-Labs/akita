@@ -1,7 +1,7 @@
 use super::*;
 use akita_config::proof_optimized::fp32;
 use akita_field::ExtField;
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
 
 type SmallCfg = fp32::D128OneHot;
 type SmallF = fp32::Field;
@@ -12,6 +12,21 @@ const SMALL_D: usize = SmallCfg::D;
 const SMALL_NV: usize = 16;
 const SMALL_BATCH: usize = 2;
 const TRANSCRIPT_LABEL: &[u8] = b"test/fp32-ext4-folded-only";
+
+fn small_verifier_statement<'a>(
+    point: &[SmallE],
+    openings: &[SmallE],
+    commitment: &'a CommittedGroup<SmallF>,
+) -> GroupBatchStatement<'a, SmallE, SmallF> {
+    let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        point.to_vec(),
+        openings.to_vec(),
+        commitment,
+    )
+    .expect("valid fp32 verifier group")])
+    .expect("valid fp32 verifier claims");
+    selected_statement::<SmallCfg>(claims).expect("selected fp32 verifier statement")
+}
 
 fn onehot_poly(seed: usize) -> OneHotPoly<SmallF, u8> {
     let onehot_k = SmallCfg::onehot_chunk_size();
@@ -116,10 +131,18 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
     let (commitment, hint) =
         SmallScheme::commit(&setup, &polys, &stack).expect("fp32 batched commitment");
 
+    let prover_claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+        point.clone(),
+        vec![SmallE::zero(); poly_refs.len()],
+        commitment.clone(),
+    )
+    .expect("valid fp32 prover group")])
+    .expect("valid fp32 prover claims");
     let mut prover_transcript = AkitaTranscript::<SmallF>::new(TRANSCRIPT_LABEL);
     let proof = SmallScheme::batched_prove::<_, _, _>(
         &setup,
-        prover_claims(&point, &poly_refs, &commitment, hint),
+        selected_prover_data::<SmallCfg, _>(prover_claims, vec![hint], vec![&poly_refs[..]])
+            .expect("selected fp32 prover data"),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -143,7 +166,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point, &openings, &commitment),
+        small_verifier_statement(&point, &openings, &commitment),
         BasisMode::Lagrange,
     )
     .expect("verify fp32 extension proof");
@@ -155,7 +178,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point, &wrong_openings, &commitment),
+        small_verifier_statement(&point, &wrong_openings, &commitment),
         BasisMode::Lagrange,
     )
     .expect_err("wrong batched extension opening must reject");
@@ -176,7 +199,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &tampered,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point, &openings, &commitment),
+        small_verifier_statement(&point, &openings, &commitment),
         BasisMode::Lagrange,
     )
     .expect_err("tampered extension-opening reduction partial must reject");
@@ -188,7 +211,7 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         &stripped,
         &verifier_setup,
         &mut verifier_transcript,
-        verifier_claims(&point, &openings, &commitment),
+        small_verifier_statement(&point, &openings, &commitment),
         BasisMode::Lagrange,
     )
     .expect_err("omitting the required root extension-opening reduction must reject");
@@ -226,7 +249,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &pre_setup,
         std::slice::from_ref(&pre_poly),
         &pre_stack,
-        SOURCE,
+        &OneHotGroupProvider::new(256),
     )
     .expect("precommit");
 
@@ -238,7 +261,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let schedule = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
         final_source: SOURCE,
-        precommitteds: vec![pre_commitment.descriptor],
+        precommitteds: vec![pre_commitment.profile],
+        precommitted_sources: vec![SOURCE],
     })
     .expect("grouped schedule");
     let root_params = &schedule.root.params.final_group.commitment;
@@ -269,8 +293,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &setup,
         std::slice::from_ref(&final_poly),
         &stack,
-        vec![pre_commitment.descriptor],
-        SOURCE,
+        vec![pre_commitment.profile],
+        &OneHotGroupProvider::new(256),
     )
     .expect("final commitment");
 
@@ -281,7 +305,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let final_opening = onehot_opening_at_point(&final_poly, &final_point);
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
-    let prover_claims = ProverOpeningData::new(
+    let prover_claims = selected_prover_data::<ProtocolCfg, _>(
         OpeningClaims::from_groups(vec![
             PolynomialGroupClaims::new(
                 pre_point.clone(),
@@ -301,6 +325,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         vec![&pre_refs, &final_refs],
     )
     .expect("grouped prover data");
+    let selection = prover_claims.selection().expect("grouped selection");
 
     let mut prover_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     let proof = ProtocolScheme::batched_prove(
@@ -338,7 +363,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_claims.clone(),
+        GroupBatchStatement::new(selection, verify_claims.clone())
+            .expect("grouped verifier statement"),
         BasisMode::Lagrange,
     )
     .expect("verify grouped extension proof");
@@ -350,7 +376,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &stripped,
         &verifier_setup,
         &mut stripped_transcript,
-        verify_claims,
+        GroupBatchStatement::new(selection, verify_claims)
+            .expect("stripped-proof verifier statement"),
         BasisMode::Lagrange,
     )
     .expect_err("omitting the required multi-group root extension-opening reduction must reject");
@@ -371,7 +398,8 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &proof,
         &verifier_setup,
         &mut tampered_transcript,
-        tampered_claims,
+        GroupBatchStatement::new(selection, tampered_claims)
+            .expect("tampered-claims verifier statement"),
         BasisMode::Lagrange,
     )
     .expect_err("tampered smaller-group opening must reject");

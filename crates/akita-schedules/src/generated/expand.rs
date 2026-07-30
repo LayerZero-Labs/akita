@@ -24,7 +24,7 @@ use akita_types::sis::{
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, CommittedGroupDescriptor, CommittedGroupParams, DecompositionParams,
+    shared_d_digit_log_basis, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
     PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
@@ -133,21 +133,31 @@ impl GeneratedSetupPrefixInput {
         }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+            ring_challenge_cfg,
+            fold_shape,
+            d,
+            inner_width,
+        )?;
+        let (num_digits_fold, _) = fold_witness_digit_plan(
+            num_live_blocks,
+            1,
+            policy.decomposition.field_bits(),
+            log_basis_open,
+            FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
+            FoldWitnessNorms::new(self.commitment.inner_commit_matrix.log_basis, d, 1, false),
+            &fold_linf_cap_config,
+        )?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             d,
-            inner_decomp,
             log_basis_open,
             ring_challenge_cfg,
             fold_shape,
-            false,
-            0,
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -198,12 +208,9 @@ impl GeneratedSetupPrefixInput {
             b_bucket,
             d,
         )?;
-        let layout = CommittedGroupDescriptor {
-            version: CommittedGroupDescriptor::VERSION,
+        let layout = CommittedGroupProfile {
+            version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            encoding: akita_types::GroupSourceEncoding::Bounded {
-                coefficient_bits: policy.decomposition.field_bits(),
-            },
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -215,32 +222,13 @@ impl GeneratedSetupPrefixInput {
             outer_commit_matrix,
         };
         layout.validate_root_geometry()?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            ring_challenge_cfg,
-            fold_shape,
-            d,
-            inner_width,
-        )?;
-        let challenge = FoldChallengeNorms {
-            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-        };
-        let (num_digits_fold_one, _) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            challenge,
-            FoldWitnessNorms::new(self.commitment.inner_commit_matrix.log_basis, d, 1, false),
-            &fold_linf_cap_config,
-        )?;
         Ok(PrecommittedLevelParams {
             layout,
             source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
-            num_digits_fold_one,
+            num_digits_fold,
         })
     }
 }
@@ -376,21 +364,37 @@ impl GeneratedCommittedGroup {
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+            &ring_challenge_cfg,
+            fold_shape,
+            ring_d,
+            inner_width,
+        )?;
+        let onehot_chunk_size = source.sparse_chunk_size();
+        let (num_digits_fold, _) = fold_witness_digit_plan(
+            num_live_blocks,
+            num_claims,
+            policy.decomposition.field_bits(),
+            log_basis_open,
+            FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
+            FoldWitnessNorms::new(
+                witness_decomp.log_basis,
+                ring_d,
+                onehot_chunk_size,
+                is_root && onehot_chunk_size > 0,
+            ),
+            &fold_linf_cap_config,
+        )?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
-            witness_decomp,
             log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
-            is_root,
-            source.sparse_chunk_size(),
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            num_claims,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -529,20 +533,16 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
-            ),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            fold_linf_cap_config,
+            num_digits_fold,
+            num_fold_claims: num_claims,
+            field_bits_hint: policy.decomposition.field_bits(),
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix,
         };
-        let params =
-            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
         Ok(params)
     }
 
@@ -626,21 +626,37 @@ impl GeneratedCommittedGroup {
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
+        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+            &ring_challenge_cfg,
+            fold_shape,
+            ring_d,
+            inner_width,
+        )?;
+        let onehot_chunk_size = source.sparse_chunk_size();
+        let (num_digits_fold, _) = fold_witness_digit_plan(
+            num_live_blocks,
+            main_num_polys,
+            policy.decomposition.field_bits(),
+            log_basis_open,
+            FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
+            FoldWitnessNorms::new(
+                witness_decomp.log_basis,
+                ring_d,
+                onehot_chunk_size,
+                onehot_chunk_size > 0,
+            ),
+            &fold_linf_cap_config,
+        )?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
             sis_modulus_profile,
             ring_d,
-            witness_decomp,
             log_basis_open,
             &ring_challenge_cfg,
             fold_shape,
-            true,
-            source.sparse_chunk_size(),
+            num_digits_fold,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            main_num_polys,
-            inner_width as u64,
         )
         .ok_or_else(|| no_layout("A"))?;
         let n_a = secure_rank(
@@ -748,18 +764,14 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
-            fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
-            ),
-            num_digits_fold_one: 1,
-            field_bits_hint: 0,
-            cached_num_digits_block_claims: 0,
-            cached_num_digits_fold_value: 1,
+            fold_linf_cap_config,
+            num_digits_fold,
+            num_fold_claims: main_num_polys,
+            field_bits_hint: policy.decomposition.field_bits(),
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix: None,
         };
-        let params =
-            params.with_fold_linf_cap_config(policy.decomposition.field_bits(), main_num_polys)?;
         Ok(params)
     }
 }
@@ -815,21 +827,25 @@ impl GeneratedTerminalFold {
             ring_dimension,
             inner_width,
         )?;
+        let (fold_digit_depth, _) = fold_witness_digit_plan(
+            num_live_blocks,
+            1,
+            policy.decomposition.field_bits(),
+            log_basis_inner,
+            FoldChallengeNorms::new(&sparse, TensorChallengeShape::Flat),
+            FoldWitnessNorms::new(log_basis_inner, ring_dimension, 1, false),
+            &fold_linf_cap_config,
+        )?;
         let collision_bucket = rounded_up_role_a_inf_norm(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             ring_dimension,
-            witness_decomposition,
             log_basis_inner,
             &sparse,
             TensorChallengeShape::Flat,
-            false,
-            0,
+            fold_digit_depth,
             policy.ring_subfield_norm_bound,
-            num_live_blocks,
-            1,
-            inner_width as u64,
         )
         .ok_or_else(|| {
             AkitaError::InvalidSetup("terminal A collision exceeds the SIS table".to_string())

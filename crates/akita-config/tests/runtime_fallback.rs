@@ -16,9 +16,12 @@ use akita_config::{
     policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::find_group_batch_schedule;
-use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
+use akita_schedules::{
+    resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
+    PlannerPolicy, SelectionPolicyId,
+};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupDescriptor, GroupSource, GroupSourceRegistration,
+    AkitaScheduleLookupKey, CommittedGroupProfile, GroupSource, GroupSourceRegistration,
     OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
@@ -90,6 +93,64 @@ fn catalog_miss_rejects_non_shipped_keys() {
 }
 
 #[test]
+fn fixed_width_selection_resolves_the_same_exact_generated_row() {
+    type Cfg = fp128::D64Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog.entries.first().expect("nonempty generated catalog");
+    let key = entry.to_runtime_lookup_key();
+    let selected = select_generated_schedule_row(
+        &key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect("prover selects exact generated row");
+    let resolved = resolve_generated_schedule_selection(
+        selected.selection(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect("verifier resolves public row selection");
+
+    assert_eq!(resolved.selection(), selected.selection());
+    assert_eq!(resolved.profiles(), selected.profiles());
+    assert_eq!(
+        resolved.schedule().canonical_descriptor_bytes(),
+        selected.schedule().canonical_descriptor_bytes()
+    );
+
+    let mut unknown = selected.selection();
+    unknown.row_digest = akita_types::ScheduleRowDigest::from_bytes([0xff; 32]);
+    assert!(matches!(
+        resolve_generated_schedule_selection(
+            unknown,
+            &policy_of::<Cfg>(),
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+            Some(catalog),
+        ),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+    ));
+
+    let mut wrong_catalog = selected.selection();
+    wrong_catalog.catalog_identity = akita_types::CatalogIdentity::from_bytes([0xee; 32]);
+    assert!(matches!(
+        resolve_generated_schedule_selection(
+            wrong_catalog,
+            &policy_of::<Cfg>(),
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+            Some(catalog),
+        ),
+        Err(akita_field::AkitaError::UnsupportedSchedule(_))
+    ));
+}
+
+#[test]
 fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     let key = AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(18),
@@ -112,7 +173,7 @@ fn generated_lookup_preserves_downstream_provider_registration() {
         .iter()
         .find(|entry| entry.root.precommitted_groups.is_empty())
         .expect("scalar catalog row");
-    let built_in = entry.root.final_group.source;
+    let built_in = Cfg::group_source();
     let downstream = GroupSource::registered(
         GroupSourceRegistration::new(*b"downstream/test\0", [9; 16]),
         built_in.encoding(),
@@ -125,7 +186,7 @@ fn generated_lookup_preserves_downstream_provider_registration() {
     );
     let resolved = Cfg::runtime_schedule(key).expect("downstream provider schedule");
     assert_eq!(
-        resolved.root.params.final_group.source, downstream,
+        resolved.root.params.final_group.commitment.source, downstream,
         "resolved parameters must retain the caller's concrete provider"
     );
 
@@ -134,7 +195,6 @@ fn generated_lookup_preserves_downstream_provider_registration() {
         built_in,
     ))
     .expect("built-in provider schedule");
-    built_in_schedule.root.params.final_group.source = downstream;
     built_in_schedule.root.params.final_group.commitment.source = downstream;
     assert_schedule_eq(
         "provider-independent schedule resolution",
@@ -197,10 +257,8 @@ fn offline_planner_admits_dense_multi_group_roots() {
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         final_source: Cfg::group_source(),
-        precommitteds: vec![CommittedGroupDescriptor::from_params(
-            pre_group,
-            &pre_params,
-        )],
+        precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
+        precommitted_sources: vec![Cfg::group_source()],
     };
     let planned = find_group_batch_schedule(
         &key,
@@ -211,7 +269,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
     .expect("dense multi-group schedule");
 
     assert_eq!(
-        planned.schedule.root.params.final_group.source,
+        planned.schedule.root.params.final_group.commitment.source,
         GroupSource::bounded(Cfg::decomposition().field_bits())
     );
     assert_eq!(
@@ -261,10 +319,10 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
 fn cataloged_committed_descriptor<Cfg: CommitmentConfig>(
     group: PolynomialGroupLayout,
     source: GroupSource,
-) -> CommittedGroupDescriptor {
+) -> CommittedGroupProfile {
     let params = akita_config::committed_group_params::<Cfg>(&group, source)
         .expect("cataloged heterogeneous group must resolve");
-    CommittedGroupDescriptor::from_params(group, &params)
+    CommittedGroupProfile::from_params(group, &params)
 }
 
 #[test]
@@ -282,6 +340,7 @@ fn mixed_group_sources_match_generated_lookup_and_reject_unlisted_order() {
         final_group: PolynomialGroupLayout::new(16, 1),
         final_source: GroupSource::one_hot(256),
         precommitteds: vec![onehot_16, dense],
+        precommitted_sources: vec![GroupSource::one_hot(16), GroupSource::bounded(32)],
     };
 
     let planned = find_group_batch_schedule(
@@ -293,20 +352,21 @@ fn mixed_group_sources_match_generated_lookup_and_reject_unlisted_order() {
     .expect("mixed one-hot/dense/one-hot group batch must plan offline");
     let root = &planned.schedule.root.params;
     assert_eq!(
-        root.precommitted_groups[0].descriptor.encoding,
-        onehot_16.encoding
+        root.precommitted_groups[0].commitment.source,
+        GroupSource::one_hot(16)
     );
     assert_eq!(
-        root.precommitted_groups[1].descriptor.encoding,
-        dense.encoding
+        root.precommitted_groups[1].commitment.source,
+        GroupSource::bounded(32)
     );
-    assert_eq!(root.final_group.source, key.final_source);
+    assert_eq!(root.final_group.commitment.source, key.final_source);
 
     let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
     assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
 
     let reordered = AkitaScheduleLookupKey {
         precommitteds: vec![dense, onehot_16],
+        precommitted_sources: vec![GroupSource::bounded(32), GroupSource::one_hot(16)],
         ..key
     };
     assert_ne!(

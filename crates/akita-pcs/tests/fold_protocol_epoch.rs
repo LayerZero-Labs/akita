@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 #![cfg(feature = "logging-transcript")]
 
-//! Complete-fold wire fixture for descriptor v2: typed fold
+//! Complete-fold wire fixture for descriptor v1: typed fold
 //! topology plus the direct terminal response.
 
 mod common;
@@ -117,7 +117,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         LoggingTranscript::wrap(AkitaTranscript::<F>::new(expected.transcript_domain));
     let proof = Scheme::batched_prove(
         &setup,
-        prove_input(&point, &[&poly], &commitment, hint),
+        prove_input::<OneHotCfg, _>(&point, &[&poly], &commitment, hint),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,
@@ -132,7 +132,7 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_input(&point, &[opening], &commitment),
+        verify_input::<OneHotCfg>(&point, &[opening], &commitment),
         BasisMode::Lagrange,
     )
     .expect("verify");

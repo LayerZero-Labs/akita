@@ -10,14 +10,15 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
+use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, CommittedGroup, FlatMatrix, OpeningClaims, PolynomialGroupClaims,
-    SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, CommittedGroup, FlatMatrix, GroupBatchStatement, OpeningClaims,
+    OpeningScheduleSelection, PolynomialGroupClaims, SetupPrefixVerifierRegistry,
+    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv2";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
@@ -64,6 +65,8 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     pub opening_point: Vec<F>,
     /// Claimed opening value at `opening_point`.
     pub opening: F,
+    /// Exact generated schedule row accepted for this opening batch.
+    pub schedule_selection: OpeningScheduleSelection,
     /// Single committed-poly group: one ring commitment per (poly, point) pair.
     pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
@@ -82,22 +85,24 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     /// The recursion profile currently ships exactly one opening for one
     /// commitment. Keeping this projection here prevents host and guest replay
     /// from growing independent claim-shaping code.
-    pub fn verifier_opening_batch<'a>(
+    pub fn verifier_statement<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> OpeningClaims<'static, F, &'a CommittedGroup<F>> {
-        assert_eq!(
-            usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
-            self.opening_point.len(),
-            "singleton recursion opening point covers all variables"
-        );
-        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+    ) -> Result<GroupBatchStatement<'a, F, F>, AkitaError> {
+        let num_vars = usize::try_from(self.num_vars).map_err(|_| {
+            AkitaError::InvalidInput("recursion blob num_vars does not fit usize".to_string())
+        })?;
+        if num_vars != self.opening_point.len() {
+            return Err(AkitaError::InvalidInput(
+                "singleton recursion opening point does not cover all variables".to_string(),
+            ));
+        }
+        let claims = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             self.opening_point.clone(),
             openings.to_vec(),
             &self.commitment,
-        )
-        .expect("singleton recursion opening batch has one evaluation")])
-        .expect("singleton recursion opening batch is valid")
+        )?])?;
+        GroupBatchStatement::new(self.schedule_selection, claims)
     }
 
     fn validate_blob_header_bounds(
@@ -162,6 +167,8 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
+        self.schedule_selection
+            .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
@@ -180,6 +187,7 @@ where
             + self.num_vars.serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
+            + self.schedule_selection.serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
             + self.proof_shape.serialized_size(BLOB_COMPRESS)
@@ -376,6 +384,12 @@ where
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
+        let schedule_selection = OpeningScheduleSelection::deserialize_with_mode(
+            &mut rest,
+            BLOB_COMPRESS,
+            BLOB_VALIDATE,
+            &(),
+        )?;
         let commitment = CommittedGroup::<F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
@@ -401,6 +415,7 @@ where
             num_vars: num_vars as u64,
             opening_point,
             opening,
+            schedule_selection,
             commitment,
             verifier_setup,
             proof_shape,
@@ -495,7 +510,7 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
-        CommittedGroupDescriptor, GroupSource, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        CommittedGroupProfile, GroupSource, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
         SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
         DEFAULT_SIS_SECURITY_POLICY,
@@ -540,12 +555,9 @@ mod tests {
         )
         .expect("audited prefix B matrix");
         PrecommittedLevelParams {
-            layout: CommittedGroupDescriptor {
-                version: CommittedGroupDescriptor::VERSION,
+            layout: CommittedGroupProfile {
+                version: CommittedGroupProfile::VERSION,
                 group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
-                encoding: akita_types::GroupSourceEncoding::Bounded {
-                    coefficient_bits: 128,
-                },
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
@@ -560,7 +572,7 @@ mod tests {
             log_basis_open: 1,
             fold_challenge_config: SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
-            num_digits_fold_one: 1,
+            num_digits_fold: 1,
         }
     }
 

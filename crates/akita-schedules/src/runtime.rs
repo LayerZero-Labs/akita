@@ -4,7 +4,7 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
     intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate, GroupSource,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
     OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
     RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
     RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
@@ -315,7 +315,6 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: GroupSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {
@@ -511,7 +510,7 @@ fn grouped_setup_prefix_next_witness_len(
             group.layout.num_digits_inner,
             group.layout.num_digits_outer,
             group.num_digits_open,
-            group.num_digits_fold_one,
+            group.num_digits_fold,
         )?;
         total = total
             .checked_add(group_rings)

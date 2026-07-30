@@ -497,7 +497,7 @@ mod tests {
         }
     }
 
-    fn test_level_params() -> CommittedGroupParams {
+    fn test_level_params(num_fold_claims: usize) -> CommittedGroupParams {
         CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
@@ -509,6 +509,8 @@ mod tests {
         )
         .with_decomp(4, 8, 1, 2, 2)
         .expect("test params")
+        .with_fold_linf_cap_config(F::modulus_bits(), num_fold_claims)
+        .expect("test fold row")
     }
 
     fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
@@ -529,7 +531,7 @@ mod tests {
 
     #[test]
     fn relation_instance_rejects_empty_y() {
-        let lp = test_level_params();
+        let lp = test_level_params(1);
         let opening_batch = OpeningClaimsLayout::new(2, 1).expect("valid opening batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -552,7 +554,10 @@ mod tests {
         );
     }
 
-    fn chunk_test_level_params(block_index_bits: usize) -> CommittedGroupParams {
+    fn chunk_test_level_params(
+        block_index_bits: usize,
+        num_fold_claims: usize,
+    ) -> CommittedGroupParams {
         // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
         CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
@@ -565,6 +570,8 @@ mod tests {
         )
         .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
         .expect("test params")
+        .with_fold_linf_cap_config(F::modulus_bits(), num_fold_claims)
+        .expect("test fold row")
     }
 
     /// Build a minimal non-terminal relation instance whose layout-relevant
@@ -595,9 +602,9 @@ mod tests {
 
     #[test]
     fn resolve_single_chunk_matches_legacy_offsets() {
-        let lp = chunk_test_level_params(1);
-        assert_eq!(lp.witness_chunk.num_chunks, 1);
         let num_claims = 3;
+        let lp = chunk_test_level_params(1, num_claims);
+        assert_eq!(lp.witness_chunk.num_chunks, 1);
         let lens = ring_relation_segment_lengths::<F>(
             &lp,
             RingRelationOpeningCounts {
@@ -629,7 +636,7 @@ mod tests {
     fn resolve_multi_chunk_offsets_contiguous_and_cover_blocks() {
         let num_claims = 2;
         for w in [1usize, 2, 4, 8] {
-            let mut lp = chunk_test_level_params(3); // num_live_blocks = 8
+            let mut lp = chunk_test_level_params(3, num_claims); // num_live_blocks = 8
             if w > 1 {
                 lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
                     num_chunks: w,
@@ -681,7 +688,7 @@ mod tests {
     fn resolve_rejects_bad_chunk_count() {
         let num_claims = 2;
         // num_chunks = 3 is not a power of two.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 3,
             num_activated_levels: 1,
@@ -691,7 +698,7 @@ mod tests {
             .is_err());
 
         // num_chunks = 16 exceeds num_live_blocks = 8.
-        let mut lp = chunk_test_level_params(3);
+        let mut lp = chunk_test_level_params(3, num_claims);
         lp.witness_chunk = crate::witness::ChunkedWitnessCfg {
             num_chunks: 16,
             num_activated_levels: 1,
@@ -704,7 +711,7 @@ mod tests {
     #[test]
     fn resolve_rejects_capacity_overflow() {
         let num_claims = 2;
-        let lp = chunk_test_level_params(3);
+        let lp = chunk_test_level_params(3, num_claims);
         // A witness ring capacity of 1 is far smaller than offset_r + r_len.
         assert!(
             build_instance(&lp, num_claims, 4)
@@ -722,7 +729,7 @@ mod tests {
     fn relation_segment_layout_uses_same_axis_contract() {
         use crate::proof::relation::RelationRhsLayout;
 
-        let lp = test_level_params();
+        let lp = test_level_params(3);
         let opening_batch = OpeningClaimsLayout::new(2, 3).expect("valid batch");
         let opening_point = opening_point(&lp);
         let ring_multiplier_point = RingMultiplierOpeningPoint::from_base(&opening_point);
@@ -770,7 +777,7 @@ mod tests {
     }
 
     fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-        use crate::schedule::CommittedGroupDescriptor;
+        use crate::schedule::CommittedGroupProfile;
         let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
             .expect("multi-group test ring dimension has a production challenge");
         let lp = CommittedGroupParams::params_only(
@@ -797,7 +804,7 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: CommittedGroupDescriptor::from_params(
+            layout: CommittedGroupProfile::from_params(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
@@ -805,7 +812,7 @@ mod tests {
             log_basis_open: precommit_lp.log_basis_open,
             fold_challenge_config: precommit_lp.fold_challenge_config,
             num_digits_open: precommit_lp.num_digits_open,
-            num_digits_fold_one: precommit_lp.num_digits_fold_one,
+            num_digits_fold: precommit_lp.num_digits_fold,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
