@@ -2,10 +2,13 @@
 
 > **Status:** stub. Part of the initial Akita Book scaffold.
 
-How Akita wires in the extension-opening reduction (EOR): it turns a base-field
-evaluation claim at an extension-field point into a single claim on a packed
-polynomial over the extension, with fewer variables. The generic reduction and
-its soundness live in
+How Akita wires in the extension-opening reduction (EOR) when
+`CommitmentConfig::EXT_DEGREE > 1` (claim field is a proper extension of the
+coefficient field): it turns a base-field evaluation claim at an extension-field
+point into a single claim on a packed polynomial over the extension, with fewer
+variables. Single-field presets (`EXT_DEGREE == 1`, including production fp128)
+never run this path; see [Fold path and field geometry](./fold-path.md).
+The generic reduction and its soundness live in
 [Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md);
 this page is about Akita's prover paths, scheduling, and efficiency.
 

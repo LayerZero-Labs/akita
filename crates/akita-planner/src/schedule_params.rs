@@ -555,6 +555,7 @@ fn find_schedule_inner(
         0,
         key,
         witness_len,
+        policy.ring_dimension,
     )
     .ok();
 

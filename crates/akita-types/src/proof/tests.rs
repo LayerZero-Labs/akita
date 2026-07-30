@@ -210,12 +210,12 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
     with_reduction
         .serialize_uncompressed(&mut bytes_with_reduction)
         .expect("serialize proof with extension-opening reduction");
-    let decoded_with_reduction = FoldLevelProof::<F, F>::deserialize_uncompressed(
+    let err = FoldLevelProof::<F, F>::deserialize_uncompressed(
         &*bytes_with_reduction,
         &with_reduction.shape(),
     )
-    .expect("deserialize proof with extension-opening reduction");
-    assert_eq!(decoded_with_reduction, with_reduction);
+    .expect_err("single-field claim field must reject EOR payloads");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
 }
 
 #[test]
@@ -293,12 +293,12 @@ fn terminal_level_proof_serde_round_trip() {
     with_reduction
         .serialize_uncompressed(&mut bytes_with_reduction)
         .expect("serialize terminal proof with extension-opening reduction");
-    let decoded_with_reduction = TerminalLevelProof::<F, F>::deserialize_uncompressed(
+    let err = TerminalLevelProof::<F, F>::deserialize_uncompressed(
         &*bytes_with_reduction,
         &with_reduction.shape(),
     )
-    .expect("deserialize terminal proof with extension-opening reduction");
-    assert_eq!(decoded_with_reduction, with_reduction);
+    .expect_err("single-field claim field must reject EOR payloads");
+    assert!(matches!(err, SerializationError::InvalidData(_)));
 
     with_reduction
         .shape()

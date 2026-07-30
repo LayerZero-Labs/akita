@@ -31,19 +31,17 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, assemble_relation_rhs, dispatch_for_field,
-    ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
-    relation_claim_from_layout_extension, relation_rhs_layout_for,
+    append_claim_values_to_transcript, assemble_relation_rhs, ensure_trace_stage2_supported,
+    eor_required_at_level, prepare_opening_point, proof::relation::evaluation_trace_row_weight,
+    raw_field_segment_bytes, relation_claim_from_layout_extension, relation_rhs_layout_for,
     ring_subfield_packed_extension_opening_point, sample_public_row_coefficients,
-    scale_evaluation_trace_claim_coefficients, tensor_equality_factor_eval_at_point,
-    AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams,
-    EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding,
-    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
-    RingOpeningPoint, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
-    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    TerminalWitnessTranscriptParts,
+    tensor_equality_factor_eval_at_point, AkitaStage1Proof, AkitaStage2Proof, AkitaVerifierSetup,
+    BasisMode, CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof,
+    FoldLevelProof, FoldLinfProtocolBinding, FoldOpeningKind, FoldSchedule, FpExtEncoding,
+    OpeningClaims, OpeningClaimsLayout, PointVariableSelection, PolynomialGroupClaims,
+    PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint, RingOpeningPoint,
+    RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams,
+    TerminalLevelProof, TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -63,8 +61,11 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    verify_fold, verify_fold_eor, verify_terminal_fold_eor, FoldEorReplay, PreparedFoldPayload,
-    PreparedFoldReplay, PreparedNextWitness,
+    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    prepare_single_field_terminal_suffix, verify_extension_claim_root_prefix,
+    verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
+    verify_single_field_root_prefix, PreparedFoldPayload, PreparedFoldReplay, PreparedNextWitness,
+    RootFoldPrefix, SuffixFoldPrefix,
 };
 
 fn prepare_terminal_witness_replay<F, T>(
