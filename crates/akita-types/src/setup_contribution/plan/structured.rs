@@ -29,6 +29,17 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         {
             return Err(AkitaError::InvalidProof);
         }
+        if !group.e_eq_slice.is_empty()
+            || !group.t_eq_slice.is_empty()
+            || !group.z_eq_slice.is_empty()
+        {
+            return self.evaluate_structured_group_from_slices::<F>(
+                group,
+                block_challenges,
+                opening_a_evals,
+                alpha,
+            );
+        }
 
         let opening_gadget = crate::gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
         let commitment_gadget =
@@ -148,35 +159,26 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             },
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
         )?;
-        // The canonical A spans are emitted as one complete fold-digit family
-        // per witness unit. Contract a dense family in one affine pass so all
-        // fold digits share the high-row traversal.
-        let a_family_width = group.fold_gadget.len();
-        if a_family_width == 0 || !group.a_spans.len().is_multiple_of(a_family_width) {
+        // Each canonical A span is one coarse fold family for a physical
+        // witness unit. Projection lanes and fold-gadget powers remain
+        // independent digit weights inside the shared affine traversal.
+        if group.fold_gadget.is_empty() {
             return Err(AkitaError::InvalidSetup(
-                "setup A spans do not form complete fold families".into(),
+                "setup A fold family has no gadget digits".into(),
             ));
         }
-        let a_family_count = group.a_spans.len() / a_family_width;
         evaluation += cfg_fold_reduce!(
-            0..a_family_count,
+            0..group.a_families.len(),
             || Ok(E::zero()),
             |acc: Result<E, AkitaError>, family_index| {
                 let mut acc = acc?;
-                let family_start = family_index.checked_mul(a_family_width).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A span family overflow".into())
-                })?;
-                let family_end = family_start.checked_add(a_family_width).ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A span family overflow".into())
-                })?;
                 let family = group
-                    .a_spans
-                    .get(family_start..family_end)
+                    .a_families
+                    .get(family_index)
                     .ok_or(AkitaError::InvalidProof)?;
                 let dense = witness_gadget.len().is_power_of_two()
-                    && family
-                        .iter()
-                        .all(|span| span.setup_column_start == 0 && span.setup_column_stride == 1);
+                    && family.setup_column_start == 0
+                    && family.setup_column_stride == 1;
                 if dense {
                     acc -= evaluate_dense_a_family(
                         &self.address_point,
@@ -187,39 +189,182 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         &group.fold_gadget,
                     )? * group.consistency_weight;
                 } else {
-                    for span in family {
-                        ensure_lane_count(span, inner_lane_powers)?;
-                        let fold = *group
-                            .fold_gadget
-                            .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
-                            .ok_or(AkitaError::InvalidProof)?;
-                        for occurrence in span.occurrences() {
-                            let (setup_column, relation_lane_start) = occurrence?;
-                            let position = setup_column / group.depth_witness;
-                            let witness_digit = setup_column % group.depth_witness;
-                            let lane_equality = evaluate_lane_segment(
+                    ensure_a_family(family, inner_lane_powers, &group.fold_gadget)?;
+                    for occurrence in family.occurrences() {
+                        let (setup_column, relation_lane_start) = occurrence?;
+                        let position = setup_column / group.depth_witness;
+                        let witness_digit = setup_column % group.depth_witness;
+                        let mut lane_equality = E::zero();
+                        for (fold_digit, &fold) in group.fold_gadget.iter().enumerate() {
+                            let fold_start = fold_digit
+                                .checked_mul(family.fold_lane_stride)
+                                .and_then(|offset| relation_lane_start.checked_add(offset))
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup("setup A fold lane overflow".into())
+                                })?;
+                            lane_equality += evaluate_lane_segment(
                                 &self.eq_window,
-                                relation_lane_start,
+                                fold_start,
                                 inner_lane_powers,
-                            )?;
-                            acc -= lane_equality
-                                * group.consistency_weight
-                                * *opening_a_evals
-                                    .get(position)
-                                    .ok_or(AkitaError::InvalidProof)?
-                                * fold
-                                * E::one().mul_base(
-                                    *witness_gadget
-                                        .get(witness_digit)
-                                        .ok_or(AkitaError::InvalidProof)?,
-                                );
+                            )? * fold;
                         }
+                        acc -= lane_equality
+                            * group.consistency_weight
+                            * *opening_a_evals
+                                .get(position)
+                                .ok_or(AkitaError::InvalidProof)?
+                            * E::one().mul_base(
+                                *witness_gadget
+                                    .get(witness_digit)
+                                    .ok_or(AkitaError::InvalidProof)?,
+                            );
                     }
                 }
                 Ok(acc)
             },
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
         )?;
+        Ok(evaluation)
+    }
+
+    fn evaluate_structured_group_from_slices<F>(
+        &self,
+        group: &SetupContributionGroupPlan<E>,
+        block_challenges: &[E],
+        opening_a_evals: &[E],
+        alpha: E,
+    ) -> Result<E, AkitaError>
+    where
+        F: FieldCore + CanonicalField,
+        E: MulBase<F>,
+    {
+        let (outer_subcolumns, opening_subcolumns) =
+            SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
+        let block_claims = group
+            .num_claims
+            .checked_mul(group.num_live_blocks)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured block count overflow".into()))?;
+        let e_stride = opening_subcolumns
+            .checked_mul(group.depth_open)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured E stride overflow".into()))?;
+        let t_stride = group
+            .n_a
+            .checked_mul(group.depth_commit)
+            .and_then(|stride| stride.checked_mul(outer_subcolumns))
+            .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
+        let expected_e = block_claims
+            .checked_mul(e_stride)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured E width overflow".into()))?;
+        let expected_t = block_claims
+            .checked_mul(t_stride)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured T width overflow".into()))?;
+        let expected_z = group
+            .num_positions_per_block
+            .checked_mul(group.depth_witness)
+            .ok_or_else(|| AkitaError::InvalidSetup("structured Z width overflow".into()))?;
+        if group.e_eq_slice.len() != expected_e
+            || group.t_eq_slice.len() != expected_t
+            || group.z_eq_slice.len() != expected_z
+        {
+            return Err(AkitaError::InvalidProof);
+        }
+
+        let opening_gadget = crate::gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
+        let commitment_gadget =
+            crate::gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
+        let witness_gadget =
+            crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
+        let opening_scales = scalar_powers(alpha, group.role_dims.d_a())
+            .into_iter()
+            .step_by(group.role_dims.d_d())
+            .collect::<Vec<_>>();
+        let outer_scales = scalar_powers(alpha, group.role_dims.d_a())
+            .into_iter()
+            .step_by(group.role_dims.d_b())
+            .collect::<Vec<_>>();
+        if opening_scales.len() != opening_subcolumns || outer_scales.len() != outer_subcolumns {
+            return Err(AkitaError::InvalidSetup(
+                "structured setup projection scale count mismatch".into(),
+            ));
+        }
+
+        let mut evaluation = cfg_fold_reduce!(
+            0..block_claims,
+            || Ok(E::zero()),
+            |acc: Result<E, AkitaError>, block_claim| {
+                let mut acc = acc?;
+                let challenge = *block_challenges
+                    .get(block_claim)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let e_start = block_claim
+                    .checked_mul(e_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_start = block_claim
+                    .checked_mul(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let mut e_weight = E::zero();
+                for (subcolumn, &scale) in opening_scales.iter().enumerate() {
+                    for (digit, &gadget) in opening_gadget.iter().enumerate() {
+                        let offset = subcolumn
+                            .checked_mul(group.depth_open)
+                            .and_then(|base| base.checked_add(digit))
+                            .and_then(|offset| e_start.checked_add(offset))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        e_weight += *group
+                            .e_eq_slice
+                            .get(offset)
+                            .ok_or(AkitaError::InvalidProof)?
+                            * scale
+                            * E::one().mul_base(gadget);
+                    }
+                }
+                acc += challenge * group.consistency_weight * e_weight;
+
+                let mut t_weight = E::zero();
+                for a_row in 0..group.n_a {
+                    let row_weight = *group
+                        .a_row_weights
+                        .get(a_row)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
+                        for (subcolumn, &scale) in outer_scales.iter().enumerate() {
+                            let offset = a_row
+                                .checked_mul(group.depth_commit)
+                                .and_then(|base| base.checked_add(digit))
+                                .and_then(|base| base.checked_mul(outer_subcolumns))
+                                .and_then(|base| base.checked_add(subcolumn))
+                                .and_then(|offset| t_start.checked_add(offset))
+                                .ok_or(AkitaError::InvalidProof)?;
+                            t_weight += *group
+                                .t_eq_slice
+                                .get(offset)
+                                .ok_or(AkitaError::InvalidProof)?
+                                * row_weight
+                                * scale
+                                * E::one().mul_base(gadget);
+                        }
+                    }
+                }
+                Ok(acc + challenge * t_weight)
+            },
+            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+        )?;
+
+        for (position, &opening_a) in opening_a_evals.iter().enumerate() {
+            for (digit, &gadget) in witness_gadget.iter().enumerate() {
+                let column = position
+                    .checked_mul(group.depth_witness)
+                    .and_then(|base| base.checked_add(digit))
+                    .ok_or(AkitaError::InvalidProof)?;
+                evaluation += *group
+                    .z_eq_slice
+                    .get(column)
+                    .ok_or(AkitaError::InvalidProof)?
+                    * group.consistency_weight
+                    * opening_a
+                    * E::one().mul_base(gadget);
+            }
+        }
         Ok(evaluation)
     }
 
@@ -242,68 +387,34 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 /// Contract one dense canonical A fold family as a single affine rectangle.
 fn evaluate_dense_a_family<E: FieldCore>(
     address_point: &[E],
-    spans: &[SetupContributionSpan],
+    span: &SetupContributionSpan,
     lane_powers: &[E],
     opening_a_evals: &[E],
     witness_gadget: &[E],
     fold_gadget: &[E],
 ) -> Result<E, AkitaError> {
-    let first = spans
-        .first()
-        .ok_or_else(|| AkitaError::InvalidSetup("setup A span family must be non-empty".into()))?;
     if !witness_gadget.len().is_power_of_two()
-        || first.setup_column_start != 0
-        || first.setup_column_stride != 1
+        || span.setup_column_start != 0
+        || span.setup_column_stride != 1
     {
         return Err(AkitaError::InvalidSetup(
             "setup A span family is not a dense affine rectangle".into(),
         ));
     }
 
-    let mut digit_count = 0usize;
-    for span in spans {
-        ensure_lane_count(span, lane_powers)?;
-        if span.setup_column_start != first.setup_column_start
-            || span.setup_column_stride != first.setup_column_stride
-            || span.relation_lane_stride != first.relation_lane_stride
-            || span.occurrence_count != first.occurrence_count
-        {
-            return Err(AkitaError::InvalidSetup(
-                "setup A span family has inconsistent affine geometry".into(),
-            ));
-        }
-        let lane_offset = span
-            .relation_lane_start
-            .checked_sub(first.relation_lane_start)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup A span family is not address ordered".into())
-            })?;
-        digit_count = digit_count.max(
-            lane_offset
-                .checked_add(lane_powers.len())
-                .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?,
-        );
-    }
-    if digit_count > first.relation_lane_stride {
-        return Err(AkitaError::InvalidSetup(
-            "setup A digit family exceeds its affine stride".into(),
-        ));
-    }
-
+    ensure_a_family(span, lane_powers, fold_gadget)?;
+    let digit_count = span
+        .fold_count
+        .checked_sub(1)
+        .and_then(|last| last.checked_mul(span.fold_lane_stride))
+        .and_then(|offset| offset.checked_add(span.relation_lane_count))
+        .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?;
     let mut digit_weights = vec![E::zero(); digit_count];
-    for span in spans {
-        let fold = *fold_gadget
-            .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
-            .ok_or(AkitaError::InvalidProof)?;
-        let lane_offset = span
-            .relation_lane_start
-            .checked_sub(first.relation_lane_start)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup A span family is not address ordered".into())
-            })?;
+    for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
         for (lane, &lane_power) in lane_powers.iter().enumerate() {
-            let digit = lane_offset
-                .checked_add(lane)
+            let digit = fold_digit
+                .checked_mul(span.fold_lane_stride)
+                .and_then(|offset| offset.checked_add(lane))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?;
             let weight = digit_weights
                 .get_mut(digit)
@@ -313,14 +424,30 @@ fn evaluate_dense_a_family<E: FieldCore>(
     }
     eval_affine_digit_interval(
         address_point,
-        first.relation_lane_start,
+        span.relation_lane_start,
         0,
-        first.occurrence_count,
-        first.relation_lane_stride,
+        span.occurrence_count,
+        span.relation_lane_stride,
         &digit_weights,
         opening_a_evals,
         witness_gadget,
     )
+}
+
+fn ensure_a_family<E: FieldCore>(
+    span: &SetupContributionSpan,
+    lane_powers: &[E],
+    fold_gadget: &[E],
+) -> Result<(), AkitaError> {
+    if span.relation_lane_count != lane_powers.len()
+        || span.fold_count != fold_gadget.len()
+        || span.fold_lane_stride < span.relation_lane_count
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup A span is not one coarse fold family".into(),
+        ));
+    }
+    Ok(())
 }
 
 // A span contained in one low-factor row has no high rows to summarize. Reuse

@@ -402,7 +402,7 @@ fn test_group_plan(
         z_eq_slice,
         d_spans: Vec::new(),
         b_spans: Vec::new(),
-        a_spans: Vec::new(),
+        a_families: Vec::new(),
     }
 }
 fn prepare_single_group_plan(

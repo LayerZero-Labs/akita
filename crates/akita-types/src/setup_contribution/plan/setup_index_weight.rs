@@ -208,7 +208,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 weight += scales[0][setup_idx % group.a_ratio]
                     * group.a_row_weights[a_row]
                     * role_column_weight_or_materialized(
-                        &group.a_spans,
+                        &group.a_families,
                         &group.z_eq_slice,
                         a_col,
                         &self.eq_window,
@@ -301,34 +301,48 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         group: &SetupContributionGroupPlan<E>,
         terms: &mut Vec<WeightedCompactPairTerm<E>>,
     ) -> Result<(), AkitaError> {
-        for span in &group.a_spans {
-            ensure_span_lane_count(span, group.a_ratio)?;
-            let fold = *group
-                .fold_gadget
-                .get(span.fold_digit.ok_or(AkitaError::InvalidProof)?)
-                .ok_or(AkitaError::InvalidProof)?;
-            let relation_start = divide_aligned(
-                span.relation_lane_start,
-                group.a_ratio,
-                "setup A relation address is not aligned to its projection ratio",
-            )?;
+        for span in &group.a_families {
+            if span.relation_lane_count != group.a_ratio
+                || span.fold_count != group.fold_gadget.len()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "setup A span is not one coarse fold family".into(),
+                ));
+            }
             let relation_stride = divide_aligned(
                 span.relation_lane_stride,
                 group.a_ratio,
                 "setup A relation stride is not aligned to its projection ratio",
             )?;
-            for (row, &row_weight) in group.a_row_weights.iter().enumerate() {
-                push_weighted_term(
-                    terms,
-                    WeightedCompactPairTerm {
-                        left_offset: row_major_index(group.z_cols, row, span.setup_column_start)?,
-                        left_stride: span.setup_column_stride,
-                        right_offset: relation_start,
-                        right_stride: relation_stride,
-                        len: span.occurrence_count,
-                        weight: -(row_weight * fold),
-                    },
+            for (fold_digit, &fold) in group.fold_gadget.iter().enumerate() {
+                let fold_lane_offset = fold_digit
+                    .checked_mul(span.fold_lane_stride)
+                    .and_then(|offset| span.relation_lane_start.checked_add(offset))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup A relation address overflow".into())
+                    })?;
+                let relation_start = divide_aligned(
+                    fold_lane_offset,
+                    group.a_ratio,
+                    "setup A relation address is not aligned to its projection ratio",
                 )?;
+                for (row, &row_weight) in group.a_row_weights.iter().enumerate() {
+                    push_weighted_term(
+                        terms,
+                        WeightedCompactPairTerm {
+                            left_offset: row_major_index(
+                                group.z_cols,
+                                row,
+                                span.setup_column_start,
+                            )?,
+                            left_stride: span.setup_column_stride,
+                            right_offset: relation_start,
+                            right_stride: relation_stride,
+                            len: span.occurrence_count,
+                            weight: -(row_weight * fold),
+                        },
+                    )?;
+                }
             }
         }
         Ok(())
@@ -385,29 +399,37 @@ fn role_column_weight<E: FieldCore>(
 ) -> Result<E, AkitaError> {
     let mut weight = E::zero();
     for span in spans {
-        super::structured::ensure_lane_count(span, lane_powers)?;
         let Some(relation_lane_start) = span.relation_lane_start_for_setup_column(column)? else {
             continue;
         };
-        let lane_equality =
-            lane_powers
-                .iter()
-                .copied()
-                .enumerate()
-                .try_fold(E::zero(), |sum, (lane, power)| {
-                    Ok::<_, AkitaError>(
-                        sum + equality_window
-                            .eval(checked_add_relation_lane(relation_lane_start, lane)?)
-                            * power,
-                    )
-                })?;
-        if let Some(fold_digit) = span.fold_digit {
-            weight -= lane_equality
-                * *fold_gadget
-                    .and_then(|gadget| gadget.get(fold_digit))
-                    .ok_or(AkitaError::InvalidProof)?;
+        if let Some(fold_gadget) = fold_gadget {
+            if span.relation_lane_count != lane_powers.len() || span.fold_count != fold_gadget.len()
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "setup A span is not one coarse fold family".into(),
+                ));
+            }
+            for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+                for (lane, &power) in lane_powers.iter().enumerate() {
+                    let offset = fold_digit
+                        .checked_mul(span.fold_lane_stride)
+                        .and_then(|offset| offset.checked_add(lane))
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("setup A fold lane overflow".into())
+                        })?;
+                    weight -= equality_window
+                        .eval(checked_add_relation_lane(relation_lane_start, offset)?)
+                        * power
+                        * fold;
+                }
+            }
         } else {
-            weight += lane_equality;
+            super::structured::ensure_lane_count(span, lane_powers)?;
+            for (lane, &power) in lane_powers.iter().enumerate() {
+                weight += equality_window
+                    .eval(checked_add_relation_lane(relation_lane_start, lane)?)
+                    * power;
+            }
         }
     }
     Ok(weight)

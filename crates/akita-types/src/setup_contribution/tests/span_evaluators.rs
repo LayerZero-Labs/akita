@@ -213,6 +213,17 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
         );
 
         let group = &full.groups[0];
+        let expected_families = layout.units_for_group(group.group_id).unwrap().len();
+        assert_eq!(group.a_families.len(), expected_families);
+        assert_eq!(
+            deferred.groups[0].a_families.len(),
+            expected_families,
+            "Full and Deferred must share one coarse A family per physical unit"
+        );
+        assert!(group.a_families.iter().all(|family| {
+            family.relation_lane_count == group.a_ratio
+                && family.fold_count == group.fold_gadget.len()
+        }));
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(401 + index as u128))
             .collect::<Vec<_>>();

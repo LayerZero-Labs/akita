@@ -67,10 +67,10 @@ basis.
 
 - One checked `RelationRangeImagePlan` and one `RelationRangeImageProver`.
 - One LSB-first flat Boolean address order for homogeneous and mixed dimensions.
-- Distinguish the relation-only alpha-reset boundary
-  `common_relation_coeff_count = min(d_a, d_b, d_d)` from the current joint
-  relation/witness address boundary
-  `common_relation_witness_coeff_count = min(common_relation_coeff_count, d_out)`.
+- Derive the canonical relation coefficient block
+  `relation_coefficient_block_len = min(d_a, d_b, d_d)` from the current
+  relation roles. Outgoing witness packaging does not alter this algebraic
+  boundary.
 - Alpha/common-coordinate rounds before relation-lane rounds.
 - Mandatory evaluation trace represented by per-claim tensor factors, never a flat table.
 - One fused relation/evaluation-trace/range-image round reducer.
@@ -180,8 +180,7 @@ Current setup-contribution stage: unchanged proof position and wire
 |---|---|
 | balanced digit table | `digit_witness` |
 | pointwise `w(w+1)` table | `range_image` |
-| largest role-common alpha-reset block | `common_relation_coeff_count` |
-| current joint relation/witness low-address block | `common_relation_witness_coeff_count` |
+| canonical relation alpha-reset block | `relation_coefficient_block_len` |
 | alpha powers over the joint low-address block | `common_alpha_factor` |
 | high-lane linear-relation factor | `relation_lane_weights` |
 | prover opening-trace factors | `EvaluationTraceWeights` |
@@ -198,33 +197,26 @@ stage names for new internal objects.
 
 ## One flat address order
 
-All rounds bind the raw physical field-coefficient address LSB first. Two counts must not
-be conflated:
+All rounds bind the raw physical field-coefficient address LSB first:
 
 ```text
-common_relation_coeff_count = min(d_a, d_b, d_d)
-common_relation_witness_coeff_count
-  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
+relation_coefficient_block_len = min(d_a, d_b, d_d)
 
 physical_address
-  = common_relation_witness_coeff_count * relation_lane
+  = relation_coefficient_block_len * relation_lane
     + coeff_within_common_block
-0 <= coeff_within_common_block < common_relation_witness_coeff_count
+0 <= coeff_within_common_block < relation_coefficient_block_len
 ```
 
-The first `log2(common_relation_witness_coeff_count)` challenges bind the joint low
+The first `log2(relation_coefficient_block_len)` challenges bind the low
 coefficient block. The rest address physical relation lanes and padded witness capacity.
 x/y is not a public protocol abstraction.
 
-The outgoing dimension appears only because the current prover groups the flat witness
-into outgoing ring elements before Stage 2. Keeping the low block no wider than one such
-element preserves the outgoing opening domain, point order, and current Stage 3 handoff;
-a wider relation-only block could fold across outgoing column boundaries. The outgoing
-dimension is not used by the relation equation, role-local alpha resets, or matrix
-semantics. A verifier relation evaluator that does not consume that storage representation
-should derive its algebra from `common_relation_coeff_count`; if it splits the final point
-at the smaller joint count, that split is address geometry, not an additional relation
-contract.
+The outgoing dimension controls only how the already-flat witness is packaged
+for the next opening. It is not used by the relation equation, role-local
+alpha resets, setup projection, or matrix semantics. `RelationAddressGeometry`
+checks the outgoing representation through the live flat length while deriving
+the Stage 2 coefficient/lane split solely from the current relation roles.
 
 This Stage 2 storage split does not reinterpret the already established Stage 1 tau0
 point. The protocol's digit-range equality point retains its incoming geometry: the
@@ -257,19 +249,19 @@ integration rather than creating a split-brain range/security contract.
 For each role dimension, write
 
 ```text
-d_role = common_relation_witness_coeff_count * role_lane_count
+d_role = relation_coefficient_block_len * role_lane_count
 
-alpha^(common_relation_witness_coeff_count * high_exponent
-        + coeff_within_common_block)
+alpha^(relation_coefficient_block_len * high_exponent
+      + coeff_within_common_block)
   = alpha^coeff_within_common_block
-      * (alpha^common_relation_witness_coeff_count)^high_exponent.
+      * (alpha^relation_coefficient_block_len)^high_exponent.
 ```
 
 The complete non-trace relation weight is
 
 ```text
 RelationWeight(
-  common_relation_witness_coeff_count * relation_lane
+  relation_coefficient_block_len * relation_lane
     + coeff_within_common_block
 )
   = CommonAlphaFactor(coeff_within_common_block)
@@ -302,7 +294,7 @@ consumer still uses the existing x/y-shaped Stage 2 state machine; the later cut
 changes that storage/state representation, not the factorization contract.
 
 Every production event has physical and exponent starts aligned to
-`common_relation_witness_coeff_count` and preserves the low common coordinate. Role-local
+`relation_coefficient_block_len` and preserves the low common coordinate. Role-local
 resets begin new aligned events. Overlaps use `+=`
 exactly once. Unsupported unaligned events return `AkitaError`; there is no production
 fringe or dense fallback. A dense exact-live vector exists only as a differential oracle.
@@ -471,7 +463,7 @@ chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
   chunk boundaries do not change `w(w+1)` or equality arithmetic.
 - The common-alpha scan is unchanged because every unit and role-subcolumn boundary is
   aligned to a physical ring coefficient boundary and therefore to
-  `common_relation_witness_coeff_count`.
+  `relation_coefficient_block_len`.
 - One transcript challenge folds every physical address. Chunks do not receive separate
   sum-check challenges.
 - The shared quotient-R suffix is one ordinary relation segment; it is not replicated by
@@ -549,29 +541,21 @@ emitter, trace segments, setup attribution, and verifier evaluator use the same 
 role/lane mapping and must agree with dense flat oracles across the mixed-dimension/chunk
 cross-product.
 
-Recursive setup offload remains a separate cutover boundary. The current Stage 3 builder
-drops `log2(d_a)` Stage 2 coordinates before constructing the setup product, whereas a
-mixed relation binds only `log2(common_relation_witness_coeff_count)` common alpha
-coordinates before its remaining role
-lanes. Reusing the uniform split would silently omit the A/B lane coordinates. Until the
-Stage 3 setup boundary is generalized to consume the checked common-coordinate count,
-mixed dimensions plus a deferred setup claim are rejected explicitly. The later setup
-boundary slice must remove that rejection and add direct/deferred parity across mixed
-dimensions, groups, and chunks; it must not reinterpret or pad the old `x/y` split.
+Recursive setup offload consumes the same checked relation address point and
+`SetupContributionPlan` as direct evaluation. Stage 3 factors each role's projection
+ratio `q = d_role / relation_coefficient_block_len`; q=1 is the identity case and q>1
+evaluates the setup and relation low-lane power MLEs before the shared compact recurrence.
+Direct and deferred modes therefore support the same mixed dimensions, groups, and chunks.
 
 The address rule is unchanged by chunks:
 
 ```text
-common_relation_coeff_count = min(d_a, d_b, d_d)
-common_relation_witness_coeff_count
-  = min(common_relation_coeff_count, outgoing_witness_ring_dimension)
+relation_coefficient_block_len = min(d_a, d_b, d_d)
 ```
 
-The relation algebra alone admits `common_relation_coeff_count`, but the current Stage 2
-prover uses the intersection with the outgoing dimension so its factorized witness state
-is also aligned to the outgoing witness representation. Role subcolumns map into
-`common_relation_witness_coeff_count`-sized lanes inside each unit. Chunking changes which
-unit owns a block, not alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
+Role subcolumns map into `relation_coefficient_block_len`-sized lanes inside each unit.
+Outgoing repacking leaves this factorization unchanged. Chunking changes which unit owns
+a block, not alpha exponents or source ring-coordinate order. Evaluation-trace terms retain their own
 `D_source` split
 
 ```text
@@ -736,17 +720,10 @@ addresses. Its characterization matrix covers:
 - mixed `128/64/64` roles; and
 - mixed `128/64/32` roles.
 
-Until the contribution-level differential tests and performance baseline are complete,
-this point representation is test-only scaffolding. Making an unused production state or
-routing the existing uniform evaluator through it would create a third implementation or
-prematurely perturb the PR #312 hot path.
-
-The current head does not yet meet that contract: `RelationMatrixEvaluator::eval_flat_at_point`
-owns the uniform formula while `mixed_relation::evaluate_mixed_relation_at_point` owns a
-second E/T/Z/setup/R formula and is also selected for uniform current roles followed by a
-different outgoing dimension. The verifier-stabilization slice must consolidate those
-formula owners before further prover work. Dense relation weights remain test oracles,
-not a production verifier fallback.
+`PreparedRelationPoint` is the production entry for every geometry. Uniform q=1 and
+projected q>1 select inner kernels only; maintaining a parallel historical evaluator is
+forbidden.
+Dense relation weights remain test oracles, not a production verifier fallback.
 
 Malformed dimensions, group/chunk layouts, claim offsets, point lengths, degrees, round
 counts, and proof-derived allocations return `AkitaError`. Verifier-reachable code adds no
@@ -772,9 +749,8 @@ stage.
 The current head has portions of the old Steps 1–5, but their ownership and support
 claims are not yet stable. Proceed in these reviewable slices:
 
-1. Correct names and documentation without changing proof behavior. In particular,
-   separate `common_relation_coeff_count` from
-   `common_relation_witness_coeff_count`, and record actual rather than intended support.
+1. Correct names and documentation around the single
+   `relation_coefficient_block_len`, and record actual rather than intended support.
 2. Stabilize the verifier before touching the prover state machine: one semantic relation
    evaluator, one succinct evaluation-trace evaluator, local uniform specializations,
    malformed-input coverage, and PR #312 performance parity.
@@ -967,7 +943,7 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 - Homogeneous direct proof bytes, transcript order, challenges, degree, final point, and
   final evaluation match the incoming epoch.
 - Common alpha coordinates bind first and relation lane state is at most
-  `N / common_relation_witness_coeff_count`.
+  `N / relation_coefficient_block_len`.
 - No `ring_bits == 0` sentinel, dense mixed relation table, exact fringe, full trace table,
   trace remap, hot unit search, or x/y architecture remains.
 - Uniform-role multigroup and multichunk scheduled shapes prove and verify; direct

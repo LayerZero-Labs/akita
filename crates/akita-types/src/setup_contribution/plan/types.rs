@@ -306,7 +306,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .filter(|group| {
                 (group.e_eq_slice.is_empty() || !group.d_spans.is_empty())
                     && (group.t_eq_slice.is_empty() || !group.b_spans.is_empty())
-                    && (group.z_eq_slice.is_empty() || !group.a_spans.is_empty())
+                    && (group.z_eq_slice.is_empty() || !group.a_families.is_empty())
             })?;
         Some((
             group.e_eq_slice.as_slice(),
@@ -329,7 +329,8 @@ pub(crate) struct SetupContributionSpan {
     pub(crate) relation_lane_stride: usize,
     pub(crate) occurrence_count: usize,
     pub(crate) relation_lane_count: usize,
-    pub(crate) fold_digit: Option<usize>,
+    pub(crate) fold_count: usize,
+    pub(crate) fold_lane_stride: usize,
 }
 
 impl SetupContributionSpan {
@@ -341,7 +342,6 @@ impl SetupContributionSpan {
         relation_lane_stride: usize,
         occurrence_count: usize,
         relation_lane_count: usize,
-        fold_digit: Option<usize>,
         setup_column_count: usize,
         relation_lane_capacity: usize,
     ) -> Result<Self, AkitaError> {
@@ -378,8 +378,64 @@ impl SetupContributionSpan {
             relation_lane_stride,
             occurrence_count,
             relation_lane_count,
-            fold_digit,
+            fold_count: 1,
+            fold_lane_stride: relation_lane_count,
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_fold_family(
+        setup_column_start: usize,
+        setup_column_stride: usize,
+        relation_lane_start: usize,
+        relation_lane_stride: usize,
+        occurrence_count: usize,
+        relation_lane_count: usize,
+        fold_count: usize,
+        fold_lane_stride: usize,
+        setup_column_count: usize,
+        relation_lane_capacity: usize,
+    ) -> Result<Self, AkitaError> {
+        if fold_count == 0 || fold_lane_stride < relation_lane_count {
+            return Err(AkitaError::InvalidSetup(
+                "setup A fold family geometry must be non-empty and disjoint".into(),
+            ));
+        }
+        let mut family = Self::new(
+            setup_column_start,
+            setup_column_stride,
+            relation_lane_start,
+            relation_lane_stride,
+            occurrence_count,
+            relation_lane_count,
+            setup_column_count,
+            relation_lane_capacity,
+        )?;
+        let fold_end = fold_count
+            .checked_sub(1)
+            .and_then(|last| last.checked_mul(fold_lane_stride))
+            .and_then(|offset| offset.checked_add(relation_lane_count))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup A fold family overflow".into()))?;
+        if fold_end > relation_lane_stride {
+            return Err(AkitaError::InvalidSetup(
+                "setup A fold family exceeds its occurrence stride".into(),
+            ));
+        }
+        if occurrence_count != 0 {
+            let last_start =
+                checked_span_index(relation_lane_start, relation_lane_stride, occurrence_count)?;
+            let last_end = last_start
+                .checked_add(fold_end)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A fold family overflow".into()))?;
+            if last_end > relation_lane_capacity {
+                return Err(AkitaError::InvalidSetup(
+                    "setup A fold family exceeds relation lane domain".into(),
+                ));
+            }
+        }
+        family.fold_count = fold_count;
+        family.fold_lane_stride = fold_lane_stride;
+        Ok(family)
     }
 
     pub(crate) fn occurrences(
@@ -472,7 +528,7 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) z_eq_slice: Vec<E>,
     pub(crate) d_spans: Vec<SetupContributionSpan>,
     pub(crate) b_spans: Vec<SetupContributionSpan>,
-    pub(crate) a_spans: Vec<SetupContributionSpan>,
+    pub(crate) a_families: Vec<SetupContributionSpan>,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {

@@ -280,7 +280,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .get(level_params.consistency_row_index(opening_batch, group.group_id)?)
                     .ok_or(AkitaError::InvalidProof)?;
                 drop(geometry_span);
-                let (d_spans, b_spans, a_spans) = build_setup_contribution_spans(
+                let (d_spans, b_spans, a_families) = build_setup_contribution_spans(
                     witness_layout,
                     group,
                     num_live_blocks,
@@ -304,6 +304,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         });
                     }
                     fold_gadget
+                        .get(..group.depth_fold)
+                        .ok_or(AkitaError::InvalidProof)?
                 } else {
                     fold_gadget_storage =
                         crate::gadget_row_scalars::<F>(group.depth_fold, log_basis_open);
@@ -397,7 +399,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             } else {
                                 materialize_span_weights::<F, E>(
                                     z_cols,
-                                    &a_spans,
+                                    &a_families,
                                     &eq_window,
                                     &lanes.inner_alpha,
                                     Some(group_fold_gadget),
@@ -440,24 +442,35 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     z_eq_slice,
                     d_spans,
                     b_spans,
-                    a_spans,
+                    a_families,
                 })
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let projection_groups = dynamic_groups
             .iter()
-            .map(|planned| SetupProjectionGroupGeometry {
-                role_dims: planned.role_dims,
-                a_rows: planned.n_a,
-                a_cols: planned.z_cols,
-                b_rows: planned.n_b,
-                b_cols: planned.t_cols,
-                d_active_cols: planned.d_col_range.len(),
-                d_span_count: planned.d_spans.len(),
-                b_span_count: planned.b_spans.len(),
-                a_span_count: planned.a_spans.len(),
+            .map(|planned| {
+                Ok(SetupProjectionGroupGeometry {
+                    role_dims: planned.role_dims,
+                    a_rows: planned.n_a,
+                    a_cols: planned.z_cols,
+                    b_rows: planned.n_b,
+                    b_cols: planned.t_cols,
+                    d_active_cols: planned.d_col_range.len(),
+                    d_span_count: planned.d_spans.len(),
+                    b_span_count: planned.b_spans.len(),
+                    // Stage 3 expands each coarse physical A family into one
+                    // recurrence term per fold digit. Budget the emitted
+                    // stream, not the compact plan metadata.
+                    a_span_count: planned
+                        .a_families
+                        .len()
+                        .checked_mul(planned.fold_gadget.len())
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("setup A expanded span count overflow".into())
+                        })?,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         let projection_geometry = crate::SetupProjectionGeometry::from_groups(
             relation_address_geometry.role_dims(),
             d_rows,
@@ -547,7 +560,7 @@ fn build_setup_contribution_spans<E: FieldCore>(
 ) -> Result<GroupContributionSpans, AkitaError> {
     let mut d_spans = Vec::new();
     let mut b_spans = Vec::new();
-    let mut a_spans = Vec::new();
+    let mut a_families = Vec::new();
     let d_setup_stride = lanes
         .d_subcolumns
         .checked_mul(depth_open)
@@ -606,7 +619,6 @@ fn build_setup_contribution_spans<E: FieldCore>(
                         d_relation_stride,
                         unit.num_live_blocks(),
                         lanes.opening_lane_count,
-                        None,
                         d_column_count,
                         relation_lane_capacity,
                     )?);
@@ -654,7 +666,6 @@ fn build_setup_contribution_spans<E: FieldCore>(
                             b_relation_stride,
                             unit.num_live_blocks(),
                             lanes.outer_lane_count,
-                            None,
                             b_column_count,
                             relation_lane_capacity,
                         )?);
@@ -663,35 +674,32 @@ fn build_setup_contribution_spans<E: FieldCore>(
             }
         }
 
-        for fold_digit in 0..group.depth_fold {
-            let witness_column = unit.z_index(
-                num_positions_per_block,
-                depth_witness,
-                group.depth_fold,
-                0,
-                0,
-                fold_digit,
-            )?;
-            let relation_lane_start = witness_column
-                .checked_mul(lanes.carrier_lane_count)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A relation address overflow".into())
-                })?;
-            a_spans.push(SetupContributionSpan::new(
-                0,
-                1,
-                relation_lane_start,
-                a_relation_stride,
-                a_column_count,
-                lanes.inner_lane_count,
-                Some(fold_digit),
-                a_column_count,
-                relation_lane_capacity,
-            )?);
-        }
+        let witness_column = unit.z_index(
+            num_positions_per_block,
+            depth_witness,
+            group.depth_fold,
+            0,
+            0,
+            0,
+        )?;
+        let relation_lane_start = witness_column
+            .checked_mul(lanes.carrier_lane_count)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup A relation address overflow".into()))?;
+        a_families.push(SetupContributionSpan::new_fold_family(
+            0,
+            1,
+            relation_lane_start,
+            a_relation_stride,
+            a_column_count,
+            lanes.inner_lane_count,
+            group.depth_fold,
+            lanes.carrier_lane_count,
+            a_column_count,
+            relation_lane_capacity,
+        )?);
     }
 
-    Ok((d_spans, b_spans, a_spans))
+    Ok((d_spans, b_spans, a_families))
 }
 
 /// Materialize the original contiguous-column path when the relation carrier
@@ -845,6 +853,10 @@ where
     E: FieldCore + MulBase<F>,
 {
     let mut weights = vec![E::zero(); column_count];
+    let expected_lane_count = |span: &SetupContributionSpan| {
+        span.relation_lane_count == lane_alpha.len()
+            && span.fold_count == fold_gadget.map_or(1, <[F]>::len)
+    };
 
     // Dense overlapping families (notably one span per fold digit/unit) all
     // cover the same destination domain. Assign one destination per worker so
@@ -859,7 +871,7 @@ where
             .enumerate()
             .try_for_each(|(setup_column, destination)| {
                 for span in spans {
-                    if span.relation_lane_count != lane_alpha.len() {
+                    if !expected_lane_count(span) {
                         return Err(AkitaError::InvalidSetup(
                             "setup contribution span disagrees with role lane geometry".into(),
                         ));
@@ -892,7 +904,7 @@ where
     let mut jobs = vec![None; column_count];
     let mut disjoint = true;
     'spans: for (span_index, span) in spans.iter().enumerate() {
-        if span.relation_lane_count != lane_alpha.len() {
+        if !expected_lane_count(span) {
             return Err(AkitaError::InvalidSetup(
                 "setup contribution span disagrees with role lane geometry".into(),
             ));
@@ -930,7 +942,7 @@ where
     }
 
     for span in spans {
-        if span.relation_lane_count != lane_alpha.len() {
+        if !expected_lane_count(span) {
             return Err(AkitaError::InvalidSetup(
                 "setup contribution span disagrees with role lane geometry".into(),
             ));
@@ -964,23 +976,36 @@ where
     F: FieldCore,
     E: FieldCore + MulBase<F>,
 {
-    let weight = lane_alpha
-        .iter()
-        .enumerate()
-        .try_fold(E::zero(), |weight, (lane, &alpha)| {
-            let relation_lane = relation_lane_start.checked_add(lane).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup contribution relation lane overflow".into())
-            })?;
-            Ok::<_, AkitaError>(weight + eq_window.eval(relation_lane) * alpha)
-        })?;
-    if let Some(fold_digit) = span.fold_digit {
-        let fold = fold_gadget
-            .and_then(|gadget| gadget.get(fold_digit))
-            .copied()
-            .ok_or(AkitaError::InvalidProof)?;
-        Ok(-weight.mul_base(fold))
-    } else {
+    if let Some(fold_gadget) = fold_gadget {
+        if span.relation_lane_count != lane_alpha.len() || span.fold_count != fold_gadget.len() {
+            return Err(AkitaError::InvalidSetup(
+                "setup A span is not one coarse fold family".into(),
+            ));
+        }
+        let mut weight = E::zero();
+        for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
+            for (lane, &alpha) in lane_alpha.iter().enumerate() {
+                let relation_lane = fold_digit
+                    .checked_mul(span.fold_lane_stride)
+                    .and_then(|offset| offset.checked_add(lane))
+                    .and_then(|offset| relation_lane_start.checked_add(offset))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup contribution relation lane overflow".into())
+                    })?;
+                weight -= (eq_window.eval(relation_lane) * alpha).mul_base(fold);
+            }
+        }
         Ok(weight)
+    } else {
+        lane_alpha
+            .iter()
+            .enumerate()
+            .try_fold(E::zero(), |weight, (lane, &alpha)| {
+                let relation_lane = relation_lane_start.checked_add(lane).ok_or_else(|| {
+                    AkitaError::InvalidSetup("setup contribution relation lane overflow".into())
+                })?;
+                Ok::<_, AkitaError>(weight + eq_window.eval(relation_lane) * alpha)
+            })
     }
 }
 
