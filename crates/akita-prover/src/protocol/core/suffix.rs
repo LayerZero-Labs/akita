@@ -274,7 +274,7 @@ where
             sumcheck_challenges.len(),
         )?;
     let polys = [&logical_source];
-    let needs_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+    let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let proved = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -476,8 +476,8 @@ where
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+    let needs_extension_reduction = E::EXT_DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -512,19 +512,32 @@ where
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
-        stack,
-        needs_extension_reduction,
-        block_claims,
-        &logical_polys,
-        &eor_opening_batch,
-        true,
-        transcript,
-        protocol_point,
-        || Ok(()),
-        level_params,
-        BasisMode::Lagrange,
-    )
+    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+        prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            block_claims,
+            true,
+            transcript,
+            protocol_point,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    } else {
+        prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            needs_extension_reduction,
+            block_claims,
+            &logical_polys,
+            &eor_opening_batch,
+            true,
+            transcript,
+            protocol_point,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    }
     .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
 }
 
