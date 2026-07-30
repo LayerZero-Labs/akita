@@ -275,19 +275,15 @@ where
     let polys = [&logical_source];
     let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
-        let proved = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            params.d_a(),
-            |D| prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS, D>(
-                stack.tensor().backend(),
-                Some(stack.tensor().prepared()),
-                &polys,
-                &eor_claims,
-                true,
-                transcript,
-                "terminal",
-            )
+        let proved = prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS>(
+            stack.tensor().backend(),
+            Some(stack.tensor().prepared()),
+            &polys,
+            &eor_claims,
+            &[params.d_a()],
+            true,
+            transcript,
+            "terminal",
         )?;
         (
             proved
@@ -525,8 +521,10 @@ where
             stack,
             needs_extension_reduction,
             block_claims,
-            &logical_polys,
-            &eor_opening_batch,
+            ExtensionOpeningSource::Logical {
+                polys: &logical_polys,
+                claims: &eor_opening_batch,
+            },
             true,
             transcript,
             || Ok(()),

@@ -9,14 +9,21 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AdditiveGroup;
 use akita_types::dispatch_for_field;
 
+pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, E: FieldCore, P> {
+    CurrentClaims,
+    Logical {
+        polys: &'a [&'a P],
+        claims: &'a OpeningClaims<'a, E>,
+    },
+}
+
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_polys: &[&P],
-    eor_opening_batch: &OpeningClaims<'_, E>,
+    eor_source: ExtensionOpeningSource<'_, E, P>,
     pad_base_evals: bool,
     transcript: &mut T,
     validate_non_eor: V,
@@ -49,37 +56,31 @@ where
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let fold_polys = block_claims.flat_polys();
     let tensor = stack.tensor();
-    let ring_d = level_params.role_dims().d_a();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let proved = if opening_batch.num_groups() > 1 {
-            prove_grouped_extension_opening_reduction::<F, E, T, P, TS>(
-                tensor.backend(),
-                Some(tensor.prepared()),
-                &block_claims,
-                &opening_batch,
-                level_params,
-                pad_base_evals,
-                transcript,
-                if pad_base_evals { "recursive" } else { "root" },
-            )
-        } else {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                ring_d,
-                |D| {
-                    prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                        tensor.backend(),
-                        Some(tensor.prepared()),
-                        eor_polys,
-                        eor_opening_batch,
-                        pad_base_evals,
-                        transcript,
-                        if pad_base_evals { "recursive" } else { "root" },
-                    )
+        let (eor_polys, eor_opening_batch): (&[&P], &dyn ExtensionOpeningClaimGeometry<E>) =
+            match eor_source {
+                ExtensionOpeningSource::CurrentClaims => {
+                    (&fold_polys, block_claims.opening_claims())
                 }
-            )
-        }
+                ExtensionOpeningSource::Logical { polys, claims } => (polys, claims),
+            };
+        let group_ring_dimensions = (0..opening_batch.num_groups())
+            .map(|group_index| {
+                level_params
+                    .group_role_dims(&opening_batch, group_index)
+                    .map(|dims| dims.d_a())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let proved = prove_extension_opening_reduction::<F, E, T, P, TS>(
+            tensor.backend(),
+            Some(tensor.prepared()),
+            eor_polys,
+            eor_opening_batch,
+            &group_ring_dimensions,
+            pad_base_evals,
+            transcript,
+            if pad_base_evals { "recursive" } else { "root" },
+        )
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;

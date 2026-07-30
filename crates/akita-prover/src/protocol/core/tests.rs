@@ -12,11 +12,18 @@ type E = FpExt2<F, NegOneNr>;
 
 #[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
-    let logical_w = RecursiveWitnessFlat::from_i8_digits(vec![1, -1, 2, 0, 3, -2]);
+    let mut digits = vec![0; 3 * 64];
+    digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
+    let logical_w = RecursiveWitnessFlat::from_i8_digits(digits);
     let point = [
         E::new(F::from_u64(2), F::from_u64(3)),
         E::new(F::from_u64(5), F::from_u64(7)),
         E::new(F::from_u64(11), F::from_u64(13)),
+        E::new(F::from_u64(17), F::from_u64(19)),
+        E::new(F::from_u64(23), F::from_u64(29)),
+        E::new(F::from_u64(31), F::from_u64(37)),
+        E::new(F::from_u64(41), F::from_u64(43)),
+        E::new(F::from_u64(47), F::from_u64(53)),
     ];
     let logical_polys = [&logical_w];
 
@@ -29,11 +36,12 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     )
     .expect("group claims")])
     .expect("opening batch");
-    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _, 2>(
+    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
         &crate::compute::CpuBackend,
         None,
         &logical_polys,
         &opening_batch,
+        &[64],
         true,
         &mut transcript,
         "recursive",
@@ -45,6 +53,44 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         <E as ExtField<F>>::EXT_DEGREE
     );
     assert_eq!(proved.reduction.proof.num_rounds(), point.len() - 1);
+}
+
+#[test]
+fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
+    let short_witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 64]);
+    let mut long_digits = vec![0; 3 * 64];
+    long_digits[..6].copy_from_slice(&[1, -1, 2, 0, 3, -2]);
+    let long_witness = RecursiveWitnessFlat::from_i8_digits(long_digits);
+    let short_point = (0..6)
+        .map(|index| E::new(F::from_u64(index + 2), F::from_u64(index + 11)))
+        .collect::<Vec<_>>();
+    let long_point = (0..8)
+        .map(|index| E::new(F::from_u64(index + 3), F::from_u64(index + 17)))
+        .collect::<Vec<_>>();
+    let opening_batch = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(short_point, vec![E::zero()], ()).expect("short group"),
+        PolynomialGroupClaims::new(long_point.clone(), vec![E::zero()], ()).expect("long group"),
+    ])
+    .expect("opening batch");
+    let polys = [&short_witness, &long_witness];
+    let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
+
+    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
+        &crate::compute::CpuBackend,
+        None,
+        &polys,
+        &opening_batch,
+        &[64, 64],
+        true,
+        &mut transcript,
+        "recursive",
+    )
+    .expect("all groups should reduce through one sumcheck");
+
+    assert_eq!(proved.protocol_points.len(), 2);
+    assert_eq!(proved.reduction.final_factors.len(), 2);
+    assert_eq!(proved.row_coefficients, vec![E::one(); 2]);
+    assert_eq!(proved.reduction.proof.num_rounds(), long_point.len() - 1);
 }
 
 #[test]

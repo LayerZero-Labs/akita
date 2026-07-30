@@ -74,7 +74,8 @@ mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
-    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, PreparedFold,
+    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, ExtensionOpeningSource,
+    PreparedFold,
 };
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
