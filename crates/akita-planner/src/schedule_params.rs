@@ -793,16 +793,6 @@ fn find_schedule_inner(
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
-    let root_eor_bytes = extension_opening_reduction_level_bytes(
-        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-        policy.claim_ext_degree,
-        0,
-        key,
-        witness_len,
-        policy.ring_dimension,
-    )
-    .ok();
-
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let mut root_candidates = Vec::new();
@@ -861,6 +851,18 @@ fn find_schedule_inner(
         }
         for (candidate_params, output_witness_len) in root_candidates {
             let candidate_dimensions = candidate_params.role_dims();
+            // Root projection is governed by the candidate's committed A dimension,
+            // not the setup-generation ceiling.
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
+                0,
+                key,
+                witness_len,
+                candidate_dimensions.d_a(),
+            ) else {
+                continue;
+            };
             let suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
@@ -880,10 +882,6 @@ fn find_schedule_inner(
             if suffix.is_empty() {
                 continue;
             }
-            let Some(eor_bytes) = root_eor_bytes else {
-                continue;
-            };
-
             let suffix_candidates = match objective {
                 ScheduleSelectionObjective::ProofPayload => {
                     suffix.best_by_payload_per_lb.values().collect::<Vec<_>>()
@@ -1217,6 +1215,77 @@ mod geometry_tests {
             .map(|handle| handle.join().expect("planner thread"))
             .collect::<Vec<_>>();
         assert!(descriptors.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_root_prices_eor_at_candidate_a_dimension() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let mut policy = policy_of::<D256OneHot>();
+        // D256 enables root projection at this width while the D64 candidate does not.
+        policy.claim_ext_degree = 64;
+        let candidate_dimensions = CommitmentRingDims::uniform(64);
+        let domain = RingDimensionSearchDomain::new(policy.ring_dimension, [candidate_dimensions])
+            .expect("mixed dimension domain");
+        let key = PolynomialGroupLayout::singleton(16);
+        let selected = find_schedule_with_ring_dimension_domain(
+            key,
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("mixed planner boundary schedule");
+        let schedule = &selected.schedule;
+        let root_params = &schedule.root.params.final_group.commitment;
+        assert_eq!(root_params.role_dims(), candidate_dimensions);
+
+        let challenge_field_bits =
+            policy.decomposition.field_bits() * policy.chal_ext_degree as u32;
+        let candidate_eor_bytes = extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            0,
+            key,
+            schedule.root.input_witness_len,
+            candidate_dimensions.d_a(),
+        )
+        .expect("candidate EOR bytes");
+        let setup_generation_eor_bytes = extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            0,
+            key,
+            schedule.root.input_witness_len,
+            policy.ring_dimension,
+        )
+        .expect("setup-generation EOR bytes");
+        assert_eq!(candidate_eor_bytes, 0);
+        assert!(setup_generation_eor_bytes > 0);
+
+        let next_params = schedule
+            .recursive_folds
+            .first()
+            .map(|step| &step.params.witness);
+        let next_binding = if next_params.is_some() {
+            akita_types::NextWitnessBindingPolicy::OuterCommitment
+        } else {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        };
+        let root_without_eor = level_proof_bytes(
+            policy.decomposition.field_bits(),
+            challenge_field_bits,
+            root_params,
+            next_params,
+            schedule.root.output_witness_len,
+            Some(next_binding),
+        )
+        .expect("root bytes without EOR");
+        assert_eq!(
+            selected.estimate.estimated_root_direct_payload_bytes,
+            root_without_eor + candidate_eor_bytes,
+        );
     }
 
     #[cfg(feature = "catalog-gen")]

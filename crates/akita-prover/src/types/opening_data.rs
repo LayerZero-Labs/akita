@@ -289,14 +289,6 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         Ok(())
     }
 
-    /// Return the only group when the current single-group path applies.
-    pub fn single_group_polys(&self) -> Option<&'a [&'a P]> {
-        self.polynomials
-            .first()
-            .copied()
-            .filter(|_| self.polynomials.len() == 1)
-    }
-
     /// Borrow root fold commitment rows in the scheduled M-row commitment order.
     pub(crate) fn fold_commitment(
         &self,
