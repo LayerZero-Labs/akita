@@ -2,7 +2,7 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
-use super::RootFoldPrefix;
+use super::FoldPrefix;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
 };
@@ -40,7 +40,7 @@ pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E, T>(
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<RootFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -82,7 +82,7 @@ where
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(RootFoldPrefix {
+    Ok(FoldPrefix {
         prepared_points,
         trace_claim_coefficients: row_coefficients.clone(),
         row_coefficients,

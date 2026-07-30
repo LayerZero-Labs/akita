@@ -274,8 +274,7 @@ where
             sumcheck_challenges.len(),
         )?;
     let polys = [&logical_source];
-    let needs_reduction =
-        eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, params.d_a(), recursive_num_vars);
+    let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let proved = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -478,11 +477,7 @@ where
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
-    let needs_extension_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Suffix,
-        level_params.role_dims().d_a(),
-        recursive_num_vars,
-    );
+    let needs_extension_reduction = E::EXT_DEGREE > 1;
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];

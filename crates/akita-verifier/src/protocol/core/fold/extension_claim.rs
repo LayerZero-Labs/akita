@@ -1,7 +1,7 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_prepared_opening_points, RootFoldPrefix, SuffixFoldPrefix};
+use super::{absorb_prepared_opening_points, FoldPrefix};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
@@ -364,7 +364,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<RootFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -387,8 +387,7 @@ where
         }
         group_points.push(claims.group_point(group_index)?);
     }
-    let requires_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Root,
+    let requires_reduction = root_tensor_projection_enabled::<F, E>(
         root_lp.role_dims().d_a(),
         opening_batch.max_num_vars(),
     );
@@ -449,7 +448,7 @@ where
     } else {
         opening_batch.batched_eval_target(&row_coefficients, openings)?
     };
-    Ok(RootFoldPrefix {
+    Ok(FoldPrefix {
         prepared_points,
         row_coefficients,
         trace_eval_target,
@@ -487,11 +486,7 @@ where
         params.d_a(),
         params.num_positions_per_block,
         params.num_live_blocks,
-        eor_required_at_level::<F, E>(
-            FoldOpeningKind::Suffix,
-            params.d_a(),
-            opening_batch.max_num_vars(),
-        ),
+        E::EXT_DEGREE > 1,
         transcript,
     )
     .map_err(|error| {
@@ -514,12 +509,12 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[Vec<E>],
     openings: &[E],
-    row_coefficients: &[E],
+    row_coefficients: Vec<E>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<SuffixFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -532,23 +527,20 @@ where
         extension_opening_reduction,
         group_points,
         openings,
-        row_coefficients,
+        &row_coefficients,
         opening_batch,
         basis,
         lp,
-        eor_required_at_level::<F, E>(
-            FoldOpeningKind::Suffix,
-            lp.role_dims().d_a(),
-            opening_batch.max_num_vars(),
-        ),
+        E::EXT_DEGREE > 1,
         transcript,
     )?;
     absorb_prepared_opening_points(&prepared_points, transcript);
     let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
     let trace_claim_coefficients =
-        opening_batch.scale_row_coefficients_by_group(row_coefficients, &factors_by_group)?;
-    Ok(SuffixFoldPrefix {
+        opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
+    Ok(FoldPrefix {
         prepared_points,
+        row_coefficients,
         trace_eval_target: final_claim,
         trace_claim_coefficients,
     })
