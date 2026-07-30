@@ -497,11 +497,13 @@ mod tests {
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
         CommittedGroupDescriptor, GroupSource, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
-        SetupPrefixVerifierSlot, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+        SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+        DEFAULT_SIS_SECURITY_POLICY,
     };
 
     type TestF = Prime128Offset275;
     const TEST_D: usize = 32;
+    const PREFIX_D: usize = 64;
 
     fn blob_prefix() -> Vec<u8> {
         let mut bytes = Vec::new();
@@ -513,10 +515,34 @@ mod tests {
     }
 
     fn prefix_commitment_params() -> PrecommittedLevelParams {
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Inner,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+                coeff_linf_bound: 32_767,
+            },
+            1,
+        )
+        .expect("audited prefix A matrix");
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Outer,
+                ring_dimension: u32::try_from(PREFIX_D).expect("test prefix ring dimension"),
+                coeff_linf_bound: 3,
+            },
+            inner_commit_matrix.output_rank(),
+        )
+        .expect("audited prefix B matrix");
         PrecommittedLevelParams {
             layout: CommittedGroupDescriptor {
                 version: CommittedGroupDescriptor::VERSION,
-                group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                group: PolynomialGroupLayout::singleton(PREFIX_D.trailing_zeros() as usize),
                 encoding: akita_types::GroupSourceEncoding::Bounded {
                     coefficient_bits: 128,
                 },
@@ -525,26 +551,10 @@ mod tests {
                 num_live_blocks: 1,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
-                inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    1,
-                    1,
-                    1,
-                    TEST_D,
-                ),
+                inner_commit_matrix,
                 log_basis_outer: 1,
                 num_digits_outer: 1,
-                outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    1,
-                    1,
-                    1,
-                    TEST_D,
-                ),
+                outer_commit_matrix,
             },
             source: GroupSource::bounded(128),
             log_basis_open: 1,
@@ -610,15 +620,20 @@ mod tests {
             public_matrix_seed,
         };
         let shared_matrix = derive_public_matrix_flat::<TestF, TEST_D>(2, &public_matrix_seed);
-        let id = setup_prefix_slot_id(TEST_D, 1, prefix_commitment_params());
+        let commitment_params = prefix_commitment_params();
+        let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
+        let id = setup_prefix_slot_id(PREFIX_D, 1, commitment_params);
         let mut prefix_slots = SetupPrefixVerifierRegistry::new();
         prefix_slots
             .insert(SetupPrefixVerifierSlot {
                 id: id.clone(),
                 natural_len: 1,
-                padded_len: TEST_D,
+                padded_len: PREFIX_D,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                    rows: vec![
+                        RingVec::from_coeffs(vec![TestF::zero(); PREFIX_D]);
+                        commitment_rows
+                    ],
                 },
             })
             .expect("insert prefix slot");
