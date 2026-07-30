@@ -32,13 +32,13 @@ pub use crate::opening_claims::{
     sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
     PolynomialGroupLayout,
 };
+pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
-    eor_required_at_level, eor_required_for_width, folded_root_supports_opening_shape,
-    padded_scalar_batch_num_vars, prepare_opening_point,
+    folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
     ring_subfield_packed_extension_opening_point, root_tensor_projection_enabled,
-    validate_batched_inputs, validate_scalar_point_matches_poly_arity, FoldOpeningKind,
-    PreparedOpeningPoint, RingMultiplierOpeningPoint,
+    validate_batched_inputs, validate_scalar_point_matches_poly_arity, PreparedOpeningPoint,
+    RingMultiplierOpeningPoint,
 };
 pub use commitment::{
     AkitaCommitment, Commitment, DummyProof, ProverCommitmentRows, RingCommitment,

@@ -79,7 +79,7 @@ where
     let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
     let needs_extension_reduction =
-        eor_required_at_level::<F, E>(FoldOpeningKind::Root, root_ring_d, opening_num_vars);
+        root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 
     let flat_polys = claims.flat_polys();
     if flat_polys.len() != num_claims {

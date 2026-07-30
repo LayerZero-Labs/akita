@@ -107,17 +107,21 @@ pub fn extension_opening_reduction_level_bytes(
             "extension opening width must be one or a power of two, got {extension_opening_width}"
         )));
     }
-    let kind = if fold_level == 0 {
-        crate::FoldOpeningKind::Root
-    } else {
-        crate::FoldOpeningKind::Suffix
-    };
     let opening_num_vars = if fold_level == 0 {
         key.num_vars()
     } else {
         padded_boolean_opening_vars(input_witness_len)?
     };
-    if !crate::eor_required_for_width(kind, extension_opening_width, ring_d, opening_num_vars) {
+    let requires_eor = if fold_level == 0 {
+        crate::proof::root_tensor_projection_enabled_for_width(
+            extension_opening_width,
+            ring_d,
+            opening_num_vars,
+        )
+    } else {
+        extension_opening_width > 1
+    };
+    if !requires_eor {
         return Ok(0);
     }
     let (partials, opening_vars) = if fold_level == 0 {
