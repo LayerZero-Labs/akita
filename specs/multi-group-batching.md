@@ -31,6 +31,13 @@
 > needs generated dense group-batch rows before it can resolve these schedules
 > without the offline planner.
 
+> **Per-group source supersession (2026-07-30).** The global root-source policy,
+> layout-only `commit_final_group` input, and rejection of self-describing
+> committed groups in this record are superseded by
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> Every group now has an independently checked source contract, and the exact
+> descriptor returned at commitment time is public schedule input.
+
 > **Topology/API supersession (PR #311).** The implementation is folded-only:
 > `Schedule` is structural `folds + terminal`, every supported proof has at
 > least two folds, and unsupported keys return `UnsupportedSchedule`. Later
