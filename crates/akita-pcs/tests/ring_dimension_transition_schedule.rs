@@ -255,6 +255,7 @@ where
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .inner_commit_matrix
             .ring_dimension(),
         128
@@ -262,6 +263,7 @@ where
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .outer_commit_matrix
             .ring_dimension(),
         64

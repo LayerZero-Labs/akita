@@ -86,10 +86,10 @@ where
     let recomposed_inner_rows = backend.dense_commit_rows(
         prepared,
         DenseCommitRowsPlan {
-            n_a: level_params.inner_commit_matrix.output_rank(),
+            n_a: level_params.layout.inner_commit_matrix.output_rank(),
             input: DenseCommitInput::CoeffBlocks {
                 block_slices,
-                num_digits_inner: level_params.num_digits_inner,
+                num_digits_inner: level_params.layout.num_digits_inner,
                 log_basis_inner: level_params.layout.log_basis_inner,
             },
         },
@@ -99,8 +99,8 @@ where
         .iter()
         .map(|_| {
             commit_inner_block_digit_count(
-                level_params.inner_commit_matrix.output_rank(),
-                level_params.num_digits_outer,
+                level_params.layout.inner_commit_matrix.output_rank(),
+                level_params.layout.num_digits_outer,
             )
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -113,7 +113,7 @@ where
             decompose_rows_i8_into(
                 rows,
                 dst,
-                level_params.num_digits_outer,
+                level_params.layout.num_digits_outer,
                 level_params.layout.log_basis_outer,
             );
             Ok(())
@@ -126,7 +126,7 @@ where
             decompose_rows_i8_into(
                 rows,
                 dst,
-                level_params.num_digits_outer,
+                level_params.layout.num_digits_outer,
                 level_params.layout.log_basis_outer,
             );
             Ok(())
@@ -134,8 +134,8 @@ where
 
     let b_input_len = commit_inner_flat_digit_count(
         level_params.layout.num_live_blocks,
-        level_params.inner_commit_matrix.output_rank(),
-        level_params.num_digits_outer,
+        level_params.layout.inner_commit_matrix.output_rank(),
+        level_params.layout.num_digits_outer,
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
     let b_input_flat = decomposed_inner_rows.digits();
@@ -148,8 +148,8 @@ where
             "setup prefix outer input length does not match inner digit stream".to_string(),
         ));
     }
-    let n_b = level_params.outer_commit_matrix.output_rank();
-    let d_b = level_params.outer_commit_matrix.ring_dimension();
+    let n_b = level_params.layout.outer_commit_matrix.output_rank();
+    let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
     let commitment_rows =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
             let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
@@ -430,8 +430,8 @@ mod tests {
         let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
         let mut prefix_params =
             setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
-        let outer = &prefix_params.outer_commit_matrix;
-        prefix_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        let outer = &prefix_params.layout.outer_commit_matrix;
+        prefix_params.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
             outer.security_policy(),
             outer.sis_table_key().table_digest,
             outer.sis_modulus_profile(),
@@ -440,7 +440,6 @@ mod tests {
             outer.coeff_linf_bound(),
             32,
         );
-        prefix_params.layout.outer_ring_dimension = 32;
 
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend;
@@ -461,7 +460,7 @@ mod tests {
 
         assert_eq!(
             slot.commitment.rows[0].coeff_len(),
-            prefix_params.outer_commit_matrix.output_rank() * 32
+            prefix_params.layout.outer_commit_matrix.output_rank() * 32
         );
     }
 }

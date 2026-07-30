@@ -4,8 +4,8 @@ use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
 use crate::sis::FoldWitnessLinfCapConfig;
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, PolynomialGroupLayout,
-    SetupContributionMode, TerminalResponseShape,
+    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -37,10 +37,12 @@ pub enum NextWitnessBindingPolicy {
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CommittedGroupDescriptor {
+    /// Version of the canonical committed-profile encoding.
+    pub version: u8,
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
-    /// Exact coefficient class committed by this group.
-    pub source: GroupSource,
+    /// Closed protocol encoding; provider registration is intentionally erased.
+    pub encoding: GroupSourceEncoding,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
@@ -49,94 +51,140 @@ pub struct CommittedGroupDescriptor {
     pub num_live_blocks: usize,
     /// Gadget basis selected for the standalone A/source digits.
     pub log_basis_inner: u32,
+    /// Exact gadget depth used by the standalone A/source relation.
+    pub num_digits_inner: usize,
+    /// Complete audited A/source matrix identity.
+    pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Gadget basis selected for the standalone B/`t_hat` digits.
     pub log_basis_outer: u32,
-    /// Ring dimension of the standalone A/source matrix.
-    pub inner_ring_dimension: usize,
-    /// Ring dimension of the standalone B/commitment matrix.
-    pub outer_ring_dimension: usize,
-    /// Exact A-role row count frozen at precommit time.
-    pub n_a: usize,
-    /// Exact A-role collision bucket frozen at precommit time.
-    pub a_coeff_linf_bound: u128,
-    /// Exact B-role row count frozen at precommit time.
-    pub n_b: usize,
-    /// Exact B-role collision bucket frozen at precommit time.
-    pub b_coeff_linf_bound: u128,
+    /// Exact gadget depth used by the standalone B/`t_hat` relation.
+    pub num_digits_outer: usize,
+    /// Complete audited B/commitment matrix identity.
+    pub outer_commit_matrix: OuterCommitMatrixParams,
 }
 
 impl CommittedGroupDescriptor {
+    /// Current committed-profile format.
+    pub const VERSION: u8 = 1;
+
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
+            version: Self::VERSION,
             group,
-            source: params.source,
+            encoding: params.source.encoding(),
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
             log_basis_inner: params.log_basis_inner,
+            num_digits_inner: params.num_digits_inner,
+            inner_commit_matrix: params.inner_commit_matrix,
             log_basis_outer: params.log_basis_outer,
-            inner_ring_dimension: params.inner_commit_matrix.ring_dimension(),
-            outer_ring_dimension: params.outer_commit_matrix.ring_dimension(),
-            n_a: params.inner_commit_matrix.output_rank(),
-            a_coeff_linf_bound: params.inner_commit_matrix.coeff_linf_bound(),
-            n_b: params.outer_commit_matrix.output_rank(),
-            b_coeff_linf_bound: params.outer_commit_matrix.coeff_linf_bound(),
+            num_digits_outer: params.num_digits_outer,
+            outer_commit_matrix: params.outer_commit_matrix,
         }
     }
 
+    /// Canonical versioned bytes used for catalog and schedule-key identity.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
+    }
+
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.version);
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
-        self.source.append_descriptor_bytes(bytes);
+        match self.encoding {
+            GroupSourceEncoding::Bounded { coefficient_bits } => {
+                bytes.push(0);
+                push_u32(bytes, coefficient_bits);
+            }
+            GroupSourceEncoding::SparseBinary { chunk_size } => {
+                bytes.push(1);
+                push_usize(bytes, chunk_size);
+            }
+        }
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
         push_u32(bytes, self.log_basis_inner);
+        push_usize(bytes, self.num_digits_inner);
+        self.inner_commit_matrix.append_descriptor_bytes(bytes);
         push_u32(bytes, self.log_basis_outer);
-        push_usize(bytes, self.inner_ring_dimension);
-        push_usize(bytes, self.outer_ring_dimension);
-        push_usize(bytes, self.n_a);
-        crate::descriptor_bytes::push_u128(bytes, self.a_coeff_linf_bound);
-        push_usize(bytes, self.n_b);
-        crate::descriptor_bytes::push_u128(bytes, self.b_coeff_linf_bound);
+        push_usize(bytes, self.num_digits_outer);
+        self.outer_commit_matrix.append_descriptor_bytes(bytes);
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
     pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.group.validate()?;
-        self.source
-            .validate_for_ring_dimension(field_bits, self.inner_ring_dimension)?;
-        if self.n_a == 0
-            || self.n_b == 0
-            || self.inner_ring_dimension == 0
-            || self.outer_ring_dimension == 0
-            || self.a_coeff_linf_bound == 0
-            || self.b_coeff_linf_bound == 0
+        if self.version != Self::VERSION {
+            return Err(AkitaError::InvalidSetup(format!(
+                "unsupported committed-group profile version {}",
+                self.version
+            )));
+        }
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
+        GroupSource::from_encoding(self.encoding)
+            .validate_for_ring_dimension(field_bits, inner_ring_dimension)?;
+        if self.inner_commit_matrix.output_rank() == 0
+            || self.outer_commit_matrix.output_rank() == 0
+            || inner_ring_dimension == 0
+            || outer_ring_dimension == 0
+            || self.inner_commit_matrix.coeff_linf_bound() == 0
+            || self.outer_commit_matrix.coeff_linf_bound() == 0
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
             ));
         }
-        if !self.inner_ring_dimension.is_power_of_two()
-            || !self.outer_ring_dimension.is_power_of_two()
-            || !self
-                .inner_ring_dimension
-                .is_multiple_of(self.outer_ring_dimension)
+        if !inner_ring_dimension.is_power_of_two()
+            || !outer_ring_dimension.is_power_of_two()
+            || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
         {
             return Err(AkitaError::InvalidSetup(
                 "precommitted group requires power-of-two A/B dimensions with A divisible by B"
                     .to_string(),
             ));
         }
-        if self.log_basis_inner == 0 {
+        if self.log_basis_inner == 0 || self.num_digits_inner == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis_inner".to_string(),
+                "commitment group layout requires nonzero inner basis and digit depth".to_string(),
             ));
         }
-        if self.log_basis_outer == 0 {
+        if self.log_basis_outer == 0 || self.num_digits_outer == 0 {
             return Err(AkitaError::InvalidSetup(
-                "commitment group layout requires nonzero log_basis_outer".to_string(),
+                "commitment group layout requires nonzero outer basis and digit depth".to_string(),
+            ));
+        }
+        if self.inner_commit_matrix.sis_modulus_profile().field_bits() != field_bits
+            || self.outer_commit_matrix.sis_modulus_profile().field_bits() != field_bits
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed-group matrix modulus profile does not match the field".to_string(),
+            ));
+        }
+        let expected_a_width = self
+            .num_positions_per_block
+            .checked_mul(self.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("committed-group A width overflow".into()))?;
+        let projection_ratio = inner_ring_dimension / outer_ring_dimension;
+        let expected_b_width = self
+            .inner_commit_matrix
+            .output_rank()
+            .checked_mul(self.num_digits_outer)
+            .and_then(|width| width.checked_mul(self.num_live_blocks))
+            .and_then(|width| width.checked_mul(self.group.num_polynomials()))
+            .and_then(|width| width.checked_mul(projection_ratio))
+            .ok_or_else(|| AkitaError::InvalidSetup("committed-group B width overflow".into()))?;
+        if self.inner_commit_matrix.input_width() != expected_a_width
+            || self.outer_commit_matrix.input_width() != expected_b_width
+        {
+            return Err(AkitaError::InvalidSetup(
+                "committed-group A/B matrix widths do not match frozen geometry".to_string(),
             ));
         }
         Ok(())
@@ -144,10 +192,11 @@ impl CommittedGroupDescriptor {
 
     /// Validate that frozen exact block geometry matches `group.num_vars`.
     pub fn validate_root_geometry(&self) -> Result<(), AkitaError> {
-        let alpha = self.inner_ring_dimension.trailing_zeros() as usize;
+        let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
+        let alpha = inner_ring_dimension.trailing_zeros() as usize;
         let Some(source_field_len) = self
             .num_live_ring_elements_per_claim
-            .checked_mul(self.inner_ring_dimension)
+            .checked_mul(inner_ring_dimension)
         else {
             return Err(AkitaError::InvalidSetup(
                 "commitment group layout geometry overflow".to_string(),
@@ -543,6 +592,17 @@ impl GroupSource {
         )
     }
 
+    /// Canonical built-in registration for a certified protocol encoding.
+    ///
+    /// Provider registrations erase to the same profile encoding at the public
+    /// commitment boundary.
+    pub const fn from_encoding(encoding: GroupSourceEncoding) -> Self {
+        match encoding {
+            GroupSourceEncoding::Bounded { coefficient_bits } => Self::bounded(coefficient_bits),
+            GroupSourceEncoding::SparseBinary { chunk_size } => Self::one_hot(chunk_size),
+        }
+    }
+
     /// Canonical registration identity and parameters.
     pub const fn registration(self) -> GroupSourceRegistration {
         self.registration
@@ -625,8 +685,6 @@ impl GroupSource {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        bytes.extend_from_slice(&self.registration.type_id);
-        bytes.extend_from_slice(&self.registration.parameters);
         match self.encoding {
             GroupSourceEncoding::Bounded { coefficient_bits } => {
                 bytes.push(0);
@@ -1007,10 +1065,12 @@ impl FoldSchedule {
                 crate::validate_role_dims(consumer_dims)?;
                 let prefix_inner_d = prefix
                     .commitment_params
+                    .layout
                     .inner_commit_matrix
                     .ring_dimension();
                 let prefix_outer_d = prefix
                     .commitment_params
+                    .layout
                     .outer_commit_matrix
                     .ring_dimension();
                 if prefix.d_setup != predecessor_setup_d

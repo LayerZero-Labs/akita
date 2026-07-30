@@ -36,7 +36,7 @@ fn schedule_key_from_committed_claims<F: Clone, CommitF: FieldCore>(
     }
     let key = AkitaScheduleLookupKey {
         final_group: final_descriptor.group,
-        final_source: final_descriptor.source,
+        final_source: akita_types::GroupSource::from_encoding(final_descriptor.encoding),
         precommitteds: precommitteds
             .iter()
             .map(|group| *group.commitment().descriptor())
@@ -589,12 +589,9 @@ mod tests {
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
             layout: CommittedGroupDescriptor::from_params(pre_layout, &pre),
-            inner_commit_matrix: pre.inner_commit_matrix,
-            outer_commit_matrix: pre.outer_commit_matrix,
+            source: pre.source,
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
-            num_digits_inner: pre.num_digits_inner,
-            num_digits_outer: pre.num_digits_outer,
             num_digits_open: pre.num_digits_open,
             num_digits_fold_one: pre.num_digits_fold_one,
         });

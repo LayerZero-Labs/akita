@@ -252,10 +252,13 @@ fn mixed_group_sources_match_generated_lookup_and_reject_unlisted_order() {
     .expect("mixed one-hot/dense/one-hot group batch must plan offline");
     let root = &planned.schedule.root.params;
     assert_eq!(
-        root.precommitted_groups[0].descriptor.source,
-        onehot_16.source
+        root.precommitted_groups[0].descriptor.encoding,
+        onehot_16.encoding
     );
-    assert_eq!(root.precommitted_groups[1].descriptor.source, dense.source);
+    assert_eq!(
+        root.precommitted_groups[1].descriptor.encoding,
+        dense.encoding
+    );
     assert_eq!(root.final_group.source, key.final_source);
 
     let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");

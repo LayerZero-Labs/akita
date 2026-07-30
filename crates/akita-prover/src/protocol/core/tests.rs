@@ -1,10 +1,13 @@
 use super::*;
 use crate::RecursiveWitnessFlat;
-use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
+use akita_config::{
+    proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
+};
 use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupDescriptor, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
@@ -56,7 +59,18 @@ fn proof_schedule_from_layout_includes_entire_batch() {
     ])
     .expect("multi-group shape");
     assert_eq!(batch.num_groups(), 3);
-    let schedule = D64OneHot::get_params_for_prove(&batch).expect("multi-group schedule");
+    let pre_layout = OpeningClaimsLayout::new(16, 1).expect("precommit layout");
+    let pre_params =
+        PrecommittedCommitmentConfig::<D64OneHot>::get_params_for_batched_commitment(&pre_layout)
+            .expect("precommit params");
+    let precommitted =
+        CommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(16, 1), &pre_params);
+    let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(32, 2),
+        final_source: D64OneHot::group_source(),
+        precommitteds: vec![precommitted, precommitted],
+    })
+    .expect("multi-group schedule");
     let root_params = schedule.root.params.final_group.commitment.clone();
     assert_eq!(root_params.precommitted_groups.len(), 2);
     for precommitted in &root_params.precommitted_groups {

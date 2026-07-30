@@ -33,7 +33,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix.clone(),
+                open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },

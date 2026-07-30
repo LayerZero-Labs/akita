@@ -33,9 +33,18 @@ fn precommit_config_commit_returns_exact_frozen_layout() {
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
     assert_eq!(frozen_layout.log_basis_outer, OneHotCfg::basis_range().0);
-    assert_eq!(frozen_layout.n_a, layout.inner_commit_matrix.output_rank());
-    assert_eq!(frozen_layout.n_b, layout.outer_commit_matrix.output_rank());
-    assert_eq!(commitment.rows().count(), frozen_layout.n_b);
+    assert_eq!(
+        frozen_layout.inner_commit_matrix.output_rank(),
+        layout.inner_commit_matrix.output_rank()
+    );
+    assert_eq!(
+        frozen_layout.outer_commit_matrix.output_rank(),
+        layout.outer_commit_matrix.output_rank()
+    );
+    assert_eq!(
+        commitment.rows().count(),
+        frozen_layout.outer_commit_matrix.output_rank()
+    );
 }
 
 fn multi_group_root_params(schedule: &akita_types::FoldSchedule) -> &CommittedGroupParams {
@@ -95,8 +104,14 @@ fn precommit_config_allows_independent_precommitted_groups() {
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
-        assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
-        assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
+        assert_eq!(
+            pre_a_commitment.rows().count(),
+            pre_a_frozen.outer_commit_matrix.output_rank()
+        );
+        assert_eq!(
+            pre_b_commitment.rows().count(),
+            pre_b_frozen.outer_commit_matrix.output_rank()
+        );
         assert_ne!(pre_a_frozen.group, pre_b_frozen.group);
     });
 }
@@ -219,8 +234,14 @@ fn group_batch_commits_independent_arity_precommitteds() {
     )
     .expect("final multi-group commitment");
 
-    assert_eq!(pre_a_commitment.rows().count(), pre_a_frozen.n_b);
-    assert_eq!(pre_b_commitment.rows().count(), pre_b_frozen.n_b);
+    assert_eq!(
+        pre_a_commitment.rows().count(),
+        pre_a_frozen.outer_commit_matrix.output_rank()
+    );
+    assert_eq!(
+        pre_b_commitment.rows().count(),
+        pre_b_frozen.outer_commit_matrix.output_rank()
+    );
     assert_eq!(
         final_commitment.rows().count(),
         main_params.outer_commit_matrix.output_rank()
@@ -281,9 +302,18 @@ fn commit_group_returns_frozen_exact_layout() {
     );
     assert_eq!(frozen_layout.num_live_blocks, layout.num_live_blocks);
     assert_eq!(frozen_layout.log_basis_outer, layout.log_basis_outer);
-    assert_eq!(frozen_layout.n_a, layout.inner_commit_matrix.output_rank());
-    assert_eq!(frozen_layout.n_b, layout.outer_commit_matrix.output_rank());
-    assert_eq!(commitment.rows().count(), frozen_layout.n_b);
+    assert_eq!(
+        frozen_layout.inner_commit_matrix.output_rank(),
+        layout.inner_commit_matrix.output_rank()
+    );
+    assert_eq!(
+        frozen_layout.outer_commit_matrix.output_rank(),
+        layout.outer_commit_matrix.output_rank()
+    );
+    assert_eq!(
+        commitment.rows().count(),
+        frozen_layout.outer_commit_matrix.output_rank()
+    );
 }
 
 /// Produce and verify a folded multi-group-root one-hot same-point proof for the
@@ -359,7 +389,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .params
             .precommitted_groups
             .iter()
-            .all(|group| group.descriptor.inner_ring_dimension == TestCfg::D),
+            .all(|group| group.descriptor.inner_commit_matrix.ring_dimension() == TestCfg::D),
         "precommitted groups must retain their native A dimension"
     );
     let expected_carrier = main_params.d_a().max(TestCfg::D);

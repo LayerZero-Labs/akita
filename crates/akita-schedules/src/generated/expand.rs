@@ -102,21 +102,6 @@ impl GeneratedSetupPrefixInput {
             ));
         }
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
-        let mut layout = CommittedGroupDescriptor {
-            group: PolynomialGroupLayout::singleton(prefix_num_vars),
-            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
-            num_live_ring_elements_per_claim,
-            num_positions_per_block,
-            num_live_blocks,
-            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
-            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
-            inner_ring_dimension: d,
-            outer_ring_dimension: d,
-            n_a: 1,
-            a_coeff_linf_bound: 1,
-            n_b: 1,
-            b_coeff_linf_bound: 1,
-        };
         let inner_decomp = DecompositionParams {
             log_basis: self.commitment.inner_commit_matrix.log_basis,
             ..policy.decomposition
@@ -141,7 +126,6 @@ impl GeneratedSetupPrefixInput {
                 log_basis_open
             ))
         };
-        layout.validate_root_geometry()?;
         if fold_shape != TensorChallengeShape::Flat {
             return Err(AkitaError::InvalidSetup(
                 "generated setup-prefix challenge shape mismatch".into(),
@@ -214,10 +198,23 @@ impl GeneratedSetupPrefixInput {
             b_bucket,
             d,
         )?;
-        layout.n_a = n_a;
-        layout.n_b = n_b;
-        layout.a_coeff_linf_bound = a_bucket;
-        layout.b_coeff_linf_bound = b_bucket;
+        let layout = CommittedGroupDescriptor {
+            version: CommittedGroupDescriptor::VERSION,
+            group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            encoding: akita_types::GroupSourceEncoding::Bounded {
+                coefficient_bits: policy.decomposition.field_bits(),
+            },
+            num_live_ring_elements_per_claim,
+            num_positions_per_block,
+            num_live_blocks,
+            log_basis_inner: self.commitment.inner_commit_matrix.log_basis,
+            num_digits_inner,
+            inner_commit_matrix,
+            log_basis_outer: self.commitment.outer_commit_matrix.log_basis,
+            num_digits_outer,
+            outer_commit_matrix,
+        };
+        layout.validate_root_geometry()?;
         let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             ring_challenge_cfg,
             fold_shape,
@@ -239,12 +236,9 @@ impl GeneratedSetupPrefixInput {
         )?;
         Ok(PrecommittedLevelParams {
             layout,
-            inner_commit_matrix,
-            outer_commit_matrix,
+            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
-            num_digits_inner,
-            num_digits_outer,
             num_digits_open: num_digits_open_val,
             num_digits_fold_one,
         })

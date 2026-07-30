@@ -263,6 +263,7 @@ pub fn validate_schedule_ring_dims(
         group.descriptor.validate_frozen_precommit(
             group
                 .commitment
+                .layout
                 .inner_commit_matrix
                 .sis_modulus_profile()
                 .field_bits(),

@@ -27,7 +27,7 @@ fn sample_schedule() -> FoldSchedule {
                     commitment: committed.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: committed.open_commit_matrix.clone(),
+                open_commit_matrix: committed.open_commit_matrix,
                 sparse_challenge_config: sparse,
                 witness_partition: WitnessPartition::Single,
             },

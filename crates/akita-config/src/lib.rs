@@ -714,8 +714,8 @@ mod precommit_tests {
             precommitted.num_live_blocks >= 8,
             "the frozen nv=16 precommit must remain distributable at a W8R2 root"
         );
-        assert_ne!(precommitted.n_a, 0);
-        assert_ne!(precommitted.n_b, 0);
+        assert_ne!(precommitted.inner_commit_matrix.output_rank(), 0);
+        assert_ne!(precommitted.outer_commit_matrix.output_rank(), 0);
     }
 
     #[test]

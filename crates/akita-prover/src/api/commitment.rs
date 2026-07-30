@@ -196,18 +196,11 @@ where
             dims.d_b()
         )));
     }
-    let d_required = params
-        .open_commit_matrix
-        .output_rank()
-        .checked_mul(params.open_commit_matrix.input_width())
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    let d_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_d())?;
-    if d_required > d_available {
-        return Err(AkitaError::InvalidSetup(format!(
-            "D-role commit params require {d_required} setup ring elements at d={}, but setup has {d_available}",
-            dims.d_d()
-        )));
-    }
+    // Commitment materialization uses only A and B. In particular, a
+    // standalone group extracted from an approved multi-group row may retain
+    // that row's shared D geometry, which is consumed only if the group later
+    // participates in the selected opening schedule. Charging D here would
+    // reject a setup that exactly fits the standalone commitment profile.
     Ok(())
 }
 
@@ -868,7 +861,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::DigitBlocks;
-    use akita_types::{SetupMatrixEnvelope, SisModulusProfileId};
+    use akita_types::{OpenCommitMatrixParams, SetupMatrixEnvelope, SisModulusProfileId};
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
@@ -964,6 +957,42 @@ mod tests {
     }
 
     #[test]
+    fn commit_level_params_do_not_charge_unused_shared_d_footprint() {
+        let expanded = AkitaProverSetup::<F>::generate_with_capacity(
+            5,
+            1,
+            D,
+            SetupMatrixEnvelope { max_setup_len: 8 },
+        )
+        .unwrap()
+        .expanded;
+        let mut params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q32Offset99,
+            D,
+            2,
+            1,
+            1,
+            1,
+            SparseChallengeConfig::pm1_only(1),
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        let d_key = params.open_commit_matrix.sis_table_key();
+        params.open_commit_matrix = OpenCommitMatrixParams::new_unchecked(
+            d_key.policy,
+            d_key.table_digest,
+            d_key.modulus_profile,
+            8,
+            8,
+            d_key.coeff_linf_bound,
+            D,
+        );
+
+        validate_commit_level_params::<F>(&params, &expanded)
+            .expect("standalone commitment only materializes A and B");
+    }
+
+    #[test]
     fn commit_b_input_len_rejects_overflow() {
         assert_eq!(checked_commit_b_input_len(3, 5).expect("fits"), 15);
         assert!(matches!(
@@ -1038,12 +1067,21 @@ mod tests {
             .expect("out-of-bound dense polynomial");
         let source = GroupSource::bounded(8);
 
-        validate_source_contract::<F, _>(&[within], source)
+        validate_source_contract::<F, _>(std::slice::from_ref(&within), source)
             .expect("8-bit coefficients satisfy the dense contract");
         assert!(matches!(
             validate_source_contract::<F, _>(&[above], source),
             Err(AkitaError::InvalidInput(_))
         ));
+
+        let downstream = GroupSource::registered(
+            akita_types::GroupSourceRegistration::new(*b"downstream/test\0", [9; 16]),
+            akita_types::GroupSourceEncoding::Bounded {
+                coefficient_bits: 8,
+            },
+        );
+        validate_source_contract::<F, _>(std::slice::from_ref(&within), downstream)
+            .expect("provider registration does not change the accepted profile");
     }
 
     #[test]

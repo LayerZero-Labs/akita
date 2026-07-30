@@ -127,6 +127,16 @@ fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
     assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
 }
 
+#[test]
+fn small_field_onehot_presets_use_the_profiled_k256_chunk_contract() {
+    assert_eq!(fp32::D64OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp32::D128OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp32::D256OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp64::D64OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp64::D128OneHot::onehot_chunk_size(), 256);
+    assert_eq!(fp64::D256OneHot::onehot_chunk_size(), 256);
+}
+
 #[cfg(feature = "schedules-default")]
 #[test]
 fn setup_envelope_scan_includes_multi_polynomial_precommitted_groups() {

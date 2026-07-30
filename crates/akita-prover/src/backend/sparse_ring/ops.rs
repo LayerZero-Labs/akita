@@ -55,9 +55,9 @@ where
                 "signed sparse-ring polynomial requires a bounded source encoding".to_string(),
             ));
         };
-        if source != GroupSource::bounded(coefficient_bits) || coefficient_bits < 1 {
+        if coefficient_bits < 1 {
             return Err(AkitaError::InvalidInput(
-                "signed sparse-ring polynomial requires the built-in bounded registration"
+                "signed sparse-ring polynomial requires a nonzero bounded coefficient width"
                     .to_string(),
             ));
         }

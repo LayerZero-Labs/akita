@@ -61,8 +61,8 @@ where
             root_dims.validate_a_carrier()?;
             middle_dims.validate_a_carrier()?;
             for descriptor in &key.precommitteds {
-                if descriptor.inner_ring_dimension != Root::D
-                    || descriptor.outer_ring_dimension != root_bd_ring_dim
+                if descriptor.inner_commit_matrix.ring_dimension() != Root::D
+                    || descriptor.outer_commit_matrix.ring_dimension() != root_bd_ring_dim
                 {
                     return Err(AkitaError::InvalidSetup(
                         "recursive transition precommit dimensions must match the root A/B band"
@@ -93,12 +93,7 @@ where
             )?;
             root.params.final_group.source =
                 GroupSource::from_commitment(&root.params.final_group.commitment);
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
@@ -181,7 +176,7 @@ where
                 )?;
             l1_step.params.witness.setup_prefix = Some(setup_prefix.clone());
             l1_step.params.incoming_setup_prefix = Some(setup_prefix);
-            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix.clone();
+            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix;
             let l1_layout = akita_planner::suffix_opening_layout(
                 l1_step.input_witness_len,
                 Some(natural_prefix_len),

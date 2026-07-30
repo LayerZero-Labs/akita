@@ -50,23 +50,22 @@ where
     }
 
     fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
-        let GroupSourceEncoding::SparseBinary { chunk_size } = source.encoding() else {
-            return Err(AkitaError::InvalidInput(
-                "one-hot polynomial requires a sparse-binary source encoding".to_string(),
-            ));
-        };
-        if source != GroupSource::one_hot(chunk_size) {
-            return Err(AkitaError::InvalidInput(
-                "one-hot polynomial requires the built-in one-hot registration".to_string(),
-            ));
+        match source.encoding() {
+            GroupSourceEncoding::Bounded { coefficient_bits } if coefficient_bits >= 1 => Ok(()),
+            GroupSourceEncoding::Bounded { .. } => Err(AkitaError::InvalidInput(
+                "one-hot polynomial requires a nonzero bounded coefficient width".to_string(),
+            )),
+            GroupSourceEncoding::SparseBinary { chunk_size } if self.onehot_k == chunk_size => {
+                Ok(())
+            }
+            GroupSourceEncoding::SparseBinary { chunk_size } => {
+                Err(AkitaError::InvalidInput(format!(
+                    "one-hot polynomial uses chunk size {}, but the source profile requires \
+                     {chunk_size}",
+                    self.onehot_k
+                )))
+            }
         }
-        if self.onehot_k != chunk_size {
-            return Err(AkitaError::InvalidInput(format!(
-                "one-hot polynomial uses chunk size {}, but the registration requires {chunk_size}",
-                self.onehot_k
-            )));
-        }
-        Ok(())
     }
 }
 

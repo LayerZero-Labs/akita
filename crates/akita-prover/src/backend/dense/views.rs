@@ -45,11 +45,6 @@ where
                 "dense polynomial requires a bounded source encoding".to_string(),
             ));
         };
-        if source != GroupSource::bounded(coefficient_bits) {
-            return Err(AkitaError::InvalidInput(
-                "dense polynomial requires the built-in bounded registration".to_string(),
-            ));
-        }
         let actual = self.dense_coefficient_bits();
         if actual > coefficient_bits {
             return Err(AkitaError::InvalidInput(format!(

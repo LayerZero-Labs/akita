@@ -6,8 +6,14 @@ fn multi_group_m_row_count_matches_canonical_layout() {
     let (lp, _) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let n_d = lp.open_commit_matrix.output_rank();
 
     assert_eq!(
@@ -21,8 +27,14 @@ fn multi_group_row_offsets_match_a_before_b_layout() {
     let (lp, batch) = sample_multi_group_root_params();
     let n_a_final = lp.inner_commit_matrix.output_rank();
     let n_b_final = lp.outer_commit_matrix.output_rank();
-    let n_a_pre = lp.precommitted_groups[0].inner_commit_matrix.output_rank();
-    let n_b_pre = lp.precommitted_groups[0].outer_commit_matrix.output_rank();
+    let n_a_pre = lp.precommitted_groups[0]
+        .layout
+        .inner_commit_matrix
+        .output_rank();
+    let n_b_pre = lp.precommitted_groups[0]
+        .layout
+        .outer_commit_matrix
+        .output_rank();
     let final_group = batch.root_final_group_index().expect("final group");
 
     assert_eq!(
@@ -63,8 +75,8 @@ fn multi_group_root_accepts_multi_chunk_witness_layout() {
 fn group_role_dims_use_group_a_b_and_level_shared_d() {
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),
@@ -73,7 +85,6 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
         outer.coeff_linf_bound(),
         32,
     );
-    precommitted.layout.outer_ring_dimension = 32;
     let dims = lp
         .group_role_dims(&batch, 0)
         .expect("precommitted group role dimensions");
@@ -97,7 +108,11 @@ fn group_role_dims_use_group_a_b_and_level_shared_d() {
 fn precommitted_params_reject_frozen_matrix_dimension_mismatch() {
     let (mut lp, _) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    precommitted.layout.outer_ring_dimension /= 2;
+    precommitted
+        .layout
+        .outer_commit_matrix
+        .sis_table_key
+        .ring_dimension /= 2;
     let err = precommitted
         .validate()
         .expect_err("frozen B dimension must match the serialized B matrix");
@@ -110,8 +125,8 @@ fn relation_witness_carrier_is_independent_of_final_group_order() {
 
     let (mut lp, batch) = sample_multi_group_root_params();
     let precommitted = &mut lp.precommitted_groups[0];
-    let inner = &precommitted.inner_commit_matrix;
-    precommitted.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
+    let inner = &precommitted.layout.inner_commit_matrix;
+    precommitted.layout.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
         inner.sis_table_key().table_digest,
         inner.sis_modulus_profile(),
@@ -120,9 +135,8 @@ fn relation_witness_carrier_is_independent_of_final_group_order() {
         inner.coeff_linf_bound(),
         128,
     );
-    precommitted.layout.inner_ring_dimension = 128;
-    let outer = &precommitted.outer_commit_matrix;
-    precommitted.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+    let outer = &precommitted.layout.outer_commit_matrix;
+    precommitted.layout.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         outer.security_policy(),
         outer.sis_table_key().table_digest,
         outer.sis_modulus_profile(),

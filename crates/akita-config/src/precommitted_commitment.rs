@@ -133,7 +133,8 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
                     .iter()
                     .enumerate()
                     .find(|(_, group)| {
-                        group.descriptor.group == *key && group.descriptor.source == source
+                        group.descriptor.group == *key
+                            && group.descriptor.encoding == source.encoding()
                     })
             else {
                 continue;
@@ -162,13 +163,13 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
             params.log_basis_inner = group.layout.log_basis_inner;
             params.log_basis_outer = group.layout.log_basis_outer;
             params.log_basis_open = group.log_basis_open;
-            params.inner_commit_matrix = group.inner_commit_matrix.clone();
-            params.outer_commit_matrix = group.outer_commit_matrix.clone();
+            params.inner_commit_matrix = group.layout.inner_commit_matrix;
+            params.outer_commit_matrix = group.layout.outer_commit_matrix;
             params.num_live_ring_elements_per_claim = group.layout.num_live_ring_elements_per_claim;
             params.num_positions_per_block = group.layout.num_positions_per_block;
             params.num_live_blocks = group.layout.num_live_blocks;
-            params.num_digits_inner = group.num_digits_inner;
-            params.num_digits_outer = group.num_digits_outer;
+            params.num_digits_inner = group.layout.num_digits_inner;
+            params.num_digits_outer = group.layout.num_digits_outer;
             params.num_digits_open = group.num_digits_open;
             params.num_digits_fold_one = group.num_digits_fold_one;
             params.precommitted_groups.clear();

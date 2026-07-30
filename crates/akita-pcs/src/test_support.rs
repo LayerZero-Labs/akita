@@ -310,7 +310,7 @@ where
             for fold in &suffix.folds {
                 recursive_folds.push(RecursiveFoldStep {
                     params: RecursiveFoldParams {
-                        open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                        open_commit_matrix: fold.params.open_commit_matrix,
                         sparse_challenge_config: fold.params.fold_challenge_config,
                         witness: fold.params.clone(),
                         incoming_setup_prefix: None,
@@ -498,12 +498,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 b_ring_dim,
                 d_ring_dim,
             )?;
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
 
             let field_bits = Env::decomposition().field_bits();
             let opening_layout = OpeningClaimsLayout::new(num_vars, num_polynomials)?;
@@ -784,7 +779,7 @@ fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldSt
     };
     RecursiveFoldStep {
         params: RecursiveFoldParams {
-            open_commit_matrix: fold.params.open_commit_matrix.clone(),
+            open_commit_matrix: fold.params.open_commit_matrix,
             sparse_challenge_config: fold.params.fold_challenge_config,
             witness: fold.params.clone(),
             incoming_setup_prefix: None,
@@ -983,12 +978,7 @@ where
                 root_dims.d_b(),
                 root_dims.d_d(),
             )?;
-            root.params.open_commit_matrix = root
-                .params
-                .final_group
-                .commitment
-                .open_commit_matrix
-                .clone();
+            root.params.open_commit_matrix = root.params.final_group.commitment.open_commit_matrix;
             let root_out = outgoing_witness_field_len(
                 field_bits,
                 &root.params.final_group.commitment,
@@ -1022,7 +1012,7 @@ where
                 middle_dims.d_b(),
                 middle_dims.d_d(),
             )?;
-            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix.clone();
+            l1_step.params.open_commit_matrix = l1_step.params.witness.open_commit_matrix;
             let l1_out = outgoing_witness_field_len(
                 field_bits,
                 &l1_step.params.witness,

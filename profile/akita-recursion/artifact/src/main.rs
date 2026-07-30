@@ -186,7 +186,7 @@ fn verify_proof(
     proof: &akita_types::AkitaBatchedProof<F, Challenge>,
     verifier_setup: &akita_types::AkitaVerifierSetup<F>,
     transcript: &mut AkitaTranscript<F>,
-    claims: OpeningClaims<'_, Claim, &akita_types::Commitment<F>>,
+    claims: OpeningClaims<'_, Claim, &akita_types::CommittedGroup<F>>,
 ) -> Result<(), String> {
     batched_verify::<Cfg, _>(
         proof,
@@ -315,12 +315,9 @@ fn run() -> Result<(), String> {
 
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
-    let prove_group = PolynomialGroupClaims::new(
-        opening_point.clone(),
-        openings.to_vec(),
-        commitment.clone(),
-    )
-    .map_err(|err| format!("invalid prover opening group: {err}"))?;
+    let prove_group =
+        PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
+            .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = ProverOpeningData::new(
         OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
@@ -349,11 +346,11 @@ fn run() -> Result<(), String> {
         &verifier_setup,
         &mut verifier_transcript,
         OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-                opening_point.clone(),
-                openings.to_vec(),
-                &commitment,
-            )
-            .map_err(|err| format!("invalid verifier opening group: {err}"))?])
+            opening_point.clone(),
+            openings.to_vec(),
+            &commitment,
+        )
+        .map_err(|err| format!("invalid verifier opening group: {err}"))?])
         .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;

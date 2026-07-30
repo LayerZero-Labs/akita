@@ -329,15 +329,15 @@ fn root_runtime_matrix_field_elements_for_opening_batch(
 
     for group in &lp.precommitted_groups {
         let a_coeff_len = matrix_coefficient_len(
-            group.inner_commit_matrix.output_rank(),
-            group.inner_commit_matrix.input_width(),
-            group.inner_commit_matrix.ring_dimension(),
+            group.layout.inner_commit_matrix.output_rank(),
+            group.layout.inner_commit_matrix.input_width(),
+            group.layout.inner_commit_matrix.ring_dimension(),
             "multi-group A",
         )?;
         let b_coeff_len = matrix_coefficient_len(
-            group.outer_commit_matrix.output_rank(),
-            group.outer_commit_matrix.input_width(),
-            group.outer_commit_matrix.ring_dimension(),
+            group.layout.outer_commit_matrix.output_rank(),
+            group.layout.outer_commit_matrix.input_width(),
+            group.layout.outer_commit_matrix.ring_dimension(),
             "multi-group B",
         )?;
         max_a_coeff_len = max_a_coeff_len.max(a_coeff_len);

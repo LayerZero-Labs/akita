@@ -143,12 +143,9 @@ fn precommitted_group(
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
         layout: CommittedGroupDescriptor::from_params(group, params),
-        inner_commit_matrix: params.inner_commit_matrix.clone(),
-        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
-        num_digits_inner: params.num_digits_inner,
-        num_digits_outer: params.num_digits_outer,
         num_digits_open: params.num_digits_open,
         num_digits_fold_one: params.num_digits_fold_one,
     }

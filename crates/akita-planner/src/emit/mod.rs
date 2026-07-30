@@ -93,7 +93,7 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        d_setup: group.inner_commit_matrix.ring_dimension() as u32,
+        d_setup: group.layout.inner_commit_matrix.ring_dimension() as u32,
         commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
                 live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
@@ -101,11 +101,11 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
                 live_blocks: group.layout.num_live_blocks as u64,
             },
             inner_commit_matrix: GeneratedInnerCommitMatrix {
-                ring_dimension: group.inner_commit_matrix.ring_dimension() as u32,
+                ring_dimension: group.layout.inner_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_inner,
             },
             outer_commit_matrix: GeneratedOuterCommitMatrix {
-                ring_dimension: group.outer_commit_matrix.ring_dimension() as u32,
+                ring_dimension: group.layout.outer_commit_matrix.ring_dimension() as u32,
                 log_basis: group.layout.log_basis_outer,
                 slice_count: 1,
             },
@@ -137,11 +137,13 @@ fn generated_entry(
                     live_blocks: group.commitment.layout.num_live_blocks as u64,
                 },
                 inner_commit_matrix: GeneratedInnerCommitMatrix {
-                    ring_dimension: group.commitment.inner_commit_matrix.ring_dimension() as u32,
+                    ring_dimension: group.commitment.layout.inner_commit_matrix.ring_dimension()
+                        as u32,
                     log_basis: group.commitment.layout.log_basis_inner,
                 },
                 outer_commit_matrix: GeneratedOuterCommitMatrix {
-                    ring_dimension: group.commitment.outer_commit_matrix.ring_dimension() as u32,
+                    ring_dimension: group.commitment.layout.outer_commit_matrix.ring_dimension()
+                        as u32,
                     log_basis: group.commitment.layout.log_basis_outer,
                     slice_count: 1,
                 },
@@ -222,20 +224,57 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
 
 fn emit_precommitted_group_key(layout: &CommittedGroupDescriptor) -> String {
     format!(
-        "CommittedGroupDescriptor {{ group: {}, source: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
+        "CommittedGroupDescriptor {{ version: CommittedGroupDescriptor::VERSION, group: {}, encoding: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, num_digits_inner: {}, inner_commit_matrix: {}, log_basis_outer: {}, num_digits_outer: {}, outer_commit_matrix: {} }}",
         emit_key(layout.group),
-        emit_group_source(layout.source),
+        emit_group_source_encoding(layout.encoding),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
         layout.log_basis_inner,
+        layout.num_digits_inner,
+        emit_profile_matrix(
+            "InnerCommitMatrixParams",
+            layout.inner_commit_matrix.output_rank(),
+            layout.inner_commit_matrix.input_width(),
+            layout.inner_commit_matrix.sis_table_key(),
+        ),
         layout.log_basis_outer,
-        layout.inner_ring_dimension,
-        layout.outer_ring_dimension,
-        layout.n_a,
-        layout.a_coeff_linf_bound,
-        layout.n_b,
-        layout.b_coeff_linf_bound,
+        layout.num_digits_outer,
+        emit_profile_matrix(
+            "OuterCommitMatrixParams",
+            layout.outer_commit_matrix.output_rank(),
+            layout.outer_commit_matrix.input_width(),
+            layout.outer_commit_matrix.sis_table_key(),
+        ),
+    )
+}
+
+fn emit_group_source_encoding(encoding: GroupSourceEncoding) -> String {
+    match encoding {
+        GroupSourceEncoding::Bounded { coefficient_bits } => {
+            format!("GroupSourceEncoding::Bounded {{ coefficient_bits: {coefficient_bits} }}")
+        }
+        GroupSourceEncoding::SparseBinary { chunk_size } => {
+            format!("GroupSourceEncoding::SparseBinary {{ chunk_size: {chunk_size} }}")
+        }
+    }
+}
+
+fn emit_profile_matrix(
+    type_name: &str,
+    output_rank: usize,
+    input_width: usize,
+    key: akita_types::SisTableKey,
+) -> String {
+    format!(
+        "{type_name}::new_unchecked(SisSecurityPolicyId::{:?}, SisTableDigest({:?}), SisModulusProfileId::{:?}, {}, {}, {}, {})",
+        key.policy,
+        key.table_digest.0,
+        key.modulus_profile,
+        output_rank,
+        input_width,
+        key.coeff_linf_bound,
+        key.ring_dimension,
     )
 }
 
@@ -623,7 +662,8 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
          GroupSource, GroupSourceEncoding, GroupSourceRegistration, PlannerCostModelId, \
-         PolynomialGroupLayout, CommittedGroupDescriptor, \
+         PolynomialGroupLayout, CommittedGroupDescriptor, InnerCommitMatrixParams, \
+         OuterCommitMatrixParams, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )

@@ -72,7 +72,7 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
                     commitment: root.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: root.open_commit_matrix.clone(),
+                open_commit_matrix: root.open_commit_matrix,
                 sparse_challenge_config: root.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },

@@ -73,6 +73,7 @@ fn generated_entry_rejects_root_source_policy_mismatch() {
     entry.root.final_group.source = akita_types::GroupSource::one_hot(256);
     let key = AkitaScheduleLookupKey {
         final_group: entry.root.final_group.layout,
+        final_source: entry.root.final_group.source,
         precommitteds: entry
             .root
             .precommitted_groups
@@ -134,9 +135,13 @@ fn assert_table_hit(
     if keys.is_empty() {
         return;
     }
-    let hit = keys
-        .iter()
-        .any(|&key| table_entry(*catalog, &AkitaScheduleLookupKey::single(key)).is_some());
+    let hit = keys.iter().any(|&key| {
+        table_entry(
+            *catalog,
+            &AkitaScheduleLookupKey::single(key, catalog.entries[0].root.final_group.source),
+        )
+        .is_some()
+    });
     assert!(
         hit,
         "family {module_name} must have at least one generated-table key hit (non-vacuous catalog guard)"
@@ -431,7 +436,8 @@ fn table_backed_expanded(
     catalog: akita_schedules::GeneratedScheduleTable,
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, akita_field::AkitaError> {
-    let lookup_key = AkitaScheduleLookupKey::single(key);
+    let lookup_key =
+        AkitaScheduleLookupKey::single(key, catalog.entries[0].root.final_group.source);
     if let Some(entry) = table_entry(catalog, &lookup_key) {
         return schedule_from_entry(
             entry,

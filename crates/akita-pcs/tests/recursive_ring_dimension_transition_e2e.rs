@@ -130,6 +130,7 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .inner_commit_matrix
             .ring_dimension(),
         128,
@@ -138,6 +139,7 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     assert_eq!(
         prefix
             .commitment_params
+            .layout
             .outer_commit_matrix
             .ring_dimension(),
         64,

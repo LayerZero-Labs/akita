@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_support::EnvelopeFinalGroupConfig;
-use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 type DenseGroupCfg = EnvelopeFinalGroupConfig<Cfg, Cfg>;
 type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
@@ -117,7 +117,9 @@ fn dense_multi_group_root_round_trips() {
     .expect("dense multi-group verification");
 
     let mut wrong_source_commitment = pre_commitment.clone();
-    wrong_source_commitment.descriptor.source = GroupSource::bounded(32);
+    wrong_source_commitment.descriptor.encoding = akita_types::GroupSourceEncoding::Bounded {
+        coefficient_bits: 32,
+    };
     let wrong_source_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(
             pre_point.clone(),
@@ -140,11 +142,20 @@ fn dense_multi_group_root_round_trips() {
     .expect_err("changed precommitted source descriptor must reject");
 
     let mut wrong_final_descriptor = final_commitment.clone();
-    wrong_final_descriptor.descriptor.n_b = wrong_final_descriptor
-        .descriptor
-        .n_b
-        .checked_add(1)
-        .expect("test n_b increment");
+    let outer = wrong_final_descriptor.descriptor.outer_commit_matrix;
+    wrong_final_descriptor.descriptor.outer_commit_matrix =
+        akita_types::OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer
+                .output_rank()
+                .checked_add(1)
+                .expect("test n_b increment"),
+            outer.input_width(),
+            outer.coeff_linf_bound(),
+            outer.ring_dimension(),
+        );
     let wrong_final_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
             .expect("precommitted verifier claim"),

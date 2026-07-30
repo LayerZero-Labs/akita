@@ -117,7 +117,7 @@ where
     for (group_index, group) in root_step.params.precommitted_groups.iter().enumerate() {
         validate_source_contract::<Cfg::Field, &P>(
             claims.group_polys(group_index)?,
-            group.commitment.layout.source,
+            group.commitment.source,
         )?;
     }
     let final_group_index = root_step.params.precommitted_groups.len();

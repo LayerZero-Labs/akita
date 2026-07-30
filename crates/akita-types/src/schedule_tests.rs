@@ -110,12 +110,9 @@ fn precommitted_group_params(
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
         layout: CommittedGroupDescriptor::from_params(group, params),
-        inner_commit_matrix: params.inner_commit_matrix.clone(),
-        outer_commit_matrix: params.outer_commit_matrix.clone(),
+        source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
-        num_digits_inner: params.num_digits_inner,
-        num_digits_outer: params.num_digits_outer,
         num_digits_open: params.num_digits_open,
         num_digits_fold_one: params.num_digits_fold_one,
     }
@@ -149,7 +146,7 @@ fn recursive_schedule(
                     commitment: predecessor.clone(),
                 },
                 precommitted_groups: Vec::new(),
-                open_commit_matrix: predecessor.open_commit_matrix.clone(),
+                open_commit_matrix: predecessor.open_commit_matrix,
                 sparse_challenge_config: predecessor.fold_challenge_config,
                 witness_partition: WitnessPartition::Single,
             },
@@ -158,7 +155,7 @@ fn recursive_schedule(
         },
         recursive_folds: vec![RecursiveFoldStep {
             params: RecursiveFoldParams {
-                open_commit_matrix: successor.open_commit_matrix.clone(),
+                open_commit_matrix: successor.open_commit_matrix,
                 sparse_challenge_config: successor.fold_challenge_config,
                 incoming_setup_prefix,
                 witness_partition: WitnessPartition::Single,
@@ -398,7 +395,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     let prefix =
         crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params);
     schedule.recursive_folds[0].params.witness = consumer.clone();
-    schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix.clone();
+    schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
     schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());
     schedule.recursive_folds[0].params.witness.setup_prefix = Some(prefix);
 
@@ -421,7 +418,7 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
     )
     .with_decomp(4, 32, 2, 2, 2)
     .expect("committed params");
-    let expected_inner = committed.inner_commit_matrix.clone();
+    let expected_inner = committed.inner_commit_matrix;
 
     let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
         .expect("terminal projection");
@@ -847,20 +844,39 @@ fn validate_rejects_zero_dimensions() {
 }
 
 fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
+    let num_live_blocks = 1usize << (num_vars - 10);
+    let inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+        crate::SisTableDigest::CURRENT,
+        crate::SisModulusProfileId::Q128OffsetA7F7,
+        3,
+        16,
+        2,
+        64,
+    );
     CommittedGroupDescriptor {
+        version: CommittedGroupDescriptor::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
-        source: GroupSource::bounded(128),
+        encoding: GroupSourceEncoding::Bounded {
+            coefficient_bits: 128,
+        },
         num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
         num_positions_per_block: 16,
-        num_live_blocks: 1usize << (num_vars - 10),
+        num_live_blocks,
         log_basis_inner: 1,
+        num_digits_inner: 1,
+        inner_commit_matrix,
         log_basis_outer: 2,
-        inner_ring_dimension: 64,
-        outer_ring_dimension: 64,
-        n_a: 3,
-        a_coeff_linf_bound: 1,
-        n_b: 4,
-        b_coeff_linf_bound: 1,
+        num_digits_outer: 1,
+        outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::SisTableDigest::CURRENT,
+            crate::SisModulusProfileId::Q128OffsetA7F7,
+            4,
+            3 * num_live_blocks,
+            2,
+            64,
+        ),
     }
 }
 
@@ -923,20 +939,19 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
         final_source: GroupSource::bounded(128),
-        precommitteds: vec![CommittedGroupDescriptor {
-            group: PolynomialGroupLayout::new(10, 2),
-            source: GroupSource::bounded(128),
-            num_live_ring_elements_per_claim: 16,
-            num_positions_per_block: 4,
-            num_live_blocks: 4,
-            log_basis_inner: 1,
-            log_basis_outer: 2,
-            inner_ring_dimension: 64,
-            outer_ring_dimension: 64,
-            n_a: 3,
-            a_coeff_linf_bound: 1,
-            n_b: 4,
-            b_coeff_linf_bound: 1,
+        precommitteds: vec![{
+            let mut descriptor = precommitted_descriptor(10);
+            descriptor.group = PolynomialGroupLayout::new(10, 2);
+            descriptor.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                crate::SisTableDigest::CURRENT,
+                crate::SisModulusProfileId::Q128OffsetA7F7,
+                4,
+                3 * descriptor.num_live_blocks * 2,
+                2,
+                64,
+            );
+            descriptor
         }],
     };
 
@@ -952,9 +967,11 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 #[test]
 fn group_batch_key_identity_binds_ordered_source_contracts() {
     let mut first = precommitted_descriptor(12);
-    first.source = GroupSource::one_hot(16);
+    first.encoding = GroupSourceEncoding::SparseBinary { chunk_size: 16 };
     let mut second = precommitted_descriptor(14);
-    second.source = GroupSource::bounded(32);
+    second.encoding = GroupSourceEncoding::Bounded {
+        coefficient_bits: 32,
+    };
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
         final_source: GroupSource::one_hot(256),
@@ -970,7 +987,8 @@ fn group_batch_key_identity_binds_ordered_source_contracts() {
     );
 
     let mut changed_pre_source = key.clone();
-    changed_pre_source.precommitteds[0].source = GroupSource::one_hot(256);
+    changed_pre_source.precommitteds[0].encoding =
+        GroupSourceEncoding::SparseBinary { chunk_size: 256 };
     assert_ne!(
         key.canonical_descriptor_bytes(),
         changed_pre_source.canonical_descriptor_bytes()
@@ -985,22 +1003,31 @@ fn group_batch_key_identity_binds_ordered_source_contracts() {
 }
 
 #[test]
+fn group_batch_key_identity_ignores_provider_registration() {
+    let built_in =
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 1), GroupSource::bounded(32));
+    let downstream = AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::new(16, 1),
+        GroupSource::registered(
+            GroupSourceRegistration::new(*b"downstream/test\0", [7; 16]),
+            GroupSourceEncoding::Bounded {
+                coefficient_bits: 32,
+            },
+        ),
+    );
+
+    assert_eq!(
+        built_in.canonical_descriptor_bytes(),
+        downstream.canonical_descriptor_bytes(),
+        "provider registration is application identity, not protocol identity"
+    );
+}
+
+#[test]
 fn validate_frozen_precommit_rejects_geometry_mismatch() {
-    let layout = CommittedGroupDescriptor {
-        group: PolynomialGroupLayout::new(20, 1),
-        source: GroupSource::bounded(128),
-        num_live_ring_elements_per_claim: 1,
-        num_positions_per_block: 16,
-        num_live_blocks: 1,
-        log_basis_inner: 1,
-        log_basis_outer: 2,
-        inner_ring_dimension: 64,
-        outer_ring_dimension: 64,
-        n_a: 3,
-        a_coeff_linf_bound: 1,
-        n_b: 4,
-        b_coeff_linf_bound: 1,
-    };
+    let mut layout = precommitted_descriptor(20);
+    layout.num_live_ring_elements_per_claim = 1;
+    layout.num_live_blocks = 1;
     let err = layout
         .validate_frozen_precommit(128)
         .expect_err("geometry must match num_vars");

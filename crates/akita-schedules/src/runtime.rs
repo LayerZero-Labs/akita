@@ -334,7 +334,7 @@ pub(crate) fn materialize_candidate_schedule(
                         commitment,
                     })
                     .collect(),
-                open_commit_matrix: root.params.open_commit_matrix.clone(),
+                open_commit_matrix: root.params.open_commit_matrix,
                 sparse_challenge_config: root.params.fold_challenge_config,
                 witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
             },
@@ -345,7 +345,7 @@ pub(crate) fn materialize_candidate_schedule(
             .into_iter()
             .map(|fold| RecursiveFoldStep {
                 params: RecursiveFoldParams {
-                    open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                    open_commit_matrix: fold.params.open_commit_matrix,
                     sparse_challenge_config: fold.params.fold_challenge_config,
                     incoming_setup_prefix: fold.params.setup_prefix.clone(),
                     witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
@@ -507,9 +507,9 @@ fn grouped_setup_prefix_next_witness_len(
             group.layout.num_live_blocks,
             num_chunks,
             group.layout.num_positions_per_block,
-            group.inner_commit_matrix.output_rank(),
-            group.num_digits_inner,
-            group.num_digits_outer,
+            group.layout.inner_commit_matrix.output_rank(),
+            group.layout.num_digits_inner,
+            group.layout.num_digits_outer,
             group.num_digits_open,
             group.num_digits_fold_one,
         )?;

@@ -174,6 +174,7 @@ fn setup_prefix_fold_geometry<const D: usize>(
     geometry.validate(
         slot.id
             .commitment_params
+            .layout
             .inner_commit_matrix
             .sis_modulus_profile()
             .field_bits(),

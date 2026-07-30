@@ -171,7 +171,7 @@ impl CommittedGroupParams {
         fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
-            source: crate::GroupSource::bounded(128),
+            source: crate::GroupSource::bounded(sis_modulus_profile.field_bits()),
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -959,7 +959,7 @@ impl CommittedGroupParams {
     #[must_use]
     pub fn relation_witness_carrier_ring_dimension(&self) -> usize {
         self.precommitted_group_iter()
-            .map(|group| group.inner_commit_matrix.ring_dimension())
+            .map(|group| group.layout.inner_commit_matrix.ring_dimension())
             .fold(self.d_a(), usize::max)
     }
 
@@ -994,7 +994,7 @@ impl CommittedGroupParams {
             return Ok(self.outer_commit_matrix.output_rank());
         }
         self.precommitted_group_params(group_index)
-            .map(|group| group.outer_commit_matrix.output_rank())
+            .map(|group| group.layout.outer_commit_matrix.output_rank())
             .ok_or(AkitaError::InvalidProof)
     }
 
@@ -1034,10 +1034,10 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.inner_commit_matrix.output_rank())
+                .checked_add(group.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             rows = rows
-                .checked_add(group.outer_commit_matrix.output_rank())
+                .checked_add(group.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         rows.checked_add(self.open_commit_matrix.output_rank())
@@ -1075,10 +1075,10 @@ impl CommittedGroupParams {
                 .checked_add(1)
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.inner_commit_matrix.output_rank())
+                .checked_add(prior.layout.inner_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
             start = start
-                .checked_add(prior.outer_commit_matrix.output_rank())
+                .checked_add(prior.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
         start
@@ -1108,6 +1108,7 @@ impl CommittedGroupParams {
             Ok(self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
+                .layout
                 .inner_commit_matrix
                 .output_rank())
         }
@@ -1124,6 +1125,7 @@ impl CommittedGroupParams {
             Ok(self
                 .precommitted_group_params(group_index)
                 .ok_or(AkitaError::InvalidProof)?
+                .layout
                 .outer_commit_matrix
                 .output_rank())
         }

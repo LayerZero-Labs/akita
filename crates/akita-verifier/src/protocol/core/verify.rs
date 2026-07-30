@@ -260,8 +260,9 @@ where
             .validate_frozen_precommit(Cfg::decomposition().field_bits())
             .map_err(|_| AkitaError::InvalidProof)?;
         let expected_coeffs = descriptor
-            .n_b
-            .checked_mul(descriptor.outer_ring_dimension)
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
             .ok_or(AkitaError::InvalidProof)?;
         if committed.commitment().rows().coeff_len() != expected_coeffs {
             return Err(AkitaError::InvalidProof);
@@ -269,7 +270,7 @@ where
     }
     let schedule_key = AkitaScheduleLookupKey {
         final_group: final_descriptor.group,
-        final_source: final_descriptor.source,
+        final_source: akita_types::GroupSource::from_encoding(final_descriptor.encoding),
         precommitteds: precommitteds
             .iter()
             .map(|group| *group.commitment().descriptor())

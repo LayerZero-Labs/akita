@@ -802,12 +802,9 @@ mod tests {
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
-            inner_commit_matrix: precommit_lp.inner_commit_matrix.clone(),
-            outer_commit_matrix: precommit_lp.outer_commit_matrix.clone(),
+            source: precommit_lp.source,
             log_basis_open: precommit_lp.log_basis_open,
             fold_challenge_config: precommit_lp.fold_challenge_config,
-            num_digits_inner: precommit_lp.num_digits_inner,
-            num_digits_outer: precommit_lp.num_digits_outer,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold_one: precommit_lp.num_digits_fold_one,
         };

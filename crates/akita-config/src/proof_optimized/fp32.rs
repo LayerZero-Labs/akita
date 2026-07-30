@@ -47,7 +47,8 @@ impl_proof_optimized_preset!(
     akita_types::SisModulusProfileId::Q32Offset99,
     64,
     32,
-    1
+    1,
+    256
 );
 impl_proof_optimized_preset!(
     D128Dense,
@@ -66,6 +67,7 @@ impl_proof_optimized_preset!(
     128,
     32,
     1,
+    256,
     schedules = (
         "schedules-fp32-d128-onehot",
         "fp32_d128_onehot",
@@ -89,6 +91,7 @@ impl_proof_optimized_preset!(
     256,
     32,
     1,
+    256,
     schedules = (
         "schedules-fp32-d256-onehot",
         "fp32_d256_onehot",

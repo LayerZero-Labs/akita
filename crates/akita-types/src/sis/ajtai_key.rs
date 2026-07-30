@@ -74,6 +74,16 @@ impl SisMatrixRole {
             Self::Open => "Open",
         }
     }
+
+    /// Parse the stable wire/catalog tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Inner),
+            2 => Some(Self::Outer),
+            3 => Some(Self::Open),
+            _ => None,
+        }
+    }
 }
 
 /// Policy identity used by SIS sizing and generated artifacts.
@@ -96,6 +106,14 @@ impl SisSecurityPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Quantum128BitADPS16 => "Quantum128BitADPS16",
+        }
+    }
+
+    /// Parse the stable wire/catalog tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Quantum128BitADPS16),
+            _ => None,
         }
     }
 }
@@ -133,6 +151,16 @@ impl SisModulusProfileId {
             Self::Q32Offset99 => 1,
             Self::Q64Offset59 => 2,
             Self::Q128OffsetA7F7 => 3,
+        }
+    }
+
+    /// Parse the stable serialized tag.
+    pub const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            1 => Some(Self::Q32Offset99),
+            2 => Some(Self::Q64Offset59),
+            3 => Some(Self::Q128OffsetA7F7),
+            _ => None,
         }
     }
 
@@ -480,7 +508,7 @@ fn min_rank_commit_matrix_fields(
 macro_rules! define_commit_matrix_params {
     ($name:ident, $role:expr, $description:literal) => {
         #[doc = $description]
-        #[derive(Debug, Clone, PartialEq, Eq)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name {
             pub(crate) output_rank: usize,
             pub(crate) input_width: usize,
@@ -528,7 +556,7 @@ macro_rules! define_commit_matrix_params {
             }
 
             #[allow(clippy::too_many_arguments)]
-            pub fn new_unchecked(
+            pub const fn new_unchecked(
                 policy: SisSecurityPolicyId,
                 table_digest: SisTableDigest,
                 sis_modulus_profile: SisModulusProfileId,

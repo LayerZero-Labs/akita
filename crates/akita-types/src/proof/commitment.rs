@@ -1,11 +1,25 @@
 //! Protocol commitment/opening wrapper types.
 
 use crate::proof::{RingVec, MAX_SETUP_MATRIX_FIELD_ELEMENTS};
+use crate::sis::{
+    InnerCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisModulusProfileId,
+    SisSecurityPolicyId, SisTableDigest,
+};
 use crate::transcript::AppendToTranscript;
 use crate::{
     detect_field_modulus, CommittedGroupDescriptor, GroupSource, GroupSourceEncoding,
     GroupSourceRegistration, PolynomialGroupLayout,
 };
+
+type MatrixFields = (
+    SisSecurityPolicyId,
+    SisTableDigest,
+    SisModulusProfileId,
+    usize,
+    usize,
+    u128,
+    usize,
+);
 use akita_algebra::ring::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_serialization::{
@@ -278,8 +292,9 @@ impl<F: FieldCore + CanonicalField + Valid> Valid for CommittedGroup<F> {
         self.commitment.check()?;
         let expected_coeffs = self
             .descriptor
-            .n_b
-            .checked_mul(self.descriptor.outer_ring_dimension)
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(self.descriptor.outer_commit_matrix.ring_dimension())
             .ok_or_else(|| {
                 SerializationError::InvalidData(
                     "committed-group coefficient count overflow".to_string(),
@@ -312,11 +327,24 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
 
         self.check()?;
         let descriptor = &self.descriptor;
+        descriptor
+            .version
+            .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, descriptor.group.num_vars())?;
         write_usize(&mut writer, descriptor.group.num_polynomials())?;
-        descriptor
-            .source
-            .serialize_with_mode(&mut writer, Compress::No)?;
+        let (encoding_tag, encoding_value) = match descriptor.encoding {
+            GroupSourceEncoding::Bounded { coefficient_bits } => (0u8, u64::from(coefficient_bits)),
+            GroupSourceEncoding::SparseBinary { chunk_size } => (
+                1u8,
+                u64::try_from(chunk_size).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "sparse-binary chunk size exceeds u64".to_string(),
+                    )
+                })?,
+            ),
+        };
+        encoding_tag.serialize_with_mode(&mut writer, Compress::No)?;
+        encoding_value.serialize_with_mode(&mut writer, Compress::No)?;
         for value in [
             descriptor.num_live_ring_elements_per_claim,
             descriptor.num_positions_per_block,
@@ -327,28 +355,65 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
         descriptor
             .log_basis_inner
             .serialize_with_mode(&mut writer, Compress::No)?;
-        descriptor
-            .log_basis_outer
-            .serialize_with_mode(&mut writer, Compress::No)?;
-        for value in [
-            descriptor.inner_ring_dimension,
-            descriptor.outer_ring_dimension,
-            descriptor.n_a,
+        write_usize(&mut writer, descriptor.num_digits_inner)?;
+        for matrix in [
+            descriptor.inner_commit_matrix.sis_table_key(),
+            descriptor.outer_commit_matrix.sis_table_key(),
         ] {
-            write_usize(&mut writer, value)?;
+            matrix
+                .modulus_profile
+                .tag()
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            matrix
+                .policy
+                .tag()
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            matrix
+                .role
+                .tag()
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            writer.write_all(&matrix.table_digest.0)?;
+            matrix
+                .ring_dimension
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            let params = if matrix.role == SisMatrixRole::Inner {
+                (
+                    descriptor.inner_commit_matrix.output_rank(),
+                    descriptor.inner_commit_matrix.input_width(),
+                )
+            } else {
+                (
+                    descriptor.outer_commit_matrix.output_rank(),
+                    descriptor.outer_commit_matrix.input_width(),
+                )
+            };
+            write_usize(&mut writer, params.0)?;
+            write_usize(&mut writer, params.1)?;
+            matrix
+                .coeff_linf_bound
+                .serialize_with_mode(&mut writer, Compress::No)?;
+            if matrix.role == SisMatrixRole::Inner {
+                descriptor
+                    .log_basis_outer
+                    .serialize_with_mode(&mut writer, Compress::No)?;
+                write_usize(&mut writer, descriptor.num_digits_outer)?;
+            }
         }
-        descriptor
-            .a_coeff_linf_bound
-            .serialize_with_mode(&mut writer, Compress::No)?;
-        write_usize(&mut writer, descriptor.n_b)?;
-        descriptor
-            .b_coeff_linf_bound
-            .serialize_with_mode(&mut writer, Compress::No)?;
         self.commitment.serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        112 + GroupSource::SERIALIZED_SIZE + self.commitment.serialized_size(compress)
+        const MATRIX_SIZE: usize = 1 + 1 + 1 + 32 + 4 + 8 + 8 + 16;
+        1 + 16
+            + 9
+            + 24
+            + 4
+            + 8
+            + MATRIX_SIZE
+            + 4
+            + 8
+            + MATRIX_SIZE
+            + self.commitment.serialized_size(compress)
     }
 }
 
@@ -373,49 +438,144 @@ where
             })
         }
 
+        fn read_matrix_fields<R: Read>(
+            reader: &mut R,
+            expected_role: SisMatrixRole,
+        ) -> Result<MatrixFields, SerializationError> {
+            let modulus_tag =
+                u8::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?;
+            let policy_tag =
+                u8::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?;
+            let role_tag =
+                u8::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?;
+            let modulus_profile = SisModulusProfileId::from_tag(modulus_tag).ok_or_else(|| {
+                SerializationError::InvalidData("unknown SIS modulus-profile tag".into())
+            })?;
+            let policy = SisSecurityPolicyId::from_tag(policy_tag).ok_or_else(|| {
+                SerializationError::InvalidData("unknown SIS security-policy tag".into())
+            })?;
+            let role = SisMatrixRole::from_tag(role_tag).ok_or_else(|| {
+                SerializationError::InvalidData("unknown SIS matrix-role tag".into())
+            })?;
+            if role != expected_role {
+                return Err(SerializationError::InvalidData(
+                    "committed-group matrix role mismatch".into(),
+                ));
+            }
+            let mut digest = [0u8; 32];
+            reader.read_exact(&mut digest)?;
+            let ring_dimension =
+                u32::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?
+                    as usize;
+            let output_rank = read_usize(reader)?;
+            let input_width = read_usize(reader)?;
+            let coeff_linf_bound =
+                u128::deserialize_with_mode(&mut *reader, Compress::No, Validate::Yes, &())?;
+            Ok((
+                policy,
+                SisTableDigest(digest),
+                modulus_profile,
+                output_rank,
+                input_width,
+                coeff_linf_bound,
+                ring_dimension,
+            ))
+        }
+
+        let version = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        if version != CommittedGroupDescriptor::VERSION {
+            return Err(SerializationError::InvalidData(format!(
+                "unknown committed-group profile version {version}"
+            )));
+        }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
-        let source = GroupSource::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
+        let encoding_tag =
+            u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let encoding_value =
+            u64::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let encoding = match encoding_tag {
+            0 => GroupSourceEncoding::Bounded {
+                coefficient_bits: u32::try_from(encoding_value).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "bounded coefficient width exceeds u32".to_string(),
+                    )
+                })?,
+            },
+            1 => GroupSourceEncoding::SparseBinary {
+                chunk_size: usize::try_from(encoding_value).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "sparse-binary chunk size exceeds usize".to_string(),
+                    )
+                })?,
+            },
+            _ => {
+                return Err(SerializationError::InvalidData(
+                    "unknown committed-profile encoding tag".to_string(),
+                ))
+            }
+        };
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
         let log_basis_inner =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let num_digits_inner = read_usize(&mut reader)?;
+        let (a_policy, a_digest, a_modulus, n_a, a_width, a_coeff_linf_bound, inner_ring_dimension) =
+            read_matrix_fields(&mut reader, SisMatrixRole::Inner)?;
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new(
+            a_policy,
+            a_digest,
+            a_modulus,
+            n_a,
+            a_width,
+            a_coeff_linf_bound,
+            inner_ring_dimension,
+        )
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
         let log_basis_outer =
             u32::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let inner_ring_dimension = read_usize(&mut reader)?;
-        let outer_ring_dimension = read_usize(&mut reader)?;
-        let n_a = read_usize(&mut reader)?;
-        let a_coeff_linf_bound =
-            u128::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let n_b = read_usize(&mut reader)?;
-        let b_coeff_linf_bound =
-            u128::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let num_digits_outer = read_usize(&mut reader)?;
+        let (b_policy, b_digest, b_modulus, n_b, b_width, b_coeff_linf_bound, outer_ring_dimension) =
+            read_matrix_fields(&mut reader, SisMatrixRole::Outer)?;
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new(
+            b_policy,
+            b_digest,
+            b_modulus,
+            n_b,
+            b_width,
+            b_coeff_linf_bound,
+            outer_ring_dimension,
+        )
+        .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
 
         let descriptor = CommittedGroupDescriptor {
+            version,
             group: PolynomialGroupLayout::new(num_vars, num_polynomials),
-            source,
+            encoding,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
             log_basis_inner,
+            num_digits_inner,
+            inner_commit_matrix,
             log_basis_outer,
-            inner_ring_dimension,
-            outer_ring_dimension,
-            n_a,
-            a_coeff_linf_bound,
-            n_b,
-            b_coeff_linf_bound,
+            num_digits_outer,
+            outer_commit_matrix,
         };
         let field_bits = 128 - (detect_field_modulus::<F>() - 1).leading_zeros();
         descriptor
             .validate_frozen_precommit(field_bits)
             .map_err(|err| SerializationError::InvalidData(err.to_string()))?;
-        let num_coeffs = n_b.checked_mul(outer_ring_dimension).ok_or_else(|| {
-            SerializationError::InvalidData(
-                "committed-group coefficient count overflow".to_string(),
-            )
-        })?;
+        let num_coeffs = descriptor
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(descriptor.outer_commit_matrix.ring_dimension())
+            .ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "committed-group coefficient count overflow".to_string(),
+                )
+            })?;
         if num_coeffs > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
             return Err(SerializationError::InvalidData(format!(
                 "committed-group coefficient count {num_coeffs} exceeds allocation cap \
@@ -472,31 +632,61 @@ mod committed_group_tests {
     use super::*;
     use akita_field::Fp32;
 
-    type F = Fp32<251>;
+    type F = Fp32<4294967197>;
 
     fn group() -> CommittedGroup<F> {
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            crate::SisTableKey {
+                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q32Offset99,
+                role: SisMatrixRole::Inner,
+                ring_dimension: 64,
+                coeff_linf_bound: 131_071,
+            },
+            32,
+        )
+        .expect("audited A profile");
+        let outer_width = inner_commit_matrix.output_rank();
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            crate::SisTableKey {
+                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q32Offset99,
+                role: SisMatrixRole::Outer,
+                ring_dimension: 64,
+                coeff_linf_bound: 3,
+            },
+            outer_width,
+        )
+        .expect("audited B profile");
         CommittedGroup::new(
             CommittedGroupDescriptor {
-                group: PolynomialGroupLayout::new(1, 1),
-                source: GroupSource::bounded(8),
-                num_live_ring_elements_per_claim: 1,
-                num_positions_per_block: 1,
+                version: CommittedGroupDescriptor::VERSION,
+                group: PolynomialGroupLayout::new(11, 1),
+                encoding: GroupSourceEncoding::Bounded {
+                    coefficient_bits: 32,
+                },
+                num_live_ring_elements_per_claim: 32,
+                num_positions_per_block: 32,
                 num_live_blocks: 1,
                 log_basis_inner: 1,
+                num_digits_inner: 1,
+                inner_commit_matrix,
                 log_basis_outer: 1,
-                inner_ring_dimension: 2,
-                outer_ring_dimension: 2,
-                n_a: 1,
-                a_coeff_linf_bound: 1,
-                n_b: 1,
-                b_coeff_linf_bound: 1,
+                num_digits_outer: 1,
+                outer_commit_matrix,
             },
-            Commitment::new(RingVec::from_coeffs(vec![F::zero(), F::one()])),
+            Commitment::new(RingVec::from_coeffs(vec![
+                F::zero();
+                outer_commit_matrix.output_rank()
+                    * 64
+            ])),
         )
     }
 
     #[test]
-    fn committed_group_serialization_binds_and_validates_source() {
+    fn committed_group_serialization_binds_and_validates_profile() {
         let group = group();
         let mut bytes = Vec::new();
         group
@@ -512,10 +702,39 @@ mod committed_group_tests {
         .expect("deserialize committed group");
         assert_eq!(decoded, group);
 
-        let source_tag_offset = 2 * std::mem::size_of::<u64>() + 2 * 16;
-        bytes[source_tag_offset] = 9;
+        let mut unknown_version = bytes.clone();
+        unknown_version[0] = CommittedGroupDescriptor::VERSION + 1;
         assert!(CommittedGroup::<F>::deserialize_with_mode(
-            bytes.as_slice(),
+            unknown_version.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
+        let encoding_tag_offset = 1 + 2 * std::mem::size_of::<u64>();
+        let mut unknown_encoding = bytes.clone();
+        unknown_encoding[encoding_tag_offset] = 9;
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            unknown_encoding.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
+        let inner_matrix_role_offset = 1
+            + 2 * std::mem::size_of::<u64>()
+            + 1
+            + std::mem::size_of::<u64>()
+            + 3 * std::mem::size_of::<u64>()
+            + std::mem::size_of::<u32>()
+            + std::mem::size_of::<u64>()
+            + 2;
+        let mut wrong_matrix_role = bytes;
+        wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            wrong_matrix_role.as_slice(),
             Compress::Yes,
             Validate::Yes,
             &(),
@@ -526,7 +745,18 @@ mod committed_group_tests {
     #[test]
     fn committed_group_rejects_dense_bound_above_field_width() {
         let mut group = group();
-        group.descriptor.source = GroupSource::bounded(9);
+        group.descriptor.encoding = GroupSourceEncoding::Bounded {
+            coefficient_bits: 33,
+        };
+        assert!(group.check().is_err());
+    }
+
+    #[test]
+    fn committed_group_rejects_commitment_row_count_mismatch() {
+        let mut group = group();
+        let coeffs = group.commitment.rows().coeffs();
+        group.commitment =
+            Commitment::new(RingVec::from_coeffs(coeffs[..coeffs.len() - 1].to_vec()));
         assert!(group.check().is_err());
     }
 }

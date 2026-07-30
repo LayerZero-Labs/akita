@@ -16,7 +16,7 @@ use akita_serialization::{
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PolynomialGroupClaims,
+    AkitaVerifierSetup, CommittedGroup, FlatMatrix, OpeningClaims, PolynomialGroupClaims,
     SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
@@ -36,7 +36,7 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv2";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
@@ -65,7 +65,7 @@ pub struct AkitaJoltInputs<F: FieldCore, const D: usize> {
     /// Claimed opening value at `opening_point`.
     pub opening: F,
     /// Single committed-poly group: one ring commitment per (poly, point) pair.
-    pub commitment: Commitment<F>,
+    pub commitment: CommittedGroup<F>,
     /// Expanded verifier setup (matrix prefix usable by the verifier kernel).
     pub verifier_setup: AkitaVerifierSetup<F>,
     /// Proof shape descriptor; needed to deserialize `proof` without
@@ -85,7 +85,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
     pub fn verifier_opening_batch<'a>(
         &'a self,
         openings: &'a [F; 1],
-    ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
+    ) -> OpeningClaims<'static, F, &'a CommittedGroup<F>> {
         assert_eq!(
             usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
             self.opening_point.len(),
@@ -128,7 +128,7 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + CanonicalField + AkitaSerialize,
+    F: FieldCore + CanonicalField + AkitaSerialize + Valid,
 {
     /// Encode the bundle into a single contiguous byte vector.
     pub fn write_to_bytes(&self) -> Result<Vec<u8>, SerializationError> {
@@ -162,14 +162,6 @@ where
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.opening
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
-        let num_commitment_coeffs =
-            u64::try_from(self.commitment.rows().coeff_len()).map_err(|_| {
-                SerializationError::LengthLimitExceeded {
-                    len: self.commitment.rows().coeff_len() as u64,
-                    max: usize::MAX,
-                }
-            })?;
-        num_commitment_coeffs.serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.commitment
             .serialize_with_mode(&mut bytes, BLOB_COMPRESS)?;
         self.verifier_setup
@@ -188,7 +180,6 @@ where
             + self.num_vars.serialized_size(BLOB_COMPRESS)
             + self.opening_point.serialized_size(BLOB_COMPRESS)
             + self.opening.serialized_size(BLOB_COMPRESS)
-            + (self.commitment.rows().coeff_len() as u64).serialized_size(BLOB_COMPRESS)
             + self.commitment.serialized_size(BLOB_COMPRESS)
             + self.verifier_setup.serialized_size(BLOB_COMPRESS)
             + self.proof_shape.serialized_size(BLOB_COMPRESS)
@@ -198,7 +189,12 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -380,13 +376,11 @@ where
         let opening_point =
             Self::decode_opening_point(&mut rest, transcript_domain.len(), num_vars)?;
         let opening = F::deserialize_with_mode(&mut rest, BLOB_COMPRESS, BLOB_VALIDATE, &())?;
-        let num_commitment_coeffs =
-            Self::decode_capped_len(&mut rest, MAX_SETUP_MATRIX_FIELD_ELEMENTS)?;
-        let commitment = Commitment::<F>::deserialize_with_mode(
+        let commitment = CommittedGroup::<F>::deserialize_with_mode(
             &mut rest,
             BLOB_COMPRESS,
             BLOB_VALIDATE,
-            &num_commitment_coeffs,
+            &(),
         )?;
         let verifier_setup = decode_setup(&mut rest)?;
         let proof_shape = AkitaBatchedProofShape::deserialize_with_mode(
@@ -418,6 +412,7 @@ where
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
     F: FieldCore
+        + CanonicalField
         + FromPrimitiveInt
         + RandomSampling
         + AkitaSerialize
@@ -454,7 +449,12 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],
@@ -483,7 +483,7 @@ where
 }
 
 // `akita-algebra` is pulled in only so that downstream consumers can rely on
-// `Commitment<F>` having all of its trait bounds satisfied; declare it
+// `CommittedGroup<F>` having all of its trait bounds satisfied; declare it
 // here to avoid a `cargo machete` style trim.
 #[doc(hidden)]
 pub use akita_algebra as _akita_algebra_dep;
@@ -515,44 +515,40 @@ mod tests {
     fn prefix_commitment_params() -> PrecommittedLevelParams {
         PrecommittedLevelParams {
             layout: CommittedGroupDescriptor {
+                version: CommittedGroupDescriptor::VERSION,
                 group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
-                source: GroupSource::Dense {
+                encoding: akita_types::GroupSourceEncoding::Bounded {
                     coefficient_bits: 128,
                 },
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,
                 log_basis_inner: 1,
+                num_digits_inner: 1,
+                inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    1,
+                    1,
+                    1,
+                    TEST_D,
+                ),
                 log_basis_outer: 1,
-                inner_ring_dimension: TEST_D,
-                outer_ring_dimension: TEST_D,
-                n_a: 1,
-                a_coeff_linf_bound: 1,
-                n_b: 1,
-                b_coeff_linf_bound: 1,
+                num_digits_outer: 1,
+                outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
+                    DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest::CURRENT,
+                    SisModulusProfileId::Q128OffsetA7F7,
+                    1,
+                    1,
+                    1,
+                    TEST_D,
+                ),
             },
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                TEST_D,
-            ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                DEFAULT_SIS_SECURITY_POLICY,
-                SisTableDigest::CURRENT,
-                SisModulusProfileId::Q128OffsetA7F7,
-                1,
-                1,
-                1,
-                TEST_D,
-            ),
+            source: GroupSource::bounded(128),
             log_basis_open: 1,
             fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-            num_digits_inner: 1,
-            num_digits_outer: 1,
             num_digits_open: 1,
             num_digits_fold_one: 1,
         }

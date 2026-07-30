@@ -317,6 +317,7 @@ fn chunked_multi_chunk_prove_verify() {
         // Confirm the schedule actually activates chunking on the leading folds.
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(NV),
+            Cfg::group_source(),
         ))
         .expect("multi-chunk schedule");
         let chunked_levels = usize::from(plan.root.params.witness_partition.num_chunks() > 1)
@@ -493,7 +494,9 @@ fn dense_d64_prove_verify() {
         );
 
         let mut mismatched_source = commitments[0].clone();
-        mismatched_source.descriptor.source = akita_types::GroupSource::bounded(64);
+        mismatched_source.descriptor.encoding = akita_types::GroupSourceEncoding::Bounded {
+            coefficient_bits: 64,
+        };
         let mut mismatch_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
         let mismatch_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
             &proof,

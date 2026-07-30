@@ -94,7 +94,6 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         SparseChallengeConfig::production_for_ring_dim(precommit_lp.d_a())
             .expect("precommit test challenge");
     certify_test_sis_bounds(&mut precommit_lp);
-    let inner_commit_matrix = precommit_lp.inner_commit_matrix.clone();
     let outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
         precommit_lp.outer_commit_matrix.security_policy(),
         precommit_lp
@@ -109,16 +108,12 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
     );
     let mut layout =
         CommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
-    layout.n_b = outer_commit_matrix.output_rank();
-    layout.b_coeff_linf_bound = outer_commit_matrix.coeff_linf_bound();
+    layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,
-        inner_commit_matrix,
-        outer_commit_matrix,
+        source: precommit_lp.source,
         log_basis_open: precommit_lp.log_basis_open,
         fold_challenge_config: precommit_lp.fold_challenge_config,
-        num_digits_inner: precommit_lp.num_digits_inner,
-        num_digits_outer: precommit_lp.num_digits_outer,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold_one: precommit_lp.num_digits_fold_one,
     };
@@ -142,7 +137,7 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 fn grouped_fold_witness_norms_use_each_groups_source() {
     let (mut grouped, batch) = sample_multi_group_root_params();
     grouped.source = crate::GroupSource::one_hot(16);
-    grouped.precommitted_groups[0].layout.source = crate::GroupSource::bounded(32);
+    grouped.precommitted_groups[0].source = crate::GroupSource::bounded(32);
 
     let precommitted = grouped
         .group_params(&batch, 0)

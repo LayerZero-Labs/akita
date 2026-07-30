@@ -191,7 +191,7 @@ fn test_inputs_for_group_sizes(
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let layout = crate::CommittedGroupDescriptor::from_params(
+                let mut layout = crate::CommittedGroupDescriptor::from_params(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );
@@ -211,14 +211,12 @@ fn test_inputs_for_group_sizes(
                     lp.outer_commit_matrix.coeff_linf_bound(),
                     lp.d_a(),
                 );
+                layout.outer_commit_matrix = outer_commit_matrix;
                 crate::PrecommittedLevelParams {
                     layout,
-                    inner_commit_matrix: lp.inner_commit_matrix.clone(),
-                    outer_commit_matrix,
+                    source: lp.source,
                     log_basis_open: lp.log_basis_open,
                     fold_challenge_config: lp.fold_challenge_config,
-                    num_digits_inner: lp.num_digits_inner,
-                    num_digits_outer: lp.num_digits_outer,
                     num_digits_open: lp.num_digits_open,
                     num_digits_fold_one: depth_fold,
                 }

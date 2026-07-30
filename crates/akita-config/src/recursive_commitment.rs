@@ -138,10 +138,12 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
 mod tests {
     use super::*;
     use crate::proof_optimized::fp128;
+    use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, RelationAddressGeometry,
-        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, CommittedGroupDescriptor, PolynomialGroupLayout,
+        RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
+        WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
@@ -172,6 +174,7 @@ mod tests {
         let descriptor = CommittedGroupDescriptor::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
+            final_source: Cfg::group_source(),
             precommitteds: vec![descriptor, descriptor],
         };
         let layout = key.opening_layout().expect("profile opening layout");
@@ -185,16 +188,17 @@ mod tests {
 
         let precommitted = PolynomialGroupLayout::new(16, 1);
         let final_group = PolynomialGroupLayout::new(32, 2);
-        let layout =
-            OpeningClaimsLayout::from_root_groups(&[precommitted, precommitted], final_group)
-                .expect("multi-group layout");
-        let schedule = Cfg::get_params_for_prove(&layout).expect("recursive schedule");
-
         let singleton = OpeningClaimsLayout::new(16, 1).expect("singleton precommit layout");
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
         let expected = CommittedGroupDescriptor::from_params(precommitted, &params);
+        let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
+            final_group,
+            final_source: Cfg::group_source(),
+            precommitteds: vec![expected, expected],
+        })
+        .expect("recursive schedule");
 
         assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
         assert!(schedule
