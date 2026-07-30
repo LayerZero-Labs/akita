@@ -2,8 +2,11 @@
 
 > **Superseded (schedule keys):** portions of this spec that describe schedule lookup
 > keys, shipped-table selection, or preset↔table binding are superseded by
-> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md). This file remains
-> for historical witness-layout / incidence notes until archived.
+> [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) and the exact
+> profile/row-selection design in
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> Source providers are not public key fields. This file remains for historical
+> witness-layout / incidence notes until archived.
 
 | Field         | Value                          |
 |---------------|--------------------------------|
@@ -54,7 +57,7 @@ After the opening-claims cutover, the main schedule-facing projection is
 ```rust
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupDescriptor>,
 }
 ```
 
@@ -216,11 +219,11 @@ result is deterministic.
 
 Current superseded schedule-key status:
 
-- Scalar same-point paths use `AkitaScheduleLookupKey::from_layout` on an
-  `OpeningClaimsLayout`; that projection rejects multi-group layouts instead of
-  collapsing them.
+- Scalar same-point paths validate a singleton `OpeningClaimsLayout`, extract
+  its `PolynomialGroupLayout`, and call `AkitaScheduleLookupKey::single` with
+  the explicit group source.
 - Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
-  `PrecommittedGroupDescriptor` for earlier groups, as specified in
+  `CommittedGroupDescriptor` for earlier groups, as specified in
   [`multi-group-batching.md`](multi-group-batching.md).
 - The older incidence-derived schedule-key plan in this file should not be
   continued directly for production paths.
@@ -301,7 +304,7 @@ Generated rows inline the runtime lookup-key fields:
 ```rust
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupDescriptor],
     pub steps: &'static [GeneratedStep],
 }
 ```

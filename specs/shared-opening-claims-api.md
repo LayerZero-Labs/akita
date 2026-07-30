@@ -16,6 +16,10 @@
 | Supersedes   | `specs/shared-opening-input-api.md`; partial overlap with `specs/single-point-opening-batch.md` (API layer) |
 | Book-chapter | book/src/usage/commitment-api.md                                                                            |
 
+> **Profile-key supersession (2026-07-30).** Scalar and grouped opening
+> statements use self-describing commitments plus an exact schedule-row
+> selection. Source-provider identity is not public schedule input. See
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
 
 
 
@@ -50,7 +54,7 @@ derived-limits types are added; existing helper bags such as `OpeningBatchLimits
 
 **Schedule type unification.** `PolynomialGroupLayout` is shared between opening layout
 and schedule lookup (replacing `CommitmentGroupScheduleKey`). Frozen precommit metadata
-becomes **`PrecommittedGroupDescriptor`** (replacing schedule `CommitmentGroupLayout`).
+becomes **`CommittedGroupDescriptor`** (replacing schedule `CommitmentGroupLayout`).
 Generated schedule tables use the same runtime types directly — the three
 `GeneratedCommitmentGroup*` / `GeneratedScheduleLookupKey` structs are deleted.
 
@@ -83,7 +87,7 @@ Schedule types in `crates/akita-types/src/schedule.rs` are renamed and unified:
 | Type | Role |
 |------|------|
 | `PolynomialGroupLayout` | per-group opening/schedule dimensions (shared with opening layout) |
-| `PrecommittedGroupDescriptor` | frozen standalone precommit metadata (`position_index_bits`, `block_index_bits`, basis, row counts) |
+| `CommittedGroupDescriptor` | frozen standalone precommit metadata (`position_index_bits`, `block_index_bits`, basis, row counts) |
 | `AkitaScheduleLookupKey` | multi-group-root schedule lookup key |
 
 Wire as `pub mod opening_claims` from `lib.rs`; re-export the public types at the
@@ -119,7 +123,7 @@ pub struct PolynomialGroupLayout {
 
 // crates/akita-types/src/schedule.rs
 /// Frozen metadata from a standalone precommit (params, not layout).
-pub struct PrecommittedGroupDescriptor {
+pub struct CommittedGroupDescriptor {
     pub group: PolynomialGroupLayout,
     pub position_index_bits: usize,
     pub block_index_bits: usize,
@@ -130,7 +134,7 @@ pub struct PrecommittedGroupDescriptor {
 
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupDescriptor>,
 }
 
 // crates/akita-prover/src/types/opening_data.rs
@@ -153,9 +157,9 @@ constructors and read through accessor methods only.
 | `OpeningGroupShape` | **`PolynomialGroupLayout`** |
 | `OpeningBatchLimits` | removed — `OpeningClaims::validate(&AkitaSetupSeed)` reads `max_num_vars` / `max_num_batched_polys` directly |
 | `CommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** |
-| schedule `CommitmentGroupLayout` | **`PrecommittedGroupDescriptor`** |
+| schedule `CommitmentGroupLayout` | **`CommittedGroupDescriptor`** |
 | `GeneratedCommitmentGroupScheduleKey` | **`PolynomialGroupLayout`** (in static tables) |
-| `GeneratedCommitmentGroupLayout` | **`PrecommittedGroupDescriptor`** (in static tables) |
+| `GeneratedCommitmentGroupLayout` | **`CommittedGroupDescriptor`** (in static tables) |
 | `GeneratedScheduleLookupKey` | fields inlined into **`GeneratedGroupBatchScheduleTableEntry`** |
 
 
@@ -374,7 +378,7 @@ Custom per-group counts: `OpeningClaimsLayout::from_groups(vec![PolynomialGroupL
 | `shape.num_vars()` | `layout.max_num_vars()` |
 | `Cfg::get_params_for_prove(&shape)` | `Cfg::get_params_for_prove(&layout)` |
 | `Cfg::get_params_for_batched_commitment(&shape)` | `Cfg::get_params_for_batched_commitment(&layout)` |
-| `CommitmentGroupScheduleKey::new_from_opening_batch(&shape)` | `AkitaScheduleLookupKey::from_layout(&layout)?` |
+| `CommitmentGroupScheduleKey::new_from_opening_batch(&shape)` | `AkitaScheduleLookupKey::single(group, source)` |
 | `CallSection::from_opening_batch(&shape, basis)` | `CallSection::from_layout(&layout, basis)` |
 | `digest_opening_batch(&shape)` | `layout.opening_batch_digest()` |
 | `active_setup_field_len(lp, &shape, D)` | `active_setup_field_len(lp, &layout, D)` |
@@ -394,7 +398,7 @@ Custom per-group counts: `OpeningClaimsLayout::from_groups(vec![PolynomialGroupL
 
 **Decision:** Delete `CommitmentGroupScheduleKey`. Use `PolynomialGroupLayout`
 everywhere a per-group schedule key was needed. Rename schedule
-`CommitmentGroupLayout` → **`PrecommittedGroupDescriptor`** (params frozen at
+`CommitmentGroupLayout` → **`CommittedGroupDescriptor`** (params frozen at
 precommit time, not opening layout).
 
 ```rust
@@ -402,7 +406,7 @@ precommit time, not opening layout).
 
 pub struct AkitaScheduleLookupKey {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupDescriptor>,
 }
 
 impl AkitaScheduleLookupKey {
@@ -437,7 +441,7 @@ impl AkitaScheduleLookupKey {
     pub fn validate(&self) -> Result<(), AkitaError>;
 }
 
-impl PrecommittedGroupDescriptor {
+impl CommittedGroupDescriptor {
     pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self;
     pub fn validate(&self) -> Result<(), AkitaError>;
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError>;
@@ -478,7 +482,7 @@ acceptance coverage. Precommitted groups larger than the final group reject.
 #### 10. Generated schedule tables — shared runtime types
 
 **Decision:** Delete the three generated mirror structs. Static catalog rows use
-`PolynomialGroupLayout` and `PrecommittedGroupDescriptor` directly.
+`PolynomialGroupLayout` and `CommittedGroupDescriptor` directly.
 
 ```rust
 // crates/akita-planner/src/generated/mod.rs (representative)
@@ -490,7 +494,7 @@ pub struct GeneratedScheduleTableEntry {
 
 pub struct GeneratedGroupBatchScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupDescriptor],
     pub steps: &'static [GeneratedStep],
 }
 ```
@@ -501,7 +505,7 @@ pub struct GeneratedGroupBatchScheduleTableEntry {
 |-------------|-----|
 | `Copy + Eq` | Rows are plain data in `static` tables |
 | `const fn new(num_vars, num_polynomials)` on `PolynomialGroupLayout` | Emitted by offline table generation |
-| `Copy` on `PrecommittedGroupDescriptor` | Precommitted rows in multi-group batch tables |
+| `Copy` on `CommittedGroupDescriptor` | Precommitted rows in multi-group batch tables |
 
 **Deleted:**
 
@@ -513,7 +517,7 @@ pub struct GeneratedGroupBatchScheduleTableEntry {
 `final_group` and `precommitteds` are top-level fields alongside `steps`.
 
 Runtime conversion from a generated grouped row builds `AkitaScheduleLookupKey`
-by copying `final_group` and mapping each static `PrecommittedGroupDescriptor` into
+by copying `final_group` and mapping each static `CommittedGroupDescriptor` into
 the runtime `Vec` (same field shapes — no parallel generated type).
 
 #### 11. Where `OpeningBatchShape` is used today — migration categories
@@ -535,7 +539,7 @@ Inventory from the current codebase (~60 references):
 | `CommitmentConfig::get_params_for_prove` | `&OpeningBatchShape` | `&OpeningClaimsLayout` |
 | `proof_optimized.rs` planner | `&OpeningBatchShape` | `&OpeningClaimsLayout` |
 | `generated_families.rs` catalog build | `OpeningBatchShape::new(nv, polys)` | `OpeningClaimsLayout::new(nv, polys)?` |
-| `CommitmentGroupScheduleKey::new_from_opening_batch` | `&OpeningBatchShape` | `AkitaScheduleLookupKey::from_layout(&layout)?` |
+| `CommitmentGroupScheduleKey::new_from_opening_batch` | `&OpeningBatchShape` | `AkitaScheduleLookupKey::single(group, source)` |
 | `AkitaScheduleLookupKey::single(key)` | `CommitmentGroupScheduleKey` | `PolynomialGroupLayout` |
 
 **C. Setup / setup-prefix** → `OpeningClaimsLayout` (built from the `AkitaSetupSeed` envelope)
@@ -638,7 +642,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 | No verifier panic | Constructors and validation return `AkitaError`; no panic on malformed input |
 | Grouped-root sizing | Precommitted `num_vars` have no ratio constraint and may use the full final-group arity |
 | Shared schedule key | `PolynomialGroupLayout` is the only per-group schedule lookup key type |
-| Generated table types | Static rows use `PolynomialGroupLayout` / `PrecommittedGroupDescriptor` directly — no generated mirror structs |
+| Generated table types | Static rows use `PolynomialGroupLayout` / `CommittedGroupDescriptor` directly — no generated mirror structs |
 
 
 
@@ -665,8 +669,8 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 - [ ] Exactly five opening-claims types ship; `OpeningBatchLimits` and all other intermediate/bridge types are removed.
 - [ ] Batch-level count API is `num_total_polynomials()` **only** — no `num_claims()` or `num_polynomials()` on `OpeningClaims`.
 - [ ] `OpeningClaimsLayout` has no batch-level `num_vars`; exposes `max_num_vars()` and `groups()`.
-- [ ] `PolynomialGroupLayout` replaces `CommitmentGroupScheduleKey`; `PrecommittedGroupDescriptor` replaces schedule `CommitmentGroupLayout`.
-- [ ] `AkitaScheduleLookupKey` uses `PolynomialGroupLayout` / `PrecommittedGroupDescriptor`; grouped validation accepts precommitted arities through the full final-group arity.
+- [ ] `PolynomialGroupLayout` replaces `CommitmentGroupScheduleKey`; `CommittedGroupDescriptor` replaces schedule `CommitmentGroupLayout`.
+- [ ] `AkitaScheduleLookupKey` uses `PolynomialGroupLayout` / `CommittedGroupDescriptor`; grouped validation accepts precommitted arities through the full final-group arity.
 - [ ] Generated tables use shared types; `GeneratedCommitmentGroupScheduleKey`, `GeneratedCommitmentGroupLayout`, and `GeneratedScheduleLookupKey` are deleted.
 - [ ] `OpeningClaimsLayout` / `PolynomialGroupLayout` replace `OpeningBatchShape` / `OpeningGroupShape`.
 - [ ] Setup/planner/config use `OpeningClaimsLayout` — not `OpeningClaims::fixture`.
@@ -710,11 +714,11 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
                           ▼
               AkitaScheduleLookupKey
               ├─ final_group: PolynomialGroupLayout
-              └─ precommitteds: [PrecommittedGroupDescriptor { group, position_index_bits, ... }]
+              └─ precommitteds: [CommittedGroupDescriptor { group, position_index_bits, ... }]
                           │
                           ▼
               GeneratedScheduleTableEntry / GeneratedGroupBatchScheduleTableEntry
-              (same PolynomialGroupLayout / PrecommittedGroupDescriptor types)
+              (same PolynomialGroupLayout / CommittedGroupDescriptor types)
 ```
 
 The verifier holds an `OpeningClaims` directly (no `ProverOpeningData` wrapper); it
@@ -826,7 +830,7 @@ impl AkitaScheduleLookupKey {
     pub fn validate(&self) -> Result<(), AkitaError>;
 }
 
-impl PrecommittedGroupDescriptor {
+impl CommittedGroupDescriptor {
     pub fn from_params(group: PolynomialGroupLayout, params: &LevelParams) -> Self;
     pub fn validate(&self) -> Result<(), AkitaError>;
     pub fn validate_root_geometry(&self, ring_dimension: usize) -> Result<(), AkitaError>;
@@ -848,7 +852,7 @@ pub struct GeneratedScheduleTableEntry {
 
 pub struct GeneratedGroupBatchScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupDescriptor],
     pub steps: &'static [GeneratedStep],
 }
 ```
@@ -1011,7 +1015,7 @@ GeneratedScheduleTableEntry {
 ## Execution
 
 1. Add `akita-types/src/opening_claims.rs`; implement `OpeningClaims`, `PolynomialGroupClaims`, `OpeningClaimsLayout`, and `PolynomialGroupLayout`.
-2. Rename schedule types: `PrecommittedGroupDescriptor`, update `AkitaScheduleLookupKey`; delete `CommitmentGroupScheduleKey`; tighten grouped `/2` validation and tests.
+2. Rename schedule types: `CommittedGroupDescriptor`, update `AkitaScheduleLookupKey`; delete `CommitmentGroupScheduleKey`; tighten grouped `/2` validation and tests.
 3. Collapse generated table types in `akita-planner/src/generated/`; regenerate static schedule modules.
 4. Add `akita-prover/src/types/`; implement `ProverOpeningData`.
 5. Migrate `CommitmentConfig`, schedule, descriptor, setup to `&OpeningClaimsLayout` and `PolynomialGroupLayout`.
@@ -1026,6 +1030,6 @@ GeneratedScheduleTableEntry {
 - `specs/single-point-opening-batch.md`
 - `specs/multi-group-batching.md`
 - `crates/akita-types/src/opening_claims.rs` (claims + layout)
-- `crates/akita-types/src/schedule.rs` (`PolynomialGroupLayout`, `PrecommittedGroupDescriptor`, `AkitaScheduleLookupKey`)
+- `crates/akita-types/src/schedule.rs` (`PolynomialGroupLayout`, `CommittedGroupDescriptor`, `AkitaScheduleLookupKey`)
 - `crates/akita-prover/src/types/` (`ProverOpeningData`)
 - `crates/akita-types/src/proof/opening_batch.rs` (legacy; deleted during migration)

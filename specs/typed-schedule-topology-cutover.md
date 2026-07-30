@@ -1,5 +1,11 @@
 # Spec: Typed Fold-Schedule Topology and Planner Cutover
 
+> **Source/profile supersession (2026-07-30).** The typed
+> `root -> recursive_folds[] -> terminal` topology remains authoritative.
+> Source-family fields and lookup ownership are superseded by exact commitment
+> profiles and batch-level approved row selection in
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+
 | Field         | Value                                       |
 |---------------|---------------------------------------------|
 | Author(s)     | Quang Dao                                   |
@@ -265,7 +271,7 @@ pub enum GeneratedFold {
 
 pub struct GeneratedScheduleTableEntry {
     pub final_group: PolynomialGroupLayout,
-    pub precommitteds: &'static [PrecommittedGroupDescriptor],
+    pub precommitteds: &'static [CommittedGroupDescriptor],
     pub folds: &'static [GeneratedFold],
 }
 ```
@@ -641,7 +647,7 @@ pub struct GeneratedRootFinalGroup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
     /// Frozen standalone commitment identity and certified bounds.
-    pub descriptor: PrecommittedGroupDescriptor,
+    pub descriptor: CommittedGroupDescriptor,
     pub commitment: GeneratedCommittedGroup,
 }
 ```
@@ -799,7 +805,7 @@ Digit depths are expanded results, never independent generated inputs.
 ```rust
 pub struct RootFoldParams {
     pub final_group: RootFinalGroupParams,
-    pub precommitted_groups: Vec<RootPrecommittedGroupDescriptor>,
+    pub precommitted_groups: Vec<RootCommittedGroupDescriptor>,
     pub open_commit_matrix: OpenCommitMatrixParams,
     pub sparse_challenge_config: SparseChallengeConfig,
     pub witness_partition: WitnessPartition,
@@ -821,7 +827,7 @@ pub struct TerminalFoldParams {
 ```
 
 Only `RootFinalGroupParams` contains a `RootFinalChallenge` field.
-`RootPrecommittedGroupDescriptor`, `RecursiveFoldParams`, and `TerminalFoldParams`
+`RootCommittedGroupDescriptor`, `RecursiveFoldParams`, and `TerminalFoldParams`
 are flat by type. Sparse sampler configuration remains explicit because it
 determines challenge distribution and certified norms even for a flat
 challenge.

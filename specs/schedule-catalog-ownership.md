@@ -4,6 +4,11 @@
 > ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
 > `zk_enabled` or `feature = "zk"` describe removed catalog paths preserved on
 > `zk-wip`.
+>
+> **Profile-key supersession (2026-07-30).** Public schedule identity now binds
+> exact ordered commitment profiles and an approved row selection, not a source
+> enum or registration. Verifier runtime remains planner-free. See
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
 
 | Field         | Value |
 |---------------|-------|
@@ -218,9 +223,9 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   `akita-schedules` through a weak dependency feature, so the accessor cannot pair ZK
   planner semantics with non-ZK table data. Non-ZK-only families (currently tiered)
   are inert under `zk` and excluded from the ZK drift guard.
-- **Same-point batching only.** Scalar lookup keys derive from
-  `OpeningClaimsLayout` / `PolynomialGroupLayout` via
-  `AkitaScheduleLookupKey::from_layout`. No multipoint keys, no
+- **Same-point batching only.** Scalar lookup keys derive from a validated
+  singleton `OpeningClaimsLayout` and explicit `GroupSource` via
+  `AkitaScheduleLookupKey::single`. No multipoint keys, no
   `ClaimIncidenceSummary` schedule path (type not in tree).
 - **Table miss falls back to DP**, never errors solely because a row is absent (unless
   DP itself rejects the key).
@@ -329,7 +334,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
 #### Same-point keys only
 
 - [ ] Schedule lookup for production prove/verify paths uses
-  `AkitaScheduleLookupKey::from_layout` / `OpeningClaimsLayout::new`.
+  `AkitaScheduleLookupKey::single` / `OpeningClaimsLayout::new`.
 - [ ] `GeneratedFamily` replaces the current hardcoded `[1, 4]` enumeration with a
   per-family `num_polys: &'static [usize]` list. Akita defaults use `[1, 4]`; Jolt can
   emit `[1, 38]` without changing Akita core.
@@ -635,8 +640,9 @@ existing `CommitmentConfig` hook name.
 
 ### Schedule lookup keys (same-point only)
 
-Production folded path uses `OpeningClaimsLayout::new(padded_num_vars, num_polys)?`
-and `AkitaScheduleLookupKey::from_layout(&layout)?`:
+Production folded paths validate
+`OpeningClaimsLayout::new(padded_num_vars, num_polys)?`, extract its singleton
+group, and call `AkitaScheduleLookupKey::single(group, source)`:
 
 ```text
 num_t_vectors = num_polys        (polynomials in the bundled commitment)
@@ -645,8 +651,9 @@ num_z_vectors = 1                (one commitment group)
 num_commitment_groups = 1        (in generated key shape)
 ```
 
-`AkitaScheduleLookupKey::from_layout` is the canonical scalar projection; grouped
-roots build an explicit key with `final_group` and `precommitteds`.
+`AkitaScheduleLookupKey::single` is the canonical scalar constructor; grouped
+roots build an explicit key with `final_group`, `final_source`, and ordered
+`precommitteds`.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
@@ -661,7 +668,7 @@ This replaces the stale incidence generalization plan for scalar same-bundle
 batching. Multi-commitment same-point batching is tracked separately in
 [`multi-group-batching.md`](multi-group-batching.md); grouped roots construct an
 explicit `AkitaScheduleLookupKey` from their final and precommitted groups rather
-than projecting through the scalar `AkitaScheduleLookupKey::from_layout` path.
+than projecting through the scalar `AkitaScheduleLookupKey::single` path.
 
 ### `akita-schedules` crate
 

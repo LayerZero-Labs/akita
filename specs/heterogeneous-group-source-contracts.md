@@ -1,4 +1,4 @@
-# Spec: Heterogeneous group source contracts
+# Spec: Open heterogeneous group profiles and source providers
 
 | Field         | Value |
 |---------------|-------|
@@ -17,517 +17,1377 @@ when, and only when, they appear in all capitals.
 
 ## Summary
 
-Akita multi-group roots currently select one preset-wide source policy. Every
-group is therefore treated as either dense with the preset's coefficient bound
-or one-hot with the preset's chunk size. The final schedule records that policy
-only for the final group. Precommitted groups carry exact A/B geometry but do
-not carry their source contract, so schedule materialization derives their fold
-norms from the final group's global policy.
+Akita multi-group batching currently assumes one preset-wide polynomial-source
+family. The in-flight implementation on this branch first generalized that
+assumption into a group-local `GroupSource` value and then into an open
+registration wrapped around a small closed encoding enum. That cut fixes the
+immediate dense/one-hot asymmetry, but it still gives the verifier a taxonomy
+of source implementations that it does not need.
 
-This change makes the source contract group-local:
+This specification makes the narrower protocol boundary explicit:
+
+- a **source provider** is an open-world prover/planner extension;
+- a **committed-group profile** is the exact public A/B geometry and accepted
+  digit envelope of one commitment;
+- an **opening schedule selection** identifies the exact approved schedule row
+  used for one batch;
+- a **committed group** carries its profile together with its commitment;
+- the verifier validates profiles, commitments, the selected schedule, setup
+  capacity, proof shape, and transcript replay without recognizing a source
+  family.
+
+Dense and one-hot become built-in source providers, not variants of a
+verifier-facing enum. A downstream repository can register a new source
+implementation without changing `akita-types`, the transcript format, or
+verifier code, provided the implementation lowers its witness to a valid Akita
+commitment profile and uses an approved schedule row.
+
+This cut does **not** redesign multi-group completeness or grinding. It
+preserves the current per-group honest-bound formulas, the current digit
+snap-down behavior, one shared grind nonce per fold, and the existing terminal
+wire model. It documents those choices precisely so a later completeness
+change can be evaluated separately.
+
+## Audit baseline and branch scope
+
+The implementation worktree has this additive ancestry:
+
+```text
+b0880f73236b89896b15efd63ff955922307afbe
+  -> 6f7fde8658bc77fde8c5d1b0fda732068f11e6e7
+  -> b70d810e79c53dfc925d8daa7cf8ee76d33d98c2
+```
+
+`b70d810e` is the standalone first version of this specification. The
+uncommitted implementation is based on `6f7fde86`, the then-current #334 mirror
+head. During this rewrite the #334 mirror was observed at
+`d3aa279a01cd36a2e37867bfe11888d96f56ec18`. The intervening commits contain
+only an extension-opening-reduction test Clippy cleanup and do not alter this
+design. They MUST be reconciled additively before the implementation commit;
+this spec does not silently claim that the dirty worktree already contains
+them.
+
+Everything semantically introduced by this branch after `6f7fde86` is in scope:
+
+1. group-local source preparation and validation;
+2. exact frozen descriptors for precommitted and final groups;
+3. self-describing public commitments and checked serialization;
+4. exact ordered schedule selection through commit, prove, and verify;
+5. group-local A sizing, fold sizing, and source validation;
+6. generated schedule identity, replay, and the curated mixed-source row;
+7. setup-envelope and standalone precommit resolution;
+8. verifier boundary checks and malformed-input rejection;
+9. scalar, multi-group, extension-field, recursive, profile, and example API
+   migration;
+10. documentation updates, including making the CI workflow authoritative for
+    final test invocations in `AGENTS.md`.
+
+The branch's current `GroupSourceRegistration`, `GroupSourceEncoding`, and
+`GroupSource` types are implementation staging, not the final architecture.
+Their useful separation of provider identity from protocol encoding is
+preserved, but public source identity and the closed encoding enum are removed
+from the verifier-facing design below.
+
+## Intent
+
+### Goal
+
+Allow every commitment group in one Akita opening batch to use an independently
+implemented polynomial source while exposing only the exact algebraic profile
+and approved schedule that the verifier needs.
+
+### Terminology
+
+**Source provider**
+: Prover/planner code that understands one concrete polynomial representation,
+  validates its values, prepares commitment/opening operations, proposes valid
+  commitment profiles, and supplies honest-prover completeness data.
+
+**Source registration**
+: An application-side mapping from a stable provider identifier and parameters
+  to provider construction. Registration supports configuration, persistence,
+  and dynamic dispatch. It is not a PCS statement and is not interpreted by
+  the verifier.
+
+**Commitment profile**
+: Exact public metadata that determines how a group is represented in the A
+  source relation and B commitment: group shape, live block geometry, gadget
+  bases and digit depths, and exact A/B matrix parameters.
+
+**Committed group**
+: A commitment profile paired with the B commitment rows produced under that
+  profile.
+
+**Opening schedule selection**
+: A canonical identifier for an approved generated schedule row. The selected
+  row fixes the root-shared D geometry, group-local fold parameters, challenge
+  families and shapes, recursive suffix, terminal response policy, setup
+  footprint, and transcript descriptor.
+
+**Accepted envelope**
+: The values the proof system actually accepts: source digits at commitment,
+  recursive folded digits at intermediate levels, and the terminal response
+  cap at the transparent tail.
+
+**Honest completeness model**
+: Prover/planner-only information used to predict whether honest witnesses fit
+  an accepted envelope and to choose among valid schedules. It is not a claim
+  about which witnesses the verifier accepts.
+
+### Core ownership rule
+
+No source name or semantic source variant is a verifier primitive.
+
+The verifier MUST know:
+
+- the exact group and block geometry;
+- both source/A and outer/B gadget bases and digit depths;
+- the exact A and B matrix ring dimensions, input widths, output ranks,
+  coefficient bounds, and SIS identities;
+- the selected root schedule, including D geometry;
+- each group's fold challenge configuration and challenge shape;
+- the accepted recursive digit envelopes;
+- the grind nonce range and wire encoding;
+- the terminal response cap and terminal wire rule.
+
+The verifier MUST NOT need:
+
+- whether a provider calls its source dense, one-hot, lookup, sparse, encoded,
+  structured, or application-specific;
+- a Rust polynomial type;
+- a provider registration ID;
+- the provider's coefficient-generation algorithm;
+- the provider's honest average-case distribution;
+- the prover's grind probe order;
+- the planner's target acceptance probability or schedule cost model.
+
+This distinction is the minimal completeness/soundness boundary. Source
+semantics are necessary to construct an honest witness and plan an efficient
+envelope. Exact accepted geometry is necessary to verify the proof. The
+verifier does not need the former to enforce the latter.
+
+### Invariants
+
+1. **Exact profile flow.** The profile returned with a commitment MUST be the
+   profile used to construct its A/B witness and B rows. Later APIs MUST carry
+   that profile; they MUST NOT reconstruct it from a bare
+   `PolynomialGroupLayout` or a global config.
+2. **Ordered statement.** Group order is transcript order. Reordering groups
+   MUST change the opening statement and challenge labels even when aggregate
+   dimensions are unchanged.
+3. **Open provider boundary.** Adding a source provider that lowers to existing
+   Akita relations MUST NOT require extending a core enum or changing verifier
+   code.
+4. **Accepted-envelope security.** SIS sizing MUST use the full digit ranges
+   accepted by the verifier, not a provider's honest distribution or observed
+   witness.
+5. **Honest-model isolation.** Provider-specific completeness data MAY select
+   among already secure schedules, but it MUST NOT weaken verifier admission
+   checks or matrix security bounds.
+6. **Shared D geometry.** Opening evaluations remain full-field values. The
+   root-selected opening basis and D matrix remain shared across groups.
+7. **Distinct group challenges.** Every group receives a separate,
+   group-indexed fold challenge draw. Challenge vectors are not reused across
+   groups.
+8. **Current joint grind.** One fold proof carries one nonce. That nonce is used
+   in every group-local challenge draw, and the prover accepts it only when all
+   group-local fold witnesses pass.
+9. **Planner-free verification.** The verifier MUST resolve an approved row and
+   validate it. It MUST NOT execute planner search or provider code.
+10. **Canonical identity.** Commitment-profile bytes, schedule-row identity,
+    serialization, generated lookup, and transcript binding MUST agree on one
+    canonical field order.
+11. **No verifier panic.** Malformed profiles, selection IDs, sizes, matrix
+    shapes, commitment rows, proofs, and serialized values MUST return
+    `AkitaError` or `SerializationError` before unchecked indexing or
+    allocation.
+12. **No parallel legacy path.** Layout-only grouped APIs, config-based
+    descriptor reconstruction, and compatibility wrappers MUST be removed.
+
+### Non-goals
+
+- Changing the current multi-group completeness probability model.
+- Reallocating the current `1/8` target across groups.
+- Replacing the existing tail formula, digit snap-down, `n_snap` behavior, or
+  terminal average-case byte model.
+- Adding one grind nonce per group in this cut.
+- Proving that a provider's private semantic description is true beyond the
+  accepted digit/range relations already checked by Akita.
+- Per-polynomial providers inside one committed group.
+- Per-group D matrices or per-group opening bases.
+- Changing the folded-only topology: multi-group structure remains root-only,
+  recursive suffixes remain singleton, precommitted root groups remain flat,
+  and tiered or immediately terminal multi-group roots remain unsupported.
+- Runtime planner execution in the verifier.
+- Cartesian generation of all provider or profile combinations.
+- Unbounded setup, schedule, polynomial, or descriptor sizes.
+- Backward compatibility with old commitment or schedule descriptor bytes.
+
+## Audited limitation
+
+### The original public boundary loses commitment facts
+
+At the audited base, `commit_group` returns frozen metadata, a commitment, and
+a hint, but `commit_final_group` accepts only earlier
+`PolynomialGroupLayout`s. It reconstructs those groups through a single config.
+Prover and verifier claims carry bare commitments, so the metadata returned at
+commitment time does not reach the final root or verification boundary.
+
+This is only coherent while one config determines one representation and one
+profile for every group. It cannot safely express independently prepared
+groups.
+
+### The original lookup key is asymmetric
+
+Earlier groups have frozen A/B metadata, while the final group is represented
+only by its polynomial layout and a preset-wide source choice. The generated
+row and transcript descriptor therefore cannot identify an arbitrary ordered
+set of exact group profiles.
+
+### Planner and runtime materialization reuse global source facts
+
+The original grouped planner and generated-row expansion reuse
+`PlannerPolicy.decomposition` and `PlannerPolicy.onehot_chunk_size` for every
+group. Consequently:
+
+- a dense group can inherit one-hot fold norms;
+- one-hot groups with different sparsities can inherit the same norm;
+- A width and rank can be derived from the wrong source digit depth;
+- fold depth can be under- or over-sized for earlier groups;
+- generated identity cannot distinguish otherwise equal layouts.
+
+The in-flight branch has already demonstrated this failure in an end-to-end
+mixed test: a global final-group source was still used to size an earlier
+group's fold witness. The group-local regression caught and corrected that
+specific use. The final design removes the semantic source dependency
+entirely from verifier-visible params rather than expanding the taxonomy.
+
+### Validation is flattened
+
+The original prover flattens all root polynomials and validates them against
+the final group's one-hot configuration. This rejects valid heterogeneous
+groups and can fail to enforce an earlier group's actual representation.
+
+Validation MUST be group-local and provider-owned before commitment and
+opening. The core then validates the resulting accepted profile independently.
+
+### Generated and setup identity are homogeneous
+
+Generated keys and setup scans are built around preset-wide source policy.
+Naively adding an enum value per source does not solve this: an open registry
+would turn catalog generation into an unbounded Cartesian product.
+
+The correct unit of generated identity is an exact approved schedule row over
+ordered commitment profiles. Providers are not enumeration axes.
+
+## Design
+
+### Architecture
+
+The data flow is:
+
+```text
+downstream source provider
+  -> prepare and validate one concrete group
+  -> propose checked commitment-profile candidates
+  -> offline planner or generated-catalog resolver
+  -> exact approved schedule row
+  -> commit under the row's exact final profile
+  -> CommittedGroup { profile, commitment }
+  -> grouped opening statement { row selection, ordered committed groups }
+  -> prover and verifier resolve the same row
+  -> verifier checks profile/row/setup/proof/transcript consistency
+```
+
+The source provider disappears at the public statement boundary. Two unrelated
+providers that produce the same profile and witness relation can use the same
+schedule row. Conversely, two schedules with the same commitment profiles but
+different valid fold or terminal choices have distinct schedule-row IDs.
+
+### Exact committed-group profile
+
+The final public shape is conceptually:
 
 ```rust
-pub enum GroupSource {
-    Dense { coefficient_bits: u32 },
-    OneHot { chunk_size: usize },
+pub struct CommittedGroupProfile {
+    pub version: u8,
+    pub group: PolynomialGroupLayout,
+
+    pub num_live_ring_elements_per_claim: usize,
+    pub num_positions_per_block: usize,
+    pub num_live_blocks: usize,
+
+    pub log_basis_inner: u32,
+    pub num_digits_inner: usize,
+    pub inner_commit_matrix: InnerCommitMatrixParams,
+
+    pub log_basis_outer: u32,
+    pub num_digits_outer: usize,
+    pub outer_commit_matrix: OuterCommitMatrixParams,
+}
+
+pub struct CommittedGroup<F: FieldCore> {
+    pub profile: CommittedGroupProfile,
+    pub commitment: Commitment<F>,
 }
 ```
 
-Every independently committed group freezes this contract together with its
-layout and exact commitment parameters. Public opening claims carry
-self-describing committed groups, so the prover and verifier derive one
-ordered schedule key from the exact descriptors that produced the
-commitments. The final group also carries a descriptor produced by
-`commit_final_group`; it is not reconstructed later from a bare
-`PolynomialGroupLayout`.
+This is illustrative naming, but the field ownership is normative.
 
-Source coefficient bounds are distinct from opening-value bounds. A dense
-group's `coefficient_bits` prices its committed source and A/fold relations.
-Opening evaluations remain full-field values. The root-selected opening basis
-and shared D matrix therefore remain shared across groups.
+Both bases are required:
 
-Generated catalogs contain only explicitly generated ordered contract
-combinations. They do not enumerate the Cartesian product of every supported
-dense bound and one-hot chunk size. Arbitrary checked combinations use the
-offline planner and may be emitted as workload-specific catalog rows.
+- `log_basis_inner` and `num_digits_inner` define the accepted source/A digit
+  layout and the A consistency rows;
+- `log_basis_outer` and `num_digits_outer` define the B input encoding and
+  therefore the commitment's row relation.
 
-## Audited current limitation
+The profile MUST carry exact digit depths. A `coefficient_bits` value is not a
+substitute: it is one provider's input to decomposition planning, not the
+protocol geometry the verifier checks.
 
-The audit uses base
-`b0880f73236b89896b15efd63ff955922307afbe`.
+The profile MUST carry the complete canonical A/B matrix parameters rather
+than duplicating a partial list of ranks and bounds. Each matrix parameter
+object binds at least:
 
-### Public ownership loses frozen metadata
+- SIS security-policy and table identity;
+- modulus profile;
+- matrix role;
+- ring dimension;
+- input width;
+- output rank;
+- coefficient infinity-norm bound.
 
-`commit_group` returns
-`(PrecommittedGroupDescriptor, Commitment, AkitaCommitmentHint)`, but
-`commit_final_group` accepts only `Vec<PolynomialGroupLayout>` and reconstructs
-every earlier descriptor through `PrecommittedCommitmentConfig<Cfg>`.
-`ProverOpeningData` and verifier `OpeningClaims` then carry only bare
-commitments. The descriptors returned at commit time do not reach final
-commitment, proving, or verification.
+The core MUST cross-check:
 
-This is safe only while one config deterministically selects one source
-contract for every group. It cannot represent independent contracts and can
-silently plan a commitment under metadata different from the metadata that
-created it.
+```text
+A width =
+    num_positions_per_block * num_digits_inner
 
-### The schedule key is asymmetric
+B width =
+    A output rank
+    * num_digits_outer
+    * num_live_blocks
+    * group.num_polynomials
+    * (A ring dimension / B ring dimension)
+```
 
-`AkitaScheduleLookupKey` contains exact `PrecommittedGroupDescriptor` values for
-earlier groups but only `PolynomialGroupLayout` for the final group. The
-materialized schedule adds `RootSource` only to `RootFinalGroupParams`.
-Descriptor bytes consequently bind the final source and precommitted A/B
-geometry, but not a precommitted group's semantic dense/one-hot contract.
+All multiplication, division, shifts, powers of two, and conversions use
+checked arithmetic. The current carrier relation requires nonzero power-of-two
+A/B dimensions with the A dimension divisible by the B dimension.
 
-### Planner and runtime materialization reuse a global source
+The profile does not contain:
 
-Both `akita-planner/src/group_batch.rs` and
-`akita-schedules/src/group_batch.rs` derive every precommitted group's
-`onehot_chunk_size`, decomposition, fold witness norms, A collision bound, and
-fold digit count from `PlannerPolicy.decomposition` and
-`PlannerPolicy.onehot_chunk_size`. The final group uses the same policy fields.
+- a provider registration;
+- a dense bound or sparse chunk size as semantic data;
+- the shared D matrix;
+- the consuming root's opening basis;
+- a fold challenge configuration;
+- a fold digit depth;
+- a terminal response policy.
 
-This creates four defects for heterogeneous input:
+Those last four items belong to the selected opening schedule because an
+independently committed group may be consumed by different valid roots.
 
-1. a dense earlier group can be priced as one-hot;
-2. one-hot groups with different chunk sizes share one L1 bound;
-3. a bounded dense group cannot select its actual source digit depth;
-4. A rank and fold-witness sizing can be security-underpriced relative to the
-   verifier-enforced source.
+### Commitment serialization
 
-### Validation flattens source identity
+`CommittedGroup` serialization is a breaking, versioned format:
 
-`batched_prove` validates all root polynomials against the final
-`CommittedGroupParams.onehot_chunk_size`. It does not validate each polynomial
-group against its own params. The verifier reconstructs descriptors from
-`OpeningClaimsLayout` and the config, so it has no independent public source
-contract to compare with the commitments.
+```text
+profile.version:u8
+group.num_vars:u64
+group.num_polynomials:u64
+num_live_ring_elements_per_claim:u64
+num_positions_per_block:u64
+num_live_blocks:u64
+log_basis_inner:u32
+num_digits_inner:u64
+canonical InnerCommitMatrixParams bytes
+log_basis_outer:u32
+num_digits_outer:u64
+canonical OuterCommitMatrixParams bytes
+canonical Commitment bytes
+```
 
-### Generated identity is preset-wide
+Platform sizes MUST serialize through checked `usize <-> u64` conversions.
+Deserialization MUST:
 
-Generated entries store one final `GeneratedRootSource`; catalog identity stores
-the preset-wide decomposition and one-hot chunk size. Multi-group keys and
-precommitted descriptor bytes omit ordered per-group source contracts. A
-generated lookup therefore cannot distinguish two otherwise identical group
-layouts with different source contracts.
+1. reject an unknown profile version;
+2. read only fixed-width lengths before validation;
+3. validate group and block geometry;
+4. validate both matrix parameter objects and exact derived widths;
+5. compute `n_b * d_b` with checked arithmetic;
+6. reject a coefficient count above the repository allocation cap;
+7. only then allocate and deserialize commitment rows;
+8. run `Valid::check` before returning a usable group.
 
-### Setup sizing samples homogeneous layouts
+Provider IDs and provider parameters MUST NOT appear in these bytes.
 
-The setup-envelope scan is keyed by `OpeningClaimsLayout` and decides whether
-to include multi-group shapes from the preset's global
-`log_commit_bound == 1`. It does not scan heterogeneous source combinations.
-Exact post-resolution footprint checks prevent out-of-bounds setup access, but
-setup generation can omit the envelope needed by a valid mixed-source
-workload.
+### Open source-provider interface
 
-## Terminology and ownership
+Akita exposes an open trait at the prover/planner boundary. Exact Rust names
+remain implementation choices because backend associated types and const ring
+dimensions need to fit the existing compute traits, but the interface MUST
+provide these capabilities:
 
-A **group source contract** is the public, checked coefficient class of one
-commitment group:
+```rust
+pub trait GroupSourceProvider<F> {
+    type PreparedGroup;
 
-- `Dense { coefficient_bits }` means every centered source coefficient has
-  magnitude representable by the declared bit bound.
-- `OneHot { chunk_size }` means every polynomial uses the declared one-hot
-  chunk size and satisfies the one-hot representation invariant.
+    fn prepare_group(
+        &self,
+        input: Self::Input,
+        layout: PolynomialGroupLayout,
+        policy: &CommitmentPlanningPolicy,
+    ) -> Result<Self::PreparedGroup, AkitaError>;
 
-A **committed group descriptor** freezes:
+    fn commitment_candidates(
+        &self,
+        prepared: &Self::PreparedGroup,
+    ) -> Result<Vec<CommitmentProfileCandidate>, AkitaError>;
 
-- `PolynomialGroupLayout`;
-- `GroupSource`;
-- live source/block geometry;
-- inner and outer gadget bases;
-- A and B ring dimensions, ranks, widths, and SIS coefficient bounds.
+    fn honest_fold_model(
+        &self,
+        prepared: &Self::PreparedGroup,
+    ) -> &dyn HonestFoldModel;
+}
+```
 
-A **committed group** owns one descriptor and one commitment. The prover-only
-hint remains separate because it is not a public statement.
+This snippet describes responsibilities, not a required object-safe signature.
+In particular:
 
-A **final group request** contains the final layout and source contract needed
-before schedule search. The exact final descriptor is created from the selected
-root commitment parameters and returned with the final commitment.
+- the provider validates every concrete polynomial in the group;
+- it prepares source digits and any specialized commitment/opening kernels;
+- it proposes bounded profile candidates under the application's setup policy;
+- it supplies the current honest fold model for planner and grind preparation;
+- it cannot construct unchecked matrix params or bypass core validation;
+- the core revalidates every returned candidate using canonical geometry and
+  SIS primitives.
 
-The ordered committed-group descriptors are public statement data. They are
-not proof-provided hints and are never inferred from commitment bytes.
+The provider trait MUST be implementable outside the Akita repository. There
+MUST NOT be a sealed trait or exhaustive match over source families in
+`akita-types`, `akita-schedules`, `akita-verifier`, or transcript code.
 
-## Canonical types and public API
+Built-in providers replace the current semantic variants:
 
-`RootSource` is renamed to `GroupSource` and becomes the only semantic source
-contract type. There is no parallel config-only or verifier-only source enum.
+- bounded dense coefficients;
+- one-hot/sparse-binary coefficients.
+
+Other providers MAY reuse either provider's preparation helpers, define a new
+honest completeness model, or lower to the same accepted digit profile through
+different storage and kernels.
+
+### Registration system
+
+Dynamic applications MAY register providers:
+
+```text
+ProviderId + canonical application parameters
+    -> provider constructor
+```
+
+Registration has three purposes:
+
+- deserialize application job configuration;
+- select downstream preparation code;
+- key provider-local caches and diagnostics.
+
+Registration MUST NOT:
+
+- be required by the verifier;
+- determine transcript identity;
+- select a schedule row without an exact profile match;
+- be trusted as a proof that a witness has some semantic form;
+- create a catalog-generation axis.
+
+A static downstream integration MAY use ordinary Rust trait bounds instead of
+the dynamic registry. Both paths lower to the same prepared-group and exact
+profile boundary.
+
+### Exact schedule selection
+
+The opening statement carries one schedule selection in addition to ordered
+committed groups:
+
+```rust
+pub struct OpeningScheduleSelection {
+    pub catalog_identity: CatalogIdentity,
+    pub row_digest: ScheduleRowDigest,
+}
+
+pub struct GroupBatchStatement<'a, E, F> {
+    pub schedule: OpeningScheduleSelection,
+    pub groups: Vec<PolynomialGroupClaims<'a, E, &'a CommittedGroup<F>>>,
+}
+```
+
+Again, names are illustrative; these properties are normative:
+
+1. The schedule selection is batch-level, not copied into every commitment.
+2. The row digest identifies the complete canonical schedule descriptor.
+3. The catalog identity binds the preset-wide field, challenge, SIS, setup,
+   recursion, terminal-wire, and cost-policy version expected by the config.
+4. The selected row contains the exact ordered commitment profiles it accepts.
+5. The verifier resolves by identity/digest and never searches.
+6. The verifier compares every group profile with the corresponding row
+   profile before transcript replay.
+7. A row cannot be selected merely because aggregate widths match.
+
+The current `AkitaScheduleLookupKey` SHOULD become an exact ordered-profile key
+used for generation, duplicate detection, and diagnostics. It SHOULD NOT carry
+a `final_source` or source registration:
+
+```rust
+pub struct AkitaScheduleLookupKey {
+    pub groups: Vec<CommittedGroupProfile>,
+}
+```
+
+The vector is nonempty and ordered as:
+
+```text
+precommitted group 0
+...
+precommitted group G-2
+final group G-1
+```
+
+Before the final commitment exists, the prover-side resolver combines the
+actual earlier profiles with the final provider's bounded profile candidates.
+It selects an approved row, obtains the exact final profile from that row, and
+commits the final group under that profile. The resulting public statement is
+therefore not circular: row selection precedes the final B commitment, while
+verification later reconstructs the exact row key from all committed groups.
+
+If more than one secure row supports the same commitment profiles, each row
+has a different digest. The prover may choose any row allowed by the
+application/catalog policy. The verifier checks the chosen row rather than
+pretending that source semantics determine a unique schedule.
+
+### Why the verifier accepts schedule choice
+
+Schedule choice is not an unchecked prover degree of freedom. The resolved row
+is approved generated data whose full descriptor is:
+
+- canonically bound to the transcript;
+- structurally validated;
+- rechecked against the SIS tables and accepted digit envelopes;
+- matched to exact committed profiles;
+- checked against the materialized setup envelope;
+- checked against the proof's recursive and terminal shape.
+
+A provider's completeness model may prefer one approved row, but cannot cause
+the verifier to accept a row with insufficient ranks, widths, digit ranges, or
+terminal capacity.
+
+### Group-local source validation
+
+Concrete source validation occurs before expensive matrix work and again
+before proving through the prepared group object.
+
+The built-in dense provider MUST:
+
+- compute the largest centered coefficient magnitude over the live logical
+  coefficients;
+- derive its checked bit width without scanning zero padding as live input;
+- reject a coefficient outside its requested commitment candidate;
+- produce balanced source digits that fit the row's
+  `(log_basis_inner, num_digits_inner)` envelope.
+
+The built-in one-hot provider MUST:
+
+- require the one-hot representation rather than accepting arbitrary dense
+  storage;
+- validate the chunk layout and index range;
+- require the exact provider-requested chunk size;
+- lower the representation to source digits fitting the selected profile.
+
+The core MUST NOT flatten heterogeneous groups and call one provider's
+validator over all polynomials.
+
+### Soundness versus completeness
+
+The implementation MUST keep three quantities separate.
+
+#### Source acceptance
+
+At commitment, the verifier-visible source relation accepts balanced digits
+under:
+
+```text
+log_basis_inner
+num_digits_inner
+A input width and matrix security
+```
+
+Soundness prices the full accepted digit envelope. A provider's statement that
+its honest coefficients are smaller does not reduce the A collision bound
+unless it selects a smaller public digit profile that the proof actually
+enforces.
+
+Provider semantics are not silently promoted into proof constraints. For
+example, the built-in one-hot provider may use one-nonzero-per-chunk sparsity
+to predict an honest folded response, while the Akita source relation proves
+only the public digit/range profile it actually contains. A malicious prover
+using a denser accepted digit vector may have worse completeness, but does not
+escape the verifier's accepted envelope or its SIS pricing. An application that
+needs one-hot sparsity itself to be a verified semantic statement MUST prove
+that property in an explicit relation; a provider registration is not such a
+proof.
+
+#### Recursive fold acceptance
+
+At a recursive root or fold, the schedule fixes:
+
+```text
+log_basis_open
+num_digits_fold
+group-local fold challenge config and shape
+```
+
+The verifier range-checks the folded digits and prices the full representable
+envelope. It does not need to know why the planner expected the honest folded
+response to fit.
+
+#### Terminal response acceptance
+
+At the transparent terminal fold, the response is revealed. The verifier
+therefore needs the explicit terminal response cap and wire rule to:
+
+- reject a coefficient above the admitted range;
+- decode the canonical terminal representation;
+- validate the terminal relation;
+- account for the terminal SIS/security envelope.
+
+The honest completeness model may predict a tighter distribution, but the
+terminal cap in the selected row is the public admission rule.
+
+### Honest fold model
+
+An open provider supplies an honest fold model to the prover and offline
+planner. The minimal abstraction is a function from a checked group/schedule
+context to an honest cap proposal and supporting diagnostics. It MUST NOT
+require every future source to pretend that `(L∞, L1)` is its natural semantic
+description.
 
 Conceptually:
 
 ```rust
-pub enum GroupSource {
-    Dense { coefficient_bits: u32 },
-    OneHot { chunk_size: usize },
+pub trait HonestFoldModel {
+    fn plan(
+        &self,
+        context: &FoldCompletenessContext,
+    ) -> Result<HonestFoldPlan, AkitaError>;
 }
 
-pub struct CommittedGroupDescriptor {
-    pub group: PolynomialGroupLayout,
-    pub source: GroupSource,
-    // exact frozen A/B and source geometry
-}
-
-pub struct CommittedGroup<F: FieldCore> {
-    pub descriptor: CommittedGroupDescriptor,
-    pub commitment: Commitment<F>,
-}
-
-pub struct GroupCommitmentRequest {
-    pub group: PolynomialGroupLayout,
-    pub source: GroupSource,
-}
-
-pub struct AkitaScheduleLookupKey {
-    pub final_group: GroupCommitmentRequest,
-    pub precommitteds: Vec<CommittedGroupDescriptor>,
+pub struct HonestFoldPlan {
+    pub unsnapped_linf_cap: u128,
+    pub decomposed_fold_digits: usize,
+    pub snapped_linf_cap: u128,
 }
 ```
 
-Exact field names may be adjusted to fit existing type ownership, but these
-properties are normative:
+The core validates that the proposed digit depth is representable and that the
+resulting schedule is SIS-secure. Built-in models MUST call the existing
+canonical primitives rather than duplicate their arithmetic.
 
-1. There MUST be one `GroupSource` type.
-2. Every committed-group descriptor MUST contain it.
-3. `commit_group` and `commit_final_group` MUST return the descriptor paired
-   with the commitment.
-4. `commit_final_group` MUST accept actual earlier descriptors, not bare
-   layouts.
-5. Prover and verifier claims MUST expose the ordered descriptors used to
-   derive the schedule.
-6. The final descriptor MUST be checked against the selected final root params
-   before commitment execution and again at prove/verify schedule resolution.
-7. No compatibility overload or forwarding alias MAY preserve the
-   layout-only multi-group path.
-
-The scalar API may obtain its default source contract from `Cfg` to preserve
-existing scalar behavior. The normalized scalar schedule key still has no
-precommitted groups, but its final request includes the derived source.
-
-## Source validation
-
-`GroupSource::validate(field_bits)` MUST reject:
-
-- dense bounds of zero;
-- dense bounds larger than the field's supported centered representation;
-- one-hot chunk size zero;
-- chunk sizes that cannot be represented or used by the selected backend;
-- arithmetic that overflows while deriving digit or norm parameters.
-
-The contract is an upper bound, not an unchecked promise. Prover commitment and
-opening entry points MUST validate the concrete polynomial group against it.
-For dense input, decomposition MUST reject a coefficient outside the declared
-bound. For one-hot input, every polynomial MUST report the exact declared chunk
-size and satisfy existing one-hot shape validation.
-
-Groups are validated independently. A heterogeneous root MUST NOT flatten all
-polynomials and validate them against the final group's params.
-
-## Decomposition and security invariants
-
-Let group `g` have source contract `S_g`.
-
-For `Dense { coefficient_bits = b_g }`:
+The current dense and one-hot models use `FoldWitnessNorms`:
 
 ```text
-log_commit_bound_g = b_g
-source ||s_g||∞     = checked centered bound for b_g
-source nonzeros_g   = D_A,g
+dense:
+  ||s||∞ = balanced_digit_abs_max(log_basis_inner)
+  ||s||1 = d_A * ||s||∞
+
+one-hot/sparse-binary:
+  ||s||∞ = 1
+  ||s||1 = ceil(d_A / chunk_size)
 ```
 
-For `OneHot { chunk_size = K_g }`:
+Those values are provider-side completeness facts. They are not a universal
+verifier-facing source schema.
+
+### Current completeness formulas are frozen in this cut
+
+For the built-in models, the current worst-case negacyclic product bound stays:
 
 ```text
-log_commit_bound_g = 1
-source ||s_g||∞     = 1
-source nonzeros_g   = ceil(D_A,g / K_g)
+product_bound =
+  min(
+    ||c||∞ * ||s||1,
+    ||c||1 * ||s||∞
+  )
+
+beta_inf =
+  num_claims * num_live_blocks * product_bound
 ```
 
-Each group independently derives:
+For a certified flat challenge family, the current tail proxy stays:
 
 ```text
-δ_inner,g
-A width_g
-A collision bound_g
-n_a,g
-fold witness norms_g
-fold L∞ cap config_g
-δ_fold,g
-B width_g and bound_g for the frozen outer basis
+t_star_squared =
+  2
+  * (num_claims * num_live_blocks)
+  * challenge_l2_sq_max
+  * witness_linf_squared
+  * grind_union_ln
+
+unsnapped_cap = min(beta_inf, ceil_sqrt(t_star_squared))
 ```
 
-Planner acceptance and verifier validation MUST call the same canonical SIS and
-fold-norm primitives with these values. A generated row MUST NOT carry a rank
-or bound that bypasses recomputation.
+For a certified tensor challenge family, the existing
+`rademacher_proxy_variance_tensor_challenges` formula remains authoritative.
+Uncertified families continue to use `beta_inf`.
 
-The precommitted group's exact A/B geometry remains frozen. Choosing the root
-opening basis MAY change its fresh opening and fold digit depths only when the
-frozen A/B bounds certify that choice.
+`fold_witness_digit_plan` continues to:
 
-### Full-field opening values remain separate
+1. derive the unsnapped cap;
+2. choose the corresponding balanced digit depth;
+3. walk the depth downward while the representable envelope retains the
+   existing snap fraction;
+4. use `3/4` for fields narrower than 128 bits and the current protocol-bound
+   `1/2` for wide fields;
+5. return the snapped honest-prover cap used by grind admission.
 
-The source contract does not bound arbitrary opening evaluations. For every
-group:
+The current `p_grind = 1/8`, `MAX_FOLD_GRIND_ATTEMPTS = 4096`, snap behavior,
+and terminal planner model remain unchanged. This spec intentionally does not
+claim that the resulting bound is tight or that the nominal `1/8` predicts
+observed rejection. The current snap margin makes acceptance effectively high
+for shipped workloads; changing that model requires its own analysis and
+measurements.
 
-```text
-log_open_bound_g = field_bits
-```
+Multi-group planning continues to apply the current model independently to
+each group and search for one nonce accepted jointly. It does not introduce a
+batch-level probability correction in this cut.
 
-unless a future separately specified public opening-value contract replaces
-that rule. Dense `coefficient_bits` MUST NOT reduce D/opening security pricing.
+### Exact multi-group challenge sampling
 
-## Root-shared opening and D geometry
+Groups do **not** reuse one fold challenge vector.
 
-The root keeps:
+For one root fold, prover and verifier perform this exact sequence:
+
+1. absorb the shared D output
+   `v = D * concat(e_hat_0, ..., e_hat_{G-1})` once;
+2. iterate groups in `OpeningClaims` order;
+3. for group `g`, obtain its native A ring dimension, live-block count,
+   polynomial count, challenge config, and challenge shape;
+4. construct a sample label binding:
+   - the fold-round domain;
+   - `group_index = g`;
+   - `num_live_blocks_g`;
+   - `num_claims_g`;
+   - flat or tensor shape and tensor low length;
+   - the base challenge label;
+5. absorb the label, challenge count, native ring dimension, challenge-family
+   domain separator, and the shared grind nonce;
+6. squeeze a fresh group-local seed and sample that group's challenges;
+7. for a tensor draw, sample the high factor, absorb its digest, then sample
+   the low factor.
+
+Because each draw mutates the transcript, later groups are also downstream of
+earlier group draws. The explicit group index and geometry prevent equal-shaped
+groups from aliasing.
+
+The selected schedule MUST bind each group's challenge config and shape.
+Changing group order, challenge family, shape, ring dimension, block count, or
+claim count MUST change replay.
+
+This provider cut does not widen the typed schedule topology. Earlier
+precommitted root groups continue to use flat challenges; only the final root
+group may select the currently supported tensor challenge. After the root, the
+recursive suffix is singleton.
+
+### Why the verifier cares about grind policy
+
+The verifier cares only about the part of grinding that changes its accepted
+Fiat-Shamir space:
+
+- whether the level permits only nonce zero or a bounded nonce range;
+- the exclusive nonce bound;
+- the canonical nonce wire width;
+- how the nonce enters each group-local challenge seed;
+- the resulting grinding entropy charged to soundness.
+
+With one shared nonce in `[0, Q)`, the prover can choose among at most `Q`
+joint challenge tuples for the complete group batch. The soundness budget
+therefore charges `log2(Q)` at that fold, not once per group.
+
+The verifier does not need the honest tail formula, the `1/8` planner target,
+the prover's sequential or shuffled probe order, the first-accepting convention,
+or the terminal expected-byte model. It cannot verify which nonces the prover
+tried. Those values may remain descriptor-versioned for compatibility during
+the cutover, but the implementation SHOULD split them into:
+
+- a verifier/protocol nonce-and-wire binding;
+- a prover/planner completeness and cost-model binding.
+
+This ownership refactor MUST preserve current transcript bytes and accepted
+nonce ranges unless a later spec explicitly changes them.
+
+### One nonce per group is deferred
+
+A future design may carry `nonce_g` for every group. It could improve honest
+multi-group completeness by allowing each group to find an accepting draw
+independently. It is not a free wire-format change:
+
+- prover and verifier would replay a nonce vector in group order;
+- transcript labels and proof shape would change;
+- the verifier would validate every nonce before sampling;
+- a range of size `Q` for each of `G` groups exposes up to `Q^G` challenge
+  tuples;
+- a conservative soundness budget would therefore charge up to
+  `G * log2(Q)` unless a tighter joint argument is proved;
+- terminal and recursive group interactions would need new completeness
+  measurements.
+
+This work belongs in a separate specification.
+
+### Root-shared opening and D geometry
+
+Source coefficients and opening evaluations have different bounds. A
+provider's source profile MUST NOT reduce the opening-value range.
+
+The root retains:
 
 - one maximum-arity EOR domain;
 - each group's own complete opening point;
 - one root-selected `log_basis_open`;
-- one shared D matrix over `concat(w_hat_0, ..., w_hat_{G-1})`.
+- group-local `num_digits_open` derived for full-field evaluations;
+- one shared D matrix over the ordered concatenation of all `e_hat_g`.
 
-This is sound because D commits decomposed opening-side values, not raw source
-coefficients. Its width is:
+For group `g`, its D-segment width remains:
 
 ```text
-width_D = Σ_g decomposed_w_width(
-    full_field_opening_depth,
-    live_blocks_g,
-    num_polynomials_g,
+num_digits_open_g
+* num_live_blocks_g
+* num_polynomials_g
+* (d_A,g / d_D)
+```
+
+The total D input width is the checked sum of those segment widths. The
+selected row MUST validate every A-to-D carrier ratio and the final sum before
+setup access or allocation.
+
+### Generalizing `ProverOpeningData`
+
+The current `ProverOpeningData` stores:
+
+- one homogeneous polynomial type `P`;
+- raw opening claims;
+- a parallel hints vector;
+- parallel polynomial slices;
+- an optional reconstructed schedule key.
+
+That ownership is unsuitable for open heterogeneous providers. It encourages
+flattening and makes index alignment a global invariant.
+
+The replacement MUST aggregate each group:
+
+```rust
+pub struct ProverOpeningData<'a, F, E> {
+    pub schedule: OpeningScheduleSelection,
+    pub groups: Vec<ProverGroupInput<'a, F, E>>,
+}
+
+pub struct ProverGroupInput<'a, F, E> {
+    pub point: Vec<E>,
+    pub evaluations: Vec<E>,
+    pub committed_group: &'a CommittedGroup<F>,
+    pub hint: AkitaCommitmentHint<F>,
+    pub prepared_source: Box<dyn PreparedGroupProver<F, E> + 'a>,
+}
+```
+
+This snippet is an ownership model, not a required allocation strategy. The
+implementation MAY use enums internally for built-in fast paths, arenas,
+borrows, or generics to avoid heap allocation.
+
+Type erasure SHOULD occur at the whole-group operation boundary, not at every
+low-level polynomial read. Existing `RootOpeningSource` and backend kernels use
+generic associated types, const ring dimensions, and monomorphized hot loops.
+Wrapping those low-level traits directly in `dyn` objects would either be
+impossible or impose unnecessary virtual calls.
+
+`PreparedGroupProver` instead owns one prepared homogeneous group and exposes
+coarse operations required by the root protocol, such as:
+
+- validate prepared witness against the selected commitment profile;
+- produce group-local opening rows;
+- prepare or execute group-local fold accumulation for a dispatched ring
+  dimension;
+- expose checked provider completeness data to the grind planner;
+- report the group layout and exact profile.
+
+The root protocol iterates group records. It MUST NOT require one global `P`,
+build one `flat_polys` source-validation path, or infer group/profile alignment
+from parallel vector positions.
+
+### Public APIs
+
+The scalar and grouped APIs perform one cutover.
+
+Standalone group preparation and commitment:
+
+```text
+provider.prepare_group(...)
+resolver.select_standalone_profile(...)
+commit_group(prepared_group, exact_profile)
+    -> (CommittedGroup, AkitaCommitmentHint)
+```
+
+Final group commitment:
+
+```text
+resolve_group_batch(
+    exact earlier CommittedGroupProfile values,
+    prepared final provider candidates,
 )
+    -> ResolvedGroupBatch { selection, schedule, final_profile }
+
+commit_final_group(prepared_final, ResolvedGroupBatch)
+    -> (CommittedGroup, AkitaCommitmentHint)
 ```
 
-The root MUST use each group's actual block geometry. Source bounds affect A
-and folded-response sizing; they do not create per-group D matrices.
-
-## Schedule identity and ordering
-
-The schedule key preserves transcript order:
+Proving:
 
 ```text
-precommitted descriptor 0
-...
-precommitted descriptor G-2
-final request
+ProverOpeningData {
+    schedule selection,
+    ordered group records carrying exact committed groups,
+}
 ```
 
-Canonical bytes MUST encode `GroupSource` with an explicit discriminant and
-fixed field order:
+Verification:
 
 ```text
-Dense  -> 0 || coefficient_bits:u32
-OneHot -> 1 || chunk_size:u64
+GroupBatchStatement {
+    schedule selection,
+    ordered claims over self-describing committed groups,
+}
 ```
 
-The final request encoding MUST include layout then source. Every committed
-descriptor encoding MUST include layout, source, then frozen geometry and
-matrix facts. Reordering groups or changing one contract MUST change:
+The repository has no backward-compatibility guarantee. There MUST NOT be:
 
-- the schedule lookup key;
-- generated table lookup;
-- effective schedule descriptor bytes;
-- catalog key digest and duplicate detection;
-- the transcript-bound instance descriptor.
+- a layout-only `commit_final_group`;
+- a `_with_profiles` sibling while the old path remains;
+- a verifier overload accepting bare commitments for grouped openings;
+- a config adapter that reconstructs earlier profiles;
+- forwarding aliases for removed source-enum APIs.
 
-`OpeningClaimsLayout::opening_batch_digest` remains a geometry digest. Source
-contracts are bound by the effective schedule digest derived from public
-committed-group descriptors. The implementation MAY additionally include them
-in a call-level digest only if it removes, rather than duplicates, an existing
-source of truth.
+Scalar behavior is preserved by having each config select its built-in default
+provider and schedule row. Scalar commitments still become self-describing so
+one public commitment type serves both scalar and grouped APIs.
 
-## Generated catalogs and offline planning
+### Generated catalogs and offline planning
 
-Catalog keys MUST compare the full final request and every ordered
-precommitted descriptor. A false hit is invalid.
+Generated catalogs contain exact schedule rows. They do not enumerate source
+providers.
 
-The stock generator MUST NOT enumerate all possible:
+The stock generator MUST:
+
+- retain existing scalar and homogeneous families through their built-in
+  provider preparations;
+- emit selected mixed-profile workloads explicitly;
+- sort and deduplicate on canonical exact-profile keys and full row
+  descriptors;
+- reject a duplicate key/digest with different row contents;
+- bind exact ordered profiles in catalog identity and row digest;
+- replay every emitted row through the runtime expander and compare it with the
+  offline planner result.
+
+The acceptance workload remains:
 
 ```text
-(Dense bit bounds ∪ OneHot chunk sizes)^G
+group 0: built-in one-hot provider, K = 16, arity 14, one polynomial
+group 1: built-in bounded-dense provider, 32-bit request, arity 15, two polynomials
+group 2: built-in one-hot provider, K = 256, arity 16, one polynomial
 ```
 
-Instead:
+Its source names and parameters are generation inputs. The emitted public row
+contains exact profiles and schedule geometry. Its reordered form is a
+different ordered key and remains deliberately absent from the stock catalog.
 
-1. existing scalar and homogeneous catalog families keep their explicit
-   default contract;
-2. selected mixed workloads MAY be listed as exact generation cases;
-3. arbitrary checked combinations use `akita-planner` offline;
-4. a workload that needs runtime lookup emits the resulting exact rows into
-   its catalog;
-5. verifier runtime remains planner-free and rejects a missing row as
-   `UnsupportedSchedule`.
+An arbitrary downstream provider uses the offline planner and emits the exact
+approved row into its application catalog. Runtime verification rejects an
+unknown selection with `UnsupportedSchedule`; it does not invoke the planner.
 
-Planner replay tests MUST prove that an emitted mixed row expands to the same
-canonical schedule as offline search. Catalog identity continues to bind
-preset-wide field, SIS, challenge, basis-range, setup, and recursion policy;
-ordered source contracts belong to row keys rather than a global identity
-field.
-
-## Setup envelope and performance
-
-Exact `ensure_schedule_fits_setup` validation remains mandatory on commit,
-prove, and verify.
+### Setup envelope
 
 Setup generation MUST cover:
 
-- scalar default-source schedules;
-- every enabled generated mixed-source row within public capacity;
-- precommit recipes for every enabled descriptor;
-- bounded representative offline-planner shapes used by tests or shipped
-  presets.
+- every enabled generated schedule row;
+- every exact profile used for standalone precommit in those rows;
+- scalar default-provider rows;
+- recursive/setup-prefix rows reachable from those schedules;
+- the maximum A, B, D, and setup-prefix dimensions of the enabled catalog.
 
-The public setup seed need not add a Cartesian source-contract range. A config
-or application that permits arbitrary contracts MUST provide an explicit
-bounded setup policy or exact workload catalog. “Arbitrary” never means that
-setup allocation is unbounded.
+The envelope is a maximum over exact rows, not a Cartesian product over
+provider registrations. Applications that accept arbitrary provider requests
+MUST still supply a bounded catalog and setup policy.
 
-Planning complexity for one exact key SHOULD remain:
+`ensure_schedule_fits_setup` remains mandatory at commit, prove, and verify.
+The verifier MUST perform exact checked footprint validation before prepared
+setup indexing.
 
-```text
-O(G * candidate_bases * candidate_root_splits + suffix_DP)
-```
+### Transcript identity
 
-Source contracts add O(G) derivation per root candidate. Implementations
-SHOULD prevalidate/freeze each descriptor once and SHOULD NOT clone polynomial
-data, replan each group inside the split loop, or enumerate unused contract
-combinations.
+Canonical instance binding MUST include:
 
-## Verifier boundary and malformed input
+1. active protocol/version bindings;
+2. catalog identity and exact schedule row digest;
+3. the full expanded schedule descriptor;
+4. ordered commitment-profile bytes;
+5. ordered group layouts and opening points;
+6. commitment rows and claimed evaluations through their existing transcript
+   locations;
+7. group-local challenge labels and the shared nonce as described above.
 
-Before schedule lookup or allocation, the verifier MUST:
+Provider registration IDs MUST NOT be transcript inputs. If two providers
+lower to identical profiles and relations, the verifier should not distinguish
+them.
 
-1. validate claim group counts and setup capacity with checked arithmetic;
-2. validate every committed-group descriptor and source contract;
-3. validate descriptor layout against that claim group's point arity and
-   evaluation count;
-4. require exactly one descriptor-bearing commitment per group;
-5. build the ordered schedule key from those descriptors;
-6. resolve and validate the exact generated schedule;
-7. compare the selected final and precommitted params with every descriptor;
-8. validate each commitment row count against its group-local B params;
-9. validate the exact schedule footprint against setup;
-10. only then bind the instance descriptor, allocate replay state, or index
-    prepared setup.
+Changing any accepted geometry, matrix parameter, group order, challenge
+configuration, challenge shape, recursive suffix, terminal cap, or wire rule
+MUST change the schedule digest or instance descriptor.
 
-Malformed contracts, descriptor mismatches, overflows, excessive sizes,
-unsupported rows, and commitment-shape mismatches MUST return `AkitaError` or
-`SerializationError`. Verifier-reachable code MUST NOT use unchecked indexing,
-`unwrap`, `expect`, assertions, or allocation sized from an unvalidated
-descriptor.
+### Verifier boundary
 
-If committed groups are serialized, deserialization MUST use fixed-width
-integer encodings, checked `u64 -> usize` conversion, a known source
-discriminant, and `Valid::check` before returning a usable object.
+Before transcript replay or attacker-sized allocation, verification MUST:
 
-## Mixed examples
+1. validate the number of groups and claims with checked arithmetic;
+2. resolve the schedule selection in the configured catalog;
+3. validate catalog identity and row digest;
+4. validate every committed-group profile;
+5. compare profile layout with point arity and evaluation count;
+6. validate exact A/B widths, roles, ranks, bounds, ring dimensions, and SIS
+   identities;
+7. validate commitment row count as `n_b * d_b`;
+8. reconstruct the ordered exact-profile key and compare it with the row;
+9. validate the expanded schedule structure and group-local consuming params;
+10. validate D segment widths and shared D geometry;
+11. validate recursive digit envelopes and terminal response policy;
+12. validate the shared grind nonce against the selected fold's range;
+13. validate the exact setup footprint;
+14. validate proof shape;
+15. only then allocate replay state, index setup matrices, or draw challenges.
 
-The primary acceptance shape is:
+Unsupported rows, unknown versions, overflows, excessive sizes, profile
+mismatches, malformed commitments, and source-independent relation failures
+return `AkitaError::InvalidProof`, `AkitaError::UnsupportedSchedule`, or
+`SerializationError` as appropriate.
 
-```text
-group 0: OneHot { chunk_size: 16 }
-group 1: Dense  { coefficient_bits: 20 }
-group 2: OneHot { chunk_size: 256 }  // final group
-```
+### Downstream integration story
 
-Each group may have a different arity, polynomial count, ring dimension, and
-opening point. The planner derives three A/fold contracts, freezes the first
-two descriptors at their original commits, plans the final descriptor from
-the complete ordered key, and uses one full-field shared D matrix.
+A downstream repository that wants multi-group batching:
 
-Reordering the first two groups is a different statement and schedule key even
-when aggregate counts are unchanged.
+1. implements or selects one source provider per group;
+2. prepares and validates each concrete group;
+3. obtains bounded commitment-profile candidates;
+4. uses an existing application catalog row or runs the Akita offline planner;
+5. emits any new exact row into its application catalog and regenerates setup
+   capacity;
+6. commits earlier groups and retains their self-describing
+   `CommittedGroup`s;
+7. resolves the final batch using those exact profiles;
+8. commits the final group under the selected row's exact profile;
+9. passes one schedule selection and ordered group records to prove/verify.
 
-## Migration and cutover
+If a new provider lowers to an existing exact profile and completeness is
+acceptable, it can reuse an existing row without changing Akita core. If it
+needs a new profile or fold plan, it emits a new row; verifier code still does
+not change.
 
-This repository has no backward-compatibility guarantee. The implementation
-MUST perform one cutover:
+### Affected crate surfaces
 
-1. rename `RootSource` to `GroupSource`;
-2. add source to the frozen descriptor;
-3. replace tuple commitment outputs with descriptor-bearing committed groups;
-4. replace layout-only `commit_final_group` input;
-5. replace bare-commitment multi-group claim construction;
-6. remove config-based reconstruction from opening claims;
-7. update generated keys, emitters, catalog identity digests, and checked
-   expansion;
-8. regenerate affected schedule artifacts;
-9. update book/API documentation.
+`akita-types`
+: Replace source-bearing descriptors with exact profiles; define
+  self-describing commitments, schedule selection identity, canonical bytes,
+  checked serialization, and verifier-visible accepted envelopes. Remove
+  `GroupSourceRegistration`, `GroupSourceEncoding`, public `GroupSource`, and
+  `LevelParamsLike::source`.
 
-No legacy wrapper, layout-only overload, `_with_sources` sibling, or
-config-reconstruction fallback remains.
+`akita-prover`
+: Define the open provider/prepared-group boundary; move dense/one-hot
+  validation behind built-in providers; generalize `ProverOpeningData`; execute
+  group-local operations and the current joint grind without flattening.
 
-## Acceptance tests
+`akita-planner`
+: Accept prepared profile candidates and provider-side honest models; validate
+  every candidate with canonical SIS primitives; preserve current completeness
+  formulas; emit exact row/profile identity.
 
-### Types and validation
+`akita-schedules`
+: Expand and validate rows from exact profiles; remove source enum matches;
+  sort, deduplicate, hash, and resolve exact row identities; stay planner-free
+  at runtime.
 
-- Dense bounds `0` and `field_bits + 1` reject.
-- One-hot chunk `0` rejects.
-- Descriptor bytes distinguish source variant, dense bound, chunk size, and
-  group order.
-- Checked conversion and size-overflow cases reject without panic.
-- Descriptor serialization round-trips and rejects unknown discriminants and
-  invalid values if serialization is exposed.
+`akita-config`
+: Select built-in default providers for scalar presets; resolve catalog rows
+  and bounded setup envelopes; remove config-based reconstruction of earlier
+  groups.
 
-### Commit and claims
+`akita-pcs`
+: Expose the one-shot public API cutover; migrate examples, benches, recursive
+  test support, and profile helpers to self-describing commitments and schedule
+  selection.
 
-- `commit_group` returns the exact source and frozen params used by the commit.
-- `commit_final_group` consumes those exact descriptors and returns an exact
-  final descriptor.
-- A descriptor/source/chunk/bound mismatch rejects before matrix work.
-- Claim layout mismatch, missing descriptor, duplicate group, and reordered
-  group reject.
-- Existing scalar dense and one-hot commits retain their schedules and
-  behavior under the config-derived default source.
+`akita-verifier`
+: Resolve the selected row, validate exact profiles and setup capacity, replay
+  distinct group-local challenges with the shared nonce, and reject malformed
+  input without provider logic.
 
-### Planner, generated rows, and setup
+`akita-setup`
+: Size matrices and setup prefixes from enabled exact rows and profiles.
 
-- Offline planning accepts one-hot K=16 + dense bounded + one-hot K=256.
-- Changing only one group source changes the key and schedule descriptor.
-- Group-local A ranks, fold depths, and norm caps match direct canonical
-  primitive calls.
-- Generated mixed rows match offline planner output exactly.
-- Generated lookup does not collide with a homogeneous or reordered key.
-- A missing mixed row rejects at runtime without invoking planner search.
-- Setup envelope covers every enabled mixed row and rejects an exact schedule
-  that exceeds materialized capacity.
+## Alternatives considered
 
-### Prove and verify
+### Public `Dense | OneHot` enum
 
-- Round-trip the primary three-group example.
-- Repeat with reordered groups, unequal arities, unequal polynomial counts,
-  independent opening points, and mixed A/B/D ring dimensions.
-- Cover base-field and extension-field openings.
-- Preserve existing recursive suffix and recursive setup-prefix behavior.
-- Tamper each descriptor source, dense bound, chunk size, layout, matrix bound,
-  commitment, opening point, and evaluation independently; verification
-  rejects.
-- Prover rejects a dense coefficient beyond its declared bound.
-- Prover rejects one-hot polynomial metadata with the wrong chunk size.
-- Transcript logs differ when one ordered source contract changes.
-- Fuzz malformed descriptor sizes and discriminants through verifier-facing
-  deserialization and entry validation.
+This fixes the first two built-in cases but makes every future source a
+protocol/API change. It also conflates provider completeness semantics with
+verifier acceptance geometry. Rejected.
 
-## Non-goals
+### Open registration plus closed encoding enum
 
-- Per-polynomial source contracts inside one commitment group.
-- Unbounded dense coefficients or unconstrained one-hot representations.
-- Per-group D matrices or per-group opening bases.
-- Runtime planner reachability from the verifier.
-- Cartesian generation of all source-contract combinations.
-- Tiered or immediately-terminal multi-group roots.
-- Backward compatibility with layout-only group claims or old descriptor bytes.
+This is the branch's current staging design. It lets downstream storage formats
+register against `Bounded` or `SparseBinary`, but a genuinely new honest model
+or source encoding still requires extending the closed enum. The verifier also
+binds provider identity that it does not use. Rejected as the final boundary;
+useful as an intermediate implementation step only.
 
-## Resolved audit decisions
+### Fully opaque provider certificate interpreted by the verifier
 
-1. **Self-describing commitments are required.** Config reconstruction cannot
-   preserve independently selected source contracts.
-2. **Source and opening bounds are separate.** Dense source bits do not reduce
-   full-field opening/D sizing.
-3. **D stays shared.** The source contract does not justify extra D outputs.
-4. **The final group is described too.** It is not a privileged globally
-   configured source.
-5. **Catalog growth is explicit.** Exact mixed rows are generated by workload,
-   not by Cartesian expansion.
-6. **Verifier runtime stays planner-free.** “Offline fallback” means explicit
-   offline search and optional row emission, not verifier-side DP.
-7. **No parallel legacy path remains.** Breaking API and descriptor changes
-   are intentional.
+An opaque type ID plus bytes merely moves the closed switch into a registry.
+Unless verifier code understands the certificate, it cannot derive security
+facts; if it does understand it, the verifier taxonomy remains closed.
+Rejected.
 
+### Put only source bounds in the public descriptor
+
+Values such as coefficient bits or one-hot chunk size are insufficient. The
+verifier needs the exact digit layout and A/B matrix geometry. Different
+providers can share those protocol facts. Rejected.
+
+### Infer profiles from commitment bytes
+
+Commitment rows do not uniquely encode the A/B geometry that created them.
+Inference would either be ambiguous or reintroduce config-global assumptions.
+Rejected.
+
+### Inline arbitrary schedules in every proof
+
+A fully self-describing inline schedule could be validated, but it enlarges the
+attacker-controlled deserialization surface and duplicates generated catalog
+policy. An approved row digest gives open offline planning while retaining a
+small runtime boundary. Not selected for this cut.
+
+### One low-level trait object per polynomial
+
+The existing backend traits rely on static ring dispatch and monomorphized
+kernels. Erasing each coefficient access would complicate object safety and
+hurt hot loops. Erase at the prepared whole-group boundary instead.
+
+### One nonce per group now
+
+This may improve completeness, but changes the proof, transcript, grinding
+entropy, and security accounting. Deferred to a separate spec.
+
+## Evaluation
+
+### Acceptance criteria
+
+- [ ] A downstream test crate defines a source provider without modifying any
+      Akita enum or verifier match and completes scalar commit/prove/verify.
+- [ ] The same downstream provider participates in a multi-group proof by
+      reusing or emitting an exact schedule row.
+- [ ] `CommittedGroupProfile` contains no provider/source registration and no
+      semantic dense/one-hot variant.
+- [ ] Every public commit returns `CommittedGroup`; every grouped final commit
+      consumes exact earlier profiles and a resolved schedule.
+- [ ] Layout-only descriptor reconstruction and bare-commitment grouped verify
+      APIs are absent.
+- [ ] Profile serialization round-trips and rejects unknown versions,
+      overflows, excessive allocation, invalid matrix roles/widths, and row
+      count mismatches.
+- [ ] Generated row identity distinguishes every exact profile field, group
+      order, challenge config/shape, fold envelope, D geometry, recursive
+      suffix, and terminal policy.
+- [ ] Provider registration changes do not change transcript bytes when the
+      exact profile and schedule row are unchanged.
+- [ ] The curated K=16 + dense-32 + K=256 row matches offline planning exactly.
+- [ ] The reordered mixed key misses the stock catalog without runtime planner
+      execution.
+- [ ] Group-local source validation rejects a dense coefficient outside its
+      selected profile and rejects malformed one-hot input before matrix work.
+- [ ] The mixed end-to-end proof uses different opening points and independently
+      checked profiles for all three groups.
+- [ ] Base-field and extension-field grouped openings pass.
+- [ ] Existing recursive suffix and mixed-ring-dimension grouped cases pass.
+- [ ] Tampering any profile field, row selection, group order, commitment row,
+      opening point, evaluation, challenge shape, or terminal cap rejects.
+- [ ] A logging-transcript test shows distinct group-local fold challenge events
+      and exact prover/verifier event equality.
+- [ ] Equal-shaped groups receive different challenge seeds because the group
+      index and sequential transcript state differ.
+- [ ] One shared nonce is replayed for every group and an out-of-range nonce
+      rejects before sampling.
+- [ ] Current scalar dense/one-hot schedule behavior and current homogeneous
+      multi-group behavior remain unchanged apart from intentional descriptor
+      version bytes.
+- [ ] Current fold completeness formulas, snap thresholds, shared-nonce search,
+      and terminal wire behavior have snapshot tests proving no unplanned drift.
+- [ ] Every enabled mixed row fits the generated setup envelope; an undersized
+      setup rejects without panic.
+- [ ] Generated artifacts replay deterministically after regeneration.
+- [ ] All verifier-facing fuzz/malformed-input tests remain no-panic.
+
+### Testing strategy
+
+Unit tests:
+
+- exact profile validation and derived A/B widths;
+- canonical profile and selection bytes;
+- commitment serialization and allocation caps;
+- provider registration independence from protocol identity;
+- group-local dense and one-hot provider validation;
+- current dense/one-hot honest-model formula snapshots;
+- current snap and nonce-range snapshots;
+- group-indexed flat and tensor challenge labels.
+
+Planner/schedule tests:
+
+- exact mixed-row offline planning and generated replay;
+- duplicate/collision detection;
+- reordered group miss;
+- two providers lowering to one profile reuse one row;
+- two valid rows over one profile key remain distinguished by row digest;
+- setup-envelope maxima over all enabled exact rows.
+
+End-to-end tests:
+
+- one-hot K=16, bounded dense, one-hot K=256;
+- unequal arities and polynomial counts;
+- independent points;
+- base and extension fields;
+- recursive suffix and per-matrix ring transitions;
+- every descriptor/selection tamper case;
+- deliberate provider/profile mismatch;
+- transcript equality and group-local challenge separation.
+
+Feature and repository gates:
+
+- run the cheap preflight from `AGENTS.md` before expensive compilation;
+- run all three exact Clippy feature matrices;
+- obtain the current CI test invocation from `.github/workflows/ci.yml`,
+  including its Cargo profile, targets, features, and sharding semantics;
+- poll every live process to a real exit code;
+- run documentation guardrails for this spec and superseded records.
+
+### Performance
+
+The design MUST avoid:
+
+- cloning polynomial buffers to cross the provider boundary;
+- virtual dispatch inside coefficient-level hot loops;
+- replanning the same prepared group for every root split;
+- catalog enumeration over provider registrations;
+- verifier-side schedule search;
+- attacker-controlled unbounded profile or schedule allocation.
+
+Offline planning for one exact candidate set SHOULD remain linear in group
+count per evaluated root candidate, plus the existing suffix dynamic program.
+The provider prepares each group once and supplies bounded profile candidates.
+
+Measure the curated mixed workload and existing homogeneous baselines with the
+repository profile harness. Record:
+
+- setup, commit, prove, and verify time;
+- proof bytes and terminal/fold breakdown;
+- peak setup A/B/D capacities;
+- selected A/B/D ring dimensions, widths, ranks, bases, and digit depths;
+- grind attempts and observed acceptance.
+
+This cut makes no claim that the current completeness model or expected
+terminal byte model is optimal. It requires only that the open-provider
+refactor not introduce an unexplained regression relative to the same selected
+schedule.
+
+## Execution
+
+### Required cutover sequence
+
+1. Introduce the exact `CommittedGroupProfile` and validate all derived widths.
+2. Remove semantic source identity from committed params, descriptors,
+   canonical bytes, serialization, and verifier APIs.
+3. Introduce the batch-level schedule selection and resolve rows by exact
+   identity.
+4. Refactor built-in dense and one-hot logic into source providers.
+5. Move honest fold semantics behind the provider/planner interface while
+   preserving current formulas.
+6. Generalize `ProverOpeningData` to ordered group records and prepared
+   whole-group operations.
+7. Cut commit, final commit, prove, verify, claims, examples, benches, and test
+   support to self-describing commitments.
+8. Regenerate generated rows from exact profiles and preserve the curated mixed
+   case.
+9. Recompute setup envelopes from enabled exact rows.
+10. Remove staging types and every legacy reconstruction/forwarding path.
+11. Reconcile the latest #334 mirror additively without rewriting the pushed
+    spec commit.
+12. Run the repository gates and push logical implementation commits.
+
+### Review checkpoints
+
+Before implementation is considered complete, reviewers should separately
+confirm:
+
+1. the exact profile contains every A/B fact needed by commitment and
+   verification but no provider semantics;
+2. the schedule row contains every consuming fold/D/terminal fact not frozen
+   by the standalone commitment;
+3. source-provider code cannot influence verifier acceptance except by
+   selecting an already validated profile and row;
+4. distinct per-group challenges and the single shared nonce are preserved
+   byte-for-byte;
+5. no completeness correction or per-group nonce change entered this cut;
+6. the new group-level prover abstraction retains monomorphized backend hot
+   paths;
+7. setup and deserialization checks precede allocation and indexing.
+
+## Documentation
+
+This spec is the active design record until implementation and review settle
+the exact API names. During cutover:
+
+- the source/commitment decisions in `multi-group-batching.md` remain marked
+  superseded;
+- `shared-opening-claims-api.md`,
+  `schedule-catalog-ownership.md`,
+  `planner-incidence-generalization.md`, and
+  `typed-schedule-topology-cutover.md` MUST stop presenting `GroupSource` as a
+  verifier-facing source of truth;
+- `book/src/how/architecture.md` MUST document the durable provider/profile
+  boundary after implementation;
+- `book/src/how/verification.md` and `docs/verifier-contract.md` MUST document
+  the exact profile and schedule-selection validation order;
+- downstream usage documentation MUST include the provider registration and
+  offline row-emission workflow;
+- `AGENTS.md` MUST continue to point at the CI workflow rather than duplicate a
+  final test command that can drift.
+
+After the implementation ships and the book owns the durable API, this spec
+should move to `implemented` and later follow `specs/PRUNING.md`.
+
+## References
+
+- [`multi-group-batching.md`](multi-group-batching.md)
+- [`fold-linf-rejection.md`](fold-linf-rejection.md)
+- [`tensor-challenge-prover-cutover.md`](tensor-challenge-prover-cutover.md)
+- [`tail-wire-encoding.md`](tail-wire-encoding.md)
+- [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md)
+- [`shared-opening-claims-api.md`](shared-opening-claims-api.md)
+- [`typed-schedule-topology-cutover.md`](typed-schedule-topology-cutover.md)
+- [`SPEC_REVIEW.md`](SPEC_REVIEW.md)
+- [`../crates/akita-verifier/src/stages/stage1.rs`](../crates/akita-verifier/src/stages/stage1.rs)
+- [`../crates/akita-challenges/src/fold_draw.rs`](../crates/akita-challenges/src/fold_draw.rs)
+- [`../crates/akita-types/src/sis/fold_witness_grind.rs`](../crates/akita-types/src/sis/fold_witness_grind.rs)
+- [`../crates/akita-types/src/sis/fold_linf_cap.rs`](../crates/akita-types/src/sis/fold_linf_cap.rs)
+- [`../crates/akita-types/src/sis/norm_bound.rs`](../crates/akita-types/src/sis/norm_bound.rs)
