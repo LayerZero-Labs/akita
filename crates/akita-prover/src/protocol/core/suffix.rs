@@ -269,12 +269,12 @@ where
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     let eor_claims =
         ProverOpeningData::<E, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
-            sumcheck_challenges.clone(),
             None,
-            sumcheck_challenges.len(),
+            sumcheck_challenges.clone(),
         )?;
     let polys = [&logical_source];
-    let needs_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+    let needs_reduction =
+        eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, params.d_a(), recursive_num_vars);
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let proved = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -476,8 +476,12 @@ where
     let suffix_hint = hint.into_hint();
     let opening_point = &sumcheck_challenges;
 
-    let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;
+    let needs_extension_reduction = eor_required_at_level::<F, E>(
+        FoldOpeningKind::Suffix,
+        level_params.role_dims().d_a(),
+        recursive_num_vars,
+    );
     let witness_source = RecursiveFoldSource::witness(Arc::clone(&witness));
     let logical_witness_source = RecursiveFoldSource::witness(logical_witness);
     let witness_polys = [&witness_source];
@@ -496,35 +500,45 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (block_claims, eor_opening_batch, protocol_point) =
-        ProverOpeningData::new_recursive_suffix_fold(
-            opening_point,
-            recursive_num_vars,
-            setup_prefix_opening,
-            setup_slot,
-            setup_polys_storage.as_ref().map(|polys| &polys[..]),
-            opening,
-            &witness_polys[..],
-            (Commitment::new(witness_commitment), suffix_hint),
-        )?;
+    let (block_claims, eor_opening_batch, _) = ProverOpeningData::new_recursive_suffix_fold(
+        opening_point,
+        recursive_num_vars,
+        setup_prefix_opening,
+        setup_slot,
+        setup_polys_storage.as_ref().map(|polys| &polys[..]),
+        opening,
+        &witness_polys[..],
+        (Commitment::new(witness_commitment), suffix_hint),
+    )?;
     let logical_polys = setup_source_storage
         .as_ref()
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
-    prepare_fold_inner::<F, E, T, _, _, C, O, TS, R>(
-        stack,
-        needs_extension_reduction,
-        block_claims,
-        &logical_polys,
-        &eor_opening_batch,
-        true,
-        transcript,
-        protocol_point,
-        || Ok(()),
-        level_params,
-        BasisMode::Lagrange,
-    )
+    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+        prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            block_claims,
+            true,
+            transcript,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    } else {
+        prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
+            stack,
+            needs_extension_reduction,
+            block_claims,
+            &logical_polys,
+            &eor_opening_batch,
+            true,
+            transcript,
+            || Ok(()),
+            level_params,
+            BasisMode::Lagrange,
+        )
+    }
     .map_err(|err| AkitaError::InvalidInput(format!("suffix fold preparation failed: {err:?}")))
 }
 

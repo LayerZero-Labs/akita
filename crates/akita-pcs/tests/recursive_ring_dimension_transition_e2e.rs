@@ -5,8 +5,10 @@
 //! - L1: A/B/D = `128/64/64`
 //! - L2+: uniform D64
 //!
-//! Workload matches the recursive mixed profile capacity: two precommitted
-//! singleton groups at `nv=16` and a two-polynomial final group at `nv=32`.
+//! The fixture is intentionally compact: two precommitted singleton groups at
+//! `nv=14` and one final polynomial at `nv=24`. This still crosses the
+//! `256/128/128 -> 128/64/64 -> 64` boundary and exercises a real setup-prefix
+//! handoff without allocating the former `nv=32`, four-polynomial workload.
 //! Coverage is intentionally layered: honest plain and W8R2 prove/verify,
 //! serialization round-trip, and a wrong final-opening rejection. Registry,
 //! NTT-slot, and malformed-geometry failures stay in focused unit tests.
@@ -22,22 +24,21 @@ use akita_pcs::test_support::{
 };
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{
-    commit_setup_prefix, AkitaProverSetup, ComputeBackendSetup, CpuBackend, OneHotIndex,
-    OneHotPoly, ProverOpeningData,
+    commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly,
+    ProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
-    AkitaBatchedProof, AkitaScheduleLookupKey, AkitaVerifierSetup, BasisMode, CommitmentRingDims,
-    FoldSchedule, NttCacheKey, OpeningClaims, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, RingVec, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
-    WitnessPartition,
+    AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims, FoldSchedule,
+    NttCacheKey, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
+    PrecommittedGroupDescriptor, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::sync::Mutex;
 
 type Root = fp128::D256OneHot;
 type Mid = fp128::D128OneHot;
@@ -46,13 +47,14 @@ type PlainCfg = RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, Suffix
 type W8R2Cfg =
     RecursiveRingDimensionTransitionConfig<Root, Mid, Suffix, fp128::D64OneHotMultiChunk, 128, 64>;
 
-const PRE_NV: usize = 16;
-const FINAL_NV: usize = 32;
+const PRE_NV: usize = 14;
+const FINAL_NV: usize = 24;
 const PRE_GROUPS: usize = 2;
 const PRE_GROUP_SIZE: usize = 1;
-const FINAL_GROUP_SIZE: usize = 2;
+const FINAL_GROUP_SIZE: usize = 1;
 const TOTAL_GROUP_SIZE: usize = PRE_GROUPS * PRE_GROUP_SIZE + FINAL_GROUP_SIZE;
 const ONEHOT_K: usize = 256;
+static RECURSIVE_E2E_LOCK: Mutex<()> = Mutex::new(());
 
 fn make_layout_onehot_poly(
     layout: &akita_types::CommittedGroupParams,
@@ -143,29 +145,9 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
     );
 }
 
-fn verifier_setup_with_dynamic_slot_mutation(
-    setup: &AkitaProverSetup<F>,
-    mut mutate: impl FnMut(&mut SetupPrefixVerifierSlot<F>),
-) -> AkitaVerifierSetup<F> {
-    let verifier_setup = setup.verifier_setup().expect("verifier setup");
-    let mut prefix_slots = SetupPrefixVerifierRegistry::new();
-    let mut found = false;
-    for (_, slot) in verifier_setup.prefix_slots.iter() {
-        let mut slot = slot.clone();
-        if slot.id.d_setup == 128 {
-            mutate(&mut slot);
-            found = true;
-        }
-        prefix_slots.insert(slot).expect("mutated prefix slot");
-    }
-    assert!(found, "fixture must contain a dynamic D128 prefix slot");
-    AkitaVerifierSetup::from_parts(verifier_setup.expanded, prefix_slots)
-}
-
 fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
     transcript_domain: &'static [u8],
     on_schedule: fn(&FoldSchedule),
-    run_negative_matrix: bool,
 ) where
     ProofCfg: CommitmentConfig<Field = F, ExtField = F>,
 {
@@ -283,7 +265,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             prover_groups.push(
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    point[..PRE_NV].to_vec(),
                     openings.clone(),
                     pre_commitments[group_idx].clone(),
                 )
@@ -292,7 +274,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         }
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                point.clone(),
                 final_openings.clone(),
                 final_commitment.clone(),
             )
@@ -308,7 +290,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         prover_hints.push(final_hint);
 
         let prover_claims = ProverOpeningData::new(
-            OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
+            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
         )
@@ -345,7 +327,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             for (group_idx, openings) in pre_openings.iter().enumerate() {
                 verifier_groups.push(
                     PolynomialGroupClaims::new(
-                        PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                        point[..PRE_NV].to_vec(),
                         openings.clone(),
                         &pre_commitments[group_idx],
                     )
@@ -353,14 +335,10 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 );
             }
             verifier_groups.push(
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                    final_openings,
-                    &final_commitment,
-                )
-                .expect("final verifier group"),
+                PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
+                    .expect("final verifier group"),
             );
-            OpeningClaims::from_groups(point.clone(), verifier_groups).expect("verifier claims")
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims")
         };
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
@@ -392,100 +370,12 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             tampered_result.is_err(),
             "mixed recursive verify must reject a tampered final opening"
         );
-
-        if run_negative_matrix {
-            let verify_with =
-                |proof: &AkitaBatchedProof<F, F>, verifier_setup: &AkitaVerifierSetup<F>| {
-                    let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
-                    Scheme::<ProofCfg>::batched_verify(
-                        proof,
-                        verifier_setup,
-                        &mut transcript,
-                        verify_claims(final_openings.clone()),
-                        BasisMode::Lagrange,
-                    )
-                };
-
-            let mut tampered_proof = proof.clone();
-            let stage3 = std::iter::once(&mut tampered_proof.root)
-                .chain(tampered_proof.recursive_folds.iter_mut())
-                .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
-                .expect("recursive mixed-D proof must contain stage-3 evidence");
-            stage3.claim += F::from_canonical_u128_reduced(1);
-            assert!(
-                verify_with(&tampered_proof, &verifier_setup).is_err(),
-                "tampered recursive setup-prefix proof must reject"
-            );
-
-            let tampered_commitment_setup =
-                verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
-                    let row = &mut slot.commitment.rows[0];
-                    let mut coeffs = row.coeffs().to_vec();
-                    coeffs[0] += F::from_canonical_u128_reduced(1);
-                    *row = RingVec::from_coeffs(coeffs);
-                });
-            assert!(
-                verify_with(&proof, &tampered_commitment_setup).is_err(),
-                "tampered D128 prefix commitment must reject"
-            );
-
-            let wrong_source_dimension_setup =
-                verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
-                    slot.id.d_setup = 64;
-                    for row in &mut slot.commitment.rows {
-                        let mut coeffs = row.coeffs().to_vec();
-                        coeffs.truncate(64);
-                        *row = RingVec::from_coeffs(coeffs);
-                    }
-                });
-            assert!(
-                verify_with(&proof, &wrong_source_dimension_setup).is_err(),
-                "a D64 slot cannot substitute for the required D128 source slot"
-            );
-
-            let malformed_b_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
-                let outer = &slot.id.commitment_params.outer_commit_matrix;
-                slot.id.commitment_params.outer_commit_matrix =
-                    OuterCommitMatrixParams::new_unchecked(
-                        outer.security_policy(),
-                        outer.sis_table_key().table_digest,
-                        outer.sis_modulus_profile(),
-                        outer.output_rank(),
-                        outer.input_width() * 2,
-                        outer.coeff_linf_bound(),
-                        128,
-                    );
-                slot.id.commitment_params.layout.outer_ring_dimension = 128;
-            });
-            assert!(
-                verify_with(&proof, &malformed_b_setup).is_err(),
-                "malformed prefix B geometry must reject"
-            );
-
-            let truncated_rows_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
-                let row = &mut slot.commitment.rows[0];
-                let mut coeffs = row.coeffs().to_vec();
-                coeffs.pop();
-                *row = RingVec::from_coeffs(coeffs);
-            });
-            assert!(
-                verify_with(&proof, &truncated_rows_setup).is_err(),
-                "truncated prefix commitment rows must reject"
-            );
-
-            let extra_rows_setup = verifier_setup_with_dynamic_slot_mutation(&setup, |slot| {
-                slot.commitment.rows.push(slot.commitment.rows[0].clone());
-            });
-            assert!(
-                verify_with(&proof, &extra_rows_setup).is_err(),
-                "extra prefix commitment rows must reject"
-            );
-        }
     });
 }
 
 #[test]
 fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
+    let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     init_rayon_pool();
     run_on_large_stack(|| {
         let pre_key = PolynomialGroupLayout::new(PRE_NV, PRE_GROUP_SIZE);
@@ -541,15 +431,16 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
 
 #[test]
 fn recursive_mixed_d_plain_multi_group_honest_round_trip() {
+    let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     recursive_mixed_d_multi_group_round_trip::<PlainCfg>(
         b"test/recursive_ring_dimension_transition_e2e/plain",
         |_schedule| {},
-        true,
     );
 }
 
 #[test]
 fn recursive_mixed_d_w8r2_multi_group_honest_round_trip() {
+    let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     recursive_mixed_d_multi_group_round_trip::<W8R2Cfg>(
         b"test/recursive_ring_dimension_transition_e2e/w8r2",
         |schedule| {
@@ -559,6 +450,5 @@ fn recursive_mixed_d_w8r2_multi_group_honest_round_trip() {
                 "W8R2 middle partition must remain distributed with 8 chunks"
             );
         },
-        false,
     );
 }

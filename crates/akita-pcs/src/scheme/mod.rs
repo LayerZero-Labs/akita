@@ -205,7 +205,7 @@ where
         )
     }
 
-    /// Produce a fused batched opening proof for one shared opening point.
+    /// Produce a fused batched opening proof over ordered commitment groups.
     ///
     /// # Errors
     ///
@@ -256,7 +256,7 @@ where
         Ok(proof)
     }
 
-    /// Verify a fused batched opening proof at one shared opening point.
+    /// Verify a fused batched opening proof over ordered commitment groups.
     ///
     /// # Errors
     ///

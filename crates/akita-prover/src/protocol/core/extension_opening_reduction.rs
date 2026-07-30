@@ -115,26 +115,13 @@ where
 
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
-        let point_vars = block_claims
-            .opening_claims()
-            .group_point_vars(group_index)?;
-        if point_vars.num_vars() < split_bits {
+        let point = block_claims.opening_claims().group_point(group_index)?;
+        if point.len() < split_bits {
             return Err(AkitaError::InvalidPointDimension {
                 expected: split_bits,
-                actual: point_vars.num_vars(),
+                actual: point.len(),
             });
         }
-        let point = point_vars
-            .indices()
-            .iter()
-            .map(|&index| {
-                block_claims
-                    .point()
-                    .get(index)
-                    .copied()
-                    .ok_or(AkitaError::InvalidProof)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
         let group_polys = block_claims.group_polys(group_index)?;
         let group_dims = level_params.group_role_dims(opening_batch, group_index)?;
         let group = dispatch_for_field!(
@@ -145,7 +132,7 @@ where
                 tensor_backend,
                 tensor_prepared,
                 group_polys,
-                &point,
+                point,
             )
         )
         .map_err(|error| {
@@ -508,7 +495,13 @@ where
         + for<'a> TensorProjectionKernel<P::TensorView<'a>, F, E, D>,
 {
     let num_claims = opening_batch.num_total_polynomials();
-    let num_vars = opening_batch.num_vars();
+    if opening_batch.num_groups() != 1 {
+        return Err(AkitaError::InvalidInput(
+            "single-group extension opening reduction requires one group".to_string(),
+        ));
+    }
+    let padded_point = opening_batch.group_point(0)?.to_vec();
+    let num_vars = padded_point.len();
     let _span =
         tracing::info_span!("prepare_extension_opening_reduction", num_claims, num_vars).entered();
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
@@ -523,8 +516,6 @@ where
             "extension-opening reduction input lengths do not match".to_string(),
         ));
     }
-
-    let padded_point = opening_batch.point().to_vec();
 
     let mut openings = Vec::with_capacity(num_claims);
     let mut partials = Vec::with_capacity(width.saturating_mul(num_claims));

@@ -6,13 +6,6 @@ pub(crate) fn push_usize(bytes: &mut Vec<u8>, value: usize) {
     bytes.extend_from_slice(&(value as u64).to_le_bytes());
 }
 
-pub(crate) fn push_usize_vec(bytes: &mut Vec<u8>, values: &[usize]) {
-    push_usize(bytes, values.len());
-    for &value in values {
-        push_usize(bytes, value);
-    }
-}
-
 pub(crate) fn push_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
 }

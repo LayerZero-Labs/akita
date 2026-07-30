@@ -1310,7 +1310,7 @@ transition.”
 | `per_matrix_ring_dims_root_e2e.rs` | Active `128/32/64` root through public PCS API; wrong opening and commitment tamper rejection |
 | `ring_dimension_transition_e2e.rs` | Direct L0 `128/128/64`, L1 `128/64/64`, then D64; public PCS API and tamper rejection |
 | `ring_dimension_transition_schedule.rs` | Exact widths, independently planned suffixes, D256/D512 schedule invariants, setup envelope equality, dynamic D128 recursive prefix, and W8R2 partition preservation |
-| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify, serialize round-trip, transcript agreement, wrong-opening and Stage 3 proof tampering, prefix commitment/identity/B-geometry/row-shape rejection, and missing D64 outer-NTT rejection |
+| `recursive_ring_dimension_transition_e2e.rs` | CI-sized recursive mixed-D (`256/128/128 → 128/64/64 → 64`) plain and W8R2 prove/verify at `nv=24`, serialize round-trip, transcript agreement, wrong-opening rejection, and missing D64 outer-NTT rejection. The cases run serially to cap peak memory. Stage 3 tampering remains in the shared recursive-profile E2E coverage. |
 | profile modes `onehot_fp128_mixed_d_multi_group_recursive*` | Benchmark-only `nv=32` recursive prove/verify for the plain and W8R2 mixed-D workloads; excluded from active `profile-ci` |
 
 The disabled legacy fixture `mixed_role_e2e.rs` has been deleted. Active

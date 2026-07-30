@@ -1,12 +1,14 @@
+mod extension_claim;
+mod single_field;
+
 use super::*;
 use crate::compute::{
-    tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
+    RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeRootProvePoly,
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -14,6 +16,9 @@ use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
     RelationRangeImagePlan,
 };
+
+pub(in crate::protocol::core) use extension_claim::prepare_extension_claim_fold;
+pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
@@ -28,194 +33,41 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
-    needs_extension_reduction: bool,
-    block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_polys: &[&P],
-    eor_opening_batch: &OpeningClaims<'_, E>,
+/// Shared non-EOR opening preparation used by single-field and extension-claim
+/// skip-EOR paths.
+type NonEorOpeningPrep<E> = (Vec<Vec<E>>, Option<Vec<E>>);
+
+pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
+    block_claims: &ProverOpeningData<'a, E, P, F>,
+    opening_batch: &OpeningClaimsLayout,
     pad_base_evals: bool,
-    transcript: &mut T,
-    non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
-    level_params: &CommittedGroupParams,
-    basis: BasisMode,
-) -> Result<PreparedFold<F, E>, AkitaError>
+) -> Result<NonEorOpeningPrep<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
-    F: RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: FieldCore,
+    E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     V: FnOnce() -> Result<(), AkitaError>,
-    TS: RuntimeTensorBackendFor<F, P, E>,
-    C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
-    R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = block_claims
-        .opening_claims()
-        .layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let fold_polys = block_claims.flat_polys();
-    let tensor = stack.tensor();
-    // A-role fold dimension: the EOR sumcheck and tensor projection operate on
-    // the claim polynomials at this level's fold ring.
-    let ring_d = level_params.role_dims().d_a();
-    let (protocol_points, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = if opening_batch.num_groups() > 1 {
-            prove_grouped_extension_opening_reduction::<F, E, T, P, TS>(
-                tensor.backend(),
-                Some(tensor.prepared()),
-                &block_claims,
-                &opening_batch,
-                level_params,
-                pad_base_evals,
-                transcript,
-                if pad_base_evals { "recursive" } else { "root" },
-            )
-        } else {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                ring_d,
-                |D| {
-                    prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                        tensor.backend(),
-                        Some(tensor.prepared()),
-                        eor_polys,
-                        eor_opening_batch,
-                        pad_base_evals,
-                        transcript,
-                        if pad_base_evals { "recursive" } else { "root" },
-                    )
-                }
-            )
-        }
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
-        })?;
-        (
-            proved.protocol_points,
-            Some(proved.row_coefficients),
-            Some(proved.reduction),
-        )
+    validate_non_eor()?;
+    let row_coefficients = if pad_base_evals {
+        Some(vec![E::one(); opening_batch.num_total_polynomials()])
     } else {
-        validate_non_eor()?;
-        let row_coefficients = if pad_base_evals {
-            Some(vec![E::one(); opening_batch.num_total_polynomials()])
-        } else {
-            None
-        };
-        let protocol_points = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                block_claims
-                    .opening_claims()
-                    .group_point_vars(group_index)?
-                    .indices()
-                    .iter()
-                    .map(|&index| {
-                        non_eor_protocol_point
-                            .get(index)
-                            .copied()
-                            .ok_or(AkitaError::InvalidProof)
-                    })
-                    .collect::<Result<Vec<_>, _>>()
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        (protocol_points, row_coefficients, None)
+        None
     };
-
-    if needs_extension_reduction {
-        if pad_base_evals {
-            finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-                stack,
-                block_claims,
-                protocol_points: &protocol_points,
-                reduction,
-                row_coefficients,
-                trace_opening_batch: &opening_batch,
-                level_params,
-                basis,
-                pad_base_evals,
-                transcript,
-            })
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}"))
-            })
-        } else {
-            let transformed: Vec<RootTensorProjectionPoly<F>> = {
-                let _span =
-                    tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                        .entered();
-                let mut transformed = Vec::with_capacity(fold_polys.len());
-                for group_index in 0..opening_batch.num_groups() {
-                    let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                    let group_polys = block_claims.group_polys(group_index)?;
-                    transformed.extend(dispatch_for_field!(
-                        ProtocolDispatchSlot::Role(RingRole::Inner),
-                        F,
-                        group_dims.d_a(),
-                        |D| {
-                            cfg_iter!(group_polys)
-                                .map(|poly| {
-                                    tensor_root_projection::<F, P, E, TS, D>(
-                                        tensor.backend(),
-                                        Some(tensor.prepared()),
-                                        *poly,
-                                    )
-                                })
-                                .collect::<Result<Vec<_>, _>>()
-                        }
-                    )?);
-                }
-                transformed
-            };
-            let fold_refs = transformed.iter().collect::<Vec<_>>();
-            let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
-            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R>(
-                FinishFoldArgs {
-                    stack,
-                    block_claims: transformed_block_claims,
-                    protocol_points: &protocol_points,
-                    reduction,
-                    row_coefficients,
-                    trace_opening_batch: &opening_batch,
-                    level_params,
-                    basis,
-                    pad_base_evals,
-                    transcript,
-                },
-            )
-        }
-    } else {
-        finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-            stack,
-            block_claims,
-            protocol_points: &protocol_points,
-            reduction,
-            row_coefficients,
-            trace_opening_batch: &opening_batch,
-            level_params,
-            basis,
-            pad_base_evals,
-            transcript,
+    let protocol_points = (0..opening_batch.num_groups())
+        .map(|group_index| {
+            block_claims
+                .opening_claims()
+                .group_point(group_index)
+                .map(<[E]>::to_vec)
         })
-    }
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((protocol_points, row_coefficients))
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
-struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
+pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore,
@@ -239,7 +91,7 @@ where
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
 /// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
 #[allow(clippy::needless_lifetimes)]
-fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
+pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
@@ -663,11 +515,7 @@ where
         }
     )?;
     drop(trace_preparation_span);
-    let ring_bits = rs
-        .relation_address_geometry
-        .common_relation_witness_variable_count();
-    let col_bits = rs.relation_address_geometry.relation_lane_variable_count();
-    let live_x_cols = rs.relation_address_geometry.live_relation_lane_count();
+    let relation_address_geometry = rs.relation_address_geometry;
     let tau1 = rs.tau1.clone();
     let alpha = rs.alpha;
     let (stage2_sumcheck_proof, sumcheck_challenges, stage2_prover) = prove_stage2::<F, E, T>(
@@ -701,26 +549,20 @@ where
             &tau1,
             alpha,
             &sumcheck_challenges,
-            w_eval,
-            logical_w.as_i8_digits(),
-            live_x_cols,
-            col_bits,
-            ring_bits,
+            relation_address_geometry,
             transcript,
         )?,
         None => None,
     };
-    let (stage3_sumcheck_proof, next_opening_point, next_opening, setup_prefix_opening) =
-        if let Some(stage3) = stage3_sumcheck_proof {
-            (
-                Some(stage3.proof),
-                stage3.next_w_point,
-                stage3.next_w_eval,
-                Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
-            )
-        } else {
-            (None, sumcheck_challenges, w_eval, None)
-        };
+    let (stage3_sumcheck_proof, setup_prefix_opening) = if let Some(stage3) = stage3_sumcheck_proof
+    {
+        (
+            Some(stage3.proof),
+            Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+        )
+    } else {
+        (None, None)
+    };
     let stage1_proof = stage1_proof.ok_or_else(|| {
         AkitaError::InvalidInput("intermediate fold missing stage-1 proof".to_string())
     })?;
@@ -765,8 +607,8 @@ where
             binding: next_binding,
             hint: committed_hint,
             log_basis: next_params.log_basis_inner(),
-            sumcheck_challenges: next_opening_point,
-            opening: next_opening,
+            sumcheck_challenges,
+            opening: w_eval,
             setup_prefix_opening,
         },
     })
@@ -895,11 +737,7 @@ pub(in crate::protocol::core) fn prove_stage3<F, E, T>(
     tau1: &[E],
     alpha: E,
     sumcheck_challenges: &[E],
-    stage2_next_w_eval: E,
-    logical_w: &[i8],
-    live_x_cols: usize,
-    col_bits: usize,
-    ring_bits: usize,
+    relation_address_geometry: akita_types::RelationAddressGeometry,
     transcript: &mut T,
 ) -> Result<Option<Stage3ProveOutput<E>>, AkitaError>
 where
@@ -914,18 +752,13 @@ where
 {
     match setup_contribution_mode {
         SetupContributionMode::Recursive => {
-            let role_dims = instance.role_dims();
             let _stage3_span = tracing::info_span!(
                 "stage3_sumcheck",
                 level,
-                witness_len = logical_w.len(),
                 stage2_rounds = sumcheck_challenges.len(),
                 d_a = lp.d_a(),
-                d_b = role_dims.d_b(),
-                d_d = role_dims.d_d(),
             )
             .entered();
-            let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
             let mut stage3_prover = {
                 let _prepare_span = tracing::info_span!("stage3_prover_prepare").entered();
                 AkitaStage3Prover::new::<T>(
@@ -937,31 +770,21 @@ where
                     tau1,
                     alpha,
                     sumcheck_challenges,
-                    stage2_next_w_eval,
-                    logical_w,
-                    live_x_cols,
-                    col_bits,
-                    ring_bits,
-                    level,
-                    eta,
+                    relation_address_geometry,
                     transcript,
                 )?
             };
             let output = stage3_prover.prove::<T, _>(transcript, |tr| {
                 sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND)
             })?;
-            transcript.append_serde(ABSORB_STAGE3_NEXT_W_EVAL, &output.next_w_eval);
             Ok(Some(Stage3ProveOutput {
                 proof: SetupSumcheckProof {
                     claim: output.setup_product_claim,
                     setup_prefix_eval: output.setup_prefix_eval,
-                    next_w_eval: output.next_w_eval,
                     sumcheck: output.sumcheck,
                 },
-                next_w_point: output.next_w_point,
                 setup_prefix_point: output.setup_prefix_point,
                 setup_prefix_eval: output.setup_prefix_eval,
-                next_w_eval: output.next_w_eval,
             }))
         }
         SetupContributionMode::Direct => Ok(None),

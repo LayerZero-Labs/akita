@@ -118,7 +118,7 @@ where
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
-    /// Produce a fused batched opening proof for one shared opening point.
+    /// Produce a fused batched opening proof over ordered commitment groups.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
     /// commitment, one opening point).

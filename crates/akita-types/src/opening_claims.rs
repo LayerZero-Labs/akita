@@ -1,6 +1,6 @@
 //! Public opening claims and layout-only opening geometry.
 
-use crate::descriptor_bytes::{push_usize, push_usize_vec};
+use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::DescriptorDigest;
 use crate::proof::scheme::OpeningPoints;
 use crate::proof::setup::AkitaSetupSeed;
@@ -9,79 +9,6 @@ use akita_transcript::labels::{ABSORB_BATCH_SHAPE, CHALLENGE_EVAL_BATCH};
 use akita_transcript::{sample_ext_challenge, Transcript};
 use blake2::digest::consts::U32;
 use blake2::{Blake2b, Digest};
-use std::collections::BTreeSet;
-
-/// Ordered coordinate selection into an opening batch's shared point.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PointVariableSelection {
-    indices: Vec<usize>,
-}
-
-impl PointVariableSelection {
-    /// Build an ordered, duplicate-free selection into a point of length `point_len`.
-    pub fn new(indices: Vec<usize>, point_len: usize) -> Result<Self, AkitaError> {
-        let selection = Self { indices };
-        selection.check(point_len)?;
-        Ok(selection)
-    }
-
-    /// Select the first `num_vars` coordinates of the shared point.
-    pub fn prefix(num_vars: usize, point_len: usize) -> Result<Self, AkitaError> {
-        if num_vars > point_len {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: point_len,
-                actual: num_vars,
-            });
-        }
-        Ok(Self {
-            indices: (0..num_vars).collect(),
-        })
-    }
-
-    /// Select the last `num_vars` coordinates of the shared point.
-    pub fn suffix(num_vars: usize, point_len: usize) -> Result<Self, AkitaError> {
-        if num_vars > point_len {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: point_len,
-                actual: num_vars,
-            });
-        }
-        Ok(Self {
-            indices: (point_len - num_vars..point_len).collect(),
-        })
-    }
-
-    /// Selected point-coordinate indices, in evaluation order.
-    pub fn indices(&self) -> &[usize] {
-        &self.indices
-    }
-
-    /// Number of variables selected for this group.
-    pub fn num_vars(&self) -> usize {
-        self.indices.len()
-    }
-
-    fn is_prefix(&self) -> bool {
-        self.indices.iter().copied().eq(0..self.indices.len())
-    }
-
-    fn is_suffix(&self, point_len: usize) -> bool {
-        self.indices
-            .iter()
-            .copied()
-            .eq(point_len - self.indices.len()..point_len)
-    }
-
-    fn check(&self, point_len: usize) -> Result<(), AkitaError> {
-        let mut seen = BTreeSet::new();
-        for &index in &self.indices {
-            if index >= point_len || !seen.insert(index) {
-                return Err(AkitaError::InvalidProof);
-            }
-        }
-        Ok(())
-    }
-}
 
 /// Per-group opening geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -292,13 +219,10 @@ impl OpeningClaimsLayout {
     /// Digest layout-only opening geometry.
     pub fn opening_batch_digest(&self) -> DescriptorDigest {
         let mut bytes = Vec::new();
-        push_usize(&mut bytes, self.max_num_vars());
-        push_usize(&mut bytes, self.num_total_polynomials());
         push_usize(&mut bytes, self.num_groups());
         for group in &self.groups {
+            push_usize(&mut bytes, group.num_vars());
             push_usize(&mut bytes, group.num_polynomials());
-            let prefix_indices = (0..group.num_vars()).collect::<Vec<_>>();
-            push_usize_vec(&mut bytes, &prefix_indices);
         }
         blake2b_256(&bytes)
     }
@@ -314,15 +238,10 @@ impl OpeningClaimsLayout {
     {
         self.check()?;
 
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.max_num_vars());
-        transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_total_polynomials());
         transcript.append_serde(ABSORB_BATCH_SHAPE, &self.num_groups());
         for group in self.groups() {
-            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials());
             transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_vars());
-            for index in 0..group.num_vars() {
-                transcript.append_serde(ABSORB_BATCH_SHAPE, &index);
-            }
+            transcript.append_serde(ABSORB_BATCH_SHAPE, &group.num_polynomials());
         }
         Ok(())
     }
@@ -399,17 +318,16 @@ impl OpeningClaimsLayout {
 
 /// Public claims and commitment payload for one polynomial group.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PolynomialGroupClaims<'a, F, C = ()> {
-    point_vars: PointVariableSelection,
+pub struct PolynomialGroupClaims<'a, F: Clone, C = ()> {
+    point: OpeningPoints<'a, F>,
     evaluations: Vec<F>,
     commitment: C,
-    _marker: std::marker::PhantomData<&'a F>,
 }
 
-impl<'a, F, C> PolynomialGroupClaims<'a, F, C> {
+impl<'a, F: Clone, C> PolynomialGroupClaims<'a, F, C> {
     /// Build one group of public claims.
     pub fn new(
-        point_vars: PointVariableSelection,
+        point: impl Into<OpeningPoints<'a, F>>,
         evaluations: Vec<F>,
         commitment: C,
     ) -> Result<Self, AkitaError> {
@@ -419,16 +337,20 @@ impl<'a, F, C> PolynomialGroupClaims<'a, F, C> {
             ));
         }
         Ok(Self {
-            point_vars,
+            point: point.into(),
             evaluations,
             commitment,
-            _marker: std::marker::PhantomData,
         })
     }
 
-    /// Ordered point-variable selection for this group.
-    pub fn point_vars(&self) -> &PointVariableSelection {
-        &self.point_vars
+    /// Complete opening point owned by this group.
+    pub fn point(&self) -> &[F] {
+        self.point.as_ref()
+    }
+
+    /// Number of variables in this group's opening point.
+    pub fn num_vars(&self) -> usize {
+        self.point.len()
     }
 
     /// Claimed evaluations, one per committed polynomial.
@@ -447,79 +369,29 @@ impl<'a, F, C> PolynomialGroupClaims<'a, F, C> {
     }
 }
 
-/// Public opening claims: one shared point and polynomial groups in transcript order.
+/// Public opening claims: polynomial groups in transcript order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpeningClaims<'a, F: Clone, C = ()> {
-    point: OpeningPoints<'a, F>,
     groups: Vec<PolynomialGroupClaims<'a, F, C>>,
 }
 
 impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
-    /// Build public claims from a shared point and ordered groups.
-    pub fn from_groups(
-        point: impl Into<OpeningPoints<'a, F>>,
-        groups: Vec<PolynomialGroupClaims<'a, F, C>>,
-    ) -> Result<Self, AkitaError> {
-        let claims = Self {
-            point: point.into(),
-            groups,
-        };
+    /// Build public claims from ordered groups.
+    pub fn from_groups(groups: Vec<PolynomialGroupClaims<'a, F, C>>) -> Result<Self, AkitaError> {
+        let claims = Self { groups };
         claims.check()?;
         Ok(claims)
     }
 
-    /// Build public claims while allowing non-prefix/non-suffix point routing.
-    ///
-    /// This is intended for internal recursive proof plumbing where a folded
-    /// challenge vector is already transcript-bound and one group needs a
-    /// different coordinate order. External public claims should use
-    /// [`Self::from_groups`].
-    #[doc(hidden)]
-    pub fn from_groups_allow_custom_routing(
-        point: impl Into<OpeningPoints<'a, F>>,
-        groups: Vec<PolynomialGroupClaims<'a, F, C>>,
-    ) -> Result<Self, AkitaError> {
-        let claims = Self {
-            point: point.into(),
-            groups,
-        };
-        claims.check_with_custom_routing()?;
-        Ok(claims)
-    }
-
-    /// Validate internal routing/count consistency.
+    /// Validate group and count consistency.
     pub fn check(&self) -> Result<(), AkitaError> {
-        self.check_inner(false)
-    }
-
-    fn check_with_custom_routing(&self) -> Result<(), AkitaError> {
-        self.check_inner(true)
-    }
-
-    fn check_inner(&self, allow_custom_routing: bool) -> Result<(), AkitaError> {
         if self.groups.is_empty() || self.checked_num_total_polynomials()? == 0 {
             return Err(AkitaError::InvalidProof);
         }
-        let point_len = self.point.as_ref().len();
-        let mut max_group_vars = 0usize;
         for group in &self.groups {
             if group.evaluations.is_empty() {
                 return Err(AkitaError::InvalidProof);
             }
-            group.point_vars.check(point_len)?;
-            if !allow_custom_routing
-                && !group.point_vars.is_prefix()
-                && !group.point_vars.is_suffix(point_len)
-            {
-                return Err(AkitaError::InvalidInput(
-                    "custom point-variable routing is not supported by instance descriptors"
-                        .to_string(),
-                ));
-            }
-            max_group_vars = max_group_vars.max(group.point_vars.num_vars());
-        }
-        if max_group_vars != point_len {
-            return Err(AkitaError::InvalidProof);
         }
         Ok(())
     }
@@ -527,10 +399,11 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
     /// Validate consistency plus public capacity against the setup envelope.
     pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError> {
         self.check()?;
-        if self.num_vars() > seed.max_num_vars {
+        let max_num_vars = self.layout()?.max_num_vars();
+        if max_num_vars > seed.max_num_vars {
             return Err(AkitaError::InvalidPointDimension {
                 expected: seed.max_num_vars,
-                actual: self.num_vars(),
+                actual: max_num_vars,
             });
         }
         let num_polynomials = self.checked_num_total_polynomials()?;
@@ -541,16 +414,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             });
         }
         Ok(())
-    }
-
-    /// Shared opening point.
-    pub fn point(&self) -> &[F] {
-        self.point.as_ref()
-    }
-
-    /// Number of coordinates in the shared opening point.
-    pub fn num_vars(&self) -> usize {
-        self.point.as_ref().len()
     }
 
     /// Number of polynomial groups.
@@ -589,27 +452,12 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .ok_or(AkitaError::InvalidProof)
     }
 
-    /// Borrow one group's point-variable selection.
-    pub fn group_point_vars(&self, g: usize) -> Result<&PointVariableSelection, AkitaError> {
+    /// Borrow one group's complete opening point.
+    pub fn group_point(&self, g: usize) -> Result<&[F], AkitaError> {
         self.groups
             .get(g)
-            .map(PolynomialGroupClaims::point_vars)
+            .map(PolynomialGroupClaims::point)
             .ok_or(AkitaError::InvalidProof)
-    }
-
-    /// Materialize one group's opening point in its declared coordinate order.
-    pub fn group_point(&self, g: usize) -> Result<Vec<F>, AkitaError> {
-        self.group_point_vars(g)?
-            .indices()
-            .iter()
-            .map(|&index| {
-                self.point
-                    .as_ref()
-                    .get(index)
-                    .cloned()
-                    .ok_or(AkitaError::InvalidProof)
-            })
-            .collect()
     }
 
     /// Borrow one group's commitment.
@@ -627,13 +475,11 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
 
     /// Structural view for setup, planner, and config code.
     pub fn layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        self.check_with_custom_routing()?;
+        self.check()?;
         OpeningClaimsLayout::from_groups(
             self.groups
                 .iter()
-                .map(|group| {
-                    PolynomialGroupLayout::new(group.point_vars.num_vars(), group.evaluations.len())
-                })
+                .map(|group| PolynomialGroupLayout::new(group.point.len(), group.evaluations.len()))
                 .collect(),
         )
     }
@@ -651,30 +497,6 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
             .iter()
             .flat_map(|group| group.evaluations.iter().cloned())
             .collect()
-    }
-}
-
-impl<'a, F: FieldCore> OpeningClaims<'a, F, ()> {
-    /// Commitment-less, full-point claims used by internal extension-opening replay.
-    pub fn with_padded_point(
-        point: &[F],
-        num_vars: usize,
-        num_total_polynomials: usize,
-    ) -> Result<Self, AkitaError> {
-        if point.len() > num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: num_vars,
-                actual: point.len(),
-            });
-        }
-        let mut padded_point = point.to_vec();
-        padded_point.resize(num_vars, F::zero());
-        let group = PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(num_vars, num_vars)?,
-            vec![F::zero(); num_total_polynomials],
-            (),
-        )?;
-        Self::from_groups(padded_point, vec![group])
     }
 }
 
@@ -723,40 +545,25 @@ mod tests {
     type F = Prime128OffsetA7F7;
 
     fn prefix_claims(num_vars: usize, evals: usize) -> OpeningClaims<'static, F, ()> {
-        let point_vars = PointVariableSelection::prefix(num_vars, num_vars).expect("prefix");
         let group =
-            PolynomialGroupClaims::new(point_vars, vec![F::zero(); evals], ()).expect("group");
-        OpeningClaims::from_groups(vec![F::zero(); num_vars], vec![group]).expect("claims")
+            PolynomialGroupClaims::new(vec![F::zero(); num_vars], vec![F::zero(); evals], ())
+                .expect("group");
+        OpeningClaims::from_groups(vec![group]).expect("claims")
     }
 
     #[test]
-    fn check_rejects_duplicate_point_indices() {
-        let err = PointVariableSelection::new(vec![0, 0], 2).expect_err("duplicate index");
-        assert!(matches!(err, AkitaError::InvalidProof));
-    }
+    fn groups_own_independent_points() {
+        let first = vec![F::from_u64(1), F::from_u64(2)];
+        let second = vec![F::from_u64(3), F::from_u64(4), F::from_u64(5)];
+        let claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(first.clone(), vec![F::zero()], ()).expect("first group"),
+            PolynomialGroupClaims::new(second.clone(), vec![F::zero()], ()).expect("second group"),
+        ])
+        .expect("claims");
 
-    #[test]
-    fn check_rejects_out_of_range_point_indices() {
-        let err = PointVariableSelection::new(vec![2], 2).expect_err("out of range");
-        assert!(matches!(err, AkitaError::InvalidProof));
-    }
-
-    #[test]
-    fn check_rejects_non_prefix_routing() {
-        let point_vars = PointVariableSelection::new(vec![1, 0], 2).expect("custom routing");
-        let group = PolynomialGroupClaims::new(point_vars, vec![F::zero()], ()).expect("group");
-        let err = OpeningClaims::from_groups(vec![F::zero(), F::zero()], vec![group])
-            .expect_err("non-prefix routing");
-        assert!(matches!(err, AkitaError::InvalidInput(_)));
-    }
-
-    #[test]
-    fn check_rejects_short_point_relative_to_max_group_vars() {
-        let claims = prefix_claims(3, 1);
-        let short_point = vec![F::zero(); 2];
-        let err = OpeningClaims::from_groups(short_point, claims.groups().to_vec())
-            .expect_err("short point");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        assert_eq!(claims.group_point(0).expect("first point"), first);
+        assert_eq!(claims.group_point(1).expect("second point"), second);
+        assert_eq!(claims.layout().expect("layout").max_num_vars(), 3);
     }
 
     #[test]
@@ -766,6 +573,35 @@ mod tests {
             claims.opening_batch_digest().expect("claims digest"),
             claims.layout().expect("layout").opening_batch_digest()
         );
+    }
+
+    #[test]
+    fn layout_digest_binds_group_arity_count_and_order() {
+        let baseline = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 1),
+            PolynomialGroupLayout::new(3, 2),
+        ])
+        .expect("baseline");
+        let changed_arity = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(1, 1),
+            PolynomialGroupLayout::new(3, 2),
+        ])
+        .expect("changed arity");
+        let changed_count = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(2, 2),
+            PolynomialGroupLayout::new(3, 1),
+        ])
+        .expect("changed count");
+        let reversed = OpeningClaimsLayout::from_groups(vec![
+            PolynomialGroupLayout::new(3, 2),
+            PolynomialGroupLayout::new(2, 1),
+        ])
+        .expect("reversed");
+
+        let digest = baseline.opening_batch_digest();
+        assert_ne!(digest, changed_arity.opening_batch_digest());
+        assert_ne!(digest, changed_count.opening_batch_digest());
+        assert_ne!(digest, reversed.opening_batch_digest());
     }
 
     #[test]
@@ -822,12 +658,5 @@ mod tests {
             layout.root_final_group_layout().expect("final group"),
             final_group
         );
-    }
-
-    #[test]
-    fn with_padded_point_rejects_longer_point() {
-        let err = OpeningClaims::with_padded_point(&[F::zero(); 3], 2, 1)
-            .expect_err("point longer than num_vars");
-        assert!(matches!(err, AkitaError::InvalidPointDimension { .. }));
     }
 }

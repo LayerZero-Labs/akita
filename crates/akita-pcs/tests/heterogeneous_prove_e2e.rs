@@ -9,8 +9,7 @@ use akita_prover::{
 };
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    lagrange_weights, BasisMode, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use std::any::TypeId;
 
@@ -99,16 +98,12 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &setup.prefix_slots,
         &stack,
         ProverOpeningData::new(
-            OpeningClaims::from_groups(
+            OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
                 opening_point.clone(),
-                vec![PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                        .expect("full-point prover group"),
-                    vec![opening],
-                    commitments[0].clone(),
-                )
-                .expect("valid prover group")],
+                vec![opening],
+                commitments[0].clone(),
             )
+            .expect("valid prover group")])
             .expect("valid prover claims"),
             vec![hint],
             vec![&poly_refs[..]],
@@ -126,16 +121,12 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             opening_point.clone(),
-            vec![PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                    .expect("full-point verifier group"),
-                vec![opening],
-                &commitments[0],
-            )
-            .expect("valid verifier group")],
+            vec![opening],
+            &commitments[0],
         )
+        .expect("valid verifier group")])
         .expect("valid verifier claims"),
         BasisMode::Lagrange,
     )

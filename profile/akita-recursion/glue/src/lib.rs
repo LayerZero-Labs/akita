@@ -10,14 +10,14 @@
 
 #![allow(clippy::missing_errors_doc)]
 
-use akita_field::{CanonicalField, FieldCore, RandomSampling};
+use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaExpandedSetup, AkitaSetupSeed,
-    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims, SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    AkitaVerifierSetup, Commitment, FlatMatrix, OpeningClaims, PolynomialGroupClaims,
+    SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -86,18 +86,17 @@ impl<F: FieldCore, const D: usize> AkitaJoltInputs<F, D> {
         &'a self,
         openings: &'a [F; 1],
     ) -> OpeningClaims<'static, F, &'a Commitment<F>> {
-        let point_vars = PointVariableSelection::prefix(
+        assert_eq!(
             usize::try_from(self.num_vars).expect("recursion blob num_vars fits usize"),
             self.opening_point.len(),
-        )
-        .expect("singleton recursion opening point covers all variables");
-        OpeningClaims::from_groups(
+            "singleton recursion opening point covers all variables"
+        );
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
             self.opening_point.clone(),
-            vec![
-                PolynomialGroupClaims::new(point_vars, openings.to_vec(), &self.commitment)
-                    .expect("singleton recursion opening batch has one evaluation"),
-            ],
+            openings.to_vec(),
+            &self.commitment,
         )
+        .expect("singleton recursion opening batch has one evaluation")])
         .expect("singleton recursion opening batch is valid")
     }
 
@@ -199,7 +198,7 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn decode_capped_bytes(
         rest: &mut &[u8],
@@ -418,7 +417,12 @@ where
 
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + RandomSampling + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore
+        + FromPrimitiveInt
+        + RandomSampling
+        + AkitaSerialize
+        + AkitaDeserialize<Context = ()>
+        + Valid,
 {
     fn deserialize_strict_host_setup(
         rest: &mut &[u8],
@@ -450,7 +454,7 @@ where
 ))]
 impl<F, const D: usize> AkitaJoltInputs<F, D>
 where
-    F: FieldCore + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
+    F: FieldCore + FromPrimitiveInt + AkitaSerialize + AkitaDeserialize<Context = ()> + Valid,
 {
     fn deserialize_trusted_host_setup(
         rest: &mut &[u8],

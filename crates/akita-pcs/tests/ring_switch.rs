@@ -112,8 +112,7 @@ mod tests {
     use akita_types::witness::ChunkedWitnessCfg;
     use akita_types::{
         r_decomp_levels, ring_opening_point_from_field, AkitaCommitmentHint, BasisMode, Commitment,
-        OpeningClaims, PointVariableSelection, PolynomialGroupClaims, RingMultiplierOpeningPoint,
-        RingVec,
+        OpeningClaims, PolynomialGroupClaims, RingMultiplierOpeningPoint, RingVec,
     };
     use akita_verifier::{prepare_relation_matrix_evaluator, RingSwitchReplay};
     use rand::rngs::StdRng;
@@ -129,14 +128,12 @@ mod tests {
         hint: AkitaCommitmentHint<F>,
     ) -> ProverOpeningData<'a, F, P, F> {
         let group = PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len())
-                .expect("full-point prover group"),
+            point.to_vec(),
             vec![F::zero(); polynomials.len()],
             commitment.clone(),
         )
         .expect("valid prover claims group");
-        let opening_claims =
-            OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+        let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
         ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
             .expect("valid prover opening data")
     }

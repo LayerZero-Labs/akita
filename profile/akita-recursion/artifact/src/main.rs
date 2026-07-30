@@ -27,8 +27,7 @@ use akita_recursion_glue::AkitaJoltInputs;
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
-    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims,
+    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use akita_verifier::batched_verify;
 use clap::Parser;
@@ -317,14 +316,13 @@ fn run() -> Result<(), String> {
     let t0 = Instant::now();
     let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
     let prove_group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-            .map_err(|err| format!("invalid opening point shape: {err}"))?,
+        opening_point.clone(),
         openings.to_vec(),
         commitment.clone(),
     )
     .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = ProverOpeningData::new(
-        OpeningClaims::from_groups(opening_point.clone(), vec![prove_group])
+        OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
         vec![&poly_refs[..]],
@@ -350,16 +348,12 @@ fn run() -> Result<(), String> {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        OpeningClaims::from_groups(
-            opening_point.clone(),
-            vec![PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(opening_point.len(), opening_point.len())
-                    .map_err(|err| format!("invalid verifier opening point shape: {err}"))?,
+        OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
+                opening_point.clone(),
                 openings.to_vec(),
                 &commitment,
             )
-            .map_err(|err| format!("invalid verifier opening group: {err}"))?],
-        )
+            .map_err(|err| format!("invalid verifier opening group: {err}"))?])
         .map_err(|err| format!("invalid verifier opening batch: {err}"))?,
     )
     .map_err(|err| format!("host-side sanity verify failed: {err}"))?;

@@ -26,7 +26,6 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
-use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
@@ -38,19 +37,18 @@ use akita_types::FpExtEncoding;
 use akita_types::{
     append_claim_values_to_transcript, basis_weights, checked_table_len,
     derive_tensor_extension_opening_claim_from_partials, embed_ring_subfield_scalar,
-    embed_ring_subfield_vector, ensure_trace_stage2_supported, prepare_opening_point,
-    proof::relation::evaluation_trace_row_weight, recover_ring_subfield_inner_product,
-    relation_claim_from_layout_extension, relation_rhs_layout_for,
-    ring_subfield_packed_extension_opening_point, root_input_witness_len,
-    root_tensor_projection_enabled, sample_public_row_coefficients,
-    tensor_equality_factor_eval_at_point, tensor_equality_factor_evals, tensor_opening_split,
-    tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
-    AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
-    CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
-    SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
-    TerminalFoldParams, TerminalLevelProof,
+    embed_ring_subfield_vector, ensure_trace_stage2_supported, eor_required_at_level,
+    prepare_opening_point, proof::relation::evaluation_trace_row_weight,
+    recover_ring_subfield_inner_product, relation_claim_from_layout_extension,
+    relation_rhs_layout_for, ring_subfield_packed_extension_opening_point, root_input_witness_len,
+    sample_public_row_coefficients, tensor_equality_factor_eval_at_point,
+    tensor_equality_factor_evals, tensor_opening_split, tensor_reduction_claim_from_rows,
+    tensor_row_partials_from_columns, AkitaBatchedProof, AkitaExpandedSetup, AkitaStage1Proof,
+    AkitaStage2Proof, BasisMode, Commitment, CommittedGroupParams, EvaluationTraceInputs,
+    ExtensionOpeningReductionProof, FoldLevelProof, FoldOpeningKind, FoldSchedule, OpeningClaims,
+    OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams, RingMultiplierOpeningPoint,
+    RingVec, RingView, SetupContributionMode, SetupPrefixProverRegistry, SetupSumcheckProof,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalLevelProof,
 };
 use std::sync::Arc;
 
@@ -74,7 +72,9 @@ mod suffix;
 mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
-pub(in crate::protocol::core) use fold::{prepare_fold_inner, prove_fold, PreparedFold};
+pub(in crate::protocol::core) use fold::{
+    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, PreparedFold,
+};
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
 use root_fold::prove_root;
@@ -104,8 +104,6 @@ pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
-    pub(in crate::protocol::core) next_w_point: Vec<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
     pub(in crate::protocol::core) setup_prefix_eval: E,
-    pub(in crate::protocol::core) next_w_eval: E,
 }

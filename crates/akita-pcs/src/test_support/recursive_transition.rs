@@ -311,12 +311,12 @@ where
         max_num_vars: usize,
         max_num_batched_polys: usize,
     ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        if max_num_vars != 32 || max_num_batched_polys != 4 {
+        if max_num_vars != 24 || max_num_batched_polys != 3 {
             return Err(AkitaError::InvalidSetup(
-                "recursive mixed-D profile fixes setup capacity at nv=32, np=4".into(),
+                "recursive mixed-D profile fixes setup capacity at nv=24, np=3".into(),
             ));
         }
-        let pre_group = PolynomialGroupLayout::new(16, 1);
+        let pre_group = PolynomialGroupLayout::new(14, 1);
         let pre_schedule = per_matrix_ring_dims_root_schedule::<Root>(
             pre_group.num_vars(),
             pre_group.num_polynomials(),
@@ -328,7 +328,7 @@ where
             &pre_schedule.root.params.final_group.commitment,
         );
         let key = AkitaScheduleLookupKey {
-            final_group: PolynomialGroupLayout::new(32, 2),
+            final_group: PolynomialGroupLayout::new(24, 1),
             precommitteds: vec![descriptor, descriptor],
         };
         let schedule = recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(

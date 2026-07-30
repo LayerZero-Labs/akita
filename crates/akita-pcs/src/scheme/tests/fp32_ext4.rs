@@ -44,7 +44,6 @@ fn onehot_opening(poly: &OneHotPoly<SmallF, u8>, weights: &[SmallE]) -> SmallE {
         .fold(SmallE::zero(), |sum, weight| sum + weight)
 }
 
-#[cfg(feature = "profile-ci")]
 fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly<SmallF, u8> {
     // Keep the tensor-partial fixture sparse at large arity. `K = 256` is
     // divisible by the supported native ring dimensions and leaves enough low
@@ -63,7 +62,6 @@ fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly
     OneHotPoly::new(onehot_k, params.d_a(), indices).expect("grouped one-hot polynomial")
 }
 
-#[cfg(feature = "profile-ci")]
 fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> SmallE {
     let onehot_k = poly.onehot_k();
     poly.indices()
@@ -181,10 +179,21 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         BasisMode::Lagrange,
     )
     .expect_err("tampered extension-opening reduction partial must reject");
+
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut verifier_transcript = AkitaTranscript::<SmallF>::new(TRANSCRIPT_LABEL);
+    SmallScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims(&point, &openings, &commitment),
+        BasisMode::Lagrange,
+    )
+    .expect_err("omitting the required root extension-opening reduction must reject");
 }
 
 #[test]
-#[cfg(feature = "profile-ci")]
 fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;
@@ -252,30 +261,28 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     )
     .expect("final commitment");
 
-    let point = extension_point(FINAL_NV);
-    let pre_opening = onehot_opening_at_point(&pre_poly, &point[..PRE_NV]);
-    let final_opening = onehot_opening_at_point(&final_poly, &point);
+    let mut pre_point = extension_point(PRE_NV);
+    pre_point[0] += SmallE::one();
+    let final_point = extension_point(FINAL_NV);
+    let pre_opening = onehot_opening_at_point(&pre_poly, &pre_point);
+    let final_opening = onehot_opening_at_point(&final_poly, &final_point);
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
     let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                    vec![pre_opening],
-                    pre_commitment.clone(),
-                )
-                .expect("pre prover claims"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV)
-                        .expect("final point routing"),
-                    vec![final_opening],
-                    final_commitment.clone(),
-                )
-                .expect("final prover claims"),
-            ],
-        )
+        OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                pre_point.clone(),
+                vec![pre_opening],
+                pre_commitment.clone(),
+            )
+            .expect("pre prover claims"),
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                vec![final_opening],
+                final_commitment.clone(),
+            )
+            .expect("final prover claims"),
+        ])
         .expect("grouped prover claims"),
         vec![pre_hint, final_hint],
         vec![&pre_refs, &final_refs],
@@ -306,51 +313,45 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     );
 
     let verifier_setup = ProtocolScheme::setup_verifier(&setup).expect("verifier setup");
-    let verify_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening],
-                &pre_commitment,
-            )
+    let verify_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
             .expect("pre verifier claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
+        PolynomialGroupClaims::new(final_point.clone(), vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
-        ],
-    )
+    ])
     .expect("grouped verifier claims");
     let mut verifier_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_claims,
+        verify_claims.clone(),
         BasisMode::Lagrange,
     )
     .expect("verify grouped extension proof");
 
-    let tampered_claims = OpeningClaims::from_groups(
-        point,
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening + SmallE::one()],
-                &pre_commitment,
-            )
-            .expect("tampered pre claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
-            .expect("final verifier claims"),
-        ],
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut stripped_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    ProtocolScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut stripped_transcript,
+        verify_claims,
+        BasisMode::Lagrange,
     )
+    .expect_err("omitting the required multi-group root extension-opening reduction must reject");
+
+    let tampered_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            pre_point,
+            vec![pre_opening + SmallE::one()],
+            &pre_commitment,
+        )
+        .expect("tampered pre claims"),
+        PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
+            .expect("final verifier claims"),
+    ])
     .expect("tampered grouped claims");
     let mut tampered_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(
