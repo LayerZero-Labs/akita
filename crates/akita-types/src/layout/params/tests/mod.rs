@@ -59,14 +59,15 @@ fn laid_out_sample_lp() -> CommittedGroupParams {
 }
 
 fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-    const BOUND: u128 = 1;
+    const INNER_BOUND: u128 = 2;
+    const OUTER_BOUND: u128 = 3;
     lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
         lp.inner_commit_matrix.security_policy(),
         lp.inner_commit_matrix.sis_table_key().table_digest,
         lp.inner_commit_matrix.sis_modulus_profile(),
         lp.inner_commit_matrix.output_rank(),
         lp.inner_commit_matrix.input_width(),
-        BOUND,
+        INNER_BOUND,
         lp.d_a(),
     );
     lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -75,7 +76,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
         lp.outer_commit_matrix.sis_modulus_profile(),
         lp.outer_commit_matrix.output_rank(),
         lp.outer_commit_matrix.input_width(),
-        BOUND,
+        OUTER_BOUND,
         lp.d_a(),
     );
 }
@@ -138,6 +139,9 @@ fn grouped_fold_witness_norms_use_each_groups_source() {
     let (mut grouped, batch) = sample_multi_group_root_params();
     grouped.source = crate::GroupSource::one_hot(16);
     grouped.precommitted_groups[0].source = crate::GroupSource::bounded(32);
+    grouped.precommitted_groups[0].layout.encoding = crate::GroupSourceEncoding::Bounded {
+        coefficient_bits: 32,
+    };
 
     let precommitted = grouped
         .group_params(&batch, 0)

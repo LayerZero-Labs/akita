@@ -43,19 +43,24 @@ impl Valid for GroupSource {
     }
 }
 
-impl AkitaSerialize for GroupSource {
+impl Valid for GroupSourceEncoding {
+    fn check(&self) -> Result<(), SerializationError> {
+        GroupSource::from_encoding(*self)
+            .validate(128)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))
+    }
+}
+
+impl AkitaSerialize for GroupSourceEncoding {
     fn serialize_with_mode<W: Write>(
         &self,
         mut writer: W,
         _compress: Compress,
     ) -> Result<(), SerializationError> {
         self.check()?;
-        let registration = self.registration();
-        writer.write_all(&registration.type_id())?;
-        writer.write_all(&registration.parameters())?;
-        let (tag, value) = match self.encoding() {
-            GroupSourceEncoding::Bounded { coefficient_bits } => (0u8, u64::from(coefficient_bits)),
-            GroupSourceEncoding::SparseBinary { chunk_size } => (
+        let (tag, value) = match *self {
+            Self::Bounded { coefficient_bits } => (0u8, u64::from(coefficient_bits)),
+            Self::SparseBinary { chunk_size } => (
                 1u8,
                 u64::try_from(chunk_size).map_err(|_| {
                     SerializationError::InvalidData(
@@ -66,6 +71,64 @@ impl AkitaSerialize for GroupSource {
         };
         tag.serialize_with_mode(&mut writer, Compress::No)?;
         value.serialize_with_mode(&mut writer, Compress::No)
+    }
+
+    fn serialized_size(&self, _compress: Compress) -> usize {
+        Self::SERIALIZED_SIZE
+    }
+}
+
+impl AkitaDeserialize for GroupSourceEncoding {
+    type Context = ();
+
+    fn deserialize_with_mode<R: Read>(
+        mut reader: R,
+        _compress: Compress,
+        validate: Validate,
+        _ctx: &(),
+    ) -> Result<Self, SerializationError> {
+        let tag = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let value = u64::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
+        let encoding = match tag {
+            0 => Self::Bounded {
+                coefficient_bits: u32::try_from(value).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "bounded coefficient width exceeds u32".to_string(),
+                    )
+                })?,
+            },
+            1 => Self::SparseBinary {
+                chunk_size: usize::try_from(value).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "sparse-binary chunk size exceeds usize".to_string(),
+                    )
+                })?,
+            },
+            _ => {
+                return Err(SerializationError::InvalidData(
+                    "unknown group-source encoding tag".to_string(),
+                ))
+            }
+        };
+        if matches!(validate, Validate::Yes) {
+            encoding.check()?;
+        }
+        Ok(encoding)
+    }
+}
+
+impl AkitaSerialize for GroupSource {
+    fn serialize_with_mode<W: Write>(
+        &self,
+        mut writer: W,
+        _compress: Compress,
+    ) -> Result<(), SerializationError> {
+        self.check()?;
+        let registration = self.registration();
+        writer.write_all(&registration.type_id())?;
+        writer.write_all(&registration.parameters())?;
+        self.encoding()
+            .serialize_with_mode(&mut writer, Compress::No)
     }
 
     fn serialized_size(&self, _compress: Compress) -> usize {
@@ -86,29 +149,8 @@ impl AkitaDeserialize for GroupSource {
         let mut parameters = [0u8; 16];
         reader.read_exact(&mut type_id)?;
         reader.read_exact(&mut parameters)?;
-        let tag = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let value = u64::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let encoding = match tag {
-            0 => GroupSourceEncoding::Bounded {
-                coefficient_bits: u32::try_from(value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "bounded coefficient width exceeds u32".to_string(),
-                    )
-                })?,
-            },
-            1 => GroupSourceEncoding::SparseBinary {
-                chunk_size: usize::try_from(value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "sparse-binary chunk size exceeds usize".to_string(),
-                    )
-                })?,
-            },
-            _ => {
-                return Err(SerializationError::InvalidData(
-                    "unknown group-source encoding tag".to_string(),
-                ))
-            }
-        };
+        let encoding =
+            GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         let source = Self::registered(GroupSourceRegistration::new(type_id, parameters), encoding);
         if matches!(validate, Validate::Yes) {
             source.check()?;
@@ -332,19 +374,9 @@ impl<F: FieldCore + CanonicalField + Valid + AkitaSerialize> AkitaSerialize for 
             .serialize_with_mode(&mut writer, Compress::No)?;
         write_usize(&mut writer, descriptor.group.num_vars())?;
         write_usize(&mut writer, descriptor.group.num_polynomials())?;
-        let (encoding_tag, encoding_value) = match descriptor.encoding {
-            GroupSourceEncoding::Bounded { coefficient_bits } => (0u8, u64::from(coefficient_bits)),
-            GroupSourceEncoding::SparseBinary { chunk_size } => (
-                1u8,
-                u64::try_from(chunk_size).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "sparse-binary chunk size exceeds u64".to_string(),
-                    )
-                })?,
-            ),
-        };
-        encoding_tag.serialize_with_mode(&mut writer, Compress::No)?;
-        encoding_value.serialize_with_mode(&mut writer, Compress::No)?;
+        descriptor
+            .encoding
+            .serialize_with_mode(&mut writer, Compress::No)?;
         for value in [
             descriptor.num_live_ring_elements_per_claim,
             descriptor.num_positions_per_block,
@@ -490,31 +522,8 @@ where
         }
         let num_vars = read_usize(&mut reader)?;
         let num_polynomials = read_usize(&mut reader)?;
-        let encoding_tag =
-            u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let encoding_value =
-            u64::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let encoding = match encoding_tag {
-            0 => GroupSourceEncoding::Bounded {
-                coefficient_bits: u32::try_from(encoding_value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "bounded coefficient width exceeds u32".to_string(),
-                    )
-                })?,
-            },
-            1 => GroupSourceEncoding::SparseBinary {
-                chunk_size: usize::try_from(encoding_value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "sparse-binary chunk size exceeds usize".to_string(),
-                    )
-                })?,
-            },
-            _ => {
-                return Err(SerializationError::InvalidData(
-                    "unknown committed-profile encoding tag".to_string(),
-                ))
-            }
-        };
+        let encoding =
+            GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
         let num_live_ring_elements_per_claim = read_usize(&mut reader)?;
         let num_positions_per_block = read_usize(&mut reader)?;
         let num_live_blocks = read_usize(&mut reader)?;
@@ -758,6 +767,50 @@ mod committed_group_tests {
         group.commitment =
             Commitment::new(RingVec::from_coeffs(coeffs[..coeffs.len() - 1].to_vec()));
         assert!(group.check().is_err());
+    }
+
+    #[test]
+    fn committed_group_reaudits_unchecked_sis_descriptors() {
+        let baseline = group();
+        let inner = baseline.descriptor.inner_commit_matrix;
+        let malformed = [
+            InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                SisTableDigest([0; 32]),
+                inner.sis_modulus_profile(),
+                inner.output_rank(),
+                inner.input_width(),
+                inner.coeff_linf_bound(),
+                inner.ring_dimension(),
+            ),
+            InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner.sis_table_key().table_digest,
+                inner.sis_modulus_profile(),
+                inner.output_rank().saturating_sub(1),
+                inner.input_width(),
+                inner.coeff_linf_bound(),
+                inner.ring_dimension(),
+            ),
+            InnerCommitMatrixParams::new_unchecked(
+                inner.security_policy(),
+                inner.sis_table_key().table_digest,
+                inner.sis_modulus_profile(),
+                inner.output_rank(),
+                inner.input_width(),
+                inner.coeff_linf_bound() - 1,
+                inner.ring_dimension(),
+            ),
+        ];
+
+        for matrix in malformed {
+            let mut candidate = baseline.clone();
+            candidate.descriptor.inner_commit_matrix = matrix;
+            assert!(candidate.check().is_err());
+            assert!(candidate
+                .serialize_with_mode(Vec::new(), Compress::Yes)
+                .is_err());
+        }
     }
 }
 

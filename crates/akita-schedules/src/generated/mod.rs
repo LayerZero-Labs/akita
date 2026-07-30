@@ -202,7 +202,8 @@ pub fn generated_schedule_key_cmp(
             left.root
                 .final_group
                 .source
-                .cmp(&right.root.final_group.source)
+                .encoding()
+                .cmp(&right.root.final_group.source.encoding())
         })
         .then_with(|| {
             left.root
@@ -239,7 +240,14 @@ pub fn generated_schedule_key_cmp_runtime(
     );
     left_main
         .cmp(&right_main)
-        .then_with(|| generated.root.final_group.source.cmp(&runtime.final_source))
+        .then_with(|| {
+            generated
+                .root
+                .final_group
+                .source
+                .encoding()
+                .cmp(&runtime.final_source.encoding())
+        })
         .then_with(|| {
             generated
                 .root
@@ -278,7 +286,11 @@ pub fn runtime_schedule_key_cmp(
     );
     left_main
         .cmp(&right_main)
-        .then_with(|| left.final_source.cmp(&right.final_source))
+        .then_with(|| {
+            left.final_source
+                .encoding()
+                .cmp(&right.final_source.encoding())
+        })
         .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
         .then_with(|| {
             left.precommitteds
@@ -297,7 +309,7 @@ fn schedule_key_eq(
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
     generated.root.final_group.layout == key.final_group
-        && generated.root.final_group.source == key.final_source
+        && generated.root.final_group.source.encoding() == key.final_source.encoding()
         && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root

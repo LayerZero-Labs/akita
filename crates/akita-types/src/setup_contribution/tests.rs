@@ -169,7 +169,7 @@ fn test_inputs_for_group_sizes(
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_b,
             expected_b_width,
-            1,
+            3,
             TEST_D,
         );
     }
@@ -180,7 +180,18 @@ fn test_inputs_for_group_sizes(
             crate::sis::SisModulusProfileId::Q128OffsetA7F7,
             n_a,
             lp.inner_commit_matrix.input_width(),
-            1,
+            2,
+            TEST_D,
+        );
+    }
+    if lp.outer_commit_matrix.coeff_linf_bound() == 0 {
+        lp.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            crate::sis::SisTableDigest::CURRENT,
+            crate::sis::SisModulusProfileId::Q128OffsetA7F7,
+            n_b,
+            lp.outer_commit_matrix.input_width(),
+            3,
             TEST_D,
         );
     }

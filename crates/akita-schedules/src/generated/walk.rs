@@ -39,11 +39,12 @@ pub(crate) fn walk_generated_schedule_entry(
     validate_entry_key(entry, key)?;
     entry.validate()?;
     let stored_root_source = entry.root.final_group.source;
-    if stored_root_source != key.final_source {
+    if stored_root_source.encoding() != key.final_source.encoding() {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated root source {stored_root_source:?} disagrees with request \
-             source {:?}",
-            key.final_source
+            "generated root source encoding {:?} disagrees with request \
+             source encoding {:?}",
+            stored_root_source.encoding(),
+            key.final_source.encoding()
         )));
     }
     let is_multi_group = !key.precommitteds.is_empty();

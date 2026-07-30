@@ -126,21 +126,12 @@ impl CommittedGroupDescriptor {
                 self.version
             )));
         }
+        self.inner_commit_matrix.validate()?;
+        self.outer_commit_matrix.validate()?;
         let inner_ring_dimension = self.inner_commit_matrix.ring_dimension();
         let outer_ring_dimension = self.outer_commit_matrix.ring_dimension();
         GroupSource::from_encoding(self.encoding)
             .validate_for_ring_dimension(field_bits, inner_ring_dimension)?;
-        if self.inner_commit_matrix.output_rank() == 0
-            || self.outer_commit_matrix.output_rank() == 0
-            || inner_ring_dimension == 0
-            || outer_ring_dimension == 0
-            || self.inner_commit_matrix.coeff_linf_bound() == 0
-            || self.outer_commit_matrix.coeff_linf_bound() == 0
-        {
-            return Err(AkitaError::InvalidSetup(
-                "precommitted group layout requires nonzero A/B rows and bounds".to_string(),
-            ));
-        }
         if !inner_ring_dimension.is_power_of_two()
             || !outer_ring_dimension.is_power_of_two()
             || !inner_ring_dimension.is_multiple_of(outer_ring_dimension)
@@ -533,6 +524,11 @@ pub enum GroupSourceEncoding {
     SparseBinary { chunk_size: usize },
 }
 
+impl GroupSourceEncoding {
+    /// Encoded byte length in canonical protocol serialization.
+    pub const SERIALIZED_SIZE: usize = 1 + 8;
+}
+
 /// Erased, self-describing source contract for one commitment group.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct GroupSource {
@@ -563,7 +559,7 @@ impl GroupSource {
     /// Built-in one-hot registration identifier.
     pub const ONE_HOT_REGISTRATION_ID: [u8; 16] = *b"akita/onehot/v1\0";
     /// Encoded byte length in canonical commitment serialization.
-    pub const SERIALIZED_SIZE: usize = 16 + 16 + 1 + 8;
+    pub const SERIALIZED_SIZE: usize = 16 + 16 + GroupSourceEncoding::SERIALIZED_SIZE;
 
     /// Build an open-world registered source contract.
     pub const fn registered(

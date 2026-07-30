@@ -562,7 +562,7 @@ mod tests {
             inner.sis_modulus_profile(),
             inner.output_rank(),
             inner.input_width(),
-            1,
+            2,
             inner.ring_dimension(),
         );
         let outer = &pre.outer_commit_matrix;
@@ -572,7 +572,7 @@ mod tests {
             outer.sis_modulus_profile(),
             outer.output_rank(),
             outer.input_width(),
-            1,
+            3,
             outer.ring_dimension(),
         );
         let mut root = CommittedGroupParams::params_only(

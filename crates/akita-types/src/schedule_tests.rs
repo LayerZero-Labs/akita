@@ -335,7 +335,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         inner.sis_modulus_profile(),
         inner.output_rank(),
         inner.input_width(),
-        1,
+        2,
         inner.ring_dimension(),
     );
     let outer = &group_params.outer_commit_matrix;
@@ -345,7 +345,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         outer.sis_modulus_profile(),
         outer.output_rank(),
         outer.input_width(),
-        1,
+        3,
         outer.ring_dimension(),
     );
     let precommitted = precommitted_group_params(&group_params, precommitted_group);
@@ -845,15 +845,19 @@ fn validate_rejects_zero_dimensions() {
 
 fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
     let num_live_blocks = 1usize << (num_vars - 10);
-    let inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
-        crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-        crate::SisTableDigest::CURRENT,
-        crate::SisModulusProfileId::Q128OffsetA7F7,
-        3,
+    let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: crate::SisTableDigest::CURRENT,
+            modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
+            role: crate::sis::SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: 32_767,
+        },
         16,
-        2,
-        64,
-    );
+    )
+    .expect("audited precommitted A matrix");
+    let outer_width = inner_commit_matrix.output_rank() * num_live_blocks;
     CommittedGroupDescriptor {
         version: CommittedGroupDescriptor::VERSION,
         group: PolynomialGroupLayout::new(num_vars, 1),
@@ -868,15 +872,18 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
         inner_commit_matrix,
         log_basis_outer: 2,
         num_digits_outer: 1,
-        outer_commit_matrix: crate::OuterCommitMatrixParams::new_unchecked(
-            crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-            crate::SisTableDigest::CURRENT,
-            crate::SisModulusProfileId::Q128OffsetA7F7,
-            4,
-            3 * num_live_blocks,
-            2,
-            64,
-        ),
+        outer_commit_matrix: crate::OuterCommitMatrixParams::try_new_with_min_rank(
+            crate::SisTableKey {
+                policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: crate::SisTableDigest::CURRENT,
+                modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
+                role: crate::sis::SisMatrixRole::Outer,
+                ring_dimension: 64,
+                coeff_linf_bound: 3,
+            },
+            outer_width,
+        )
+        .expect("audited precommitted B matrix"),
     }
 }
 
@@ -942,15 +949,20 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
             descriptor.group = PolynomialGroupLayout::new(10, 2);
-            descriptor.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
-                crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-                crate::SisTableDigest::CURRENT,
-                crate::SisModulusProfileId::Q128OffsetA7F7,
-                4,
-                3 * descriptor.num_live_blocks * 2,
-                2,
-                64,
-            );
+            descriptor.outer_commit_matrix = crate::OuterCommitMatrixParams::try_new_with_min_rank(
+                crate::SisTableKey {
+                    policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+                    table_digest: crate::SisTableDigest::CURRENT,
+                    modulus_profile: crate::SisModulusProfileId::Q128OffsetA7F7,
+                    role: crate::sis::SisMatrixRole::Outer,
+                    ring_dimension: 64,
+                    coeff_linf_bound: 3,
+                },
+                descriptor.inner_commit_matrix.output_rank()
+                    * descriptor.num_live_blocks
+                    * descriptor.group.num_polynomials(),
+            )
+            .expect("audited multi-polynomial B matrix");
             descriptor
         }],
     };

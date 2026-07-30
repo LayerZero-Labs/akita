@@ -18,8 +18,8 @@ use akita_config::{
 use akita_planner::find_group_batch_schedule;
 use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupDescriptor, GroupSource, OpeningClaimsLayout,
-    PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupDescriptor, GroupSource, GroupSourceRegistration,
+    OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -100,6 +100,47 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
         .expect("recursive adapter scalar schedule must resolve");
     assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
+}
+
+#[test]
+fn generated_lookup_preserves_downstream_provider_registration() {
+    type Cfg = fp128::D64Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog
+        .entries
+        .iter()
+        .find(|entry| entry.root.precommitted_groups.is_empty())
+        .expect("scalar catalog row");
+    let built_in = entry.root.final_group.source;
+    let downstream = GroupSource::registered(
+        GroupSourceRegistration::new(*b"downstream/test\0", [9; 16]),
+        built_in.encoding(),
+    );
+    let key = AkitaScheduleLookupKey::single(entry.root.final_group.layout, downstream);
+
+    assert!(
+        akita_schedules::generated::table_entry(catalog, &key).is_some(),
+        "catalog lookup identity must depend on protocol encoding, not provider registration"
+    );
+    let resolved = Cfg::runtime_schedule(key).expect("downstream provider schedule");
+    assert_eq!(
+        resolved.root.params.final_group.source, downstream,
+        "resolved parameters must retain the caller's concrete provider"
+    );
+
+    let mut built_in_schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        entry.root.final_group.layout,
+        built_in,
+    ))
+    .expect("built-in provider schedule");
+    built_in_schedule.root.params.final_group.source = downstream;
+    built_in_schedule.root.params.final_group.commitment.source = downstream;
+    assert_schedule_eq(
+        "provider-independent schedule resolution",
+        &resolved,
+        &built_in_schedule,
+    );
 }
 
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {

@@ -466,14 +466,13 @@ mod tests {
     }
 
     fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
-        const BOUND: u128 = 1;
         lp.inner_commit_matrix = InnerCommitMatrixParams::new_unchecked(
             lp.inner_commit_matrix.security_policy(),
             lp.inner_commit_matrix.sis_table_key().table_digest,
             lp.inner_commit_matrix.sis_modulus_profile(),
             lp.inner_commit_matrix.output_rank(),
             lp.inner_commit_matrix.input_width(),
-            BOUND,
+            2,
             lp.d_a(),
         );
         lp.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
@@ -482,7 +481,7 @@ mod tests {
             lp.outer_commit_matrix.sis_modulus_profile(),
             lp.outer_commit_matrix.output_rank(),
             lp.outer_commit_matrix.input_width(),
-            BOUND,
+            3,
             lp.d_a(),
         );
     }

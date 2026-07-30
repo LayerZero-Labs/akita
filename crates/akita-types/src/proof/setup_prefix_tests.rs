@@ -1,9 +1,12 @@
 use super::*;
 use crate::{
-    CommittedGroupDescriptor, CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
+    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, GroupSourceEncoding,
+    GroupSourceRegistration, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
+    PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
+use std::collections::BTreeMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
 
 fn sample_level_params() -> CommittedGroupParams {
     CommittedGroupParams::params_only(
@@ -32,6 +35,56 @@ fn prefix_eligible_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 3, field_element_digits, 2, 2)
     .expect("prefix eligible level params")
+}
+
+fn valid_setup_prefix_params() -> PrecommittedLevelParams {
+    let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: crate::SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: crate::sis::SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: 131_071,
+        },
+        1,
+    )
+    .expect("audited prefix A matrix");
+    let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: crate::SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q32Offset99,
+            role: crate::sis::SisMatrixRole::Outer,
+            ring_dimension: 64,
+            coeff_linf_bound: 3,
+        },
+        inner_commit_matrix.output_rank(),
+    )
+    .expect("audited prefix B matrix");
+    PrecommittedLevelParams {
+        layout: CommittedGroupDescriptor {
+            version: CommittedGroupDescriptor::VERSION,
+            group: PolynomialGroupLayout::singleton(6),
+            encoding: GroupSourceEncoding::Bounded {
+                coefficient_bits: 32,
+            },
+            num_live_ring_elements_per_claim: 1,
+            num_positions_per_block: 1,
+            num_live_blocks: 1,
+            log_basis_inner: 1,
+            num_digits_inner: 1,
+            inner_commit_matrix,
+            log_basis_outer: 1,
+            num_digits_outer: 1,
+            outer_commit_matrix,
+        },
+        source: GroupSource::bounded(32),
+        log_basis_open: 1,
+        fold_challenge_config: SparseChallengeConfig::pm1_only(0),
+        num_digits_open: 1,
+        num_digits_fold_one: 1,
+    }
 }
 
 #[test]
@@ -115,26 +168,32 @@ fn retarget_group_role_dims(
     params.fold_challenge_config =
         SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
             .expect("production challenge");
-    let inner = &params.inner_commit_matrix;
-    params.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
-        inner.security_policy(),
-        inner.sis_table_key().table_digest,
-        inner.sis_modulus_profile(),
-        inner.output_rank(),
+    let inner = params.inner_commit_matrix;
+    params.inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: inner.security_policy(),
+            table_digest: inner.sis_table_key().table_digest,
+            modulus_profile: inner.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Inner,
+            ring_dimension: u32::try_from(inner_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 131_071,
+        },
         inner.input_width(),
-        inner.coeff_linf_bound().max(1),
-        inner_ring_dimension,
-    );
-    let outer = &params.outer_commit_matrix;
-    params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
-        outer.security_policy(),
-        outer.sis_table_key().table_digest,
-        outer.sis_modulus_profile(),
-        outer.output_rank(),
+    )
+    .expect("audited retargeted A matrix");
+    let outer = params.outer_commit_matrix;
+    params.outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+        crate::SisTableKey {
+            policy: outer.security_policy(),
+            table_digest: outer.sis_table_key().table_digest,
+            modulus_profile: outer.sis_modulus_profile(),
+            role: crate::sis::SisMatrixRole::Outer,
+            ring_dimension: u32::try_from(outer_ring_dimension).expect("test ring dimension"),
+            coeff_linf_bound: 3,
+        },
         outer.input_width() * (inner_ring_dimension / outer_ring_dimension),
-        outer.coeff_linf_bound().max(1),
-        outer_ring_dimension,
-    );
+    )
+    .expect("audited retargeted B matrix");
 }
 
 fn precommitted_group(
@@ -337,6 +396,74 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
         .to_string()
         .contains("required setup prefix slot is missing from registry"));
     let _ = F::zero();
+}
+
+#[test]
+fn setup_prefix_slot_identity_erases_provider_registration() {
+    let commitment_params = valid_setup_prefix_params();
+    let builtin = setup_prefix_slot_id(64, 1, commitment_params);
+    let mut downstream = builtin.clone();
+    downstream.commitment_params.source = GroupSource::registered(
+        GroupSourceRegistration::new(*b"downstream/test\0", [7; 16]),
+        builtin.commitment_params.source.encoding(),
+    );
+    downstream.check().expect("registered provider is valid");
+
+    assert_ne!(
+        builtin.commitment_params.source,
+        downstream.commitment_params.source
+    );
+    assert_eq!(builtin, downstream);
+    assert_eq!(builtin.cmp(&downstream), Ordering::Equal);
+
+    let hash = |id: &SetupPrefixSlotId| {
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        hasher.finish()
+    };
+    assert_eq!(hash(&builtin), hash(&downstream));
+
+    let mut builtin_bytes = Vec::new();
+    builtin
+        .serialize_with_mode(&mut builtin_bytes, Compress::Yes)
+        .expect("serialize built-in provider");
+    let mut downstream_bytes = Vec::new();
+    downstream
+        .serialize_with_mode(&mut downstream_bytes, Compress::Yes)
+        .expect("serialize downstream provider");
+    assert_eq!(builtin_bytes, downstream_bytes);
+
+    let decoded = SetupPrefixSlotId::deserialize_with_mode(
+        downstream_bytes.as_slice(),
+        Compress::Yes,
+        Validate::Yes,
+        &(),
+    )
+    .expect("deserialize provider-independent slot id");
+    assert_eq!(decoded, builtin);
+    assert_eq!(decoded, downstream);
+
+    let mut map = BTreeMap::new();
+    assert_eq!(map.insert(builtin, 1), None);
+    assert_eq!(map.insert(downstream, 2), Some(1));
+    assert_eq!(map.len(), 1);
+}
+
+#[test]
+fn setup_prefix_slot_rejects_source_layout_encoding_mismatch() {
+    let mut commitment_params = valid_setup_prefix_params();
+    commitment_params.layout.encoding = match commitment_params.source.encoding() {
+        GroupSourceEncoding::Bounded { coefficient_bits } if coefficient_bits > 1 => {
+            GroupSourceEncoding::Bounded {
+                coefficient_bits: coefficient_bits - 1,
+            }
+        }
+        _ => GroupSourceEncoding::SparseBinary { chunk_size: 64 },
+    };
+    assert!(commitment_params.validate().is_err());
+
+    let id = setup_prefix_slot_id(64, 1, commitment_params);
+    assert!(id.serialize_with_mode(Vec::new(), Compress::Yes).is_err());
 }
 
 #[test]

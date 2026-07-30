@@ -42,12 +42,21 @@ impl PrecommittedLevelParams {
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        self.layout.validate(
-            self.layout
-                .inner_commit_matrix
-                .sis_modulus_profile()
-                .field_bits(),
+        let field_bits = self
+            .layout
+            .inner_commit_matrix
+            .sis_modulus_profile()
+            .field_bits();
+        self.layout.validate(field_bits)?;
+        self.source.validate_for_ring_dimension(
+            field_bits,
+            self.layout.inner_commit_matrix.ring_dimension(),
         )?;
+        if self.source.encoding() != self.layout.encoding {
+            return Err(AkitaError::InvalidSetup(
+                "precommitted source encoding does not match frozen layout".to_string(),
+            ));
+        }
         if self.fold_challenge_config.weight() != 0 {
             self.fold_challenge_config
                 .validate_for_ring_dim(self.layout.inner_commit_matrix.ring_dimension())
@@ -87,10 +96,7 @@ impl PrecommittedLevelParams {
             .and_then(|width| width.checked_mul(self.layout.group.num_polynomials()))
             .and_then(|width| width.checked_mul(outer_projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("precommitted B width overflow".to_string()))?;
-        if self.layout.inner_commit_matrix.sis_table_key().role != crate::sis::SisMatrixRole::Inner
-            || self.layout.inner_commit_matrix.input_width() != expected_a_width
-            || self.layout.outer_commit_matrix.sis_table_key().role
-                != crate::sis::SisMatrixRole::Outer
+        if self.layout.inner_commit_matrix.input_width() != expected_a_width
             || self.layout.outer_commit_matrix.input_width() != expected_b_width
         {
             return Err(AkitaError::InvalidSetup(

@@ -9,8 +9,9 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, GroupSourceEncoding,
+    InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
+    PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -30,7 +31,7 @@ pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
 ///
 /// `natural_len` distinguishes exact prefixes that share the padded commitment
 /// domain derived from `commitment_params`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SetupPrefixSlotId {
     /// Coefficient-axis ring dimension for the delegated prefix object.
     pub d_setup: usize,
@@ -39,6 +40,14 @@ pub struct SetupPrefixSlotId {
     /// Commitment parameters used to build the setup-prefix object.
     pub commitment_params: PrecommittedLevelParams,
 }
+
+impl PartialEq for SetupPrefixSlotId {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other).is_eq()
+    }
+}
+
+impl Eq for SetupPrefixSlotId {}
 
 impl SetupPrefixSlotId {
     /// Padded flat coefficient length committed for this slot.
@@ -373,7 +382,8 @@ fn serialize_precommitted_level_params<W: Write>(
         .num_polynomials()
         .serialize_with_mode(&mut writer, compress)?;
     params
-        .source
+        .layout
+        .encoding
         .serialize_with_mode(&mut writer, Compress::No)?;
     params
         .layout
@@ -438,7 +448,9 @@ fn deserialize_precommitted_level_params<R: Read>(
     }
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let source = GroupSource::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
+    let encoding =
+        GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
+    let source = GroupSource::from_encoding(encoding);
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -461,7 +473,7 @@ fn deserialize_precommitted_level_params<R: Read>(
         layout: CommittedGroupDescriptor {
             version,
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
-            encoding: source.encoding(),
+            encoding,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -494,7 +506,7 @@ fn precommitted_level_params_serialized_size(
             .group
             .num_polynomials()
             .serialized_size(compress)
-        + params.source.serialized_size(Compress::No)
+        + params.layout.encoding.serialized_size(Compress::No)
         + params
             .layout
             .num_live_ring_elements_per_claim
@@ -529,6 +541,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.check()?;
         self.d_setup.serialize_with_mode(&mut writer, compress)?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;

@@ -290,7 +290,8 @@ mod tests {
             setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupDescriptor, DigitBlocks,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
-            SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+            SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
+            DEFAULT_SIS_SECURITY_POLICY,
         };
 
         let mut setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
@@ -302,6 +303,31 @@ mod tests {
         .expect("generate setup");
         let decomposed = DigitBlocks::empty(64);
         let hint = AkitaCommitmentHint::singleton(decomposed);
+        let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Inner,
+                ring_dimension: 64,
+                coeff_linf_bound: 32_767,
+            },
+            1,
+        )
+        .expect("audited prefix A matrix");
+        let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+            SisTableKey {
+                policy: DEFAULT_SIS_SECURITY_POLICY,
+                table_digest: SisTableDigest::CURRENT,
+                modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                role: SisMatrixRole::Outer,
+                ring_dimension: 64,
+                coeff_linf_bound: 3,
+            },
+            inner_commit_matrix.output_rank(),
+        )
+        .expect("audited prefix B matrix");
+        let commitment_rows = outer_commit_matrix.output_rank();
         let commitment_params = PrecommittedLevelParams {
             layout: CommittedGroupDescriptor {
                 version: CommittedGroupDescriptor::VERSION,
@@ -314,26 +340,10 @@ mod tests {
                 num_live_blocks: 1,
                 log_basis_inner: 1,
                 num_digits_inner: 1,
-                inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    1,
-                    1,
-                    1,
-                    64,
-                ),
+                inner_commit_matrix,
                 log_basis_outer: 1,
                 num_digits_outer: 1,
-                outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                    DEFAULT_SIS_SECURITY_POLICY,
-                    SisTableDigest::CURRENT,
-                    SisModulusProfileId::Q128OffsetA7F7,
-                    1,
-                    1,
-                    1,
-                    64,
-                ),
+                outer_commit_matrix,
             },
             source: akita_types::GroupSource::bounded(128),
             log_basis_open: 1,
@@ -348,7 +358,10 @@ mod tests {
                 natural_len: 1,
                 padded_len: 3,
                 commitment: SetupPrefixPublicCommitment {
-                    rows: vec![RingVec::from_coeffs(vec![Prime128Offset275::default(); 64])],
+                    rows: vec![
+                        RingVec::from_coeffs(vec![Prime128Offset275::default(); 64]);
+                        commitment_rows
+                    ],
                 },
                 hint,
             })

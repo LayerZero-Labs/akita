@@ -562,7 +562,7 @@ mod tests {
                     DigitBlocks, InnerCommitMatrixParams, OuterCommitMatrixParams,
                     PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
                     SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
-                    SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
+                    SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
                 };
 
                 const MAX_VARS: usize = 13;
@@ -570,6 +570,31 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
+                let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Inner,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 32_767,
+                    },
+                    1,
+                )
+                .expect("audited prefix A matrix");
+                let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
+                    SisTableKey {
+                        policy: DEFAULT_SIS_SECURITY_POLICY,
+                        table_digest: SisTableDigest::CURRENT,
+                        modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+                        role: akita_types::SisMatrixRole::Outer,
+                        ring_dimension: u32::try_from(TEST_D).expect("test ring dimension"),
+                        coeff_linf_bound: 3,
+                    },
+                    inner_commit_matrix.output_rank(),
+                )
+                .expect("audited prefix B matrix");
+                let commitment_rows = outer_commit_matrix.output_rank();
                 let commitment_params = PrecommittedLevelParams {
                     layout: CommittedGroupDescriptor {
                         version: CommittedGroupDescriptor::VERSION,
@@ -580,26 +605,10 @@ mod tests {
                         num_live_blocks: 1,
                         log_basis_inner: 1,
                         num_digits_inner: 1,
-                        inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                            DEFAULT_SIS_SECURITY_POLICY,
-                            SisTableDigest::CURRENT,
-                            SisModulusProfileId::Q128OffsetA7F7,
-                            1,
-                            1,
-                            1,
-                            TEST_D,
-                        ),
+                        inner_commit_matrix,
                         log_basis_outer: 1,
                         num_digits_outer: 1,
-                        outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                            DEFAULT_SIS_SECURITY_POLICY,
-                            SisTableDigest::CURRENT,
-                            SisModulusProfileId::Q128OffsetA7F7,
-                            1,
-                            1,
-                            1,
-                            TEST_D,
-                        ),
+                        outer_commit_matrix,
                     },
                     source: Cfg::group_source(),
                     log_basis_open: 1,
@@ -618,7 +627,10 @@ mod tests {
                         natural_len: 1,
                         padded_len: TEST_D,
                         commitment: SetupPrefixPublicCommitment {
-                            rows: vec![RingVec::from_coeffs(vec![TestF::zero(); TEST_D])],
+                            rows: vec![
+                                RingVec::from_coeffs(vec![TestF::zero(); TEST_D]);
+                                commitment_rows
+                            ],
                         },
                         hint,
                     })
