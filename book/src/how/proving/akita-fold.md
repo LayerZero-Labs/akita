@@ -1,0 +1,523 @@
+# Ring relation in an Akita fold
+
+This page describes the ring-valued relations proved by one non-terminal
+Akita fold. The presentation starts with one polynomial group, one opening
+claim, and one common ring dimension:
+
+$$
+R=F[X]/(X^D+1).
+$$
+
+The current implementation also supports multiple polynomial groups,
+multiple claims, chunked witnesses, and different ring dimensions for
+different relation rows. Those extensions change the layout, but not the four
+core relations developed below.
+
+The Akita paper presents a more general matrix with additional compression
+relations. Its basic Greyhound relation motivates the four row families here;
+the current implementation is the source of truth for the rows and witness
+layout documented on this page.
+
+The goal of the fold is to replace the current polynomial blocks by a smaller
+digit witness while proving that the new witness is consistent with:
+
+1. the opening data computed from the old polynomial;
+2. the inner and outer commitments; and
+3. the random fold of the old polynomial blocks.
+
+These statements form the **physical ring relation**. The scalar evaluation
+claim from [Field-to-ring evaluation
+reduction](./field-ring-reduction.md) is a separate field-valued relation. It
+is fused with the physical rows later, but it is not a row of the ring matrix
+described on this page.
+
+## Objects entering the fold
+
+### Polynomial blocks and inner digits
+
+As in the previous page, split the ring-valued polynomial table into blocks.
+Let $b$ index a live block and $p$ a position inside the block. Write the ring
+at that location as
+
+$$
+F_{p,b}(X)\in R.
+$$
+
+Digit-decompose each ring with public inner gadget weights
+$G_a^{\mathrm{in}}$:
+
+$$
+F_{p,b}(X)
+=
+\sum_a G_a^{\mathrm{in}}s_{b,p,a}(X).
+\tag{1}
+$$
+
+For one block, collect all digit rings $s_{b,p,a}$ into a vector
+$\mathbf{s}_b$. The inner commitment matrix $\mathbf A$ maps that vector to
+
+$$
+\mathbf t_b
+=
+\mathbf A\mathbf s_b.
+\tag{2}
+$$
+
+Each coordinate of $\mathbf t_b$ is decomposed again, now with the outer
+gadget weights $G_h^{\mathrm{out}}$:
+
+$$
+t_{b,\rho}(X)
+=
+\sum_hG_h^{\mathrm{out}}\hat t_{b,\rho,h}(X),
+\tag{3}
+$$
+
+where $\rho$ selects a row of $\mathbf A$. Stack the $\hat t$ digits from all
+blocks. The public outer commitment is
+
+$$
+\mathbf u
+=
+\mathbf B\hat{\mathbf t}.
+\tag{4}
+$$
+
+The matrices $\mathbf A$ and $\mathbf B$ therefore serve different purposes:
+$\mathbf A$ creates an inner image for each block, while $\mathbf B$ commits
+the digit-decomposed inner images across all blocks.
+
+### Partial evaluations and opening digits
+
+Let $Q_p$ be the position weight derived from the opening point. For the
+base-field setting of the previous page, $Q_p\in F$ acts as a constant in
+$R$. Evaluate the position coordinate inside each block:
+
+$$
+E_b(X)
+=
+\sum_pQ_pF_{p,b}(X).
+\tag{5}
+$$
+
+Digit-decompose each $E_b$ with the opening gadget weights
+$G_h^{\mathrm{open}}$:
+
+$$
+E_b(X)
+=
+\sum_hG_h^{\mathrm{open}}\hat e_{b,h}(X).
+\tag{6}
+$$
+
+The fold witness contains the digit rings $\hat e$, not a second copy of the
+recomposed $E_b$. To bind those digits, Akita computes an opening commitment
+
+$$
+\mathbf v_D
+=
+\mathbf D\hat{\mathbf e}.
+\tag{7}
+$$
+
+The subscript in $\mathbf v_D$ distinguishes this ring vector from the scalar
+opening target $v_{\mathrm{tr}}$. Equation (7) is a commitment relation; it
+does not prove that the multilinear evaluation equals
+$v_{\mathrm{tr}}$.
+
+### The folded response
+
+After the relevant data is fixed, the transcript samples one sparse
+ring-valued fold challenge $c_b(X)$ for each live block. The prover folds the
+original block digits:
+
+$$
+z_{p,a}(X)
+=
+\sum_b c_b(X)s_{b,p,a}(X).
+\tag{8}
+$$
+
+The coefficients of $z$ are larger than the original digits, so $z$ is
+digit-decomposed once more:
+
+$$
+z_{p,a}(X)
+=
+\sum_fG_f^{\mathrm{fold}}\hat z_{p,a,f}(X).
+\tag{9}
+$$
+
+The three main digit segments produced so far are therefore
+
+$$
+\hat{\mathbf z}
+\;\Vert\;
+\hat{\mathbf e}
+\;\Vert\;
+\hat{\mathbf t}.
+\tag{10}
+$$
+
+They have different origins:
+
+| Segment | What it digit-decomposes | Why it is needed |
+|---|---|---|
+| $\hat{\mathbf z}$ | the challenge-folded block digits $\mathbf z$ | becomes the smaller folded response |
+| $\hat{\mathbf e}$ | the position-folded rings $E_b$ | carries the opening data into the fold |
+| $\hat{\mathbf t}$ | the inner images $\mathbf t_b$ | binds the folded response to the existing commitment |
+
+## The four physical relation families
+
+The verifier must check that the three segments in Equation (10) describe the
+same original polynomial and commitment. Akita expresses the checks as four
+families of linear equations over $R$.
+
+### 1. Fold-evaluation consistency
+
+Fold the recomposed partial evaluations using the same challenges as in
+Equation (8):
+
+$$
+\sum_{b,h}
+c_bG_h^{\mathrm{open}}\hat e_{b,h}.
+\tag{11}
+$$
+
+Alternatively, first fold the original digit blocks into $\hat z$, recompose
+them with Equation (9), and then apply the position weights:
+
+$$
+\sum_{p,a,f}
+Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
+\tag{12}
+$$
+
+Both expressions equal $\sum_bc_bE_b$. The first physical row therefore
+checks
+
+$$
+\boxed{
+\sum_{b,h}
+c_bG_h^{\mathrm{open}}\hat e_{b,h}
+=
+\sum_{p,a,f}
+Q_pG_a^{\mathrm{in}}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
+}
+\tag{13}
+$$
+
+This is called the `consistency` row in the code. It binds the partial
+evaluation digits $\hat e$ to the folded response $\hat z$. It does **not**
+contain the scalar opening target $v_{\mathrm{tr}}$.
+
+Notice that this row uses the random fold challenges $c_b$, not the block
+opening weights $B_b$ from the previous page. The $B_b$ weights belong to the
+separate evaluation-correctness relation on $\hat e$.
+
+### 2. Inner-commitment consistency
+
+For every row $\rho$ of $\mathbf A$, fold the corresponding recomposed inner
+images:
+
+$$
+\sum_{b,h}
+c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}.
+\tag{14}
+$$
+
+By linearity of $\mathbf A$, this must equal row $\rho$ of $\mathbf A$ applied
+to the folded response:
+
+$$
+\sum_{p,a,f}
+A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
+\tag{15}
+$$
+
+Thus every $\mathbf A$ row checks
+
+$$
+\boxed{
+\sum_{b,h}
+c_bG_h^{\mathrm{out}}\hat t_{b,\rho,h}
+=
+\sum_{p,a,f}
+A_{\rho,(p,a)}G_f^{\mathrm{fold}}\hat z_{p,a,f}.
+}
+\tag{16}
+$$
+
+There is no factor $G_a^{\mathrm{in}}$ on the right of Equation (16):
+$\mathbf A$ already acts on the inner digit vector $\mathbf s_b$, whose
+columns are indexed by $(p,a)$.
+
+### 3. Outer-commitment consistency
+
+The $\hat t$ segment must still open the public commitment that entered this
+fold:
+
+$$
+\boxed{
+\mathbf B\hat{\mathbf t}
+=
+\mathbf u.
+}
+\tag{17}
+$$
+
+Unlike Equations (13) and (16), this relation does not use the fold
+challenges. It checks the existing outer commitment directly.
+
+### 4. Opening-commitment consistency
+
+The $\hat e$ segment is bound by the opening commitment from Equation (7):
+
+$$
+\boxed{
+\mathbf D\hat{\mathbf e}
+=
+\mathbf v_D.
+}
+\tag{18}
+$$
+
+This relation also does not use the fold challenges. It prevents the prover
+from changing the partial-evaluation digits after $\mathbf v_D$ has been
+absorbed.
+
+## Assemble the ring relation
+
+Define the pre-switch witness
+
+$$
+\mathbf w_0
+=
+\hat{\mathbf z}
+\;\Vert\;
+\hat{\mathbf e}
+\;\Vert\;
+\hat{\mathbf t}.
+\tag{19}
+$$
+
+The four relation families can be written as one matrix equation
+
+$$
+\boxed{
+\mathbf M_0\mathbf w_0=\mathbf y
+\quad\text{over }R.
+}
+\tag{20}
+$$
+
+For one group, the physical row order and right-hand side are:
+
+| Physical rows | Meaning | Right-hand side |
+|---|---|---|
+| `consistency` | Equation (13) | $0$ |
+| $\mathbf A$ rows | Equation (16) | $\mathbf 0$ |
+| $\mathbf B$ rows | Equation (17) | $\mathbf u$ |
+| $\mathbf D$ rows | Equation (18) | $\mathbf v_D$ |
+
+Consequently,
+
+$$
+\mathbf y
+=
+\mathbf 0
+\;\Vert\;
+\mathbf 0_{\mathbf A}
+\;\Vert\;
+\mathbf u
+\;\Vert\;
+\mathbf v_D.
+\tag{21}
+$$
+
+The matrix is usually not materialized as one dense object. Its entries come
+from the fold challenges, opening weights, gadget weights, and the setup
+matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$. The code generates these
+contributions directly from the canonical witness layout.
+
+## Lift the ring relation before sumcheck
+
+Equation (20) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
+identity. Choose the canonical representatives of degree less than $D$ for
+all ring elements. There is then one quotient polynomial for every physical
+row:
+
+$$
+\widetilde{\mathbf M}_0(X)\widetilde{\mathbf w}_0(X)
+-
+\widetilde{\mathbf y}(X)
+=
+(X^D+1)\mathbf r(X).
+\tag{22}
+$$
+
+Digit-decompose the quotient vector:
+
+$$
+\mathbf r(X)
+=
+\mathbf G_r\hat{\mathbf r}(X),
+\tag{23}
+$$
+
+and append its digits to the committed witness:
+
+$$
+\boxed{
+\mathbf w
+=
+\hat{\mathbf z}
+\;\Vert\;
+\hat{\mathbf e}
+\;\Vert\;
+\hat{\mathbf t}
+\;\Vert\;
+\hat{\mathbf r}.
+}
+\tag{24}
+$$
+
+Move the denominator term to the left and define
+
+$$
+\mathbf M_{\mathrm{ext}}(X)
+=
+\left[
+\widetilde{\mathbf M}_0(X)
+\;\middle|\;
+-(X^D+1)\mathbf G_r
+\right].
+\tag{25}
+$$
+
+The extended relation is the exact polynomial identity
+
+$$
+\boxed{
+\mathbf M_{\mathrm{ext}}(X)\widetilde{\mathbf w}(X)
+=
+\widetilde{\mathbf y}(X).
+}
+\tag{26}
+$$
+
+This distinction is important: Equation (22) uses the quotient
+$\mathbf r$, while Equation (26) already includes the quotient digits
+$\hat{\mathbf r}$ inside $\mathbf w$. The denominator term must not be added
+to the right-hand side a second time.
+
+Ring switching now samples $\alpha$ and evaluates Equation (26):
+
+$$
+\mathbf M_{\mathrm{ext}}(\alpha)\mathbf w(\alpha)
+=
+\mathbf y(\alpha).
+\tag{27}
+$$
+
+Equation (27) is the field relation consumed by Stage 2. The
+[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck) page
+explains how $\tau_1$ batches its physical rows and how the resulting relation
+is proved over the flat witness address.
+
+## The scalar opening claim is a virtual row
+
+Two different statements involve $\hat e$, and they should not be conflated:
+
+| Statement | Form | Physical ring row? | Ring-switch quotient? |
+|---|---|---:|---:|
+| opening commitment | $\mathbf D\hat{\mathbf e}=\mathbf v_D$ | yes | yes |
+| evaluation correctness | $\sum_xw(x)T(x)=v_{\mathrm{tr}}$ | no | no |
+
+The second statement is derived in [Field-to-ring evaluation
+reduction](./field-ring-reduction.md#express-the-direct-relation-as-a-sumcheck-claim).
+It is already a linear equation over the field coefficients of the committed
+witness. Akita therefore treats it as an `EvaluationTrace` virtual row after
+the physical rows. It reuses the same row-batching challenge $\tau_1$, but it
+is absent from $\mathbf M_0$, $\mathbf y$, and the quotient vector
+$\mathbf r$.
+
+[Sumcheck stages](./sumcheck-stages.md#stage-2-fused-relation-sumcheck)
+continues from Equation (27) and fuses the physical relation, the virtual
+evaluation row, and the range-image binding into one Stage-2 sumcheck.
+
+## Code reference
+
+The current prover follows the construction above:
+
+1. **Build the partial-evaluation and fold witnesses.**
+   [`RingRelationProver::new`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation.rs#L433-L760)
+   decomposes $E_b$ into $\hat e$, computes
+   $\mathbf v_D=\mathbf D\hat{\mathbf e}$, samples the fold challenges, and
+   builds $\mathbf z$.
+2. **Assemble the public relation statement.**
+   [`assemble_relation_rhs`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/relation.rs#L286-L353)
+   lays out $\mathbf y$ as
+   `consistency | A | B | D`, while
+   [`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
+   carries the public challenges, points, and right-hand side.
+3. **Prepare the digit segments.**
+   [`ring_switch_build_w`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/coeffs.rs#L253-L455)
+   extracts $\hat t$ from the commitment hint and prepares
+   $\hat z\Vert\hat e\Vert\hat t$ in the canonical witness layout.
+4. **Compute the row quotients.**
+   [`compute_multi_group_relation_quotient`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs#L412-L690)
+   computes one quotient for each `consistency`, $\mathbf A$, $\mathbf B$, and
+   $\mathbf D$ row. `ring_switch_build_w` decomposes them and appends
+   $\hat r$.
+5. **Evaluate the extended relation.**
+   [`build_relation_weight_events`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L398-L870)
+   emits the contributions of all four row families and the quotient columns
+   after evaluation at $\alpha$ and batching by $\tau_1$.
+
+The main data flow is:
+
+```text
+old polynomial blocks and commitment hints
+                  |
+                  v
+RingRelationProver::new
+|-- position-folded rings E_b --> e_hat
+|-- inner-image hints ----------> t_hat
+|-- fold challenges ------------> z
+|-- D * e_hat ------------------> v_D
+`-- [0 | 0_A | u | v_D] -------> relation rhs y
+                  |
+                  v
+ring_switch_build_w
+|-- compute_multi_group_relation_quotient --> r
+|-- decompose z ----------------------------> z_hat
+|-- decompose r ----------------------------> r_hat
+`-- emit [z_hat | e_hat | t_hat | r_hat] ---> committed witness w
+                  |
+                  v
+build_relation_weight_events
+`-- M_ext(alpha), row-batched by tau_1 ------> Stage 2
+```
+
+The main code values are:
+
+| Code value | Mathematical object |
+|---|---|
+| `RingRelationGroupWitness::z_folded_rings` | folded response $\mathbf z$ before its final digit decomposition |
+| `RingRelationGroupWitness::e_folded` | position-folded rings $E_b$ |
+| `RingRelationGroupWitness::e_hat` | opening digits $\hat{\mathbf e}$ |
+| `RingRelationGroupWitness::hint` | commitment hint containing $\hat{\mathbf t}$ |
+| `RingRelationInstance::group_challenges()` | fold challenges $c_b$ |
+| `RingRelationInstance::rhs()` | physical right-hand side $\mathbf y$ |
+| `RingRelationInstance::v()` | opening-commitment rows $\mathbf v_D$ |
+| `RelationQuotientOutput` | row quotient vector $\mathbf r$ |
+| `RecursiveWitnessFlat` | flat committed witness $\hat z\Vert\hat e\Vert\hat t\Vert\hat r$ |
+
+With multiple groups, the implementation repeats
+`consistency | A | B` for each group and places the shared `D` rows at the
+end. With a chunked witness, it emits one
+$\hat z_i\Vert\hat e_i\Vert\hat t_i$ ownership unit per chunk followed by one
+shared $\hat r$ tail. The canonical physical layout is described in
+[Opening points and digit-innermost
+layout](./opening-points-layout.md#witness-order).
