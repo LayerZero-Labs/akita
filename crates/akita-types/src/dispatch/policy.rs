@@ -24,6 +24,7 @@ macro_rules! protocol_dispatch_policy {
             opening: [$($p128:literal),* $(,)?]
             envelope: [$($e128:literal),* $(,)?]
             ntt: [$($n128:literal),* $(,)?]
+            compression: [$($c128:literal),* $(,)?]
             min_bd: $min128:literal
             ntt_max: $max128:literal
         }
@@ -33,6 +34,7 @@ macro_rules! protocol_dispatch_policy {
             opening: [$($p64:literal),* $(,)?]
             envelope: [$($e64:literal),* $(,)?]
             ntt: [$($n64:literal),* $(,)?]
+            compression: [$($c64:literal),* $(,)?]
             min_bd: $min64:literal
             ntt_max: $max64:literal
         }
@@ -42,6 +44,7 @@ macro_rules! protocol_dispatch_policy {
             opening: [$($p32:literal),* $(,)?]
             envelope: [$($e32:literal),* $(,)?]
             ntt: [$($n32:literal),* $(,)?]
+            compression: [$($c32:literal),* $(,)?]
             min_bd: $min32:literal
             ntt_max: $max32:literal
         }
@@ -95,6 +98,7 @@ macro_rules! protocol_dispatch_policy {
                 }
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Envelope) => &[$($e128),*],
                 (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Ntt) => &[$($n128),*],
+                (ProtocolRingDispatchTierId::Fp128, ProtocolDispatchSlot::Compression) => &[$($c128),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
                     &[$($i64),*]
                 }
@@ -106,6 +110,7 @@ macro_rules! protocol_dispatch_policy {
                 }
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Envelope) => &[$($e64),*],
                 (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Ntt) => &[$($n64),*],
+                (ProtocolRingDispatchTierId::Fp64, ProtocolDispatchSlot::Compression) => &[$($c64),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Role(RingRole::Inner)) => {
                     &[$($i32),*]
                 }
@@ -117,6 +122,7 @@ macro_rules! protocol_dispatch_policy {
                 }
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Envelope) => &[$($e32),*],
                 (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Ntt) => &[$($n32),*],
+                (ProtocolRingDispatchTierId::Fp32, ProtocolDispatchSlot::Compression) => &[$($c32),*],
             }
         }
 
@@ -140,6 +146,16 @@ macro_rules! protocol_dispatch_policy {
             d: usize,
         ) -> bool {
             slot_dim_supported_for_tier(tier, ProtocolDispatchSlot::Role(role), d)
+        }
+
+        /// Whether `d` is supported for diagnostic compression on `tier`.
+        #[inline]
+        #[must_use]
+        pub fn compression_ring_dim_supported_for_tier(
+            tier: ProtocolRingDispatchTierId,
+            d: usize,
+        ) -> bool {
+            slot_dim_supported_for_tier(tier, ProtocolDispatchSlot::Compression, d)
         }
 
         /// Whether `d` is a supported inner (A-role) ring degree for `tier`.
@@ -288,6 +304,24 @@ macro_rules! __dispatch_for_field_ntt {
     }};
 }
 
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __dispatch_for_field_compression {
+    ($F:ty, $d:expr, |$D:ident| $body:expr) => {{
+        match $crate::protocol_dispatch_tier::<$F>() {
+            $crate::ProtocolRingDispatchTierId::Fp128 => {
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 8, 16, 32 })
+            }
+            $crate::ProtocolRingDispatchTierId::Fp64 => {
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 16, 32, 64 })
+            }
+            $crate::ProtocolRingDispatchTierId::Fp32 => {
+                $crate::__dispatch_ring_dim_arms!($d, $D, $body, { 32, 64, 128 })
+            }
+        }
+    }};
+}
+
 #[macro_export]
 macro_rules! dispatch_for_field {
     ($crate::ProtocolDispatchSlot::Role($crate::RingRole::Inner), $F:ty, $d:expr, |$D:ident| $body:expr) => {
@@ -339,6 +373,16 @@ macro_rules! dispatch_for_field {
     (akita_types::ProtocolDispatchSlot::Ntt, $F:ty, $d:expr, |$D:ident| $body:expr) => {
         $crate::__dispatch_for_field_ntt!($F, $d, |$D| $body)
     };
+
+    ($crate::ProtocolDispatchSlot::Compression, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_compression!($F, $d, |$D| $body)
+    };
+    (ProtocolDispatchSlot::Compression, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_compression!($F, $d, |$D| $body)
+    };
+    (akita_types::ProtocolDispatchSlot::Compression, $F:ty, $d:expr, |$D:ident| $body:expr) => {
+        $crate::__dispatch_for_field_compression!($F, $d, |$D| $body)
+    };
 }
 
 protocol_dispatch_policy! {
@@ -348,6 +392,7 @@ protocol_dispatch_policy! {
         opening: [32, 64, 128, 256]
         envelope: [64, 128, 256, 512]
         ntt: [16, 32, 64, 128, 256, 512]
+        compression: [8, 16, 32]
         min_bd: 32
         ntt_max: 512
     }
@@ -357,6 +402,7 @@ protocol_dispatch_policy! {
         opening: [32, 64, 128, 256]
         envelope: [32, 64, 128, 256]
         ntt: [32, 64, 128, 256, 512, 1024]
+        compression: [16, 32, 64]
         min_bd: 32
         ntt_max: 1024
     }
@@ -366,6 +412,7 @@ protocol_dispatch_policy! {
         opening: [64, 128, 256]
         envelope: [64, 128, 256]
         ntt: [64, 128, 256, 512, 1024, 2048]
+        compression: [32, 64, 128]
         min_bd: 64
         ntt_max: 2048
     }
@@ -417,6 +464,31 @@ mod tests {
     }
 
     #[test]
+    fn compression_arms_cover_the_rank_one_ladder_for_each_tier() {
+        assert_eq!(
+            arms_for_slot(
+                ProtocolRingDispatchTierId::Fp128,
+                ProtocolDispatchSlot::Compression
+            ),
+            &[8, 16, 32]
+        );
+        assert_eq!(
+            arms_for_slot(
+                ProtocolRingDispatchTierId::Fp64,
+                ProtocolDispatchSlot::Compression
+            ),
+            &[16, 32, 64]
+        );
+        assert_eq!(
+            arms_for_slot(
+                ProtocolRingDispatchTierId::Fp32,
+                ProtocolDispatchSlot::Compression
+            ),
+            &[32, 64, 128]
+        );
+    }
+
+    #[test]
     fn slot_support_matches_every_policy_arm() {
         for tier in [
             ProtocolRingDispatchTierId::Fp128,
@@ -429,6 +501,7 @@ mod tests {
                 ProtocolDispatchSlot::Role(RingRole::Opening),
                 ProtocolDispatchSlot::Envelope,
                 ProtocolDispatchSlot::Ntt,
+                ProtocolDispatchSlot::Compression,
             ] {
                 for &d in arms_for_slot(tier, slot) {
                     assert!(

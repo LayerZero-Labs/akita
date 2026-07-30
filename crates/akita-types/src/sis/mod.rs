@@ -24,6 +24,7 @@
 //! contains no SIS formula of its own.
 
 pub mod ajtai_key;
+pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
 pub mod fold_witness_grind;

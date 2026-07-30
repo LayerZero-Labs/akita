@@ -224,6 +224,54 @@ fn asymmetric_centering_boundary_roundtrip_fp128() {
 }
 
 #[test]
+fn flat_coefficient_decomposition_matches_ring_digit_layout() {
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| match index % 6 {
+        0 => F128::zero(),
+        1 => F128::one(),
+        2 => -F128::one(),
+        3 => F128::from_u64((index * 17) as u64),
+        4 => F128::from_i64(-((index * 19) as i64)),
+        _ => F128::from_canonical_u128_reduced(u128::MAX - index as u128),
+    }));
+
+    for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
+        let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
+        let mut flat_digits = vec![0i8; D * levels];
+        balanced_decompose_coefficients_pow2_i8_into(
+            &ring.coeffs,
+            &mut flat_digits,
+            levels,
+            log_basis,
+        );
+        assert_eq!(flat_digits, ring_digits.as_flattened());
+    }
+}
+
+/// Run with:
+/// `cargo test -p akita-algebra --release balanced_i8_decomposition_bench -- --ignored --nocapture`
+#[test]
+#[ignore = "release-only balanced decomposition microbenchmark"]
+fn balanced_i8_decomposition_bench() {
+    use std::hint::black_box;
+    use std::time::Instant;
+
+    const ITERATIONS: usize = 100_000;
+    let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|index| {
+        F128::from_u64((index * 0x9e37 + 0x1234) as u64)
+    }));
+    let mut digits = vec![[0i8; D]; 128];
+    let started = Instant::now();
+    for _ in 0..ITERATIONS {
+        black_box(&ring).balanced_decompose_pow2_i8_into(black_box(&mut digits), 1);
+    }
+    let elapsed = started.elapsed();
+    println!(
+        "balanced i8 D64 x 128: {} ns/iteration",
+        elapsed.as_nanos() / ITERATIONS as u128
+    );
+}
+
+#[test]
 fn balanced_i16_decomposition_supports_bases_ten_and_eleven() {
     let ring = CyclotomicRing::<F128, D>::from_coefficients(from_fn(|i| match i % 6 {
         0 => F128::from_i64(-1024),

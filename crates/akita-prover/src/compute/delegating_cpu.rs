@@ -78,6 +78,10 @@ macro_rules! delegate_digit_rows {
         where
             F: FieldCore + CanonicalField,
         {
+            fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+                CpuBackend.compression_cache_bytes(prepared)
+            }
+
             fn digit_rows<const D: usize>(
                 &self,
                 prepared: &Self::PreparedSetup,
@@ -86,6 +90,14 @@ macro_rules! delegate_digit_rows {
                 log_basis: u32,
             ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError> {
                 CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+            }
+
+            fn compression_rows<const D: usize>(
+                &self,
+                prepared: &Self::PreparedSetup,
+                digit_vectors: &[&[[i8; D]]],
+            ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+                CpuBackend.compression_rows(prepared, digit_vectors)
             }
         }
     };

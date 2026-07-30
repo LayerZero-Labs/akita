@@ -44,7 +44,6 @@ fn onehot_opening(poly: &OneHotPoly<SmallF, u8>, weights: &[SmallE]) -> SmallE {
         .fold(SmallE::zero(), |sum, weight| sum + weight)
 }
 
-#[cfg(feature = "profile-ci")]
 fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly<SmallF, u8> {
     // Keep the tensor-partial fixture sparse at large arity. `K = 256` is
     // divisible by the supported native ring dimensions and leaves enough low
@@ -63,7 +62,6 @@ fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly
     OneHotPoly::new(onehot_k, params.d_a(), indices).expect("grouped one-hot polynomial")
 }
 
-#[cfg(feature = "profile-ci")]
 fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> SmallE {
     let onehot_k = poly.onehot_k();
     poly.indices()
@@ -181,10 +179,21 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         BasisMode::Lagrange,
     )
     .expect_err("tampered extension-opening reduction partial must reject");
+
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut verifier_transcript = AkitaTranscript::<SmallF>::new(TRANSCRIPT_LABEL);
+    SmallScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut verifier_transcript,
+        verifier_claims(&point, &openings, &commitment),
+        BasisMode::Lagrange,
+    )
+    .expect_err("omitting the required root extension-opening reduction must reject");
 }
 
 #[test]
-#[cfg(feature = "profile-ci")]
 fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;
@@ -316,10 +325,22 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
-        verify_claims,
+        verify_claims.clone(),
         BasisMode::Lagrange,
     )
     .expect("verify grouped extension proof");
+
+    let mut stripped = proof.clone();
+    stripped.root.extension_opening_reduction = None;
+    let mut stripped_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
+    ProtocolScheme::batched_verify(
+        &stripped,
+        &verifier_setup,
+        &mut stripped_transcript,
+        verify_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("omitting the required multi-group root extension-opening reduction must reject");
 
     let tampered_claims = OpeningClaims::from_groups(vec![
         PolynomialGroupClaims::new(

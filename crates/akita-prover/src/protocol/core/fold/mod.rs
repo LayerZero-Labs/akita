@@ -1,12 +1,14 @@
+mod extension_claim;
+mod single_field;
+
 use super::*;
 use crate::compute::{
-    tensor_root_projection, CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend,
-    ProverComputeStack, RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor,
-    RuntimeRingSwitchProveBackend, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
+    RootOpeningSource, RootPolyMeta, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
+    RuntimeRootProvePoly,
 };
 use crate::protocol::sumcheck::relation_range_image::PreparedProverEvaluationTrace;
 use crate::protocol::sumcheck::DigitRangeProver;
-use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
 
@@ -14,6 +16,9 @@ use akita_types::{
     dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan, OpeningClaimsLayout,
     RelationRangeImagePlan,
 };
+
+pub(in crate::protocol::core) use extension_claim::prepare_extension_claim_fold;
+pub(in crate::protocol::core) use single_field::prepare_single_field_fold;
 
 pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) commitment: RingVec<F>,
@@ -28,185 +33,41 @@ pub(in crate::protocol::core) struct PreparedFold<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) row_coefficients: Option<Vec<E>>,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_fold_inner<'a, F, E, T, P, V, C, O, TS, R>(
-    stack: &ProverComputeStack<'_, F, C, O, TS, R>,
-    needs_extension_reduction: bool,
-    block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_polys: &[&P],
-    eor_opening_batch: &OpeningClaims<'_, E>,
+/// Shared non-EOR opening preparation used by single-field and extension-claim
+/// skip-EOR paths.
+type NonEorOpeningPrep<E> = (Vec<Vec<E>>, Option<Vec<E>>);
+
+pub(super) fn prepare_non_eor_opening<'a, F, E, P, V>(
+    block_claims: &ProverOpeningData<'a, E, P, F>,
+    opening_batch: &OpeningClaimsLayout,
     pad_base_evals: bool,
-    transcript: &mut T,
     validate_non_eor: V,
-    level_params: &CommittedGroupParams,
-    basis: BasisMode,
-) -> Result<PreparedFold<F, E>, AkitaError>
+) -> Result<NonEorOpeningPrep<E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide,
-    E: FpExtEncoding<F>
-        + ExtField<F>
-        + HasUnreducedOps
-        + HasOptimizedFold
-        + FromPrimitiveInt
-        + MulBaseUnreduced<F>
-        + AkitaSerialize,
-    T: Transcript<F> + ProverTranscriptGrind<F>,
-    F: RandomSampling + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
+    F: FieldCore,
+    E: ExtField<F>,
     P: RuntimeRootProvePoly<F>,
     V: FnOnce() -> Result<(), AkitaError>,
-    TS: RuntimeTensorBackendFor<F, P, E>,
-    C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
-    R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = block_claims
-        .opening_claims()
-        .layout()
-        .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let fold_polys = block_claims.flat_polys();
-    let tensor = stack.tensor();
-    // A-role fold dimension: the EOR sumcheck and tensor projection operate on
-    // the claim polynomials at this level's fold ring.
-    let ring_d = level_params.role_dims().d_a();
-    let (protocol_points, row_coefficients, reduction) = if needs_extension_reduction {
-        let proved = if opening_batch.num_groups() > 1 {
-            prove_grouped_extension_opening_reduction::<F, E, T, P, TS>(
-                tensor.backend(),
-                Some(tensor.prepared()),
-                &block_claims,
-                &opening_batch,
-                level_params,
-                pad_base_evals,
-                transcript,
-                if pad_base_evals { "recursive" } else { "root" },
-            )
-        } else {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                ring_d,
-                |D| {
-                    prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                        tensor.backend(),
-                        Some(tensor.prepared()),
-                        eor_polys,
-                        eor_opening_batch,
-                        pad_base_evals,
-                        transcript,
-                        if pad_base_evals { "recursive" } else { "root" },
-                    )
-                }
-            )
-        }
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
-        })?;
-        (
-            proved.protocol_points,
-            Some(proved.row_coefficients),
-            Some(proved.reduction),
-        )
+    validate_non_eor()?;
+    let row_coefficients = if pad_base_evals {
+        Some(vec![E::one(); opening_batch.num_total_polynomials()])
     } else {
-        validate_non_eor()?;
-        let row_coefficients = if pad_base_evals {
-            Some(vec![E::one(); opening_batch.num_total_polynomials()])
-        } else {
-            None
-        };
-        let protocol_points = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                block_claims
-                    .opening_claims()
-                    .group_point(group_index)
-                    .map(<[E]>::to_vec)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        (protocol_points, row_coefficients, None)
+        None
     };
-
-    if needs_extension_reduction {
-        if pad_base_evals {
-            finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-                stack,
-                block_claims,
-                protocol_points: &protocol_points,
-                reduction,
-                row_coefficients,
-                trace_opening_batch: &opening_batch,
-                level_params,
-                basis,
-                pad_base_evals,
-                transcript,
-            })
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("finish prepared fold failed: {err:?}"))
-            })
-        } else {
-            let transformed: Vec<RootTensorProjectionPoly<F>> = {
-                let _span =
-                    tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                        .entered();
-                let mut transformed = Vec::with_capacity(fold_polys.len());
-                for group_index in 0..opening_batch.num_groups() {
-                    let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                    let group_polys = block_claims.group_polys(group_index)?;
-                    transformed.extend(dispatch_for_field!(
-                        ProtocolDispatchSlot::Role(RingRole::Inner),
-                        F,
-                        group_dims.d_a(),
-                        |D| {
-                            cfg_iter!(group_polys)
-                                .map(|poly| {
-                                    tensor_root_projection::<F, P, E, TS, D>(
-                                        tensor.backend(),
-                                        Some(tensor.prepared()),
-                                        *poly,
-                                    )
-                                })
-                                .collect::<Result<Vec<_>, _>>()
-                        }
-                    )?);
-                }
-                transformed
-            };
-            let fold_refs = transformed.iter().collect::<Vec<_>>();
-            let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
-            finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R>(
-                FinishFoldArgs {
-                    stack,
-                    block_claims: transformed_block_claims,
-                    protocol_points: &protocol_points,
-                    reduction,
-                    row_coefficients,
-                    trace_opening_batch: &opening_batch,
-                    level_params,
-                    basis,
-                    pad_base_evals,
-                    transcript,
-                },
-            )
-        }
-    } else {
-        finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {
-            stack,
-            block_claims,
-            protocol_points: &protocol_points,
-            reduction,
-            row_coefficients,
-            trace_opening_batch: &opening_batch,
-            level_params,
-            basis,
-            pad_base_evals,
-            transcript,
+    let protocol_points = (0..opening_batch.num_groups())
+        .map(|group_index| {
+            block_claims
+                .opening_claims()
+                .group_point(group_index)
+                .map(<[E]>::to_vec)
         })
-    }
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((protocol_points, row_coefficients))
 }
 
 /// Borrowed/owned argument bundle for [`finish_prepared_fold`].
-struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
+pub(super) struct FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>
 where
     F: FieldCore + CanonicalField,
     E: FieldCore,
@@ -230,7 +91,7 @@ where
 /// Evaluate folded claims, derive the trace target, and build the ring-relation
 /// instance/witness for one borrowed source-view set `Q: RootOpeningSource`.
 #[allow(clippy::needless_lifetimes)]
-fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
+pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where

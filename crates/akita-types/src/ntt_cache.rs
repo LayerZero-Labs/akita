@@ -17,6 +17,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use crate::dispatch::compression_ring_dim_supported_for_tier;
 use crate::{
     field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
     proof::AkitaExpandedSetup, protocol_dispatch_tier, RingMatrixView,
@@ -62,17 +63,38 @@ pub enum ProtocolCrtNttParams<const D: usize> {
 }
 
 /// Select the canonical CRT+NTT parameter set for protocol field `F` and degree `D`.
+///
+/// This is the ordinary protocol selector. Compression-only ring degrees must use
+/// [`select_compression_crt_ntt_params`] instead of widening this gate.
 pub fn select_crt_ntt_params<F: CanonicalField, const D: usize>(
 ) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
+    let tier = protocol_dispatch_tier::<F>();
     if !ntt_ring_degree_supported_for_field::<F>(D) {
-        let tier = protocol_dispatch_tier::<F>();
         return Err(AkitaError::InvalidSetup(format!(
             "CRT+NTT ring degree {D} outside tier band [{}, {}] for this field",
             ntt_min_ring_d(tier),
             ntt_max_ring_d(tier),
         )));
     }
+    select_crt_ntt_params_for_modulus::<F, D>()
+}
 
+/// Select CRT+NTT params for the compressed-commitment diagnostic ladder.
+///
+/// Ordinary protocol callers must keep using [`select_crt_ntt_params`].
+pub fn select_compression_crt_ntt_params<F: CanonicalField, const D: usize>(
+) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
+    let tier = protocol_dispatch_tier::<F>();
+    if !compression_ring_dim_supported_for_tier(tier, D) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "compression CRT+NTT ring degree {D} is outside the compression surface for this field"
+        )));
+    }
+    select_crt_ntt_params_for_modulus::<F, D>()
+}
+
+fn select_crt_ntt_params_for_modulus<F: CanonicalField, const D: usize>(
+) -> Result<ProtocolCrtNttParams<D>, AkitaError> {
     let modulus = field_modulus::<F>();
     let split_only_q128_modulus =
         u128::MAX - (<Prime128Offset159 as PseudoMersenneField>::MODULUS_OFFSET - 1);
@@ -581,13 +603,38 @@ pub fn prepare_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
-    prepare_ntt_cache_with_tail_prefix(matrix, mode, None)
+    prepare_ntt_cache_with_tail_prefix(matrix, mode, None, select_crt_ntt_params::<F, D>()?)
+}
+
+/// Prepare the exact-prefix, negacyclic-only cache used by compressed commitments.
+///
+/// Uses [`select_compression_crt_ntt_params`] so compression-only ring degrees do
+/// not widen the ordinary protocol NTT selector.
+#[tracing::instrument(
+    skip_all,
+    name = "prepare_compression_ntt_cache",
+    fields(ring_d = D, rings = matrix.as_slice().len(), width)
+)]
+pub fn prepare_compression_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
+    matrix: RingMatrixView<'_, F, D>,
+    width: usize,
+) -> Result<PreparedNttCache<D>, AkitaError> {
+    prepare_ntt_cache_with_tail_prefix(
+        matrix,
+        NttCacheMode::ExactNegacyclic {
+            width,
+            log_basis: 1,
+        },
+        None,
+        select_compression_crt_ntt_params::<F, D>()?,
+    )
 }
 
 fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
     mode: NttCacheMode,
     tail_prefix_len: Option<usize>,
+    selected: ProtocolCrtNttParams<D>,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
     validate_cache_mode(mode)?;
     if matches!(mode, NttCacheMode::ExactNegacyclic { width, .. } if width > matrix.as_slice().len())
@@ -660,7 +707,7 @@ fn prepare_ntt_cache_with_tail_prefix<F: FieldCore + CanonicalField, const D: us
             }
         }};
     }
-    let prepared = match select_crt_ntt_params::<F, D>()? {
+    let prepared = match selected {
         ProtocolCrtNttParams::Q32(params) => prepare!(params, Q32, Q32_NUM_PRIMES),
         ProtocolCrtNttParams::Q64(params) => prepare!(params, Q64, Q64_NUM_PRIMES),
         ProtocolCrtNttParams::Q128(params) => prepare!(params, Q128, Q128_NUM_PRIMES),
@@ -804,6 +851,7 @@ impl VerifierNttCache {
             view,
             mode,
             Some(tail_prefix_len),
+            select_crt_ntt_params::<F, D>()?,
         )?);
         if prepared.has_i16_tail() != (tail_prefix_len > 0) {
             return Err(AkitaError::InvalidSetup(
@@ -935,6 +983,30 @@ mod tests {
         assert!(matches!(
             select_crt_ntt_params::<Prime128OffsetA7F7, 512>(),
             Ok(ProtocolCrtNttParams::Q128(_))
+        ));
+    }
+
+    #[test]
+    fn protocol_selector_rejects_compression_only_q128_d8_while_compression_prep_succeeds() {
+        assert!(matches!(
+            select_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
+        assert!(matches!(
+            select_compression_crt_ntt_params::<Prime128OffsetA7F7, 8>(),
+            Ok(ProtocolCrtNttParams::Q128(_))
+        ));
+        let flat = flat_zeros::<Prime128OffsetA7F7, 8>(1);
+        let cache =
+            prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"), 1)
+                .expect("compression-only D8 cache");
+        assert!(!cache.has_cyclic());
+        assert!(matches!(
+            prepare_ntt_cache(
+                flat.ring_view::<8>(1, 1).expect("matrix view"),
+                NttCacheMode::BothTransforms,
+            ),
+            Err(AkitaError::InvalidSetup(_))
         ));
     }
 

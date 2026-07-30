@@ -8,10 +8,11 @@ pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
-    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
+    ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
+    outer_opening_min_ring_d, protocol_dispatch_tier, validate_ring_dispatch,
+    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
+    ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -76,8 +77,9 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_ntt_cache,
-    select_crt_ntt_params, NttCacheKey, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
+    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
+    prepare_ntt_cache, select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey,
+    NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
@@ -85,7 +87,8 @@ pub use proof::{
     append_claim_values_to_transcript, assemble_relation_rhs, build_terminal_response,
     build_terminal_response_from_groups, decode_terminal_z_golomb_payload,
     derive_public_matrix_flat, emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes,
-    emit_witness_z_planes, folded_root_supports_opening_shape, generate_relation_rhs,
+    emit_witness_z_planes, eor_required_at_level, eor_required_for_width,
+    folded_root_supports_opening_shape, generate_relation_rhs,
     inflate_envelope_for_setup_prefix_slot, padded_scalar_batch_num_vars, padded_setup_prefix_len,
     prepare_opening_point, raw_field_segment_bytes, relation_claim_from_layout_extension,
     relation_claim_from_rows, relation_claim_from_rows_extension, relation_rhs_coeff_len,
@@ -102,8 +105,8 @@ pub use proof::{
     AkitaCommitment, AkitaCommitmentHint, AkitaExpandedSetup, AkitaSetupSeed, AkitaStage1Proof,
     AkitaStage1StageProof, AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment,
     CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
-    ExtensionOpeningReductionShape, FoldLevelProof, LevelProofShape, NextWitnessBinding,
-    NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
+    ExtensionOpeningReductionShape, FoldLevelProof, FoldOpeningKind, LevelProofShape,
+    NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
     PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
     PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
     RelationRangeImagePlan, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,

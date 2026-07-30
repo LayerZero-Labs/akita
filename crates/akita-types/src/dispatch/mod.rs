@@ -13,8 +13,8 @@ use akita_algebra::ntt::tables::{Q32_MODULUS, Q64_MODULUS};
 use akita_field::{AkitaError, CanonicalField};
 
 pub use policy::{
-    inner_ring_dim_supported_for_tier, ntt_max_ring_d, ntt_min_ring_d,
-    opening_ring_dim_supported_for_tier, outer_opening_min_ring_d,
+    compression_ring_dim_supported_for_tier, inner_ring_dim_supported_for_tier, ntt_max_ring_d,
+    ntt_min_ring_d, opening_ring_dim_supported_for_tier, outer_opening_min_ring_d,
     outer_opening_ring_dim_supported_for_tier, outer_ring_dim_supported_for_tier,
     role_dim_supported_for_tier, slot_dim_supported_for_tier,
 };
@@ -39,6 +39,8 @@ pub enum ProtocolDispatchSlot {
     Envelope,
     /// CRT/NTT cache warm and build.
     Ntt,
+    /// Diagnostic compressed-commitment F/H matrices.
+    Compression,
 }
 
 /// Canonical field modulus from the canonical representation of `-1`.
