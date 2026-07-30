@@ -297,8 +297,7 @@ pub fn fold_witness_digit_plan(
             )
         };
         if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
-            let floor = (rademacher_inf_norm_bound
-                .saturating_mul(u128::from(retain_num))
+            let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
                 / u128::from(retain_den))
             .max(1);
             while fold_decomposed_digits > 1 {
