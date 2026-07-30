@@ -89,6 +89,11 @@ pub fn padded_boolean_opening_vars(len: usize) -> Result<usize, AkitaError> {
 }
 
 /// Extension-opening reduction proof bytes for one fold level in a schedule.
+///
+/// `extension_opening_width` is the claim-vs-coefficient field degree: `1`
+/// (single-field geometry, zero bytes) or a supported power-of-two extension
+/// width. Any other width is rejected rather than priced, so invalid custom
+/// configurations cannot pass planning as zero-cost.
 pub fn extension_opening_reduction_level_bytes(
     challenge_field_bits: u32,
     extension_opening_width: usize,
@@ -97,6 +102,11 @@ pub fn extension_opening_reduction_level_bytes(
     input_witness_len: usize,
     ring_d: usize,
 ) -> Result<usize, AkitaError> {
+    if extension_opening_width != 1 && !extension_opening_width.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(format!(
+            "extension opening width must be one or a power of two, got {extension_opening_width}"
+        )));
+    }
     let kind = if fold_level == 0 {
         crate::FoldOpeningKind::Root
     } else {
@@ -176,4 +186,50 @@ pub fn sumcheck_rounds(level_d: usize, output_witness_len: usize) -> usize {
     let num_ring_elems = output_witness_len / level_d;
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     col_bits + ring_bits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn level_bytes(width: usize, fold_level: usize, ring_d: usize) -> Result<usize, AkitaError> {
+        extension_opening_reduction_level_bytes(
+            128,
+            width,
+            fold_level,
+            PolynomialGroupLayout::singleton(12),
+            1 << 12,
+            ring_d,
+        )
+    }
+
+    #[test]
+    fn invalid_extension_widths_error_instead_of_pricing_zero() {
+        for width in [0, 3, usize::MAX] {
+            for fold_level in [0, 1] {
+                assert!(
+                    level_bytes(width, fold_level, 128).is_err(),
+                    "width {width} at level {fold_level} must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn valid_extension_widths_price_by_gate() {
+        assert_eq!(
+            level_bytes(1, 0, 128).expect("degree one"),
+            0,
+            "single-field geometry contributes no EOR bytes"
+        );
+        assert!(
+            level_bytes(4, 0, 128).expect("gate-on root") > 0,
+            "gate-on extension root prices the reduction"
+        );
+        assert_eq!(
+            level_bytes(8, 0, 4).expect("gate-off root"),
+            0,
+            "valid width below the tensor-projection gate prices zero, not an error"
+        );
+    }
 }
