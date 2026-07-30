@@ -3,7 +3,7 @@
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
-use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::{eval_ring_at_pows_fast, evaluate_power_sequence_mle};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -26,7 +26,7 @@ use akita_types::{
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     setup_index_weight_evaluator: SetupIndexWeightEvaluator<E>,
-    alpha_pows: Vec<E>,
+    alpha: E,
     ring_bits: usize,
     rounds: usize,
 }
@@ -62,12 +62,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
                 Ok,
             )?;
         let geometry = plan.projection_geometry();
-        let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
         let setup_index_weight_evaluator =
             relation_matrix_evaluator.setup_index_weight_evaluator(plan, alpha)?;
         Ok(Self {
             setup_index_weight_evaluator,
-            alpha_pows,
+            alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
         })
@@ -215,7 +214,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
             self.setup_index_weight_evaluator.evaluate(rho_setup_idx)?
         };
-        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
+        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         let setup_term = setup_val * setup_index_weight * alpha_val;
         if final_claim != setup_term {
             return Err(AkitaError::InvalidProof);
@@ -236,24 +235,6 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
         });
     }
     Ok(eq_y)
-}
-
-fn eval_dense_table_with_eq<E: FieldCore>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
-    if evals.len() != eq.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: evals.len(),
-            actual: eq.len(),
-        });
-    }
-    Ok(cfg_fold_reduce!(
-        0..evals.len(),
-        E::zero,
-        |mut acc, idx| {
-            acc += evals[idx] * eq[idx];
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
 }
 
 fn setup_mle_at_eq_tables<F, E, const D: usize>(

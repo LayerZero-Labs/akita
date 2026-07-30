@@ -15,6 +15,25 @@ pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
     out
 }
 
+/// Evaluate the multilinear extension of `[1, base, base², ...]`.
+///
+/// The point uses little-endian coordinate order: `point[i]` selects bit `i`
+/// of the power-sequence index. The power table has length
+/// `2^point.len()`, but this factorization evaluates it in linear time without
+/// materializing the table:
+///
+/// `∏ᵢ ((1 - point[i]) + point[i] * base^(2^i))`.
+#[inline]
+pub fn evaluate_power_sequence_mle<F: FieldCore>(base: F, point: &[F]) -> F {
+    let mut evaluation = F::one();
+    let mut bit_power = base;
+    for &coordinate in point {
+        evaluation *= (F::one() - coordinate) + coordinate * bit_power;
+        bit_power *= bit_power;
+    }
+    evaluation
+}
+
 /// Evaluate a cyclotomic ring element at the scalar `alpha`.
 pub fn eval_ring_at<F: FieldCore, const D: usize>(r: &CyclotomicRing<F, D>, alpha: &F) -> F {
     let mut acc = F::zero();
@@ -126,6 +145,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::multilinear_eval;
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -165,6 +185,21 @@ mod tests {
                 eval_flat_ring_at_pows(ring.coefficients(), &pows),
                 eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
                 "flat deferred reduction diverged from per-term at seed {seed}"
+            );
+        }
+    }
+
+    #[test]
+    fn power_sequence_mle_matches_materialized_table() {
+        let base = F::from_canonical_u128(7);
+        for num_vars in 0..8 {
+            let point = (0..num_vars)
+                .map(|index| F::from_canonical_u128(11 + index as u128))
+                .collect::<Vec<_>>();
+            let table = scalar_powers(base, 1usize << num_vars);
+            assert_eq!(
+                evaluate_power_sequence_mle(base, &point),
+                multilinear_eval(&table, &point).unwrap()
             );
         }
     }

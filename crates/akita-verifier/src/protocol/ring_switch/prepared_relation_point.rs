@@ -3,7 +3,12 @@
 //! This is the single authority for splitting coefficient coordinates from
 //! lane-and-column coordinates and preparing role-native alpha powers.
 
-use akita_algebra::{offset_eq::OffsetEqWindow, poly::multilinear_eval, ring::scalar_powers};
+#[cfg(test)]
+use akita_algebra::poly::multilinear_eval;
+use akita_algebra::{
+    offset_eq::OffsetEqWindow,
+    ring::{evaluate_power_sequence_mle, scalar_powers},
+};
 use akita_field::{AkitaError, FieldCore};
 use akita_types::RelationAddressGeometry;
 #[cfg(test)]
@@ -50,8 +55,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         let coeff_bits = geometry.relation_coefficient_variable_count();
         let coeff_point = point.get(..coeff_bits).ok_or(AkitaError::InvalidProof)?;
         let lane_and_column_point = point.get(coeff_bits..).ok_or(AkitaError::InvalidProof)?;
-        let coeff_powers = scalar_powers(alpha, coeff_count);
-        let coeff_eval = multilinear_eval(&coeff_powers, coeff_point)?;
+        let coeff_eval = evaluate_power_sequence_mle(alpha, coeff_point);
         let equality_window = OffsetEqWindow::new(lane_and_column_point)?;
 
         let prepare_role = |ring_dim: usize| -> Result<Arc<PreparedRolePoint<E>>, AkitaError> {
