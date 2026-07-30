@@ -589,11 +589,11 @@ mod tests {
             PolynomialGroupLayout::singleton(WITNESS_VARS),
         ])
         .expect("recursive setup-prefix opening layout");
-        let group_points = vec![
+        let group_points = [
             extension_point(SETUP_PREFIX_VARS, 10),
             extension_point(WITNESS_VARS, 100),
         ];
-        let group_point_refs = group_points.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let group_point_refs = [group_points[0].as_slice(), group_points[1].as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
@@ -668,8 +668,8 @@ mod tests {
         let opening_batch =
             OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::singleton(NUM_VARS)])
                 .expect("single-group opening layout");
-        let group_points = vec![extension_point(NUM_VARS, 10)];
-        let group_point_refs = group_points.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let group_point = extension_point(NUM_VARS, 10);
+        let group_point_refs = [group_point.as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
