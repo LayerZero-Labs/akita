@@ -150,7 +150,7 @@ fn materialize_catalog_rows(
 ///
 /// This is a transitional resolver: generated artifacts do not yet embed a
 /// digest-sorted row index, so each call materializes at most
-/// [`MAX_RESOLVED_CATALOG_ROWS`] entries before lookup. The intended generated
+/// `MAX_RESOLVED_CATALOG_ROWS` entries before lookup. The intended generated
 /// form emits the exact row digests and resolves directly without this
 /// verifier-side catalog walk.
 pub fn resolve_generated_schedule_selection(

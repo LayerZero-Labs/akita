@@ -36,7 +36,7 @@ where
     /// Verify a fused batched opening proof over ordered commitment groups.
     ///
     /// The root layout and Fiat-Shamir batching are derived from normalized
-    /// [`OpeningClaims`], with each group carrying its complete opening point.
+    /// [`crate::OpeningClaims`], with each group carrying its complete opening point.
     ///
     /// # Errors
     ///
