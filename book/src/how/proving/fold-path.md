@@ -21,15 +21,18 @@ When `EXT_DEGREE == 1`:
 2. Shared `prove_fold` (ring relation, ring switch, stages 1/2/3)
 3. No imports of extension-opening reduction or root tensor projection on that prep path
 
-Verifier mirrors: single-field prefixes prepare opening points without calling
-`verify_fold_eor`.
+Verifier mirrors: root, terminal-suffix, and recursive-suffix single-field
+prefixes live in `fold/single_field.rs` and never reference EOR; a scalar root
+is the one-group case of the grouped `verify_root_inner` path.
 
 ## Extension-claim path
 
 When `EXT_DEGREE > 1`, prep lives in `prepare_extension_claim_fold` /
 matching verifier prefixes. Extension-opening reduction and (when required)
 root tensor projection bridge \(F\)-coefficient witnesses to \(E\)-valued
-openings. Details: [Extension-opening reduction](./extension-opening-reduction.md).
+openings. The verifier accepts an EOR payload at a level if and only if
+`eor_required_at_level` holds there. Details:
+[Extension-opening reduction](./extension-opening-reduction.md).
 
 ## Sources to fold in
 

@@ -7,11 +7,32 @@ use super::*;
 use akita_types::{dispatch_for_field, DigitRangeEqualityPoint, DigitRangePlan};
 
 pub(in crate::protocol::core) use extension_claim::{
-    verify_fold_eor, verify_terminal_fold_eor, FoldEorReplay,
+    verify_extension_claim_root_prefix, verify_extension_claim_suffix_prefix,
+    verify_extension_claim_terminal_suffix,
 };
 pub(in crate::protocol::core) use single_field::{
-    verify_single_field_multi_group_root_prefix, verify_single_field_scalar_root_prefix,
+    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    prepare_single_field_terminal_suffix, verify_single_field_root_prefix,
 };
+
+/// Common prepared root prefix produced by the single-field and
+/// extension-claim geometry modules, consumed by the shared root finishing
+/// logic in `root_fold`.
+pub(in crate::protocol::core) struct RootFoldPrefix<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) row_coefficients: Vec<E>,
+    pub(in crate::protocol::core) trace_eval_target: E,
+    pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
+}
+
+/// Common prepared suffix prefix produced by the single-field and
+/// extension-claim geometry modules, consumed by the shared suffix finishing
+/// logic in `suffix`.
+pub(in crate::protocol::core) struct SuffixFoldPrefix<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) trace_eval_target: E,
+    pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
+}
 
 pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) lp: &'a CommittedGroupParams,

@@ -106,7 +106,7 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 - All current `EXT_DEGREE == 1` presets (today’s fp128 production set) remain byte-identical after wire hardening.
 - Verifier no-panic contract unchanged.
 - Preset/module dispatch uses only `EXT_DEGREE == 1` vs `> 1` (claim field coincides with coefficient field or not).
-- When `EXT_DEGREE > 1`, `eor_required_at_level` is the only authority for per-level EOR presence in prover, verifier, and planner.
+- When `EXT_DEGREE > 1`, `eor_required_at_level` is the only authority for per-level EOR presence in prover, verifier, and planner. The verifier enforces exact presence at the `verify_eor_sumcheck` boundary: a payload is present if and only if the predicate holds, so both an omitted required reduction and an unsolicited one reject.
 - `fold/single_field.rs` must not reference `extension_opening_reduction`, `tensor_root_projection`, or `RootTensorProjectionPoly`. Enforced by the compiler: the module uses explicit imports only (no `super::*` glob), so any EOR reference fails name resolution.
 
 ### Non-Goals
@@ -365,7 +365,7 @@ let root_eor = verify_fold_eor::<F, E, T>(
 
 #### Diff 5 — root verifier fail-closed (multi-group)
 
-**File:** same `root_fold.rs` (`verify_multi_group_root_inner`)
+**File:** same `root_fold.rs` (`verify_root_inner`, reached via `verify_extension_claim_root_prefix`)
 
 **Today:** `verify_fold_eor(..., false, transcript)?` when EOR is present (and the missing-EOR path never requires it).
 
@@ -466,9 +466,10 @@ Exact helper shape may be a width-based twin of `eor_required_at_level` for the 
   - `fold/single_field.rs` — `prepare_single_field_fold` (no EOR imports; used iff `EXT_DEGREE == 1`)
   - `fold/extension_claim.rs` — `prepare_extension_claim_fold` (owns EOR + `RootTensorProjectionPoly`)
 - Mirror under `crates/akita-verifier/src/protocol/core/fold/`:
-  - shared `verify_fold` / `verify_fold_eor`
-  - `single_field.rs` — prefix that never calls EOR
-  - `extension_claim.rs` — prefix that uses `eor_required_at_level`
+  - `fold/mod.rs` — shared `verify_fold` and the common `RootFoldPrefix` produced by both geometry prefixes
+  - `single_field.rs` — root, terminal-suffix, and recursive-suffix prefixes that never reference EOR
+  - `extension_claim.rs` — root and suffix prefixes plus EOR replay (`verify_eor_sumcheck`, exact presence) keyed off `eor_required_at_level`
+  - A scalar root is the one-group case of the same grouped `verify_root_inner` path; there is no separate scalar orchestration
 
 **Delete** the `needs_extension_reduction: bool` parameter from the shared prep entry.
 Dispatch at callers on **extension degree only**:
@@ -562,7 +563,7 @@ Phase C is documentation + deserialize belt-and-suspenders.
 
 | Risk | Mitigation |
 |------|------------|
-| Multi-group root EOR regression when splitting prep | Keep `prove_grouped_extension_opening_reduction` / `verify_multi_group_root_inner` in `extension_claim` module; run multi-group e2e in Phase B |
+| Multi-group root EOR regression when splitting prep | Keep `prove_grouped_extension_opening_reduction` / `verify_extension_claim_root_prefix` in `extension_claim` module; run multi-group e2e in Phase B |
 | Planner signature churn for `ring_d` | Localize to `extension_opening_reduction_level_bytes` + two call sites |
 | Over-splitting before predicate lands | Do Phase A first; Phase B deletes the bool |
 | Someone gates on “fp128” / bit-width by accident | Spec + review: only `EXT_DEGREE == 1` for single-field module entry |

@@ -44,7 +44,6 @@ fn onehot_opening(poly: &OneHotPoly<SmallF, u8>, weights: &[SmallE]) -> SmallE {
         .fold(SmallE::zero(), |sum, weight| sum + weight)
 }
 
-#[cfg(feature = "profile-ci")]
 fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly<SmallF, u8> {
     // Keep the tensor-partial fixture sparse at large arity. `K = 256` is
     // divisible by the supported native ring dimensions and leaves enough low
@@ -63,7 +62,6 @@ fn grouped_onehot_poly(params: &CommittedGroupParams, seed: usize) -> OneHotPoly
     OneHotPoly::new(onehot_k, params.d_a(), indices).expect("grouped one-hot polynomial")
 }
 
-#[cfg(feature = "profile-ci")]
 fn onehot_opening_at_point(poly: &OneHotPoly<SmallF, u8>, point: &[SmallE]) -> SmallE {
     let onehot_k = poly.onehot_k();
     poly.indices()
@@ -196,7 +194,6 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
 }
 
 #[test]
-#[cfg(feature = "profile-ci")]
 fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     const PRE_NV: usize = 14;
     const FINAL_NV: usize = 20;

@@ -1,7 +1,8 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use akita_types::dispatch_for_field;
+use super::{absorb_prepared_opening_points, RootFoldPrefix, SuffixFoldPrefix};
+use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
@@ -97,15 +98,14 @@ where
     {
         return Err(AkitaError::InvalidProof);
     }
-    let Some(reduction) = extension_opening_reduction else {
-        if requires_reduction && <E as ExtField<F>>::EXT_DEGREE != 1 {
-            return Err(AkitaError::InvalidProof);
-        }
-        return Ok(None);
-    };
-    if <E as ExtField<F>>::EXT_DEGREE == 1 {
+    // Exact presence: the per-level predicate is the sole authority, so a
+    // missing required payload and an unsolicited payload both fail closed.
+    if extension_opening_reduction.is_some() != requires_reduction {
         return Err(AkitaError::InvalidProof);
     }
+    let Some(reduction) = extension_opening_reduction else {
+        return Ok(None);
+    };
     let shape = eor_reduction_shape::<F, E>(
         opening_batch.max_num_vars(),
         reduction.partials.len(),
@@ -351,6 +351,209 @@ where
     })
 }
 
+/// Extension-claim root prefix: per-group point width checks, direct
+/// preparation at gate-off roots, and one batched EOR sumcheck at gate-on
+/// roots. Payload presence is enforced exactly against the per-level
+/// predicate inside `verify_eor_sumcheck`.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
+    claims: &OpeningClaims<'_, E, &Commitment<F>>,
+    openings: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    basis: BasisMode,
+    root_lp: &CommittedGroupParams,
+    transcript: &mut T,
+) -> Result<RootFoldPrefix<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let mut group_points = Vec::with_capacity(opening_batch.num_groups());
+    for group_index in 0..opening_batch.num_groups() {
+        let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
+        let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+        let group_lp = root_lp.group_params(opening_batch, group_index)?;
+        let target_len = group_alpha_bits
+            .checked_add(group_lp.position_index_bits())
+            .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("group opening point length overflow".to_string())
+            })?;
+        let point_vars = claims.group_point_vars(group_index)?;
+        if point_vars.num_vars() != target_len {
+            return Err(AkitaError::InvalidProof);
+        }
+        group_points.push(claims.group_point(group_index)?);
+    }
+    let requires_reduction = eor_required_at_level::<F, E>(
+        FoldOpeningKind::Root,
+        root_lp.role_dims().d_a(),
+        opening_batch.max_num_vars(),
+    );
+    let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+    if !requires_reduction {
+        for (group_index, group_point) in group_points.iter().enumerate() {
+            let group_lp = root_lp.group_params(opening_batch, group_index)?;
+            let group_dims = root_lp.group_role_dims(opening_batch, group_index)?;
+            let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
+            let prepared = dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Inner),
+                F,
+                group_dims.d_a(),
+                |D| {
+                    prepare_opening_point::<F, E, D>(
+                        group_point,
+                        basis,
+                        group_lp.num_positions_per_block(),
+                        group_lp.num_live_blocks(),
+                        group_alpha_bits,
+                    )
+                }
+            )?;
+            for pt in &prepared.padded_point {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
+            }
+            prepared_points.push(prepared);
+        }
+    }
+    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
+    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
+    let eor_replay = verify_fold_eor::<F, E, T>(
+        extension_opening_reduction,
+        &group_points,
+        openings,
+        &row_coefficients,
+        opening_batch,
+        basis,
+        root_lp,
+        requires_reduction,
+        transcript,
+    )?;
+    if requires_reduction {
+        prepared_points = eor_replay.prepared_points;
+        absorb_prepared_opening_points(&prepared_points, transcript);
+    }
+    let eor_final_relation = eor_replay.final_relation;
+    if prepared_points.len() != opening_batch.num_groups() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let trace_claim_coefficients = if let Some((_, final_factors)) = &eor_final_relation {
+        opening_batch.scale_row_coefficients_by_group(&row_coefficients, final_factors)?
+    } else {
+        row_coefficients.clone()
+    };
+    let trace_eval_target = if let Some((final_claim, _)) = eor_final_relation {
+        final_claim
+    } else {
+        opening_batch.batched_eval_target(&row_coefficients, openings)?
+    };
+    Ok(RootFoldPrefix {
+        prepared_points,
+        row_coefficients,
+        trace_eval_target,
+        trace_claim_coefficients,
+    })
+}
+
+/// Terminal-suffix extension-claim prefix: one batched EOR replay over the
+/// recursive opening group, then the prepared points are absorbed.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_extension_claim_terminal_suffix<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    protocol_point: &[E],
+    opening: &E,
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    params: &TerminalCommittedGroupParams,
+    transcript: &mut T,
+) -> Result<FoldEorReplay<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let FoldEorReplay {
+        prepared_points,
+        final_relation,
+    } = verify_terminal_fold_eor::<F, E, T>(
+        extension_opening_reduction,
+        protocol_point,
+        std::slice::from_ref(opening),
+        &[E::one()],
+        opening_batch,
+        basis,
+        params.d_a(),
+        params.num_positions_per_block,
+        params.num_live_blocks,
+        eor_required_at_level::<F, E>(
+            FoldOpeningKind::Suffix,
+            params.d_a(),
+            opening_batch.max_num_vars(),
+        ),
+        transcript,
+    )
+    .map_err(|error| {
+        AkitaError::InvalidInput(format!(
+            "terminal extension-opening replay failed: {error:?}"
+        ))
+    })?;
+    absorb_prepared_opening_points(&prepared_points, transcript);
+    Ok(FoldEorReplay {
+        prepared_points,
+        final_relation,
+    })
+}
+
+/// Recursive-suffix extension-claim prefix: one batched EOR replay over the
+/// suffix opening groups; the trace target and claim coefficients come from
+/// the replay relation, which exact presence makes total here.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
+    extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
+    group_points: &[Vec<E>],
+    openings: &[E],
+    row_coefficients: &[E],
+    opening_batch: &OpeningClaimsLayout,
+    basis: BasisMode,
+    lp: &CommittedGroupParams,
+    transcript: &mut T,
+) -> Result<SuffixFoldPrefix<F, E>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let FoldEorReplay {
+        prepared_points,
+        final_relation,
+    } = verify_fold_eor::<F, E, T>(
+        extension_opening_reduction,
+        group_points,
+        openings,
+        row_coefficients,
+        opening_batch,
+        basis,
+        lp,
+        eor_required_at_level::<F, E>(
+            FoldOpeningKind::Suffix,
+            lp.role_dims().d_a(),
+            opening_batch.max_num_vars(),
+        ),
+        transcript,
+    )?;
+    absorb_prepared_opening_points(&prepared_points, transcript);
+    let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
+    let trace_claim_coefficients =
+        opening_batch.scale_row_coefficients_by_group(row_coefficients, &factors_by_group)?;
+    Ok(SuffixFoldPrefix {
+        prepared_points,
+        trace_eval_target: final_claim,
+        trace_claim_coefficients,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,6 +658,61 @@ mod tests {
         assert!(
             matches!(missing_result, Err(AkitaError::InvalidProof)),
             "missing setup-prefix EOR must reject for extension claims"
+        );
+    }
+
+    #[test]
+    fn eor_presence_must_match_predicate_exactly() {
+        const NUM_VARS: usize = 12;
+        let opening_batch =
+            OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::singleton(NUM_VARS)])
+                .expect("single-group opening layout");
+        let group_points = vec![extension_point(NUM_VARS, 10)];
+        let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
+        let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
+        let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
+        let reduction = ExtensionOpeningReductionProof {
+            partials: vec![E::zero(); width * opening_batch.num_total_polynomials()],
+            sumcheck: SumcheckProof {
+                round_polys: (0..NUM_VARS - split_bits)
+                    .map(|_| CompressedUniPoly {
+                        coeffs_except_linear_term: vec![
+                            E::zero();
+                            EXTENSION_OPENING_REDUCTION_DEGREE
+                        ],
+                    })
+                    .collect(),
+            },
+        };
+
+        // Honest gate-off level: no payload, predicate off, replay is a no-op.
+        let mut idle_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
+        let idle_replay = verify_eor_sumcheck::<F, E, _>(
+            None,
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            false,
+            &mut idle_transcript,
+        )
+        .expect("gate-off level without payload must verify");
+        assert!(idle_replay.is_none());
+
+        // Unsolicited payload at a gate-off level must fail closed.
+        let mut unsolicited_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
+        let unsolicited_result = verify_eor_sumcheck::<F, E, _>(
+            Some(&reduction),
+            &group_points,
+            &openings,
+            &row_coefficients,
+            &opening_batch,
+            false,
+            &mut unsolicited_transcript,
+        );
+        assert!(
+            matches!(unsolicited_result, Err(AkitaError::InvalidProof)),
+            "unsolicited EOR at a gate-off level must reject"
         );
     }
 }

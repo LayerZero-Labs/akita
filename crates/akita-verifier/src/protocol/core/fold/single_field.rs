@@ -2,6 +2,7 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
+use super::RootFoldPrefix;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
 };
@@ -11,17 +12,10 @@ use akita_transcript::{append_ext_field, Transcript};
 use akita_types::{
     append_claim_values_to_transcript, dispatch_for_field, prepare_opening_point,
     sample_public_row_coefficients, BasisMode, Commitment, CommittedGroupParams, FpExtEncoding,
-    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint,
+    OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
 
-pub(in crate::protocol::core) struct SingleFieldFoldPrefix<F: FieldCore, E: FieldCore> {
-    pub prepared_points: Vec<PreparedOpeningPoint<F, E>>,
-    pub row_coefficients: Vec<E>,
-    pub trace_eval_target: E,
-    pub trace_claim_coefficients: Vec<E>,
-}
-
-fn absorb_prepared_opening_points<F, E, T>(
+pub(in crate::protocol::core) fn absorb_prepared_opening_points<F, E, T>(
     prepared_points: &[PreparedOpeningPoint<F, E>],
     transcript: &mut T,
 ) where
@@ -36,54 +30,17 @@ fn absorb_prepared_opening_points<F, E, T>(
     }
 }
 
-/// Scalar-root single-field prefix: `prepare_opening_point` only, no EOR.
+/// Root single-field prefix: per-group `prepare_opening_point`, no EOR. A
+/// scalar root is the one-group case of the same layout.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_single_field_scalar_root_prefix<F, E, T>(
-    shared_opening_point: &[E],
-    openings: &[E],
-    opening_batch: &OpeningClaimsLayout,
-    basis: BasisMode,
-    root_lp: &CommittedGroupParams,
-    d_a: usize,
-    transcript: &mut T,
-) -> Result<SingleFieldFoldPrefix<F, E>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-    T: Transcript<F>,
-{
-    let prepared_point =
-        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Inner), F, d_a, |D| {
-            prepare_opening_point::<F, E, D>(
-                shared_opening_point,
-                basis,
-                root_lp.num_positions_per_block,
-                root_lp.num_live_blocks,
-                d_a.trailing_zeros() as usize,
-            )
-        })?;
-    absorb_prepared_opening_points(std::slice::from_ref(&prepared_point), transcript);
-    append_claim_values_to_transcript::<F, E, T>(openings, transcript);
-    let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
-    let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(SingleFieldFoldPrefix {
-        prepared_points: vec![prepared_point],
-        row_coefficients: row_coefficients.clone(),
-        trace_eval_target,
-        trace_claim_coefficients: row_coefficients,
-    })
-}
-
-/// Multi-group root single-field prefix: per-group `prepare_opening_point`, no EOR.
-#[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn verify_single_field_multi_group_root_prefix<F, E, T>(
+pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E, T>(
     claims: &OpeningClaims<'_, E, &Commitment<F>>,
     openings: &[E],
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<SingleFieldFoldPrefix<F, E>, AkitaError>
+) -> Result<RootFoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -125,10 +82,95 @@ where
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(SingleFieldFoldPrefix {
+    Ok(RootFoldPrefix {
         prepared_points,
-        row_coefficients: row_coefficients.clone(),
+        trace_claim_coefficients: row_coefficients.clone(),
+        row_coefficients,
         trace_eval_target,
-        trace_claim_coefficients: row_coefficients,
     })
+}
+
+/// Terminal-suffix single-field prefix: prepare the recursive opening point
+/// and absorb the point and claim value, no EOR.
+pub(in crate::protocol::core) fn prepare_single_field_terminal_suffix<F, E, T>(
+    protocol_point: &[E],
+    basis: BasisMode,
+    opening: &E,
+    params: &TerminalCommittedGroupParams,
+    transcript: &mut T,
+) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+    T: Transcript<F>,
+{
+    let prepared_point = dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        params.d_a(),
+        |D| {
+            prepare_opening_point::<F, E, D>(
+                protocol_point,
+                basis,
+                params.num_positions_per_block,
+                params.num_live_blocks,
+                params.d_a().trailing_zeros() as usize,
+            )
+        }
+    )?;
+    let prepared_points = vec![prepared_point];
+    absorb_prepared_opening_points(&prepared_points, transcript);
+    append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
+    Ok(prepared_points)
+}
+
+/// Recursive-suffix single-field preparation: per-group `prepare_opening_point`
+/// over the suffix opening groups, no EOR.
+pub(in crate::protocol::core) fn prepare_single_field_suffix_groups<F, E>(
+    block_claims: &OpeningClaims<'_, E>,
+    lp: &CommittedGroupParams,
+    opening_batch: &OpeningClaimsLayout,
+    role_d_a: usize,
+    alpha_bits: usize,
+) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
+{
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        role_d_a,
+        |D| {
+            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+            for group_index in 0..opening_batch.num_groups() {
+                let group_lp = lp.group_params(opening_batch, group_index)?;
+                let target_len = alpha_bits
+                    .checked_add(group_lp.position_index_bits())
+                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
+                    })?;
+                let point_vars = block_claims.group_point_vars(group_index)?;
+                if point_vars.num_vars() != target_len {
+                    return Err(AkitaError::InvalidInput(format!(
+                        "suffix group point width mismatch: group={group_index}, \
+                         groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
+                        opening_batch.num_groups(),
+                        lp.setup_prefix.is_some(),
+                        point_vars.num_vars()
+                    )));
+                }
+                let group_protocol_point = block_claims.group_point(group_index)?;
+                prepared_points.push(prepare_opening_point::<F, E, D>(
+                    &group_protocol_point,
+                    BasisMode::Lagrange,
+                    group_lp.num_positions_per_block(),
+                    group_lp.num_live_blocks(),
+                    alpha_bits,
+                )?);
+            }
+            Ok(prepared_points)
+        }
+    )
 }

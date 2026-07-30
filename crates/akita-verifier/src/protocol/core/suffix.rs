@@ -1,21 +1,6 @@
 use super::*;
 use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
 
-fn absorb_prepared_opening_points<F, E, T>(
-    prepared_points: &[PreparedOpeningPoint<F, E>],
-    transcript: &mut T,
-) where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + AkitaSerialize,
-    T: Transcript<F>,
-{
-    for prepared in prepared_points {
-        for coordinate in &prepared.padded_point {
-            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
-        }
-    }
-}
-
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
     /// Current opening point for the committed suffix witness.
@@ -34,55 +19,6 @@ pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
 pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
     Commitment(&'a RingVec<F>),
     TerminalT(Vec<u8>),
-}
-
-fn prepare_suffix_group_points<F, E>(
-    block_claims: &OpeningClaims<'_, E>,
-    lp: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-    role_d_a: usize,
-    alpha_bits: usize,
-) -> Result<Vec<PreparedOpeningPoint<F, E>>, AkitaError>
-where
-    F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
-{
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        role_d_a,
-        |D| {
-            let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
-            for group_index in 0..opening_batch.num_groups() {
-                let group_lp = lp.group_params(opening_batch, group_index)?;
-                let target_len = alpha_bits
-                    .checked_add(group_lp.position_index_bits())
-                    .and_then(|n| n.checked_add(group_lp.block_index_bits()))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("group opening point length overflow".to_string())
-                    })?;
-                let point_vars = block_claims.group_point_vars(group_index)?;
-                if point_vars.num_vars() != target_len {
-                    return Err(AkitaError::InvalidInput(format!(
-                        "suffix group point width mismatch: group={group_index}, \
-                         groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
-                        opening_batch.num_groups(),
-                        lp.setup_prefix.is_some(),
-                        point_vars.num_vars()
-                    )));
-                }
-                let group_protocol_point = block_claims.group_point(group_index)?;
-                prepared_points.push(prepare_opening_point::<F, E, D>(
-                    &group_protocol_point,
-                    BasisMode::Lagrange,
-                    group_lp.num_positions_per_block(),
-                    group_lp.num_live_blocks(),
-                    alpha_bits,
-                )?);
-            }
-            Ok(prepared_points)
-        }
-    )
 }
 
 fn suffix_commitment_rows<F: FieldCore>(
@@ -343,7 +279,6 @@ where
     }
     params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
 
-    let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     if current_state.opening_point.len() > recursive_num_vars
         || current_state.setup_prefix_opening.is_some()
@@ -357,76 +292,25 @@ where
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        let prepared_point = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            params.d_a(),
-            |D| prepare_opening_point::<F, E, D>(
-                &protocol_point,
-                current_state.basis,
-                params.num_positions_per_block,
-                params.num_live_blocks,
-                alpha_bits,
-            )
-        )?;
-        let prepared_points = vec![prepared_point];
-        absorb_prepared_opening_points(&prepared_points, transcript);
-        append_claim_values_to_transcript::<F, E, T>(
-            std::slice::from_ref(&current_state.opening),
+        let prepared_points = prepare_single_field_terminal_suffix::<F, E, T>(
+            &protocol_point,
+            current_state.basis,
+            &current_state.opening,
+            params,
             transcript,
-        );
+        )?;
         (prepared_points, None)
     } else {
-        let FoldEorReplay {
-            prepared_points,
-            final_relation,
-            ..
-        } = verify_terminal_fold_eor::<F, E, T>(
+        let replay = verify_extension_claim_terminal_suffix::<F, E, T>(
             proof.extension_opening_reduction.as_ref(),
             &protocol_point,
-            &[current_state.opening],
-            &[E::one()],
+            &current_state.opening,
             &opening_batch,
             current_state.basis,
-            params.d_a(),
-            params.num_positions_per_block,
-            params.num_live_blocks,
-            eor_required_at_level::<F, E>(
-                FoldOpeningKind::Suffix,
-                params.d_a(),
-                opening_batch.max_num_vars(),
-            ),
+            params,
             transcript,
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "terminal extension-opening replay failed: {error:?}"
-            ))
-        })?;
-        let prepared_points = if proof.extension_opening_reduction.is_some() {
-            prepared_points
-        } else {
-            vec![dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                params.d_a(),
-                |D| prepare_opening_point::<F, E, D>(
-                    &protocol_point,
-                    current_state.basis,
-                    params.num_positions_per_block,
-                    params.num_live_blocks,
-                    alpha_bits,
-                )
-            )?]
-        };
-        absorb_prepared_opening_points(&prepared_points, transcript);
-        if final_relation.is_none() {
-            append_claim_values_to_transcript::<F, E, T>(
-                std::slice::from_ref(&current_state.opening),
-                transcript,
-            );
-        }
-        (prepared_points, final_relation)
+        )?;
+        (replay.prepared_points, replay.final_relation)
     };
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
@@ -562,13 +446,15 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let (prepared_points, trace_eval_target, trace_claim_coefficients) = if const {
-        <E as ExtField<F>>::EXT_DEGREE == 1
-    } {
+    let SuffixFoldPrefix {
+        prepared_points,
+        trace_eval_target,
+        trace_claim_coefficients,
+    } = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        let prepared_points = prepare_suffix_group_points::<F, E>(
+        let prepared_points = prepare_single_field_suffix_groups::<F, E>(
             &block_claims,
             lp,
             &opening_batch,
@@ -577,21 +463,16 @@ where
         )?;
         absorb_prepared_opening_points(&prepared_points, transcript);
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-        (prepared_points, trace_eval_target, row_coefficients.clone())
+        SuffixFoldPrefix {
+            prepared_points,
+            trace_eval_target,
+            trace_claim_coefficients: row_coefficients.clone(),
+        }
     } else {
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;
-        let requires_extension_reduction = eor_required_at_level::<F, E>(
-            FoldOpeningKind::Suffix,
-            lp.role_dims().d_a(),
-            opening_batch.max_num_vars(),
-        );
-        let FoldEorReplay {
-            prepared_points,
-            final_relation: eor_trace_final,
-            ..
-        } = verify_fold_eor::<F, E, T>(
+        verify_extension_claim_suffix_prefix::<F, E, T>(
             proof.extension_opening_reduction,
             &group_points,
             &openings,
@@ -599,33 +480,8 @@ where
             &opening_batch,
             current_state.basis,
             lp,
-            requires_extension_reduction,
             transcript,
-        )?;
-        let prepared_points = if proof.extension_opening_reduction.is_some() {
-            prepared_points
-        } else {
-            prepare_suffix_group_points::<F, E>(
-                &block_claims,
-                lp,
-                &opening_batch,
-                role_dims.d_a(),
-                alpha_bits,
-            )?
-        };
-        absorb_prepared_opening_points(&prepared_points, transcript);
-        let (trace_eval_target, trace_claim_coefficients) = match eor_trace_final.as_ref() {
-            Some((final_claim, factors_by_group)) => (
-                *final_claim,
-                opening_batch
-                    .scale_row_coefficients_by_group(&row_coefficients, factors_by_group)?,
-            ),
-            None => (
-                opening_batch.batched_eval_target(&row_coefficients, &openings)?,
-                row_coefficients.clone(),
-            ),
-        };
-        (prepared_points, trace_eval_target, trace_claim_coefficients)
+        )?
     };
 
     let witness_len = output_witness_len;
