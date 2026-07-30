@@ -529,10 +529,9 @@ fn structured_weight_fixture_with_outgoing(
     );
     retarget_test_role_dims(&mut inputs.level_params, role_dims);
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let opening_source_len = layout
-        .total_len()
-        .checked_mul(role_dims.d_a() / outgoing_ring_dim)
-        .unwrap();
+    let flat_witness_len = layout.total_len().checked_mul(role_dims.d_a()).unwrap();
+    assert!(flat_witness_len.is_multiple_of(outgoing_ring_dim));
+    let opening_source_len = flat_witness_len / outgoing_ring_dim;
     let relation_address_geometry =
         crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
             .unwrap();
@@ -675,14 +674,6 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         &groups,
     )
     .unwrap();
-    assert_eq!(
-        get_d_col_range(&inputs.level_params, &inputs.opening_batch, &groups, 1).unwrap(),
-        0..1
-    );
-    assert_eq!(
-        get_d_col_range(&inputs.level_params, &inputs.opening_batch, &groups, 0).unwrap(),
-        1..2
-    );
     let randomness_bits = crate::opening_domain_len(opening_source_len)
         .unwrap()
         .trailing_zeros() as usize;
@@ -700,6 +691,22 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         CommitmentRingDims::uniform(TEST_D),
     )
     .unwrap();
+    assert_eq!(
+        plan.groups
+            .iter()
+            .find(|group| group.group_id == 1)
+            .unwrap()
+            .d_col_range,
+        0..1
+    );
+    assert_eq!(
+        plan.groups
+            .iter()
+            .find(|group| group.group_id == 0)
+            .unwrap()
+            .d_col_range,
+        1..2
+    );
     let setup_len = plan.required();
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
@@ -755,6 +762,12 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         .fold(F::zero(), |acc, (index, weight)| {
             acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
+    let setup_weight_evaluator = SetupIndexWeightEvaluator::new(plan, alpha).unwrap();
+    assert_eq!(
+        setup_weight_evaluator.evaluate(&rho_setup_idx).unwrap(),
+        dense_mle,
+        "plan-owned setup-index MLE must match the full plan"
+    );
     assert_eq!(
         deferred
             .evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)

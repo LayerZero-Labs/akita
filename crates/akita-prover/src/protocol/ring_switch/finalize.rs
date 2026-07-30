@@ -81,7 +81,7 @@ where
         // common coefficients are the low Boolean coordinates.
         let geometry =
             lp.relation_address_geometry(opening_batch, opening_ring_dim, opening_source_len)?;
-        let coeff_count = geometry.common_relation_witness_coeff_count();
+        let coeff_count = geometry.relation_coefficient_block_len();
         if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
                 "relation witness is not aligned to the common coefficient block".into(),
@@ -89,18 +89,12 @@ where
         }
         let live_relation_lane_count = geometry.live_relation_lane_count();
         let col_bits = geometry.relation_lane_variable_count();
-        let ring_bits = geometry.common_relation_witness_variable_count();
-        // Bind the shared low coefficient block (`coeff_count`) as the digit
-        // range check's ring phase on every path. On uniform schedules
-        // `coeff_count == opening_ring_dim`, so this equals the historical value
-        // and the proof is byte-identical. On non-uniform schedules (per-level
-        // ring switch, e.g. a D=128 root folding into a D=64 tail, or per-role
-        // compression) it lets the range check exploit the same low ring block
-        // the witness is actually stored in — the fast compact ring phase —
-        // instead of collapsing to the dense flat x-sweep (`low = 0`). The
-        // Stage-1 challenge point folds the ring block first in both cases; the
-        // downstream Stage-2 relation reads that point through the same
-        // `col_bits`/`ring_bits` split, so the ordering stays consistent.
+        let ring_bits = geometry.relation_coefficient_variable_count();
+        // Bind the current roles' shared low coefficient block as the digit
+        // range check's ring phase. Outgoing witness packaging determines only
+        // the checked flat live length and its zero-padded capacity. Stage 1,
+        // Stage 2, and Stage 3 all read the resulting point through this same
+        // `col_bits`/`ring_bits` split.
         let digit_range_equality_low_variable_count = ring_bits;
         let num_sc_vars = col_bits + ring_bits;
         let num_i = lp.relation_row_index_num_vars(opening_batch)?;
@@ -163,7 +157,7 @@ where
         })?;
         if witness_col_bits != col_bits || witness_ring_bits != ring_bits {
             return Err(AkitaError::InvalidSetup(
-                "prepared witness geometry disagrees with the joint relation-witness split".into(),
+                "prepared witness geometry disagrees with the current relation split".into(),
             ));
         }
 

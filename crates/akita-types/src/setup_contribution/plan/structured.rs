@@ -230,7 +230,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     ) -> [Vec<E>; 3] {
         let common = self
             .relation_address_geometry
-            .common_relation_witness_coeff_count();
+            .relation_coefficient_block_len();
         [
             relation_lane_powers(alpha, group.role_dims.d_a(), common),
             relation_lane_powers(alpha, group.role_dims.d_b(), common),

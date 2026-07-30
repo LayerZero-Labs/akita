@@ -2,14 +2,14 @@
 //!
 //! This sumcheck views the committed witness as one flat LSB-first Boolean table.
 //! The current state machine splits its point after
-//! `log2(common_relation_witness_coeff_count)` low coordinates. Those coordinates
-//! index the largest coefficient block aligned for both every relation role and
-//! the outgoing witness ring representation; the remaining coordinates index
-//! relation lanes and padded witness capacity. Kernel names use only coefficient
-//! and lane geometry.
+//! `log2(relation_coefficient_block_len)` low coordinates. Those coordinates
+//! index the largest coefficient block shared by every current relation role;
+//! the remaining coordinates index relation lanes and padded flat witness
+//! capacity. Outgoing ring packaging determines that flat capacity, but not the
+//! split. Kernel names use only coefficient and lane geometry.
 //!
 //! Let `common_alpha` be the multilinear extension of
-//! `[1, alpha, ..., alpha^(common_relation_witness_coeff_count - 1)]`. Let the
+//! `[1, alpha, ..., alpha^(relation_coefficient_block_len - 1)]`. Let the
 //! relation matrix be evaluated at the transcript challenge `alpha`, and define
 //! its `tau1`-weighted relation-lane combination
 //!

@@ -69,7 +69,7 @@ where
         T: Transcript<F>,
     {
         let setup_coefficient_bits =
-            relation_address_geometry.common_relation_witness_variable_count();
+            relation_address_geometry.relation_coefficient_variable_count();
         let setup_x_challenges = stage2_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;

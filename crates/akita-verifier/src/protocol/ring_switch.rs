@@ -107,7 +107,6 @@ pub(crate) struct FlatRelationContext {
     pub(crate) opening_batch: OpeningClaimsLayout,
     pub(crate) witness_layout: Arc<WitnessLayout>,
     pub(crate) opening_source_len: usize,
-    pub(crate) opening_ring_dim: usize,
 }
 
 #[derive(Clone)]
@@ -225,12 +224,11 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let num_ring_elems = w_len / D;
-    // Bind the shared low coefficient block as the digit-range check's ring
-    // phase on every path. On uniform schedules this equals the outgoing
-    // witness ring width (byte-identical replay); on non-uniform schedules it
-    // mirrors the prover's compact relation-lane split.
+    // Bind the current roles' shared low coefficient block as the digit-range
+    // check's ring phase. Outgoing witness packaging determines the checked
+    // flat live length but never this point split.
     let digit_range_equality_low_variable_count =
-        relation_address_geometry.common_relation_witness_variable_count();
+        relation_address_geometry.relation_coefficient_variable_count();
     let num_sc_vars = relation_address_geometry.relation_point_variable_count();
     let num_i = lp.relation_row_index_num_vars(opening_batch)?;
 
@@ -327,7 +325,6 @@ where
         replay.row_coefficients,
         layout,
         replay.opening_source_len,
-        replay.opening_ring_dim,
         rows,
         relation_address_geometry,
     )
@@ -511,7 +508,6 @@ where
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
             opening_source_len: replay.opening_source_len,
-            opening_ring_dim: replay.opening_ring_dim,
         }),
         setup_plan_cache: Default::default(),
     })
@@ -575,7 +571,6 @@ fn prepare_relation_matrix_evaluator_inner<F, E, const D: usize>(
     gamma: &[E],
     layout: WitnessLayout,
     opening_source_len: usize,
-    opening_ring_dim: usize,
     rows: usize,
     relation_address_geometry: RelationAddressGeometry,
 ) -> Result<RelationMatrixEvaluator<E>, AkitaError>
@@ -656,7 +651,6 @@ where
             opening_batch: opening_batch.clone(),
             witness_layout: layout,
             opening_source_len,
-            opening_ring_dim,
         }),
         setup_plan_cache: Default::default(),
     })
@@ -691,24 +685,14 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        // Uniform-role fast path. This fires whenever all three roles share the
-        // dispatch dimension `D`, regardless of the outgoing witness ring
-        // (`opening_ring_dim`). When `opening_ring_dim < D` the relation carries
-        // `D / opening_ring_dim` lanes per ring element, but for uniform roles
-        // the point is laid out `[coeff][lane][column]` with coeff+lane
-        // occupying the low `log2(D)` bits (the address is
-        // `witness_column·lanes + lane`, coeff below), so the low `log2(D)` bits
-        // are exactly the `D`-ring coefficient block. Hence
-        // `coefficient_eval(D) = coeff_eval · lane_eval` and the column
-        // structure is identical to the `opening_ring_dim == D` case: the
-        // succinct evaluator returns the same value the lane-factored mixed scan
-        // would, without the explicit O(setup-columns) multiply. (Validated by
-        // `mixed_d_per_level_e2e`, whose level-1 fold is a uniform-role,
-        // `opening_ring_dim = D/2` step, plus tamper rejection.)
+        // Uniform-role fast path. Repacking the same flat witness into a
+        // different outgoing ring dimension does not change this role-only
+        // coefficient block. The extra guard excludes a batch containing a
+        // precommitted group with a smaller current role dimension.
         if self.role_dims == CommitmentRingDims::uniform(D)
             && self
                 .relation_address_geometry
-                .common_relation_witness_coeff_count()
+                .relation_coefficient_block_len()
                 == D
         {
             let coefficient_bits = D.trailing_zeros() as usize;
@@ -834,44 +818,12 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn setup_index_weight_evaluator<F>(
+    pub(crate) fn setup_index_weight_evaluator(
         &self,
-        plan: &SetupContributionPlan<E>,
-        tau1: &[E],
-        x_challenges: &[E],
-        fold_gadget: &[F],
+        plan: SetupContributionPlan<E>,
         alpha: E,
-    ) -> Result<Option<akita_types::SetupIndexWeightEvaluator<E>>, AkitaError>
-    where
-        F: FieldCore,
-        E: MulBase<F>,
-    {
-        let geometry = plan.projection_geometry();
-        let base_ring_dim = geometry.base_ring_dim();
-        if geometry.role_dims() != CommitmentRingDims::uniform(base_ring_dim)
-            || self
-                .relation_address_geometry
-                .common_relation_witness_coeff_count()
-                != base_ring_dim
-        {
-            return Ok(None);
-        }
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
-        akita_types::SetupIndexWeightEvaluator::new::<F>(
-            plan,
-            &context.level_params,
-            &context.opening_batch,
-            &context.witness_layout,
-            context.opening_source_len,
-            &setup_groups,
-            tau1,
-            x_challenges,
-            fold_gadget,
-            alpha,
-        )
-        .map(Some)
+    ) -> Result<akita_types::SetupIndexWeightEvaluator<E>, AkitaError> {
+        akita_types::SetupIndexWeightEvaluator::new(plan, alpha)
     }
 
     pub(crate) fn setup_rows(&self) -> Result<usize, AkitaError> {
@@ -1020,7 +972,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         let uniform_deferred_setup = self.role_dims == CommitmentRingDims::uniform(D)
             && self
                 .relation_address_geometry
-                .common_relation_witness_coeff_count()
+                .relation_coefficient_block_len()
                 == D;
         let setup_plan = {
             let _span = tracing::info_span!("setup_contribution_plan").entered();

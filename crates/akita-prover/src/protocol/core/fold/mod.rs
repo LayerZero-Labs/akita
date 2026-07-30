@@ -487,7 +487,7 @@ where
         source_ring_dimension = ring_d,
         coeff_count = rs
             .relation_address_geometry
-            .common_relation_witness_coeff_count(),
+            .relation_coefficient_block_len(),
     )
     .entered();
     let evaluation_trace = dispatch_for_field!(
@@ -509,7 +509,7 @@ where
             PreparedProverEvaluationTrace::new(
                 &semantic_trace,
                 rs.relation_address_geometry
-                    .common_relation_witness_coeff_count(),
+                    .relation_coefficient_block_len(),
                 evaluation_trace_weight,
             )
         }
@@ -679,7 +679,7 @@ where
     let geometry = rs.relation_address_geometry;
     let live_relation_lane_count = geometry.live_relation_lane_count();
     let relation_lane_variable_count = geometry.relation_lane_variable_count();
-    let common_relation_witness_variable_count = geometry.common_relation_witness_variable_count();
+    let relation_coefficient_variable_count = geometry.relation_coefficient_variable_count();
     if plan.relation_address_geometry() != geometry
         || domain.live_len() != rs.w_evals_compact.len()
         || plan.digit_range_plan().basis() != rs.b
@@ -691,7 +691,7 @@ where
     let (common_alpha_factor, relation_lane_weights) = rs
         .relation_weight_factorization
         .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = geometry.common_relation_witness_coeff_count();
+    let expected_factor_len = geometry.relation_coefficient_block_len();
     if common_alpha_factor.len() != expected_factor_len {
         return Err(AkitaError::InvalidSetup(format!(
             "common alpha factor has length {}, expected {expected_factor_len}",
@@ -708,7 +708,7 @@ where
         relation_lane_weights,
         live_relation_lane_count,
         relation_lane_variable_count,
-        common_relation_witness_variable_count,
+        relation_coefficient_variable_count,
         relation_claim,
         evaluation_trace,
         trace_opening_claim,

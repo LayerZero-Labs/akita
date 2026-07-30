@@ -182,7 +182,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             validate_setup_inputs(level_params, opening_batch, witness_layout, groups)?;
             validate_static_inputs(level_params, opening_batch, &eq_tau1)?
         };
-        let common_coeff_count = relation_address_geometry.common_relation_witness_coeff_count();
+        let common_coeff_count = relation_address_geometry.relation_coefficient_block_len();
         let group_geometry = groups
             .iter()
             .map(|group| {
@@ -466,6 +466,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_physical_cols,
             &projection_groups,
         )?;
+        if projection_geometry.base_ring_dim()
+            != relation_address_geometry.relation_coefficient_block_len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup projection and relation point use different current-role bases"
+                    .into(),
+            ));
+        }
         if materialization.builds_scan_segments() {
             for group in &mut dynamic_groups {
                 let base = projection_geometry.base_ring_dim();

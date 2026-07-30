@@ -13,8 +13,8 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, SetupContributionPlan, SetupIndexWeightEvaluator,
-    SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
+    AkitaVerifierSetup, CommittedGroupParams, SetupIndexWeightEvaluator, SetupSumcheckProof,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -25,10 +25,8 @@ use akita_types::{
 /// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    plan: SetupContributionPlan<E>,
-    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
+    setup_index_weight_evaluator: SetupIndexWeightEvaluator<E>,
     alpha_pows: Vec<E>,
-    alpha: E,
     ring_bits: usize,
     rounds: usize,
 }
@@ -44,7 +42,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn new<F>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
-        tau1: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
@@ -66,24 +63,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             )?;
         let geometry = plan.projection_geometry();
         let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
-        let setup_index_weight_evaluator = fold_gadget
-            .as_deref()
-            .map(|fold_gadget| {
-                relation_matrix_evaluator.setup_index_weight_evaluator::<F>(
-                    &plan,
-                    tau1,
-                    x_challenges,
-                    fold_gadget,
-                    alpha,
-                )
-            })
-            .transpose()?
-            .flatten();
+        let setup_index_weight_evaluator =
+            relation_matrix_evaluator.setup_index_weight_evaluator(plan, alpha)?;
         Ok(Self {
-            plan,
             setup_index_weight_evaluator,
             alpha_pows,
-            alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
         })
@@ -104,7 +88,10 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let ring_d = self.plan.projection_geometry().base_ring_dim();
+        let ring_d = self
+            .setup_index_weight_evaluator
+            .projection_geometry()
+            .base_ring_dim();
         let setup_len = setup
             .expanded
             .shared_matrix()
@@ -149,7 +136,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if next_fold_level_params.setup_prefix.is_some() {
-            let geometry = self.plan.projection_geometry();
+            let geometry = self.setup_index_weight_evaluator.projection_geometry();
             let natural_field_len = geometry.natural_field_len();
             ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
@@ -193,7 +180,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.plan.required();
+        let required = self.setup_index_weight_evaluator.required();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -225,17 +212,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             }
         };
         let setup_index_weight = {
-            let _span = tracing::info_span!(
-                "stage3_setup_index_weight_eval",
-                uniform = self.setup_index_weight_evaluator.is_some()
-            )
-            .entered();
-            if let Some(evaluator) = &self.setup_index_weight_evaluator {
-                evaluator.evaluate(rho_setup_idx)?
-            } else {
-                self.plan
-                    .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
-            }
+            let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
+            self.setup_index_weight_evaluator.evaluate(rho_setup_idx)?
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
         let setup_term = setup_val * setup_index_weight * alpha_val;

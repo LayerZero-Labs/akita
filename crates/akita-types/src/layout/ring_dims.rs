@@ -130,28 +130,6 @@ impl CommitmentRingDims {
         }
     }
 
-    /// Largest low coefficient block aligned for both the relation and the
-    /// outgoing witness representation.
-    ///
-    /// The current prover stores the flat relation witness in outgoing ring
-    /// elements. Its first rounds therefore need a block width that divides
-    /// both every role-local alpha sequence and one outgoing witness ring
-    /// element. This is the intersection of those two address geometries, not
-    /// an additional relation constraint. Use [`Self::common_relation_coeff_count`]
-    /// when only the relation algebra matters.
-    #[must_use]
-    pub const fn common_relation_witness_coeff_count(
-        self,
-        outgoing_witness_ring_dimension: usize,
-    ) -> usize {
-        let relation_common = self.common_relation_coeff_count();
-        if relation_common < outgoing_witness_ring_dimension {
-            relation_common
-        } else {
-            outgoing_witness_ring_dimension
-        }
-    }
-
     /// The single dimension shared by all matrices, or an error once their
     /// dimensions diverge.
     pub fn uniform_dim(self) -> Result<usize, AkitaError> {

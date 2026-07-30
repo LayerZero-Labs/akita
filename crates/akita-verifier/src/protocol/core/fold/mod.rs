@@ -203,7 +203,7 @@ where
         relation_claim,
         rs.relation_address_geometry.relation_lane_variable_count(),
         rs.relation_address_geometry
-            .common_relation_witness_variable_count(),
+            .relation_coefficient_variable_count(),
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
@@ -234,14 +234,13 @@ where
     if let Some((proof, next_fold_level_params)) = stage3 {
         let setup_coefficient_bits = rs
             .relation_address_geometry
-            .common_relation_witness_variable_count();
+            .relation_coefficient_variable_count();
         let setup_x_challenges = sumcheck_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let verifier = SetupSumcheckVerifier::new::<F>(
             &rs.relation_matrix_evaluator,
             setup_x_challenges,
-            &rs.tau1,
             rs.alpha,
         )?;
         let setup_point =

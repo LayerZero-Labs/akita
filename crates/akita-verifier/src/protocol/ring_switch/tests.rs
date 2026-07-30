@@ -162,7 +162,6 @@ fn mixed_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
             opening_batch,
             witness_layout: Arc::new(witness_layout),
             opening_source_len,
-            opening_ring_dim: D_PROJECTED,
         }),
         setup_plan_cache: Default::default(),
     };
@@ -185,8 +184,7 @@ fn mixed_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
     let point = (0..relation_address_geometry.relation_point_variable_count())
         .map(|index| MixedF::from_u64(211 + index as u64))
         .collect::<Vec<_>>();
-    let address_point =
-        &point[relation_address_geometry.common_relation_witness_variable_count()..];
+    let address_point = &point[relation_address_geometry.relation_coefficient_variable_count()..];
     let alpha = MixedF::from_u64(7);
     let fold_gadget = evaluator
         .setup_contribution_fold_gadget::<MixedF>()
@@ -230,11 +228,11 @@ fn mixed_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         )
         .unwrap();
     let coefficient_point =
-        &point[..relation_address_geometry.common_relation_witness_variable_count()];
+        &point[..relation_address_geometry.relation_coefficient_variable_count()];
     let common_alpha = akita_sumcheck::multilinear_eval(
         &scalar_powers(
             alpha,
-            relation_address_geometry.common_relation_witness_coeff_count(),
+            relation_address_geometry.relation_coefficient_block_len(),
         ),
         coefficient_point,
     )

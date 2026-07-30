@@ -239,7 +239,6 @@ impl SetupContributionFixture {
                 opening_batch,
                 witness_layout: layout,
                 opening_source_len,
-                opening_ring_dim: TEST_RING_DIM,
             }),
             setup_plan_cache: Default::default(),
         };

@@ -17,8 +17,8 @@ use akita_field::{
 #[cfg(test)]
 use akita_types::SetupProjectionGeometry;
 use akita_types::{
-    checked_opening_source_index, gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for,
-    AkitaExpandedSetup, FpExtEncoding,
+    gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
+    FpExtEncoding, RelationAddressGeometry,
 };
 
 pub(super) fn evaluate_lane_factored_relation_at_point<F, E>(
@@ -47,10 +47,10 @@ where
     if evaluator.relation_address_geometry != prepared_point.relation_address_geometry() {
         return Err(AkitaError::InvalidProof);
     }
-    // The setup projection still uses the common base of the commitment roles,
-    // while the checked plan spans address the potentially finer coefficient
-    // block shared with the outgoing witness. The same plan therefore owns the
-    // mixed E/T/Z contraction, direct setup scan, and deferred Stage-3 geometry.
+    // The setup projection and flat relation point use the same common base of
+    // the current commitment roles. Outgoing witness packaging affects only
+    // the checked flat live length. The same plan therefore owns the mixed
+    // E/T/Z contraction, direct setup scan, and deferred Stage-3 geometry.
     let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
     let plan = {
         let _span = tracing::info_span!("mixed_relation_setup_plan").entered();
@@ -133,7 +133,6 @@ where
     let inner_ring_dimension = role_dims.d_a();
     let outer_ring_dimension = role_dims.d_b();
     let opening_ring_dimension = role_dims.d_d();
-    let coeff_count = prepared_point.common_relation_witness_coeff_count();
     let equality_window = prepared_point.equality_window();
     let (outer_subcolumns, opening_subcolumns) =
         SetupProjectionGeometry::a_carrier_subcolumn_counts(role_dims)?;
@@ -187,10 +186,7 @@ where
                 let witness_column =
                     unit.e_index(num_claims, depth_open, claim, global_block, digit)?;
                 let lane_start = canonical_relation_lane_index(
-                    context.opening_source_len,
-                    context.opening_ring_dim,
-                    inner_ring_dimension,
-                    coeff_count,
+                    evaluator.relation_address_geometry,
                     witness_column,
                     opening_subcolumn * opening_lanes,
                 )?;
@@ -268,10 +264,7 @@ where
                         digit,
                     )?;
                     let lane_start = canonical_relation_lane_index(
-                        context.opening_source_len,
-                        context.opening_ring_dim,
-                        inner_ring_dimension,
-                        coeff_count,
+                        evaluator.relation_address_geometry,
                         witness_column,
                         outer_subcolumn * outer_lanes,
                     )?;
@@ -333,10 +326,7 @@ where
                             fold_digit,
                         )?;
                         let lane_start = canonical_relation_lane_index(
-                            context.opening_source_len,
-                            context.opening_ring_dim,
-                            inner_ring_dimension,
-                            coeff_count,
+                            evaluator.relation_address_geometry,
                             witness_column,
                             0,
                         )?;
@@ -408,10 +398,7 @@ where
         for (digit, &gadget) in quotient_gadget.iter().enumerate() {
             let witness_column = context.witness_layout.r_index(levels, row, digit)?;
             let lane_start = canonical_relation_lane_index(
-                context.opening_source_len,
-                context.opening_ring_dim,
-                evaluator.relation_address_geometry.carrier_ring_dimension(),
-                prepared_point.common_relation_witness_coeff_count(),
+                evaluator.relation_address_geometry,
                 witness_column,
                 0,
             )?;
@@ -442,20 +429,18 @@ fn evaluate_lane_segment<E: FieldCore>(
         })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn canonical_relation_lane_index(
-    opening_source_len: usize,
-    opening_ring_dimension: usize,
-    inner_ring_dimension: usize,
-    coeff_count: usize,
+    geometry: RelationAddressGeometry,
     witness_column: usize,
     inner_lane: usize,
 ) -> Result<usize, AkitaError> {
+    let inner_ring_dimension = geometry.carrier_ring_dimension();
+    let coeff_count = geometry.relation_coefficient_block_len();
     let lanes_per_inner_column = inner_ring_dimension
         .checked_div(coeff_count)
         .filter(|count| *count != 0)
         .ok_or_else(|| AkitaError::InvalidSetup("invalid common relation lane width".into()))?;
-    if inner_lane >= lanes_per_inner_column || opening_ring_dimension == 0 {
+    if inner_lane >= lanes_per_inner_column {
         return Err(AkitaError::InvalidProof);
     }
     let physical_coefficient = witness_column
@@ -466,11 +451,9 @@ fn canonical_relation_lane_index(
                 .and_then(|offset| base.checked_add(offset))
         })
         .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
-    checked_opening_source_index(
-        opening_source_len,
-        physical_coefficient / opening_ring_dimension,
-    )?;
-    if !physical_coefficient.is_multiple_of(coeff_count) {
+    if physical_coefficient >= geometry.digit_witness_domain().live_len()
+        || !physical_coefficient.is_multiple_of(coeff_count)
+    {
         return Err(AkitaError::InvalidProof);
     }
     Ok(physical_coefficient / coeff_count)

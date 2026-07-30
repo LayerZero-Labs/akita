@@ -58,26 +58,6 @@ pub(crate) fn validate_setup_inputs(
     validate_setup_group_ids(groups, witness_layout.num_groups())
 }
 
-pub(crate) fn get_d_col_range(
-    level_params: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-    groups: &[SetupContributionGroupInputs],
-    group_id: usize,
-) -> Result<Range<usize>, AkitaError> {
-    let mut cursor = 0usize;
-    for group in groups {
-        let width = group.d_active_cols(level_params, opening_batch)?;
-        let end = cursor
-            .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
-        if group.group_id == group_id {
-            return Ok(cursor..end);
-        }
-        cursor = end;
-    }
-    Err(AkitaError::InvalidSetup("setup D group is missing".into()))
-}
-
 fn validate_setup_group_ids(
     groups: &[SetupContributionGroupInputs],
     num_groups: usize,

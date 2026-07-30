@@ -11,10 +11,9 @@ use akita_field::{
     AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, LiftBase, MulBase, MulBaseUnreduced,
 };
 use akita_types::{
-    checked_opening_source_index, gadget_row_scalars, opening_domain_len, r_decomp_levels,
-    relation_rhs_layout_for, AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams,
-    FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry, RingRelationInstance,
-    SetupProjectionGeometry,
+    gadget_row_scalars, opening_domain_len, r_decomp_levels, relation_rhs_layout_for,
+    AkitaExpandedSetup, CommitmentRingDims, CommittedGroupParams, FpExtEncoding,
+    OpeningClaimsLayout, RelationAddressGeometry, RingRelationInstance, SetupProjectionGeometry,
 };
 
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
@@ -215,19 +214,8 @@ impl<E: FieldCore> RelationWeightEvents<E> {
                 .enumerate()
             {
                 let physical = event.physical_coefficients.start + offset;
-                let opening_column = checked_opening_source_index(
-                    self.opening_source_len,
-                    physical / self.opening_ring_dim,
-                )?;
-                let opening_index = opening_column
-                    .checked_mul(self.opening_ring_dim)
-                    .and_then(|base| base.checked_add(physical % self.opening_ring_dim))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("relation weight address overflow".into())
-                    })?;
-                *weights
-                    .get_mut(opening_index)
-                    .ok_or(AkitaError::InvalidProof)? += event.scalar * alpha_power;
+                *weights.get_mut(physical).ok_or(AkitaError::InvalidProof)? +=
+                    event.scalar * alpha_power;
             }
         }
         Ok(weights)
@@ -246,7 +234,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             self.opening_ring_dim,
             self.opening_source_len,
         )?;
-        let coeff_count = geometry.common_relation_witness_coeff_count();
+        let coeff_count = geometry.relation_coefficient_block_len();
         let mut relation_lane_weights = vec![E::zero(); geometry.relation_lane_capacity()];
         for event in &self.events {
             if !event
@@ -265,22 +253,12 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             }
             for coefficient_offset in (0..event.physical_coefficients.len()).step_by(coeff_count) {
                 let physical = event.physical_coefficients.start + coefficient_offset;
-                let opening_column = checked_opening_source_index(
-                    self.opening_source_len,
-                    physical / self.opening_ring_dim,
-                )?;
-                let opening_coefficient = opening_column
-                    .checked_mul(self.opening_ring_dim)
-                    .and_then(|base| base.checked_add(physical % self.opening_ring_dim))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("relation lane address overflow".into())
-                    })?;
-                if !opening_coefficient.is_multiple_of(coeff_count) {
+                if !physical.is_multiple_of(coeff_count) {
                     return Err(AkitaError::InvalidSetup(
-                        "opening layout breaks relation lane alignment".into(),
+                        "flat relation layout breaks relation lane alignment".into(),
                     ));
                 }
-                let lane = opening_coefficient / coeff_count;
+                let lane = physical / coeff_count;
                 let alpha_exponent = event.alpha_exponent_start + coefficient_offset;
                 let alpha_power = *self
                     .inner_alpha_powers

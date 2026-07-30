@@ -23,7 +23,6 @@ mod tests;
 
 pub(crate) use geometry::SetupProjectionGroupGeometry;
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
-pub(crate) use plan::get_d_col_range;
 #[cfg(test)]
 pub(crate) use plan::validate_setup_inputs;
 pub use plan::{SetupContributionGroupInputs, SetupContributionPlan};

@@ -80,10 +80,10 @@ impl RelationRangeImagePlan {
             });
         }
 
-        let coeff_count = relation_address_geometry.common_relation_witness_coeff_count();
+        let coeff_count = relation_address_geometry.relation_coefficient_block_len();
         if !digit_witness_domain.live_len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
-                "digit witness is not aligned to the joint relation-witness block".into(),
+                "digit witness is not aligned to the current relation coefficient block".into(),
             ));
         }
         if relation_address_geometry.live_relation_lane_count() == 0 {
@@ -299,13 +299,10 @@ mod tests {
                         assert_eq!(plan.digit_range_plan().basis(), basis);
                         assert_eq!(plan.role_dims(), role_dims);
                         let geometry = plan.relation_address_geometry();
-                        assert_eq!(
-                            geometry.common_relation_witness_coeff_count(),
-                            role_dims.d_d()
-                        );
+                        assert_eq!(geometry.relation_coefficient_block_len(), role_dims.d_d());
                         assert_eq!(
                             geometry.live_relation_lane_count()
-                                * geometry.common_relation_witness_coeff_count(),
+                                * geometry.relation_coefficient_block_len(),
                             plan.digit_witness_domain().live_len()
                         );
                         assert_eq!(plan.groups().len(), group_sizes.len());
@@ -331,12 +328,12 @@ mod tests {
     }
 
     #[test]
-    fn plan_common_block_respects_outgoing_ring_dimension() {
+    fn plan_common_block_ignores_outgoing_repacking() {
         let plan = plan_for(&[1], 1, CommitmentRingDims::uniform(128), 64, 8);
         let geometry = plan.relation_address_geometry();
-        assert_eq!(geometry.common_relation_witness_coeff_count(), 64);
+        assert_eq!(geometry.relation_coefficient_block_len(), 128);
         assert_eq!(
-            geometry.live_relation_lane_count() * geometry.common_relation_witness_coeff_count(),
+            geometry.live_relation_lane_count() * geometry.relation_coefficient_block_len(),
             plan.digit_witness_domain().live_len()
         );
     }
