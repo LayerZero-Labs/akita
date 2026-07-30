@@ -14,9 +14,10 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         b_ratio: usize,
         d_ratio: usize,
     ) -> Result<(), AkitaError> {
+        let (e_eq_slice, _, _) = self.require_column_eq_slices()?;
         let (required, segments) = build_packed_segments(
             self.d_col_range.start,
-            self.e_eq_slice.len(),
+            e_eq_slice.len(),
             self.t_cols,
             self.z_cols,
             self.n_a,

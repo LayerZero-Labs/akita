@@ -2,7 +2,9 @@
 
 use akita_field::Prime128OffsetA7F7;
 use akita_types::CommitmentRingDims;
-use akita_verifier::relation_evaluator_benchmark_case;
+use akita_verifier::{
+    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
+};
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use std::time::Duration;
 
@@ -45,6 +47,50 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                                 None,
                             )
                             .expect("relation evaluation"),
+                    )
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(cell, "deferred"),
+            &case,
+            |b, benchmark_case| {
+                b.iter(|| {
+                    black_box(
+                        benchmark_case
+                            .evaluator
+                            .eval_flat_at_point::<F, D>(
+                                black_box(&benchmark_case.point),
+                                black_box(&benchmark_case.setup),
+                                black_box(benchmark_case.alpha),
+                                Some(black_box(F::one())),
+                            )
+                            .expect("deferred relation evaluation"),
+                    )
+                });
+            },
+        );
+    }
+
+    let multi_chunk =
+        relation_evaluator_benchmark_case_with_chunks(CommitmentRingDims::uniform(D), D, 8)
+            .expect("valid multi-chunk relation benchmark case");
+    for (mode, deferred_setup_claim) in [("direct", None), ("deferred", Some(F::one()))] {
+        group.bench_with_input(
+            BenchmarkId::new("U-8chunks", mode),
+            &multi_chunk,
+            |b, benchmark_case| {
+                b.iter(|| {
+                    black_box(
+                        benchmark_case
+                            .evaluator
+                            .eval_flat_at_point::<F, D>(
+                                black_box(&benchmark_case.point),
+                                black_box(&benchmark_case.setup),
+                                black_box(benchmark_case.alpha),
+                                black_box(deferred_setup_claim),
+                            )
+                            .expect("multi-chunk relation evaluation"),
                     )
                 });
             },

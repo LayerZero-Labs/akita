@@ -1,7 +1,7 @@
 use super::*;
 use akita_algebra::{
     offset_eq::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm, MAX_COMPACT_STRIDE_TERMS},
-    ring::{evaluate_power_sequence_mle, scalar_powers},
+    ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
 };
 use akita_field::fft::field_pow;
 use std::collections::BTreeMap;
@@ -19,11 +19,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let group_weights = self
             .groups
             .iter()
-            .map(|group| GroupSetupIndexWeights {
-                projection_scales: self.group_projection_scales(group, alpha),
-                relation_lane_powers: self.group_relation_lane_powers(group, alpha),
+            .map(|group| -> Result<_, AkitaError> {
+                Ok(GroupSetupIndexWeights {
+                    projection_scales: self.group_projection_scales(group, alpha)?,
+                    relation_lane_powers: self.group_relation_lane_powers(group, alpha)?,
+                })
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, _>>()?;
         (0..self.required())
             .map(|setup_idx| self.setup_index_weight_at(setup_idx, &group_weights))
             .collect()
@@ -52,35 +54,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         self.projection_geometry
             .ensure_setup_index_evaluation_budget()?;
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        let mut terms_by_projection_ratio =
-            BTreeMap::<usize, Vec<WeightedCompactPairTerm<E>>>::new();
-        for group in &self.groups {
-            self.append_d_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.d_ratio).or_default(),
-            )?;
-            self.append_b_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.b_ratio).or_default(),
-            )?;
-            self.append_a_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.a_ratio).or_default(),
-            )?;
-        }
         let base_ring_dim = self.projection_geometry.base_ring_dim();
         let base_ring_dim_u64 = u64::try_from(base_ring_dim).map_err(|_| {
             AkitaError::InvalidSetup("setup base ring dimension does not fit u64".into())
         })?;
         let alpha_per_base_ring = field_pow(alpha, base_ring_dim_u64);
-        terms_by_projection_ratio
-            .into_iter()
+        self.setup_index_terms
+            .iter()
             .try_fold(E::zero(), |evaluation, (ratio, terms)| {
-                if ratio == 0 || !ratio.is_power_of_two() {
-                    return Err(AkitaError::InvalidSetup(
-                        "setup projection ratio must be a non-zero power of two".into(),
-                    ));
-                }
                 let low_variable_count = ratio.trailing_zeros() as usize;
                 let setup_low_point =
                     rho_setup_idx
@@ -119,27 +100,65 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         * eval_weighted_compact_pair_eq(
                             setup_high_point,
                             relation_high_point,
-                            &terms,
+                            terms,
                         )?)
             })
+    }
+
+    pub(crate) fn prepare_setup_index_terms(
+        &self,
+    ) -> Result<BTreeMap<usize, Vec<WeightedCompactPairTerm<E>>>, AkitaError> {
+        let mut terms_by_projection_ratio =
+            BTreeMap::<usize, Vec<WeightedCompactPairTerm<E>>>::new();
+        for group in &self.groups {
+            self.append_d_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.d_ratio).or_default(),
+            )?;
+            self.append_b_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.b_ratio).or_default(),
+            )?;
+            self.append_a_span_terms(
+                group,
+                terms_by_projection_ratio.entry(group.a_ratio).or_default(),
+            )?;
+        }
+        terms_by_projection_ratio
+            .into_iter()
+            .map(|(ratio, terms)| {
+                if ratio == 0 || !ratio.is_power_of_two() {
+                    return Err(AkitaError::InvalidSetup(
+                        "setup projection ratio must be a non-zero power of two".into(),
+                    ));
+                }
+                Ok((ratio, terms))
+            })
+            .collect()
     }
 
     fn group_projection_scales(
         &self,
         group: &SetupContributionGroupPlan<E>,
         alpha: E,
-    ) -> [Vec<E>; 3] {
+    ) -> Result<[Vec<E>; 3], AkitaError> {
+        let base_ring_dim = self.projection_geometry.base_ring_dim();
         let role_scales = |role_dim: usize| {
-            scalar_powers(alpha, role_dim)
-                .chunks(self.projection_geometry.base_ring_dim())
-                .map(|chunk| chunk[0])
-                .collect()
+            let ratio = role_dim
+                .checked_div(base_ring_dim)
+                .filter(|count| *count != 0 && role_dim.is_multiple_of(base_ring_dim))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "setup role dimension does not decompose over its base ring".into(),
+                    )
+                })?;
+            scalar_powers_with_stride(alpha, base_ring_dim, ratio)
         };
-        [
-            role_scales(group.role_dims.d_a()),
-            role_scales(group.role_dims.d_b()),
-            role_scales(group.role_dims.d_d()),
-        ]
+        Ok([
+            role_scales(group.role_dims.d_a())?,
+            role_scales(group.role_dims.d_b())?,
+            role_scales(group.role_dims.d_d())?,
+        ])
     }
 
     fn setup_index_weight_at(
@@ -156,6 +175,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let mut weight = E::zero();
         for (group, weights) in self.groups.iter().zip(group_weights) {
+            let column_slices = group.column_eq_slices();
             let scales = &weights.projection_scales;
             let lane_powers = &weights.relation_lane_powers;
             let d_idx = setup_idx / group.d_ratio;
@@ -171,7 +191,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         * self.d_weights[d_row]
                         * role_column_weight_or_materialized(
                             &group.d_spans,
-                            &group.e_eq_slice,
+                            column_slices.map(|slices| slices.0),
                             d_col - group.d_col_range.start,
                             self.relation_address.equality_window(),
                             &lane_powers[2],
@@ -192,7 +212,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     * group.b_weights[b_row]
                     * role_column_weight_or_materialized(
                         &group.b_spans,
-                        &group.t_eq_slice,
+                        column_slices.map(|slices| slices.1),
                         b_col,
                         self.relation_address.equality_window(),
                         &lane_powers[1],
@@ -212,7 +232,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     * group.a_row_weights[a_row]
                     * role_column_weight_or_materialized(
                         &group.a_families,
-                        &group.z_eq_slice,
+                        column_slices.map(|slices| slices.2),
                         a_col,
                         self.relation_address.equality_window(),
                         &lane_powers[0],
@@ -373,13 +393,13 @@ fn push_weighted_term<E: FieldCore>(
 
 fn role_column_weight_or_materialized<E: FieldCore>(
     spans: &[SetupContributionSpan],
-    materialized: &[E],
+    materialized: Option<&[E]>,
     column: usize,
     equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
     lane_powers: &[E],
     fold_gadget: Option<&[E]>,
 ) -> Result<E, AkitaError> {
-    if !materialized.is_empty() {
+    if let Some(materialized) = materialized {
         return materialized
             .get(column)
             .copied()

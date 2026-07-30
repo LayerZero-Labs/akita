@@ -30,7 +30,9 @@ mod types;
 
 pub(crate) use types::validate_setup_inputs;
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
-pub(crate) use types::{SetupContributionGroupPlan, SetupContributionSpan};
+pub(crate) use types::{
+    SetupContributionColumnWeights, SetupContributionGroupPlan, SetupContributionSpan,
+};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::{checked_slice, SetupProjectionGeometry};

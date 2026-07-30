@@ -29,6 +29,7 @@ fn projected_setup_weight_reference(
     for base_idx in 0..required {
         let mut weight = F::zero();
         for group in &plan.groups {
+            let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -36,23 +37,21 @@ fn projected_setup_weight_reference(
                 if group.d_col_range.contains(&d_col) {
                     weight += d_scales[base_idx % d_ratio]
                         * plan.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.d_col_range.start];
+                        * e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
             let b_idx = base_idx / b_ratio;
             if b_idx < group.n_b * group.t_cols {
                 let b_col = b_idx % group.t_cols;
                 let b_row = b_idx / group.t_cols;
-                weight +=
-                    b_scales[base_idx % b_ratio] * group.b_weights[b_row] * group.t_eq_slice[b_col];
+                weight += b_scales[base_idx % b_ratio] * group.b_weights[b_row] * t_eq_slice[b_col];
             }
             let a_idx = base_idx / a_ratio;
             if a_idx < group.n_a * group.z_cols {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
-                weight += a_scales[base_idx % a_ratio]
-                    * group.a_row_weights[a_row]
-                    * group.z_eq_slice[a_col];
+                weight +=
+                    a_scales[base_idx % a_ratio] * group.a_row_weights[a_row] * z_eq_slice[a_col];
             }
         }
         acc += eq_eval_at_index(rho, base_idx) * weight;
@@ -92,6 +91,7 @@ pub(super) fn structured_slice_reference(
     opening_a_evals: &[F],
     alpha: F,
 ) -> F {
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
     let (outer_subcolumns, opening_subcolumns) =
         SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims).unwrap();
     let role_dims = group.role_dims;
@@ -111,7 +111,7 @@ pub(super) fn structured_slice_reference(
                         + digit;
                     evaluation += challenge
                         * group.consistency_weight
-                        * group.e_eq_slice[column]
+                        * e_eq_slice[column]
                         * gadget
                         * alpha_powers[subcolumn * role_dims.d_d()];
                 }
@@ -127,7 +127,7 @@ pub(super) fn structured_slice_reference(
                             + subcolumn;
                         evaluation += challenge
                             * group.a_row_weights[row]
-                            * group.t_eq_slice[column]
+                            * t_eq_slice[column]
                             * gadget
                             * alpha_powers[subcolumn * role_dims.d_b()];
                     }
@@ -139,7 +139,7 @@ pub(super) fn structured_slice_reference(
         for (digit, &gadget) in witness_gadget.iter().enumerate() {
             evaluation += group.consistency_weight
                 * opening
-                * group.z_eq_slice[position * group.depth_witness + digit]
+                * z_eq_slice[position * group.depth_witness + digit]
                 * gadget;
         }
     }

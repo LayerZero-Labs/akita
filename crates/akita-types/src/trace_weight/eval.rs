@@ -1,4 +1,4 @@
-use akita_algebra::offset_eq::{eval_affine_digit_interval, AffineWeight};
+use akita_algebra::offset_eq::{eval_affine_digit_intervals, AffineWeight};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use std::marker::PhantomData;
@@ -500,9 +500,9 @@ where
                     AkitaError::InvalidInput("trace term block index overflow".to_string())
                 })?;
             let base = layout.opening_digit_col_index(block, 0)?;
-            let contribution = eval_affine_digit_interval(
+            let contribution = eval_affine_digit_intervals(
                 col_point,
-                base,
+                &[base],
                 unit.global_block_start(),
                 unit.num_live_blocks(),
                 layout.num_digits_open,

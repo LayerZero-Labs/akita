@@ -235,11 +235,8 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .take_cached_setup_contribution_plan(address_point)
         .unwrap()
         .expect("mixed deferred evaluation must cache its Stage-3 plan");
-    let (e_slice, t_slice, z_slice) = cached
-        .group_column_eq_slices(0)
-        .expect("cached plan must retain checked group spans");
     assert!(
-        e_slice.is_empty() && t_slice.is_empty() && z_slice.is_empty(),
-        "deferred mixed evaluation should cache the compact plan"
+        cached.group_column_eq_slices(0).is_none(),
+        "deferred relation evaluation should cache spans without prepared columns"
     );
 }

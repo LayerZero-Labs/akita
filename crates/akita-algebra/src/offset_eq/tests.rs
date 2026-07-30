@@ -559,7 +559,21 @@ fn weighted_compact_pairs_merge_equal_states_and_cancel() {
 }
 
 #[test]
-fn weighted_compact_pairs_coalesce_contiguous_fragments() {
+fn weighted_compact_pair_work_cap_is_aggregate() {
+    let mut work = MAX_COMPACT_STRIDE_TERMS - 1;
+    charge_compact_pair_work(&mut work, 1).unwrap();
+    let error = charge_compact_pair_work(&mut work, 1).unwrap_err();
+    assert!(matches!(
+        error,
+        AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual
+        } if actual == MAX_COMPACT_STRIDE_TERMS + 1
+    ));
+}
+
+#[test]
+fn weighted_compact_pairs_match_contiguous_fragmentation() {
     let mut rng = StdRng::seed_from_u64(0x00C0_11AD);
     let left = random_vec(&mut rng, 12);
     let right = random_vec(&mut rng, 13);
@@ -591,6 +605,30 @@ fn weighted_compact_pairs_coalesce_contiguous_fragments() {
         eval_weighted_compact_pair_eq(&left, &right, &fragments).unwrap(),
         eval_weighted_compact_pair_eq(&left, &right, &[whole]).unwrap()
     );
+}
+
+#[test]
+fn weighted_compact_pair_rectangle_preprocessing_policy_is_bounded() {
+    let weight = F::from_u64(7);
+    let rectangle = |width: usize, weight_for_lane: &dyn Fn(usize) -> F| {
+        (0..width)
+            .map(|lane| WeightedCompactPairTerm {
+                left_offset: 3 * lane,
+                left_stride: 3 * width,
+                right_offset: 5 * lane,
+                right_stride: 5 * width,
+                len: 16,
+                weight: weight_for_lane(lane),
+            })
+            .collect::<Vec<_>>()
+    };
+
+    assert!(!rectangle_preprocessing_worthwhile(&rectangle(2, &|_| weight)).unwrap());
+    assert!(rectangle_preprocessing_worthwhile(&rectangle(3, &|_| weight)).unwrap());
+    assert!(!rectangle_preprocessing_worthwhile(&rectangle(3, &|lane| {
+        weight * F::from_u64(lane as u64 + 1)
+    }))
+    .unwrap());
 }
 
 #[test]
@@ -674,9 +712,9 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
         let digit_weights = random_vec(&mut rng, digits);
         let high = random_vec(&mut rng, high_len);
         let low = random_vec(&mut rng, low_len);
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
@@ -719,7 +757,8 @@ fn affine_digit_interval_handles_boolean_challenges_without_inversion() {
         F::from_u64(23),
         F::from_u64(29),
     ];
-    let got = eval_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low).unwrap();
+    let got =
+        eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, &digits, &high, &low).unwrap();
     assert_eq!(
         got,
         reference_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low)
@@ -731,9 +770,9 @@ fn affine_digit_interval_rejects_work_above_cap() {
     let challenges = vec![F::from_u64(2); 20];
     let digits = vec![F::one(); 1 << 14];
     let low = vec![F::one(); 1 << 14];
-    let err = eval_affine_digit_interval(
+    let err = eval_affine_digit_intervals(
         &challenges,
-        0,
+        &[0],
         0,
         1 << 14,
         1 << 14,
@@ -747,9 +786,9 @@ fn affine_digit_interval_rejects_work_above_cap() {
 
 #[test]
 fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
-    let err = eval_affine_digit_interval(
+    let err = eval_affine_digit_intervals(
         &[F::from_u64(2); 3],
-        7,
+        &[7],
         0,
         2,
         2,
@@ -1143,9 +1182,9 @@ fn affine_digit_interval_matches_reference() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
@@ -1195,9 +1234,9 @@ fn affine_digit_interval_matches_boolean_challenges() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             5,
@@ -1211,6 +1250,73 @@ fn affine_digit_interval_matches_boolean_challenges() {
             "boolean canonical mismatch {outer_start} {live_len} {base}"
         );
     }
+}
+
+#[test]
+fn affine_digit_intervals_batch_matches_independent_families() {
+    let mut rng = StdRng::seed_from_u64(0xBA7C_4FF1);
+    let challenges = random_vec(&mut rng, 15);
+    let digit_weights = random_vec(&mut rng, 5);
+    let high = random_vec(&mut rng, 32);
+    let low = random_vec(&mut rng, 4);
+    for base_offsets in [vec![3usize, 67, 131], vec![3, 68, 133]] {
+        let got = eval_affine_digit_intervals(
+            &challenges,
+            &base_offsets,
+            1,
+            63,
+            7,
+            &digit_weights,
+            &high,
+            &low,
+        )
+        .unwrap();
+        let expected = base_offsets
+            .iter()
+            .map(|&base| {
+                reference_affine_digit_interval(
+                    &challenges,
+                    base,
+                    1,
+                    63,
+                    7,
+                    &digit_weights,
+                    &high,
+                    &low,
+                )
+            })
+            .sum();
+        assert_eq!(got, expected);
+    }
+}
+
+#[test]
+fn affine_digit_intervals_many_short_families_avoid_quadratic_bucketing() {
+    let mut rng = StdRng::seed_from_u64(0xA11F_1EE7);
+    let challenges = random_vec(&mut rng, 13);
+    let base_offsets = (0..8usize).collect::<Vec<_>>();
+    let outer_stride = 4095usize;
+    assert_eq!(
+        bucketed_high_rows_plan(base_offsets.len(), outer_stride + 1, challenges.len()).unwrap(),
+        None
+    );
+
+    let got = eval_affine_digit_intervals(
+        &challenges,
+        &base_offsets,
+        0,
+        1,
+        outer_stride,
+        &[F::one()],
+        &[F::one()],
+        &[F::one()],
+    )
+    .unwrap();
+    let expected = base_offsets
+        .iter()
+        .map(|&base| eq_eval_at_index(&challenges, base))
+        .sum();
+    assert_eq!(got, expected);
 }
 
 // Micro-benchmark the canonical kernel across digit counts at balanced folds.
@@ -1238,9 +1344,9 @@ fn affine_digit_interval_bench() {
         for _ in 0..iters {
             let start = Instant::now();
             std::hint::black_box(
-                eval_affine_digit_interval(
+                eval_affine_digit_intervals(
                     &challenges,
-                    0,
+                    &[0],
                     0,
                     live_len,
                     stride,
@@ -1305,9 +1411,9 @@ fn affine_digit_interval_matches_geometric_digits() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
@@ -1356,9 +1462,9 @@ fn affine_digit_interval_bench_geometric() {
         for _ in 0..iters {
             let start = Instant::now();
             std::hint::black_box(
-                eval_affine_digit_interval(
+                eval_affine_digit_intervals(
                     &challenges,
-                    0,
+                    &[0],
                     0,
                     live_len,
                     stride,

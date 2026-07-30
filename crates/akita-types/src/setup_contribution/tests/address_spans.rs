@@ -12,6 +12,7 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
 
     let lane_weight = |witness_column: usize| eq_eval_at_index(&address_point, witness_column);
     let group = &groups[0];
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
     let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
     let first_e = first_unit
         .e_index(
@@ -22,7 +23,7 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
             0,
         )
         .unwrap();
-    assert_eq!(plan.groups[0].e_eq_slice[0], lane_weight(first_e));
+    assert_eq!(e_eq_slice[0], lane_weight(first_e));
 
     let first_t = first_unit
         .t_index(
@@ -35,7 +36,7 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
             0,
         )
         .unwrap();
-    assert_eq!(plan.groups[0].t_eq_slice[0], lane_weight(first_t));
+    assert_eq!(t_eq_slice[0], lane_weight(first_t));
 
     let mut expected_z = F::zero();
     for unit in witness_layout.units_for_group(group.group_id).unwrap() {
@@ -53,7 +54,7 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
             expected_z -= lane_weight(z) * fold;
         }
     }
-    assert_eq!(plan.groups[0].z_eq_slice[0], expected_z);
+    assert_eq!(z_eq_slice[0], expected_z);
 }
 
 #[test]
@@ -86,6 +87,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 .sum::<F>()
         };
         let group = &groups[0];
+        let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
         let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
         let first_e = first_unit
             .e_index(
@@ -96,8 +98,8 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 0,
             )
             .unwrap();
-        assert_eq!(plan.groups[0].e_eq_slice[0], lane_weight(first_e, 0, 1));
-        assert_eq!(plan.groups[0].e_eq_slice[2], lane_weight(first_e, 1, 1));
+        assert_eq!(e_eq_slice[0], lane_weight(first_e, 0, 1));
+        assert_eq!(e_eq_slice[2], lane_weight(first_e, 1, 1));
 
         let first_t = first_unit
             .t_index(
@@ -110,8 +112,8 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 0,
             )
             .unwrap();
-        assert_eq!(plan.groups[0].t_eq_slice[0], lane_weight(first_t, 0, 1));
-        assert_eq!(plan.groups[0].t_eq_slice[1], lane_weight(first_t, 1, 1));
+        assert_eq!(t_eq_slice[0], lane_weight(first_t, 0, 1));
+        assert_eq!(t_eq_slice[1], lane_weight(first_t, 1, 1));
 
         let mut expected_z = F::zero();
         for unit in witness_layout.units_for_group(group.group_id).unwrap() {
@@ -129,15 +131,15 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 expected_z -= lane_weight(z, 0, 2) * fold;
             }
         }
-        assert_eq!(plan.groups[0].z_eq_slice[0], expected_z);
+        assert_eq!(z_eq_slice[0], expected_z);
 
         let rho = (0..plan.required().next_power_of_two().trailing_zeros() as usize)
             .map(|index| test_scalar(701 + index as u128))
             .collect::<Vec<_>>();
         let observed = (
-            plan.groups[0].e_eq_slice.to_vec(),
-            plan.groups[0].t_eq_slice.to_vec(),
-            plan.groups[0].z_eq_slice.to_vec(),
+            e_eq_slice.to_vec(),
+            t_eq_slice.to_vec(),
+            z_eq_slice.to_vec(),
             plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
         );
         if let Some(expected) = &expected {

@@ -1,4 +1,4 @@
-use super::plan::SetupContributionGroupPlan;
+use super::plan::{SetupContributionColumnWeights, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
@@ -370,6 +370,7 @@ fn finalize_test_plan(
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
+        setup_index_terms: Default::default(),
         relation_address: PreparedRelationAddress::new(&[]).unwrap(),
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
@@ -395,6 +396,9 @@ fn finalize_test_plan(
             )
             .expect("valid cached setup scan segments");
     }
+    plan.setup_index_terms = plan
+        .prepare_setup_index_terms()
+        .expect("valid cached setup-index terms");
     plan
 }
 
@@ -437,9 +441,11 @@ fn test_group_plan(
         a_row_weights: a_row_weights.into(),
         b_weights: b_weights.into(),
         fold_gadget: vec![F::one()].into(),
-        e_eq_slice,
-        t_eq_slice,
-        z_eq_slice,
+        column_weights: SetupContributionColumnWeights::Prepared {
+            e: e_eq_slice,
+            t: t_eq_slice,
+            z: z_eq_slice,
+        },
         d_spans: Vec::new(),
         b_spans: Vec::new(),
         a_families: Vec::new(),
@@ -892,9 +898,10 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         .enumerate()
         .map(|(k, &weight)| weight * commit_gadget[k % depth_commit])
         .collect::<Vec<_>>();
-    assert_eq!(plan.groups[0].z_eq_slice, expected);
+    let z_eq_slice = plan.groups[0].column_eq_slices().unwrap().2;
+    assert_eq!(z_eq_slice, expected);
     assert_ne!(
-        plan.groups[0].z_eq_slice, wrong_with_commit_gadget,
+        z_eq_slice, wrong_with_commit_gadget,
         "A setup weights are for A * G_fold * z_hat, not A * G_commit * G_fold * z_hat"
     );
 }

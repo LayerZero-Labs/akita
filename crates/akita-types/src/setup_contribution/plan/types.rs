@@ -3,9 +3,9 @@ use crate::{
     CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
-use akita_algebra::offset_eq::OffsetEqWindow;
+use akita_algebra::offset_eq::{OffsetEqWindow, WeightedCompactPairTerm};
 use akita_field::{AkitaError, FieldCore};
-use std::{ops::Range, sync::Arc};
+use std::{collections::BTreeMap, ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
@@ -312,6 +312,7 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
+    pub(crate) setup_index_terms: BTreeMap<usize, Vec<WeightedCompactPairTerm<E>>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
@@ -335,20 +336,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// the same opening equality addresses a second time.
     #[must_use]
     pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
-        let group = self
-            .groups
+        self.groups
             .iter()
             .find(|group| group.group_id == group_id)
-            .filter(|group| {
-                (group.e_eq_slice.is_empty() || !group.d_spans.is_empty())
-                    && (group.t_eq_slice.is_empty() || !group.b_spans.is_empty())
-                    && (group.z_eq_slice.is_empty() || !group.a_families.is_empty())
-            })?;
-        Some((
-            group.e_eq_slice.as_slice(),
-            group.t_eq_slice.as_slice(),
-            group.z_eq_slice.as_slice(),
-        ))
+            .and_then(SetupContributionGroupPlan::column_eq_slices)
     }
 }
 
@@ -533,6 +524,13 @@ fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, 
         .ok_or_else(|| AkitaError::InvalidSetup("setup contribution span overflow".into()))
 }
 
+pub(crate) enum SetupContributionColumnWeights<E> {
+    Prepared { e: Vec<E>, t: Vec<E>, z: Vec<E> },
+    Deferred,
+}
+
+type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
+
 pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) group_id: usize,
     pub(crate) role_dims: CommitmentRingDims,
@@ -559,15 +557,28 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    pub(crate) e_eq_slice: Vec<E>,
-    pub(crate) t_eq_slice: Vec<E>,
-    pub(crate) z_eq_slice: Vec<E>,
+    pub(crate) column_weights: SetupContributionColumnWeights<E>,
     pub(crate) d_spans: Vec<SetupContributionSpan>,
     pub(crate) b_spans: Vec<SetupContributionSpan>,
     pub(crate) a_families: Vec<SetupContributionSpan>,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    pub(crate) fn column_eq_slices(&self) -> Option<(&[E], &[E], &[E])> {
+        match &self.column_weights {
+            SetupContributionColumnWeights::Prepared { e, t, z } => Some((e, t, z)),
+            SetupContributionColumnWeights::Deferred => None,
+        }
+    }
+
+    pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {
+        self.column_eq_slices().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "direct setup operation requires prepared column weights".into(),
+            )
+        })
+    }
+
     pub(crate) fn set_projection_ratios(&mut self, base_ring_dim: usize) -> Result<(), AkitaError> {
         let ratio = |name: &'static str, dimension: usize| {
             dimension

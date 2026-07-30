@@ -1,21 +1,26 @@
 //! Offset-EQ helpers for structured inner products.
 //!
-//! The production evaluator is [`eval_affine_digit_interval`]. It contracts an
+//! The production evaluator is [`eval_affine_digit_intervals`]. It contracts
 //! exact affine digit interval against factored outer weights while preserving
 //! carries from arbitrary physical offsets. [`eq_eval_at_index`] is the scalar
 //! equality primitive shared by the kernel and direct callers.
 
 use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 mod compact_pair;
-pub use compact_pair::eval_compact_pair_eq;
+#[cfg(test)]
+use compact_pair::{
+    charge_compact_pair_work, coalesce_weighted_compact_pair_terms,
+    rectangle_preprocessing_worthwhile,
+};
+pub use compact_pair::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm};
 
 /// Verifier work cap for one compact-stride equality contraction.
 pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
 
-/// Coefficient algebra used by [`eval_affine_digit_interval`].
+/// Coefficient algebra used by [`eval_affine_digit_intervals`].
 ///
 /// The equality and digit factors live in `F`; outer high/low factors may live
 /// either in `F` itself or in a small coordinate algebra that is linear over
@@ -47,21 +52,23 @@ impl<F: FieldCore> AffineWeight<F> for F {
     }
 }
 
-/// Evaluate one exact digit-innermost affine interval with factored outer weights.
+/// Evaluate compatible digit-innermost affine intervals with factored outer
+/// weights.
 ///
 /// For `Q = low_weights.len()` and `i` in the exact global outer window
 /// `[outer_start, outer_start + live_len)`, this computes
 ///
 /// ```text
-/// Σ_i Σ_d high[i / Q] · low[i % Q] · digit[d]
-///            · eq(challenges, base_offset + outer_stride · (i - outer_start) + d).
+/// Σ_base Σ_i Σ_d high[i / Q] · low[i % Q] · digit[d]
+///     · eq(challenges, base + outer_stride · (i - outer_start) + d).
 /// ```
 ///
 /// `Q` must be a power of two. The implementation splits the equality point at
 /// `log2(Q)`, summarizes the low factor into at most `outer_stride + 1` carry
-/// states, and reuses that summary for every complete high row. Guarded
-/// geometric-prefix and carry-bucketed contractions accelerate eligible
-/// layouts and transparently fall back to the general row contraction.
+/// states, reuses summaries for base offsets with the same low residue, and
+/// seeds their high rows into shared carry buckets. Guarded geometric-prefix
+/// and carry-bucketed contractions accelerate eligible layouts and
+/// transparently fall back to the general row contraction.
 /// Unaligned first and last rows are handled as exact low-factor subwindows, so
 /// distributed chunks and a partial final tensor row do not enumerate the
 /// Cartesian high-by-low domain. Boolean challenges require no inversion.
@@ -73,36 +80,9 @@ impl<F: FieldCore> AffineWeight<F> for F {
 /// [`MAX_COMPACT_STRIDE_TERMS`]. The work bound is checked before allocating
 /// carry summaries.
 #[allow(clippy::too_many_arguments)]
-pub fn eval_affine_digit_interval<F, A>(
+pub fn eval_affine_digit_intervals<F, A>(
     challenges: &[F],
-    base_offset: usize,
-    outer_start: usize,
-    live_len: usize,
-    outer_stride: usize,
-    digit_weights: &[F],
-    high_weights: &[A],
-    low_weights: &[A],
-) -> Result<A, AkitaError>
-where
-    F: FieldCore,
-    A: AffineWeight<F>,
-{
-    eval_affine_digit_interval_impl(
-        challenges,
-        base_offset,
-        outer_start,
-        live_len,
-        outer_stride,
-        digit_weights,
-        high_weights,
-        low_weights,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn eval_affine_digit_interval_impl<F, A>(
-    challenges: &[F],
-    base_offset: usize,
+    base_offsets: &[usize],
     outer_start: usize,
     live_len: usize,
     outer_stride: usize,
@@ -118,7 +98,7 @@ where
         .first()
         .or_else(|| low_weights.first())
         .ok_or_else(|| AkitaError::InvalidInput("affine factors must be non-empty".into()))?;
-    if live_len == 0 {
+    if live_len == 0 || base_offsets.is_empty() {
         return Ok(template.zero_like());
     }
     let low_len = low_weights.len();
@@ -153,19 +133,20 @@ where
     let carry_count = outer_stride
         .checked_add(1)
         .ok_or_else(|| AkitaError::InvalidInput("affine carry count overflow".into()))?;
-    let max_address = base_offset
-        .checked_add(
-            outer_stride
-                .checked_mul(live_len - 1)
-                .and_then(|delta| delta.checked_add(digit_count - 1))
-                .ok_or_else(|| AkitaError::InvalidInput("affine address overflow".into()))?,
-        )
+    let address_span = outer_stride
+        .checked_mul(live_len - 1)
+        .and_then(|delta| delta.checked_add(digit_count - 1))
         .ok_or_else(|| AkitaError::InvalidInput("affine address overflow".into()))?;
-    if challenges.len() < usize::BITS as usize && max_address >= (1usize << challenges.len()) {
-        return Err(AkitaError::InvalidSize {
-            expected: challenges.len() + 1,
-            actual: challenges.len(),
-        });
+    for &base_offset in base_offsets {
+        let max_address = base_offset
+            .checked_add(address_span)
+            .ok_or_else(|| AkitaError::InvalidInput("affine address overflow".into()))?;
+        if challenges.len() < usize::BITS as usize && max_address >= (1usize << challenges.len()) {
+            return Err(AkitaError::InvalidSize {
+                expected: challenges.len() + 1,
+                actual: challenges.len(),
+            });
+        }
     }
 
     let mut cursor = outer_start;
@@ -199,7 +180,7 @@ where
         .checked_add(full_rows)
         .and_then(|rows| rows.checked_add(usize::from(suffix_span != 0)))
         .ok_or_else(|| AkitaError::InvalidInput("affine row work overflow".into()))?;
-    let work = digit_count
+    let work_per_family = digit_count
         .checked_mul(summarized_low)
         .and_then(|low_work| {
             row_count
@@ -207,6 +188,9 @@ where
                 .and_then(|high_work| low_work.checked_add(high_work))
         })
         .ok_or_else(|| AkitaError::InvalidInput("affine work overflow".into()))?;
+    let work = work_per_family
+        .checked_mul(base_offsets.len())
+        .ok_or_else(|| AkitaError::InvalidInput("affine family work overflow".into()))?;
     if work > MAX_COMPACT_STRIDE_TERMS {
         return Err(AkitaError::InvalidSize {
             expected: MAX_COMPACT_STRIDE_TERMS,
@@ -222,7 +206,7 @@ where
             &mut out,
             low_challenges,
             high_challenges,
-            base_offset,
+            base_offsets,
             outer_start,
             outer_stride,
             digit_weights,
@@ -239,7 +223,7 @@ where
             &mut out,
             low_challenges,
             high_challenges,
-            base_offset,
+            base_offsets,
             outer_start,
             outer_stride,
             digit_weights,
@@ -256,7 +240,7 @@ where
             &mut out,
             low_challenges,
             high_challenges,
-            base_offset,
+            base_offsets,
             outer_start,
             outer_stride,
             digit_weights,
@@ -276,7 +260,7 @@ fn accumulate_affine_rows<F, A>(
     out: &mut A,
     low_challenges: &[F],
     high_challenges: &[F],
-    base_offset: usize,
+    base_offsets: &[usize],
     outer_start: usize,
     outer_stride: usize,
     digit_weights: &[F],
@@ -302,15 +286,19 @@ where
     let local_outer = row_outer
         .checked_sub(outer_start)
         .ok_or_else(|| AkitaError::InvalidInput("affine row precedes outer window".into()))?;
-    let first_address = base_offset
-        .checked_add(
-            outer_stride
-                .checked_mul(local_outer)
-                .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?,
-        )
+    let address_delta = outer_stride
+        .checked_mul(local_outer)
         .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-    let low_mask = low_len - 1;
-    let address_low = first_address & low_mask;
+    let mut address_groups = BTreeMap::<usize, Vec<usize>>::new();
+    for &base_offset in base_offsets {
+        let first_address = base_offset
+            .checked_add(address_delta)
+            .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
+        address_groups
+            .entry(first_address & (low_len - 1))
+            .or_default()
+            .push(first_address);
+    }
     let template = high_weights
         .get(first_high)
         .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
@@ -325,15 +313,97 @@ where
     } else {
         None
     };
-    // Guarded production path: when the digit weights are geometric — the gadget
-    // vector `g^d`, as used by the E/opening lane — and the digit window fits in
-    // one low block, the per-`low` digit sum is a geometric-weighted contiguous
-    // window of the low equality table, so the whole `low * digit` summary
-    // factors through one prefix scan in `O(low_len)` instead of
-    // `O(low_len * digit_count)`. Non-geometric weights (e.g. the flattened T
-    // lane) fall back to the dense double loop, which stays bit-identical.
-    let geometric = match &eq_low_table {
-        Some(table) => build_geometric_low_summaries(
+    for (address_low, first_addresses) in address_groups {
+        let summaries = build_affine_low_summaries(
+            template,
+            low_challenges,
+            eq_low_table.as_deref(),
+            address_low,
+            outer_stride,
+            low_len,
+            low_start,
+            low_end,
+            digit_weights,
+            low_weights,
+            carry_count,
+        )?;
+
+        // Contract every compatible family into the same high buckets before
+        // combining with the shared low summaries.
+        if accumulate_high_rows_bucketed(
+            out,
+            high_challenges,
+            &first_addresses,
+            outer_stride,
+            low_challenges.len(),
+            high_weights,
+            first_high,
+            rows,
+            &summaries,
+        )? {
+            continue;
+        }
+
+        for first_address in first_addresses {
+            for row in 0..rows {
+                let high_index = first_high
+                    .checked_add(row)
+                    .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
+                let high_factor = high_weights.get(high_index).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine high factor out of range".into())
+                })?;
+                let row_address = first_address
+                    .checked_add(
+                        outer_stride
+                            .checked_mul(low_len)
+                            .and_then(|stride| stride.checked_mul(row))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidInput("affine high address overflow".into())
+                            })?,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high address overflow".into())
+                    })?;
+                let address_high = row_address >> low_challenges.len();
+                for (carry, summary) in summaries.iter().enumerate() {
+                    let eq_high = eq_eval_at_index(
+                        high_challenges,
+                        address_high.checked_add(carry).ok_or_else(|| {
+                            AkitaError::InvalidInput("affine high address overflow".into())
+                        })?,
+                    );
+                    if !eq_high.is_zero() {
+                        out.add_scaled(&high_factor.multiply(summary), eq_high);
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_affine_low_summaries<F, A>(
+    template: &A,
+    low_challenges: &[F],
+    eq_low_table: Option<&[F]>,
+    address_low: usize,
+    outer_stride: usize,
+    low_len: usize,
+    low_start: usize,
+    low_end: usize,
+    digit_weights: &[F],
+    low_weights: &[A],
+    carry_count: usize,
+) -> Result<Vec<A>, AkitaError>
+where
+    F: FieldCore,
+    A: AffineWeight<F>,
+{
+    // Geometric digit windows share one prefix scan. Other weights use the
+    // dense low summary, still once per distinct low-address residue.
+    if let Some(table) = eq_low_table {
+        if let Some(summaries) = build_geometric_low_summaries(
             template,
             table,
             address_low,
@@ -344,96 +414,39 @@ where
             digit_weights,
             low_weights,
             carry_count,
-        )?,
-        None => None,
-    };
-    let summaries = match geometric {
-        Some(built) => built,
-        None => {
-            let mut summaries = vec![template.zero_like(); carry_count];
-            for low in low_start..low_end {
-                let low_factor = low_weights.get(low).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine low factor out of range".into())
-                })?;
-                let low_delta = outer_stride.checked_mul(low - low_start).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine low address overflow".into())
-                })?;
-                for (digit, &digit_weight) in digit_weights.iter().enumerate() {
-                    let shifted = address_low
-                        .checked_add(low_delta)
-                        .and_then(|value| value.checked_add(digit))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("affine low address overflow".into())
-                        })?;
-                    let carry = shifted / low_len;
-                    let low_index = shifted & low_mask;
-                    let eq_low = match &eq_low_table {
-                        Some(table) => table.get(low_index).copied().ok_or_else(|| {
-                            AkitaError::InvalidInput("affine low index out of range".into())
-                        })?,
-                        None => eq_eval_at_index(low_challenges, low_index),
-                    };
-                    summaries
-                        .get_mut(carry)
-                        .ok_or_else(|| {
-                            AkitaError::InvalidInput("affine carry out of range".into())
-                        })?
-                        .add_scaled(low_factor, digit_weight * eq_low);
-                }
-            }
-            summaries
+        )? {
+            return Ok(summaries);
         }
-    };
-
-    // Guarded production path: contract the high rows with a bounded high-equality
-    // table and carry-bucketing (O(rows + carry_count^2)) instead of the
-    // `rows * carry_count` on-demand `eq` loop below. Returns `false` when the
-    // geometry is ineligible, in which case we fall through to the base loop.
-    if accumulate_high_rows_bucketed(
-        out,
-        high_challenges,
-        first_address,
-        outer_stride,
-        low_challenges.len(),
-        high_weights,
-        first_high,
-        rows,
-        &summaries,
-    )? {
-        return Ok(());
     }
-
-    for row in 0..rows {
-        let high_index = first_high
-            .checked_add(row)
-            .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
-        let high_factor = high_weights
-            .get(high_index)
-            .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
-        let row_address = first_address
-            .checked_add(
-                outer_stride
-                    .checked_mul(low_len)
-                    .and_then(|stride| stride.checked_mul(row))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidInput("affine high address overflow".into())
-                    })?,
-            )
-            .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
-        let address_high = row_address >> low_challenges.len();
-        for (carry, summary) in summaries.iter().enumerate() {
-            let eq_high = eq_eval_at_index(
-                high_challenges,
-                address_high.checked_add(carry).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine high address overflow".into())
+    let low_mask = low_len - 1;
+    let mut summaries = vec![template.zero_like(); carry_count];
+    for low in low_start..low_end {
+        let low_factor = low_weights
+            .get(low)
+            .ok_or_else(|| AkitaError::InvalidInput("affine low factor out of range".into()))?;
+        let low_delta = outer_stride
+            .checked_mul(low - low_start)
+            .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
+        for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+            let shifted = address_low
+                .checked_add(low_delta)
+                .and_then(|value| value.checked_add(digit))
+                .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
+            let carry = shifted / low_len;
+            let low_index = shifted & low_mask;
+            let eq_low = match eq_low_table {
+                Some(table) => table.get(low_index).copied().ok_or_else(|| {
+                    AkitaError::InvalidInput("affine low index out of range".into())
                 })?,
-            );
-            if !eq_high.is_zero() {
-                out.add_scaled(&high_factor.multiply(summary), eq_high);
-            }
+                None => eq_eval_at_index(low_challenges, low_index),
+            };
+            summaries
+                .get_mut(carry)
+                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
+                .add_scaled(low_factor, digit_weight * eq_low);
         }
     }
-    Ok(())
+    Ok(summaries)
 }
 
 /// Build the low carry summaries via a geometric prefix scan.
@@ -449,9 +462,10 @@ where
 /// Returns `None` (caller falls back to the dense loop) when the weights are not
 /// geometric, the ratio or leading weight is zero, the window spans more than one
 /// block, or the span is too short to amortize the prefix setup. The `Some`
-/// result is bit-identical to the dense loop. The single field inversion is of
-/// the public gadget ratio (never a challenge), so the no-challenge-inversion
-/// contract is preserved.
+/// result is bit-identical to the dense loop. The single field inversion may
+/// use a nonzero gadget or projected-lane digit-sequence ratio; zero and
+/// non-geometric sequences fall back. Equality-point coordinates are never
+/// inverted.
 #[allow(clippy::too_many_arguments)]
 fn build_geometric_low_summaries<F, A>(
     template: &A,
@@ -564,12 +578,75 @@ where
 /// table setup. Below this the base row loop is cheaper.
 const FAST_HIGH_ROWS_MIN: usize = 8;
 
+/// Return the bounded bucket window when bucketing performs less charged work
+/// than the direct row/carry contraction.
+fn bucketed_high_rows_plan(
+    total_rows: usize,
+    carry_count: usize,
+    high_challenge_count: usize,
+) -> Result<Option<usize>, AkitaError> {
+    if total_rows < FAST_HIGH_ROWS_MIN || carry_count == 0 {
+        return Ok(None);
+    }
+    let window = carry_count
+        .checked_next_power_of_two()
+        .ok_or_else(|| AkitaError::InvalidInput("affine bucket window overflow".into()))?;
+    if window.trailing_zeros() as usize > OFFSET_EQ_LOW_BITS_CAP {
+        return Ok(None);
+    }
+    let window_bits = window.trailing_zeros() as usize;
+    let Some(split_bits) = high_challenge_count.checked_sub(window_bits) else {
+        return Ok(None);
+    };
+    if split_bits > 2 * OFFSET_EQ_HIGH_BITS_CAP {
+        return Ok(None);
+    }
+    let split_low_bits = split_bits / 2;
+    let split_high_bits = split_bits - split_low_bits;
+    let split_entries = 1usize
+        .checked_shl(split_low_bits as u32)
+        .and_then(|low| {
+            1usize
+                .checked_shl(split_high_bits as u32)
+                .and_then(|high| low.checked_add(high))
+        })
+        .ok_or_else(|| AkitaError::InvalidInput("affine split table work overflow".into()))?;
+    let fallback_work = total_rows
+        .checked_mul(carry_count)
+        .ok_or_else(|| AkitaError::InvalidInput("affine fallback work overflow".into()))?;
+    let bucket_work = total_rows
+        .checked_mul(2)
+        .and_then(|rows| {
+            carry_count
+                .checked_mul(window)
+                .and_then(|combine| rows.checked_add(combine))
+        })
+        .and_then(|work| {
+            window
+                .checked_mul(3)
+                .and_then(|allocation| work.checked_add(allocation))
+        })
+        .and_then(|work| work.checked_add(split_entries))
+        .ok_or_else(|| AkitaError::InvalidInput("affine bucket work overflow".into()))?;
+    if bucket_work >= fallback_work {
+        return Ok(None);
+    }
+    if bucket_work > MAX_COMPACT_STRIDE_TERMS {
+        return Err(AkitaError::InvalidSize {
+            expected: MAX_COMPACT_STRIDE_TERMS,
+            actual: bucket_work,
+        });
+    }
+    Ok(Some(window))
+}
+
 /// Contract the fold-high rows against the shared low carry summaries using a
 /// bounded high-equality table and carry-bucketing.
 ///
-/// For each row `r` the base kernel adds
+/// For each compatible family and row `r` the base kernel adds
 /// `high[first_high + r] * summaries[carry] * eq(high_challenges, h0 + stride*r + carry)`
-/// over every `carry in 0..summaries.len()`, where `h0 = first_address >> low_bits`.
+/// over every `carry in 0..summaries.len()`, where
+/// `h0 = first_address >> low_bits`.
 /// Because the equality point splits at `log2(next_pow2(carry_count))`, each row's
 /// carry window straddles at most two high-table blocks, so the whole double loop
 /// factors into: (1) one pass over rows that buckets `high[r] * eq_hi(block)` by
@@ -585,7 +662,7 @@ const FAST_HIGH_ROWS_MIN: usize = 8;
 fn accumulate_high_rows_bucketed<F, A>(
     out: &mut A,
     high_challenges: &[F],
-    first_address: usize,
+    first_addresses: &[usize],
     outer_stride: usize,
     low_bits: usize,
     high_weights: &[A],
@@ -598,20 +675,19 @@ where
     A: AffineWeight<F>,
 {
     let carry_count = summaries.len();
-    if rows < FAST_HIGH_ROWS_MIN || carry_count == 0 {
+    let total_rows = rows
+        .checked_mul(first_addresses.len())
+        .ok_or_else(|| AkitaError::InvalidInput("affine high row count overflow".into()))?;
+    let Some(window) = bucketed_high_rows_plan(total_rows, carry_count, high_challenges.len())?
+    else {
         return Ok(false);
-    }
+    };
     let template = summaries
         .first()
         .ok_or_else(|| AkitaError::InvalidInput("affine summaries empty".into()))?;
 
     // Split the high equality point so the carry window fits inside the low part.
-    let window = carry_count.next_power_of_two();
     let window_bits = window.trailing_zeros() as usize;
-    if window_bits > high_challenges.len() {
-        // High domain is smaller than the carry window; base loop is cheap here.
-        return Ok(false);
-    }
     let low_hi = &high_challenges[..window_bits];
     let high_hi = &high_challenges[window_bits..];
     let eq_low_hi = crate::eq_poly::EqPolynomial::evals(low_hi)?; // length == window
@@ -629,36 +705,35 @@ where
         }
     };
 
-    let h0 = first_address >> low_bits;
     let window_mask = window - 1;
     // Bucket each row by its low-window position, split into the "no carry into
     // the next high block" bucket (`bucket0`) and the "carries" bucket (`bucket1`).
     let mut bucket0 = vec![template.zero_like(); window];
     let mut bucket1 = vec![template.zero_like(); window];
-    for row in 0..rows {
-        let high_index = first_high
-            .checked_add(row)
-            .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
-        let high_factor = high_weights
-            .get(high_index)
-            .ok_or_else(|| AkitaError::InvalidInput("affine high factor out of range".into()))?;
-        let address_high = h0
-            .checked_add(
-                outer_stride.checked_mul(row).ok_or_else(|| {
+    for &first_address in first_addresses {
+        let h0 = first_address >> low_bits;
+        for row in 0..rows {
+            let high_index = first_high
+                .checked_add(row)
+                .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
+            let high_factor = high_weights.get(high_index).ok_or_else(|| {
+                AkitaError::InvalidInput("affine high factor out of range".into())
+            })?;
+            let address_high = h0
+                .checked_add(outer_stride.checked_mul(row).ok_or_else(|| {
                     AkitaError::InvalidInput("affine high address overflow".into())
-                })?,
-            )
-            .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
-        let low_pos = address_high & window_mask;
-        let block = address_high >> window_bits;
-        let eq_block0 = eval_high(block)?;
-        let eq_block1 = eval_high(
-            block
-                .checked_add(1)
-                .ok_or_else(|| AkitaError::InvalidInput("affine high block overflow".into()))?,
-        )?;
-        bucket0[low_pos].add_scaled(high_factor, eq_block0);
-        bucket1[low_pos].add_scaled(high_factor, eq_block1);
+                })?)
+                .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
+            let low_pos = address_high & window_mask;
+            let block = address_high >> window_bits;
+            let eq_block0 = eval_high(block)?;
+            let eq_block1 =
+                eval_high(block.checked_add(1).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine high block overflow".into())
+                })?)?;
+            bucket0[low_pos].add_scaled(high_factor, eq_block0);
+            bucket1[low_pos].add_scaled(high_factor, eq_block1);
+        }
     }
 
     // Combine: out += Σ_carry (Σ_pos bucket[pos] * eq_low_hi[(pos+carry) mod window]) * summaries[carry].
@@ -675,523 +750,6 @@ where
         out.add_scaled(&phi.multiply(summary), F::one());
     }
     Ok(true)
-}
-
-/// One weighted pair of affine equality-address streams.
-///
-/// The represented contribution is
-///
-/// ```text
-/// weight * sum_{i < len}
-///     eq(left_challenges, left_offset + left_stride*i)
-///   * eq(right_challenges, right_offset + right_stride*i).
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct WeightedCompactPairTerm<F: FieldCore> {
-    /// First address in the left equality domain.
-    pub left_offset: usize,
-    /// Positive left-address stride.
-    pub left_stride: usize,
-    /// First address in the right equality domain.
-    pub right_offset: usize,
-    /// Positive right-address stride.
-    pub right_stride: usize,
-    /// Exact number of occurrences before domain clipping.
-    pub len: usize,
-    /// Scalar applied to this affine-pair contraction.
-    pub weight: F,
-}
-
-/// Evaluate a weighted union of exact affine equality-address contractions.
-///
-/// Every non-power-of-two stream is decomposed into aligned power-of-two
-/// blocks. Blocks with equal lengths and stride pairs seed one shared sparse
-/// carry recurrence. Equal carry states merge by adding their weights, so
-/// fragmented affine streams share the expensive block-index traversal without
-/// requiring their address union itself to be affine.
-///
-/// Boolean challenges require no inversions. Addresses outside either equality
-/// domain contribute zero.
-///
-/// # Errors
-///
-/// Returns an error for zero strides, arithmetic overflow, unsupported
-/// challenge arity, or aggregate seed/recurrence work above
-/// [`MAX_COMPACT_STRIDE_TERMS`].
-pub fn eval_weighted_compact_pair_eq<F: FieldCore>(
-    left_challenges: &[F],
-    right_challenges: &[F],
-    terms: &[WeightedCompactPairTerm<F>],
-) -> Result<F, AkitaError> {
-    if left_challenges.len() >= usize::BITS as usize
-        || right_challenges.len() >= usize::BITS as usize
-    {
-        return Err(AkitaError::InvalidSize {
-            expected: usize::BITS as usize - 1,
-            actual: left_challenges.len().max(right_challenges.len()),
-        });
-    }
-    let terms = coalesce_weighted_compact_pair_terms(terms)?;
-
-    let left_domain = 1usize << left_challenges.len();
-    let right_domain = 1usize << right_challenges.len();
-    let mut batches = BTreeMap::<(usize, usize, usize), HashMap<(usize, usize), F>>::new();
-    let mut seed_work = 0usize;
-    for term in &terms {
-        if term.left_offset >= left_domain || term.right_offset >= right_domain {
-            continue;
-        }
-        let left_live = (left_domain - 1 - term.left_offset) / term.left_stride + 1;
-        let right_live = (right_domain - 1 - term.right_offset) / term.right_stride + 1;
-        let live_len = term.len.min(left_live).min(right_live);
-        if live_len == 0 {
-            continue;
-        }
-        if live_len > MAX_COMPACT_STRIDE_TERMS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: live_len,
-            });
-        }
-
-        let highest_bit = usize::BITS as usize - 1 - live_len.leading_zeros() as usize;
-        let mut block_base = 0usize;
-        for block_index_bits in (0..=highest_bit).rev() {
-            let block_size = 1usize << block_index_bits;
-            if live_len & block_size == 0 {
-                continue;
-            }
-            let left_carry = term
-                .left_stride
-                .checked_mul(block_base)
-                .and_then(|delta| term.left_offset.checked_add(delta))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("compact-pair left address overflow".into())
-                })?;
-            let right_carry = term
-                .right_stride
-                .checked_mul(block_base)
-                .and_then(|delta| term.right_offset.checked_add(delta))
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("compact-pair right address overflow".into())
-                })?;
-            seed_work = seed_work.checked_add(1).ok_or_else(|| {
-                AkitaError::InvalidInput("compact-pair seed work overflow".into())
-            })?;
-            if seed_work > MAX_COMPACT_STRIDE_TERMS {
-                return Err(AkitaError::InvalidSize {
-                    expected: MAX_COMPACT_STRIDE_TERMS,
-                    actual: seed_work,
-                });
-            }
-            *batches
-                .entry((term.left_stride, term.right_stride, block_index_bits))
-                .or_default()
-                .entry((left_carry, right_carry))
-                .or_insert(F::zero()) += term.weight;
-            block_base = block_base.checked_add(block_size).ok_or_else(|| {
-                AkitaError::InvalidInput("compact-pair block coverage overflow".into())
-            })?;
-        }
-    }
-    let mut work = 0usize;
-    let mut acc = F::zero();
-    for ((left_stride, right_stride, block_index_bits), mut states) in batches {
-        states.retain(|_, weight| !weight.is_zero());
-        if states.is_empty() {
-            continue;
-        }
-        if block_index_bits > left_challenges.len() || block_index_bits > right_challenges.len() {
-            return Err(AkitaError::InvalidInput(
-                "compact-pair block exceeds equality arity".into(),
-            ));
-        }
-        for bit in 0..block_index_bits {
-            work = work
-                .checked_add(states.len().checked_mul(2).ok_or_else(|| {
-                    AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
-                })?)
-                .ok_or_else(|| {
-                    AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
-                })?;
-            if work > MAX_COMPACT_STRIDE_TERMS {
-                return Err(AkitaError::InvalidSize {
-                    expected: MAX_COMPACT_STRIDE_TERMS,
-                    actual: work,
-                });
-            }
-            let mut next = HashMap::new();
-            for ((left_carry, right_carry), state_weight) in states {
-                for index_bit in 0..=1usize {
-                    let left_sum = if index_bit == 0 {
-                        left_carry
-                    } else {
-                        left_carry.checked_add(left_stride).ok_or_else(|| {
-                            AkitaError::InvalidInput("compact-pair left carry overflow".into())
-                        })?
-                    };
-                    let right_sum = if index_bit == 0 {
-                        right_carry
-                    } else {
-                        right_carry.checked_add(right_stride).ok_or_else(|| {
-                            AkitaError::InvalidInput("compact-pair right carry overflow".into())
-                        })?
-                    };
-                    let left_factor = if left_sum & 1 == 1 {
-                        left_challenges[bit]
-                    } else {
-                        F::one() - left_challenges[bit]
-                    };
-                    let right_factor = if right_sum & 1 == 1 {
-                        right_challenges[bit]
-                    } else {
-                        F::one() - right_challenges[bit]
-                    };
-                    *next
-                        .entry((left_sum >> 1, right_sum >> 1))
-                        .or_insert(F::zero()) += state_weight * left_factor * right_factor;
-                }
-            }
-            next.retain(|_, weight| !weight.is_zero());
-            states = next;
-        }
-        acc += finish_compact_pair_states(
-            left_challenges,
-            right_challenges,
-            block_index_bits,
-            states,
-            &mut work,
-        )?;
-    }
-    Ok(acc)
-}
-
-fn finish_compact_pair_states<F: FieldCore>(
-    left_challenges: &[F],
-    right_challenges: &[F],
-    mut bit: usize,
-    mut states: HashMap<(usize, usize), F>,
-    work: &mut usize,
-) -> Result<F, AkitaError> {
-    let max_bits = left_challenges.len().max(right_challenges.len());
-    while states.len() > 1 && bit < max_bits {
-        *work = work.checked_add(states.len()).ok_or_else(|| {
-            AkitaError::InvalidInput("compact-pair recurrence work overflow".into())
-        })?;
-        if *work > MAX_COMPACT_STRIDE_TERMS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: *work,
-            });
-        }
-        let mut next = HashMap::new();
-        for ((left_carry, right_carry), state_weight) in states {
-            let (left_high, left_factor) = if let Some(&challenge) = left_challenges.get(bit) {
-                (
-                    left_carry >> 1,
-                    if left_carry & 1 == 1 {
-                        challenge
-                    } else {
-                        F::one() - challenge
-                    },
-                )
-            } else if left_carry == 0 {
-                (0, F::one())
-            } else {
-                continue;
-            };
-            let (right_high, right_factor) = if let Some(&challenge) = right_challenges.get(bit) {
-                (
-                    right_carry >> 1,
-                    if right_carry & 1 == 1 {
-                        challenge
-                    } else {
-                        F::one() - challenge
-                    },
-                )
-            } else if right_carry == 0 {
-                (0, F::one())
-            } else {
-                continue;
-            };
-            *next.entry((left_high, right_high)).or_insert(F::zero()) +=
-                state_weight * left_factor * right_factor;
-        }
-        next.retain(|_, weight| !weight.is_zero());
-        states = next;
-        bit += 1;
-    }
-
-    Ok(states
-        .into_iter()
-        .map(|((left_high, right_high), state_weight)| {
-            let left_equality = left_challenges.get(bit..).map_or_else(
-                || {
-                    if left_high == 0 {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                },
-                |challenges| eq_eval_at_index(challenges, left_high),
-            );
-            let right_equality = right_challenges.get(bit..).map_or_else(
-                || {
-                    if right_high == 0 {
-                        F::one()
-                    } else {
-                        F::zero()
-                    }
-                },
-                |challenges| eq_eval_at_index(challenges, right_high),
-            );
-            state_weight * left_equality * right_equality
-        })
-        .sum())
-}
-
-fn coalesce_weighted_compact_pair_terms<F: FieldCore>(
-    terms: &[WeightedCompactPairTerm<F>],
-) -> Result<Vec<WeightedCompactPairTerm<F>>, AkitaError> {
-    if terms.len() > MAX_COMPACT_STRIDE_TERMS {
-        return Err(AkitaError::InvalidSize {
-            expected: MAX_COMPACT_STRIDE_TERMS,
-            actual: terms.len(),
-        });
-    }
-    let mut sorted = Vec::new();
-    sorted
-        .try_reserve_exact(terms.len())
-        .map_err(|_| AkitaError::InvalidInput("compact-pair term allocation failed".into()))?;
-    for term in terms {
-        if term.left_stride == 0 || term.right_stride == 0 {
-            return Err(AkitaError::InvalidInput(
-                "compact-pair strides must be non-zero".into(),
-            ));
-        }
-        if term.len == 0 {
-            continue;
-        }
-        let last = term.len - 1;
-        term.left_stride
-            .checked_mul(last)
-            .and_then(|delta| term.left_offset.checked_add(delta))
-            .ok_or_else(|| AkitaError::InvalidInput("compact-pair left address overflow".into()))?;
-        term.right_stride
-            .checked_mul(last)
-            .and_then(|delta| term.right_offset.checked_add(delta))
-            .ok_or_else(|| {
-                AkitaError::InvalidInput("compact-pair right address overflow".into())
-            })?;
-        if !term.weight.is_zero() {
-            sorted.push(*term);
-        }
-    }
-    let mut coalesced = sorted;
-    loop {
-        // Exhaust cheap rectangle fusion before building the heavier
-        // predecessor map. A contiguous merge can expose another tensor axis,
-        // so repeat only when that merge actually changes the term set.
-        loop {
-            let previous_len = coalesced.len();
-            coalesced = fuse_interleaved_pair_rectangles(coalesced)?;
-            if coalesced.len() == previous_len {
-                break;
-            }
-        }
-        let previous_len = coalesced.len();
-        coalesced = coalesce_contiguous_pair_terms(coalesced)?;
-        if coalesced.len() == previous_len {
-            return Ok(coalesced);
-        }
-    }
-}
-
-fn coalesce_contiguous_pair_terms<F: FieldCore>(
-    mut terms: Vec<WeightedCompactPairTerm<F>>,
-) -> Result<Vec<WeightedCompactPairTerm<F>>, AkitaError> {
-    #[cfg(feature = "parallel")]
-    terms.par_sort_unstable_by_key(|term| {
-        (
-            term.left_stride,
-            term.right_stride,
-            term.left_offset,
-            term.right_offset,
-            term.len,
-        )
-    });
-    #[cfg(not(feature = "parallel"))]
-    terms.sort_unstable_by_key(|term| {
-        (
-            term.left_stride,
-            term.right_stride,
-            term.left_offset,
-            term.right_offset,
-            term.len,
-        )
-    });
-    // Include the field weight in the hash key so predecessor lookup stays
-    // constant-time even when many projection lanes share one address.
-    let mut pending =
-        HashMap::<(usize, usize, usize, usize, F), Vec<WeightedCompactPairTerm<F>>>::new();
-    let mut complete = Vec::new();
-    complete
-        .try_reserve_exact(terms.len())
-        .map_err(|_| AkitaError::InvalidInput("compact-pair term allocation failed".into()))?;
-    for term in terms {
-        let start_key = (
-            term.left_stride,
-            term.right_stride,
-            term.left_offset,
-            term.right_offset,
-            term.weight,
-        );
-        let predecessor = pending
-            .get_mut(&start_key)
-            .and_then(|candidates| candidates.pop());
-        if pending
-            .get(&start_key)
-            .is_some_and(|candidates| candidates.is_empty())
-        {
-            pending.remove(&start_key);
-        }
-        let mut chain = predecessor.unwrap_or(term);
-        if predecessor.is_some() {
-            chain.len = chain.len.checked_add(term.len).ok_or_else(|| {
-                AkitaError::InvalidInput("compact-pair coalesced length overflow".into())
-            })?;
-        }
-        let next_left = chain
-            .left_stride
-            .checked_mul(chain.len)
-            .and_then(|delta| chain.left_offset.checked_add(delta));
-        let next_right = chain
-            .right_stride
-            .checked_mul(chain.len)
-            .and_then(|delta| chain.right_offset.checked_add(delta));
-        if let (Some(next_left), Some(next_right)) = (next_left, next_right) {
-            pending
-                .entry((
-                    chain.left_stride,
-                    chain.right_stride,
-                    next_left,
-                    next_right,
-                    chain.weight,
-                ))
-                .or_default()
-                .push(chain);
-        } else {
-            complete.push(chain);
-        }
-    }
-    complete.extend(pending.into_values().flatten());
-    Ok(complete)
-}
-
-/// Fuse a rectangular family of interleaved affine streams.
-///
-/// If `width` equal-weight streams have outer strides
-/// `(width * left_inner, width * right_inner)` and starts advancing by
-/// `(left_inner, right_inner)`, their union is exactly one affine stream with
-/// the inner strides. This recognizes tensor axes from address geometry alone:
-/// no caller, role, or physical-subcolumn special case is involved.
-fn fuse_interleaved_pair_rectangles<F: FieldCore>(
-    mut terms: Vec<WeightedCompactPairTerm<F>>,
-) -> Result<Vec<WeightedCompactPairTerm<F>>, AkitaError> {
-    #[cfg(feature = "parallel")]
-    terms.par_sort_unstable_by_key(|term| {
-        (
-            term.left_stride,
-            term.right_stride,
-            term.len,
-            term.left_offset,
-            term.right_offset,
-        )
-    });
-    #[cfg(not(feature = "parallel"))]
-    terms.sort_unstable_by_key(|term| {
-        (
-            term.left_stride,
-            term.right_stride,
-            term.len,
-            term.left_offset,
-            term.right_offset,
-        )
-    });
-    let mut fused = Vec::new();
-    fused
-        .try_reserve_exact(terms.len())
-        .map_err(|_| AkitaError::InvalidInput("compact-pair term allocation failed".into()))?;
-
-    let mut index = 0usize;
-    while index < terms.len() {
-        let base = terms[index];
-        let Some(next) = terms.get(index + 1).copied() else {
-            fused.push(base);
-            break;
-        };
-        let same_shape = next.left_stride == base.left_stride
-            && next.right_stride == base.right_stride
-            && next.len == base.len
-            && next.weight == base.weight;
-        let left_inner = next.left_offset.checked_sub(base.left_offset);
-        let right_inner = next.right_offset.checked_sub(base.right_offset);
-        let fusion = match (same_shape, left_inner, right_inner) {
-            (true, Some(left_inner), Some(right_inner))
-                if left_inner != 0
-                    && right_inner != 0
-                    && base.left_stride.is_multiple_of(left_inner)
-                    && base.right_stride.is_multiple_of(right_inner)
-                    && base.left_stride / left_inner == base.right_stride / right_inner =>
-            {
-                Some((left_inner, right_inner, base.left_stride / left_inner))
-            }
-            _ => None,
-        };
-        let Some((left_inner, right_inner, width)) = fusion else {
-            fused.push(base);
-            index += 1;
-            continue;
-        };
-        if width < 2 || index.checked_add(width).is_none_or(|end| end > terms.len()) {
-            fused.push(base);
-            index += 1;
-            continue;
-        }
-        let family = &terms[index..index + width];
-        let complete_rectangle = family.iter().enumerate().all(|(lane, term)| {
-            term.left_stride == base.left_stride
-                && term.right_stride == base.right_stride
-                && term.len == base.len
-                && term.weight == base.weight
-                && left_inner
-                    .checked_mul(lane)
-                    .and_then(|delta| base.left_offset.checked_add(delta))
-                    == Some(term.left_offset)
-                && right_inner
-                    .checked_mul(lane)
-                    .and_then(|delta| base.right_offset.checked_add(delta))
-                    == Some(term.right_offset)
-        });
-        if !complete_rectangle {
-            fused.push(base);
-            index += 1;
-            continue;
-        }
-
-        fused.push(WeightedCompactPairTerm {
-            left_offset: base.left_offset,
-            left_stride: left_inner,
-            right_offset: base.right_offset,
-            right_stride: right_inner,
-            len: base.len.checked_mul(width).ok_or_else(|| {
-                AkitaError::InvalidInput("compact-pair fused length overflow".into())
-            })?,
-            weight: base.weight,
-        });
-        index += width;
-    }
-    Ok(fused)
 }
 
 /// Hard cap on the number of low bits materialized by [`OffsetEqWindow`].

@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::eval_affine_digit_interval;
+use akita_algebra::offset_eq::eval_affine_digit_intervals;
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
@@ -85,9 +85,9 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("trace claim address overflow".into())
                         })?;
-                    claim_evaluation += eval_affine_digit_interval(
+                    claim_evaluation += eval_affine_digit_intervals(
                         column_point,
-                        claim_column,
+                        &[claim_column],
                         unit.global_block_start,
                         unit.block_count,
                         digit_weights.len(),

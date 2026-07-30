@@ -4,7 +4,7 @@ use super::fold_two_round_quad;
 use std::{mem, sync::Arc};
 
 #[cfg(test)]
-use akita_algebra::offset_eq::eval_affine_digit_interval;
+use akita_algebra::offset_eq::eval_affine_digit_intervals;
 #[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, FieldCore};
@@ -80,9 +80,9 @@ impl<E: FieldCore> EvaluationTraceWeights<E> {
                         "trace segment is not source-ring aligned".into(),
                     ));
                 }
-                term_evaluation += eval_affine_digit_interval(
+                term_evaluation += eval_affine_digit_intervals(
                     column_point,
-                    segment.physical_coefficient_start / term.source_ring_dimension,
+                    &[segment.physical_coefficient_start / term.source_ring_dimension],
                     segment.global_block_start,
                     segment.block_count,
                     term.opening_digit_weights.len(),

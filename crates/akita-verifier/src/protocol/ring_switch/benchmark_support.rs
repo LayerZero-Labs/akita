@@ -36,6 +36,20 @@ pub fn relation_evaluator_benchmark_case(
     role_dims: CommitmentRingDims,
     outgoing_ring_dimension: usize,
 ) -> Result<RelationEvaluatorBenchmarkCase, AkitaError> {
+    relation_evaluator_benchmark_case_with_chunks(role_dims, outgoing_ring_dimension, 1)
+}
+
+/// Build one U/L/M benchmark cell with a selected physical chunk count.
+///
+/// # Errors
+///
+/// Returns an error if the requested role, outgoing, or chunk geometry is
+/// invalid.
+pub fn relation_evaluator_benchmark_case_with_chunks(
+    role_dims: CommitmentRingDims,
+    outgoing_ring_dimension: usize,
+    witness_chunks: usize,
+) -> Result<RelationEvaluatorBenchmarkCase, AkitaError> {
     type F = Prime128OffsetA7F7;
     const CARRIER_D: usize = 128;
     const NUM_CLAIMS: usize = 2;
@@ -104,8 +118,13 @@ pub fn relation_evaluator_benchmark_case(
     let opening_batch = OpeningClaimsLayout::new(0, NUM_CLAIMS)?;
     let rows = level_params.relation_matrix_row_count(opening_batch.num_groups())?;
     let quotient_depth = r_decomp_levels::<F>(LOG_BASIS);
-    let witness_layout =
-        WitnessLayout::new(&level_params, &opening_batch, 1, rows, quotient_depth)?;
+    let witness_layout = WitnessLayout::new(
+        &level_params,
+        &opening_batch,
+        witness_chunks,
+        rows,
+        quotient_depth,
+    )?;
     let carrier_flat_len = witness_layout
         .total_len()
         .checked_mul(CARRIER_D)

@@ -4,9 +4,9 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
-| Status | implementation in progress; direct mixed-role E2E established |
-| Branch | `quang/relation-range-image-rewrite` |
-| Base | `main` at `e131faf48938b975ca63b12b59ac6d86894048e0` (includes PR #312) |
+| Status | implemented; verifier relation/setup unification under review |
+| Branch | `quang/unify-verifier-setup-weights` |
+| Base | `feat/planner-per-matrix-d` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
 | Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
 
@@ -22,9 +22,9 @@ PCS API with audited role-native SIS ranks. Prover-only relation events, common-
 factorization, evaluation-trace terms, segment addressing, and fold storage now live in
 `akita-prover`; `akita-types` retains only checked role/layout and trace-group geometry
 needed across protocol sides. The legacy dense/sparse trace-table implementation is
-test-only. Mixed-role roots and uniform multigroup/multichunk roots are supported as
-separate scheduled shapes; their unscheduled cross-product is not introduced by this PR.
-The remaining compact-kernel cutover is still outstanding.
+test-only. One verifier relation evaluator and one `SetupContributionPlan` now cover
+singleton/multigroup, single-chunk/multichunk, uniform/mixed-role, and direct/deferred
+geometry. Runtime acceptance still requires a planner-authenticated schedule.
 
 The sum-check has three semantic terms:
 
@@ -32,11 +32,11 @@ The sum-check has three semantic terms:
 2. the mandatory evaluation trace that binds opening claims to the committed witness; and
 3. range-image consistency with the independent Stage 1 evaluation.
 
-The goals and acceptance criteria below describe the final PR head, not every additive
-implementation slice. Direct mixed-role evaluation has W=1/W=2 differential parity, and
-the public direct-setup roundtrip now fixes the statement-construction contract. Recursive
-mixed-role setup offload remains deliberately rejected until the later Stage 3 boundary
-change.
+The goals and acceptance criteria below describe the final architecture, not every
+additive implementation slice. Direct mixed-role evaluation has W=1/W=2 differential
+parity, the public direct-setup roundtrip fixes the statement-construction contract, and
+Stage 3 evaluates the same plan formula for uniform, mixed-D, multigroup, and multichunk
+shapes.
 
 All three share one transcript lifecycle and checked protocol geometry. The prover owns
 one round-result reducer and the storage it needs to produce messages. The verifier owns
@@ -309,15 +309,45 @@ authority for lane compilation and dense prover-side differential oracles. Sourc
 are dropped after coalescing; no prover provider retains dense and factorized copies.
 
 The verifier does **not** build or consume these events. Its relation evaluator is derived
-directly from the checked common inputs and retains the PR #312 structured algorithm:
-prepared claim/block challenge evaluations; bounded equality windows and affine-interval
-E/T contractions; reuse of setup-plan E/T/Z equality slices; a compact quotient-tail
-contraction; and one coefficient-side alpha evaluation for uniform dimensions. Direct
-setup and deferred setup claims remain explicit mutually exclusive inputs. Refactoring
-may improve ownership, validation, names, and module boundaries, but may not replace
-these contractions with leaf event replay.
+directly from the checked common inputs: one common-coordinate alpha contraction for
+every role geometry; prepared claim/block challenge evaluations; bounded equality
+windows and batched affine-family contractions; reuse of setup-plan E/T/Z equality
+slices; and a compact quotient-tail contraction. Direct setup and deferred setup claims
+remain explicit mutually exclusive inputs. Refactoring may improve ownership,
+validation, names, and module boundaries, but may not replace these contractions with
+leaf event replay.
 
 ## Binding order and relation arithmetic
+
+Let
+
+```text
+c = min(d_a, d_b, d_d)
+q_R = d_R / c
+beta = alpha^c
+```
+
+for role `R`. The relation address is LSB-first. Splitting it into
+`log2(q_R)` low lane coordinates and the remaining high address gives, for
+`0 <= v < q_R`,
+
+```text
+eq(x, q_R*j + v) = eq(x_low, v) * eq(x_high, j).
+```
+
+Therefore the projected role contraction factors as
+
+```text
+Σ_v beta^v * eq(x, q_R*j + v)
+  = P_beta(x_low) * eq(x_high, j),
+
+P_beta(r) = MLE([1, beta, ..., beta^(q_R-1)], r).
+```
+
+The setup-index point has the same factor. Projection is applied once before
+the expensive high-address contraction. When `q_R = 1`, the low point is empty,
+`P_beta([]) = 1`, and the exact same formula becomes the identity case; verifier
+control flow does not select a separate uniform algorithm.
 
 The joint common alpha coordinates bind first. Relation lane weights are constant over each
 low-coordinate block and are not folded during these rounds. For
@@ -419,7 +449,7 @@ The complication matrix is:
 |---|---|---|---|---|
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
-| mixed role dimensions | none | common factor uses the current-role minimum; role subcolumns map into common lanes | each claim retains its own source ring split | direct and deferred plans select projected-lane kernels |
+| mixed role dimensions | none | common factor uses the current-role minimum; role subcolumns map into common lanes | each claim retains its own source ring split | projection factors precede the shared high-address kernels |
 | EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
@@ -743,7 +773,7 @@ claims are not yet stable. Proceed in these reviewable slices:
 1. Correct names and documentation around the single
    `relation_coefficient_block_len`, and record actual rather than intended support.
 2. Stabilize the verifier before touching the prover state machine: one semantic relation
-   evaluator, one succinct evaluation-trace evaluator, local uniform specializations,
+   evaluator, one succinct evaluation-trace evaluator, deep geometry-selected kernels,
    malformed-input coverage, and PR #312 performance parity.
 3. Move prover-only relation events, trace factors, and fold storage out of `akita-types`.
    Keep only checked protocol geometry and facts consumed by both sides in the common crate.
@@ -785,19 +815,19 @@ state type; no type is introduced solely to mirror prover structure.
 For the verifier relation matrix, PR #312 is also the source-level baseline. Its prepared
 tensor/flat challenge evaluations, equality-window and affine-interval contractions,
 setup-plan reuse, and quotient-tail contraction remain the optimized primitives. The
-stabilized evaluator assembles the relation formula once and specializes those primitives
-for uniform dimensions; it does not retain the current uniform/mixed pair of complete
-formula implementations. Verifier changes relative to PR #312 require a specific semantic
+stabilized evaluator assembles the relation formula once and selects inner primitives
+from checked address geometry; it does not retain a uniform/mixed pair of complete formula
+implementations. Verifier changes relative to PR #312 require a specific semantic
 justification—mixed dimensions, compact trace ownership, no-panic hardening, removal of
 dead state, or a strictly local simplification. Equivalent rewrites and naming-only churn
 are rejected even when their measured runtime is similar.
 
 The final setup kernel is generic at `coeff_count`-ring granularity, not through dynamic
 per-coefficient dispatch. Point preparation bulk-combines equality and lane-alpha weights;
-the hot scan remains const-generic and contiguous. For the uniform case, all lane and role
-ratios are one, preparation borrows the existing E/T/Z slices, and the current
-`SetupContributionPlan` identity scan remains the executable specialization. A strategy
-or geometry match occurs once outside hot loops; no trait object, enum match, closure call,
+the hot scan remains const-generic and contiguous. One-lane unit-weight spans are fused into
+contiguous intervals by the span kernel, and compatible folded families seed one shared
+affine recurrence. These are geometry facts, not a `q == 1` verifier mode. A strategy or
+geometry match occurs once outside hot loops; no trait object, enum match, closure call,
 checked lane reconstruction, or role lookup occurs per coefficient or setup entry.
 
 | Surface | Responsibility |

@@ -1,6 +1,8 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
+use crate::AkitaError;
+use akita_field::fft::field_pow;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
 
@@ -13,6 +15,29 @@ pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
         power *= alpha;
     }
     out
+}
+
+/// Return `1, alpha^stride, alpha^(2*stride), ...` up to `len` entries.
+///
+/// This is the compact form of taking every `stride`-th entry from
+/// [`scalar_powers`]. It avoids materializing the skipped powers, which is
+/// important when a projection has only one lane.
+///
+/// # Errors
+///
+/// Returns an error when `stride` cannot be represented by the exponentiation
+/// primitive.
+pub fn scalar_powers_with_stride<F: FieldCore>(
+    alpha: F,
+    stride: usize,
+    len: usize,
+) -> Result<Vec<F>, AkitaError> {
+    if len <= 1 {
+        return Ok(scalar_powers(alpha, len));
+    }
+    let exponent = u64::try_from(stride)
+        .map_err(|_| AkitaError::InvalidInput("power stride does not fit u64".into()))?;
+    Ok(scalar_powers(field_pow(alpha, exponent), len))
 }
 
 /// Evaluate the multilinear extension of `[1, base, base², ...]`.
@@ -201,6 +226,25 @@ mod tests {
                 evaluate_power_sequence_mle(base, &point),
                 multilinear_eval(&table, &point).unwrap()
             );
+        }
+    }
+
+    #[test]
+    fn strided_scalar_powers_match_materialized_subsequence() {
+        let alpha = F::from_canonical_u128(13);
+        for stride in [1usize, 2, 7, 64] {
+            for len in 0..8usize {
+                let full = scalar_powers(alpha, stride.saturating_mul(len));
+                let expected = full
+                    .into_iter()
+                    .step_by(stride)
+                    .take(len)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    scalar_powers_with_stride(alpha, stride, len).unwrap(),
+                    expected
+                );
+            }
         }
     }
 }

@@ -18,6 +18,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         E: ExtField<F> + MulBaseUnreduced<F>,
     {
         let setup_flat = setup_view.as_slice();
+        let (e_eq_slice, t_eq_slice, z_eq_slice) = self.require_column_eq_slices()?;
         if self.required > setup_flat.len() {
             return Err(AkitaError::InvalidSetup(
                 "shared matrix is too small for selected verifier layout".into(),
@@ -25,7 +26,7 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
         }
         if d_weights.len() != d_rows
             || self.d_col_range.end > d_physical_cols
-            || self.d_col_range.len() != self.e_eq_slice.len()
+            || self.d_col_range.len() != e_eq_slice.len()
         {
             return Err(AkitaError::InvalidSetup(
                 "cached setup scan geometry is malformed".into(),
@@ -42,9 +43,9 @@ impl<E: FieldCore> SetupContributionGroupPlan<E> {
                         setup_flat,
                         base_pows,
                         segment,
-                        &self.e_eq_slice,
-                        &self.t_eq_slice,
-                        &self.z_eq_slice,
+                        e_eq_slice,
+                        t_eq_slice,
+                        z_eq_slice,
                         d_projection,
                         b_projection,
                         a_projection,

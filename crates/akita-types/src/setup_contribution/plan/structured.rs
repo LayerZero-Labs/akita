@@ -1,5 +1,5 @@
 use super::*;
-use akita_algebra::{offset_eq::eval_affine_digit_interval, ring::scalar_powers};
+use akita_algebra::{offset_eq::eval_affine_digit_intervals, ring::scalar_powers_with_stride};
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms from the same checked spans
@@ -29,12 +29,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         {
             return Err(AkitaError::InvalidProof);
         }
-        if !group.e_eq_slice.is_empty()
-            || !group.t_eq_slice.is_empty()
-            || !group.z_eq_slice.is_empty()
-        {
+        if let Some(column_slices) = group.column_eq_slices() {
             return self.evaluate_structured_group_from_slices::<F>(
                 group,
+                column_slices,
                 block_challenges,
                 opening_a_evals,
                 alpha,
@@ -51,7 +49,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .copied()
             .map(|weight| E::one().mul_base(weight))
             .collect::<Vec<_>>();
-        let lane_powers = self.group_relation_lane_powers(group, alpha);
+        let lane_powers = self.group_relation_lane_powers(group, alpha)?;
         let inner_lane_powers = &lane_powers[0];
         let (outer_subcolumns, opening_subcolumns) =
             SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
@@ -167,28 +165,30 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 "setup A fold family has no gadget digits".into(),
             ));
         }
-        evaluation += cfg_fold_reduce!(
-            0..group.a_families.len(),
-            || Ok(E::zero()),
-            |acc: Result<E, AkitaError>, family_index| {
-                let mut acc = acc?;
-                let family = group
-                    .a_families
-                    .get(family_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let dense = witness_gadget.len().is_power_of_two()
-                    && family.setup_column_start == 0
-                    && family.setup_column_stride == 1;
-                if dense {
-                    acc -= evaluate_dense_a_family(
-                        self.relation_address.point(),
-                        family,
-                        inner_lane_powers,
-                        opening_a_evals,
-                        &witness_gadget_ext,
-                        &group.fold_gadget,
-                    )? * group.consistency_weight;
-                } else {
+        let dense_a_families = witness_gadget.len().is_power_of_two()
+            && group
+                .a_families
+                .iter()
+                .all(|family| family.setup_column_start == 0 && family.setup_column_stride == 1);
+        if dense_a_families {
+            evaluation -= evaluate_dense_a_families(
+                self.relation_address.point(),
+                &group.a_families,
+                inner_lane_powers,
+                opening_a_evals,
+                &witness_gadget_ext,
+                &group.fold_gadget,
+            )? * group.consistency_weight;
+        } else {
+            evaluation += cfg_fold_reduce!(
+                0..group.a_families.len(),
+                || Ok(E::zero()),
+                |acc: Result<E, AkitaError>, family_index| {
+                    let mut acc = acc?;
+                    let family = group
+                        .a_families
+                        .get(family_index)
+                        .ok_or(AkitaError::InvalidProof)?;
                     ensure_a_family(family, inner_lane_powers, &group.fold_gadget)?;
                     for occurrence in family.occurrences() {
                         let (setup_column, relation_lane_start) = occurrence?;
@@ -219,17 +219,18 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     .ok_or(AkitaError::InvalidProof)?,
                             );
                     }
-                }
-                Ok(acc)
-            },
-            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-        )?;
+                    Ok(acc)
+                },
+                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+            )?;
+        }
         Ok(evaluation)
     }
 
     fn evaluate_structured_group_from_slices<F>(
         &self,
         group: &SetupContributionGroupPlan<E>,
+        (e_eq_slice, t_eq_slice, z_eq_slice): (&[E], &[E], &[E]),
         block_challenges: &[E],
         opening_a_evals: &[E],
         alpha: E,
@@ -262,9 +263,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .num_positions_per_block
             .checked_mul(group.depth_witness)
             .ok_or_else(|| AkitaError::InvalidSetup("structured Z width overflow".into()))?;
-        if group.e_eq_slice.len() != expected_e
-            || group.t_eq_slice.len() != expected_t
-            || group.z_eq_slice.len() != expected_z
+        if e_eq_slice.len() != expected_e
+            || t_eq_slice.len() != expected_t
+            || z_eq_slice.len() != expected_z
         {
             return Err(AkitaError::InvalidProof);
         }
@@ -274,17 +275,41 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             crate::gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
         let witness_gadget =
             crate::gadget_row_scalars::<F>(group.depth_witness, group.log_basis_inner);
-        let opening_scales = scalar_powers(alpha, group.role_dims.d_a())
+        let opening_gadget = opening_gadget
             .into_iter()
-            .step_by(group.role_dims.d_d())
+            .map(|weight| E::one().mul_base(weight))
             .collect::<Vec<_>>();
-        let outer_scales = scalar_powers(alpha, group.role_dims.d_a())
+        let commitment_gadget = commitment_gadget
             .into_iter()
-            .step_by(group.role_dims.d_b())
+            .map(|weight| E::one().mul_base(weight))
             .collect::<Vec<_>>();
+        let witness_gadget = witness_gadget
+            .into_iter()
+            .map(|weight| E::one().mul_base(weight))
+            .collect::<Vec<_>>();
+        let opening_scales =
+            scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns)?;
+        let outer_scales =
+            scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns)?;
         if opening_scales.len() != opening_subcolumns || outer_scales.len() != outer_subcolumns {
             return Err(AkitaError::InvalidSetup(
                 "structured setup projection scale count mismatch".into(),
+            ));
+        }
+        let mut t_weights = Vec::new();
+        t_weights.try_reserve_exact(t_stride).map_err(|_| {
+            AkitaError::InvalidSetup("structured T weight allocation failed".into())
+        })?;
+        for &row_weight in group.a_row_weights.iter() {
+            for &gadget in &commitment_gadget {
+                for &scale in &outer_scales {
+                    t_weights.push(row_weight * gadget * scale);
+                }
+            }
+        }
+        if t_weights.len() != t_stride {
+            return Err(AkitaError::InvalidSetup(
+                "structured T contraction weight count mismatch".into(),
             ));
         }
 
@@ -310,41 +335,24 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             .and_then(|base| base.checked_add(digit))
                             .and_then(|offset| e_start.checked_add(offset))
                             .ok_or(AkitaError::InvalidProof)?;
-                        e_weight += *group
-                            .e_eq_slice
-                            .get(offset)
-                            .ok_or(AkitaError::InvalidProof)?
+                        e_weight += *e_eq_slice.get(offset).ok_or(AkitaError::InvalidProof)?
                             * scale
-                            * E::one().mul_base(gadget);
+                            * gadget;
                     }
                 }
                 acc += challenge * group.consistency_weight * e_weight;
 
-                let mut t_weight = E::zero();
-                for a_row in 0..group.n_a {
-                    let row_weight = *group
-                        .a_row_weights
-                        .get(a_row)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                        for (subcolumn, &scale) in outer_scales.iter().enumerate() {
-                            let offset = a_row
-                                .checked_mul(group.depth_commit)
-                                .and_then(|base| base.checked_add(digit))
-                                .and_then(|base| base.checked_mul(outer_subcolumns))
-                                .and_then(|base| base.checked_add(subcolumn))
-                                .and_then(|offset| t_start.checked_add(offset))
-                                .ok_or(AkitaError::InvalidProof)?;
-                            t_weight += *group
-                                .t_eq_slice
-                                .get(offset)
-                                .ok_or(AkitaError::InvalidProof)?
-                                * row_weight
-                                * scale
-                                * E::one().mul_base(gadget);
-                        }
-                    }
-                }
+                let t_end = t_start
+                    .checked_add(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_block = t_eq_slice
+                    .get(t_start..t_end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_weight = t_block
+                    .iter()
+                    .zip(&t_weights)
+                    .map(|(&equality, &weight)| equality * weight)
+                    .sum::<E>();
                 Ok(acc + challenge * t_weight)
             },
             |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
@@ -356,13 +364,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .checked_mul(group.depth_witness)
                     .and_then(|base| base.checked_add(digit))
                     .ok_or(AkitaError::InvalidProof)?;
-                evaluation += *group
-                    .z_eq_slice
-                    .get(column)
-                    .ok_or(AkitaError::InvalidProof)?
+                evaluation += *z_eq_slice.get(column).ok_or(AkitaError::InvalidProof)?
                     * group.consistency_weight
                     * opening_a
-                    * E::one().mul_base(gadget);
+                    * gadget;
             }
         }
         Ok(evaluation)
@@ -372,48 +377,60 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         &self,
         group: &SetupContributionGroupPlan<E>,
         alpha: E,
-    ) -> [Vec<E>; 3] {
+    ) -> Result<[Vec<E>; 3], AkitaError> {
         let common = self
             .relation_address_geometry
             .relation_coefficient_block_len();
-        [
-            relation_lane_powers(alpha, group.role_dims.d_a(), common),
-            relation_lane_powers(alpha, group.role_dims.d_b(), common),
-            relation_lane_powers(alpha, group.role_dims.d_d(), common),
-        ]
+        Ok([
+            relation_lane_powers(alpha, group.role_dims.d_a(), common)?,
+            relation_lane_powers(alpha, group.role_dims.d_b(), common)?,
+            relation_lane_powers(alpha, group.role_dims.d_d(), common)?,
+        ])
     }
 }
 
-/// Contract one dense canonical A fold family as a single affine rectangle.
-fn evaluate_dense_a_family<E: FieldCore>(
+/// Contract compatible dense A fold families through one shared affine
+/// recurrence.
+fn evaluate_dense_a_families<E: FieldCore>(
     address_point: &[E],
-    span: &SetupContributionSpan,
+    spans: &[SetupContributionSpan],
     lane_powers: &[E],
     opening_a_evals: &[E],
     witness_gadget: &[E],
     fold_gadget: &[E],
 ) -> Result<E, AkitaError> {
-    if !witness_gadget.len().is_power_of_two()
-        || span.setup_column_start != 0
-        || span.setup_column_stride != 1
-    {
+    let Some(first) = spans.first() else {
+        return Ok(E::zero());
+    };
+    if !witness_gadget.len().is_power_of_two() {
         return Err(AkitaError::InvalidSetup(
-            "setup A span family is not a dense affine rectangle".into(),
+            "setup A span families are not dense affine rectangles".into(),
         ));
     }
-
-    ensure_a_family(span, lane_powers, fold_gadget)?;
-    let digit_count = span
+    for span in spans {
+        ensure_a_family(span, lane_powers, fold_gadget)?;
+        if span.setup_column_start != 0
+            || span.setup_column_stride != 1
+            || span.occurrence_count != first.occurrence_count
+            || span.relation_lane_stride != first.relation_lane_stride
+            || span.fold_lane_stride != first.fold_lane_stride
+        {
+            return Err(AkitaError::InvalidSetup(
+                "setup A span families do not share one affine geometry".into(),
+            ));
+        }
+    }
+    let digit_count = first
         .fold_count
         .checked_sub(1)
-        .and_then(|last| last.checked_mul(span.fold_lane_stride))
-        .and_then(|offset| offset.checked_add(span.relation_lane_count))
+        .and_then(|last| last.checked_mul(first.fold_lane_stride))
+        .and_then(|offset| offset.checked_add(first.relation_lane_count))
         .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?;
     let mut digit_weights = vec![E::zero(); digit_count];
     for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
         for (lane, &lane_power) in lane_powers.iter().enumerate() {
             let digit = fold_digit
-                .checked_mul(span.fold_lane_stride)
+                .checked_mul(first.fold_lane_stride)
                 .and_then(|offset| offset.checked_add(lane))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup A digit width overflow".into()))?;
             let weight = digit_weights
@@ -422,12 +439,16 @@ fn evaluate_dense_a_family<E: FieldCore>(
             *weight += fold * lane_power;
         }
     }
-    eval_affine_digit_interval(
+    let base_offsets = spans
+        .iter()
+        .map(|span| span.relation_lane_start)
+        .collect::<Vec<_>>();
+    eval_affine_digit_intervals(
         address_point,
-        span.relation_lane_start,
+        &base_offsets,
         0,
-        span.occurrence_count,
-        span.relation_lane_stride,
+        first.occurrence_count,
+        first.relation_lane_stride,
         &digit_weights,
         opening_a_evals,
         witness_gadget,
@@ -465,9 +486,9 @@ fn evaluate_single_factor_row<E: FieldCore>(
         .checked_add(span.occurrence_count)
         .ok_or_else(|| AkitaError::InvalidSetup("structured outer window overflow".into()))?;
     if outer_end > low_weights.len() {
-        return eval_affine_digit_interval(
+        return eval_affine_digit_intervals(
             address_point,
-            relation_lane_start,
+            &[relation_lane_start],
             outer_start,
             span.occurrence_count,
             span.relation_lane_stride,
@@ -496,11 +517,17 @@ fn relation_lane_powers<E: FieldCore>(
     alpha: E,
     role_dimension: usize,
     common_coeff_count: usize,
-) -> Vec<E> {
-    scalar_powers(alpha, role_dimension)
-        .into_iter()
-        .step_by(common_coeff_count)
-        .collect()
+) -> Result<Vec<E>, AkitaError> {
+    let lane_count = role_dimension
+        .checked_div(common_coeff_count)
+        .filter(|count| *count != 0 && role_dimension.is_multiple_of(common_coeff_count))
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "relation role dimension does not decompose over the common coefficient count"
+                    .into(),
+            )
+        })?;
+    scalar_powers_with_stride(alpha, common_coeff_count, lane_count)
 }
 
 fn ensure_projection_partition<E: FieldCore>(

@@ -59,7 +59,7 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.groups[0].z_eq_slice, expected);
+    assert_eq!(plan.groups[0].column_eq_slices().unwrap().2, expected);
 }
 
 #[test]

@@ -30,7 +30,10 @@ mod tensor_challenges;
 mod tests;
 
 #[cfg(feature = "benchmark-support")]
-pub use benchmark_support::{relation_evaluator_benchmark_case, RelationEvaluatorBenchmarkCase};
+pub use benchmark_support::{
+    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
+    RelationEvaluatorBenchmarkCase,
+};
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.

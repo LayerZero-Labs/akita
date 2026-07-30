@@ -77,7 +77,7 @@ where
                 )
                 .map_err(|error| {
                     AkitaError::InvalidInput(format!(
-                        "mixed relation group {} contraction failed: {error:?}",
+                        "relation group {} contraction failed: {error:?}",
                         group.group_id
                     ))
                 })?;
@@ -98,7 +98,7 @@ where
     };
     let quotient_evaluation =
         evaluate_quotient_tail::<F, E>(evaluator, &prepared_point).map_err(|error| {
-            AkitaError::InvalidInput(format!("mixed relation quotient failed: {error:?}"))
+            AkitaError::InvalidInput(format!("relation quotient failed: {error:?}"))
         })?;
 
     let relation_evaluation = structured_evaluation + setup_evaluation + quotient_evaluation;
