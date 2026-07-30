@@ -96,19 +96,32 @@ where
     let eor_opening_batch =
         OpeningClaims::with_padded_point(claims.point(), opening_num_vars, num_claims)?;
     let non_eor_protocol_point = claims.point().to_vec();
-    prepare_fold_inner::<F, E, T, P, _, C, O, TS, R>(
-        stack,
-        needs_extension_reduction,
-        claims,
-        &flat_polys,
-        &eor_opening_batch,
-        false,
-        transcript,
-        non_eor_protocol_point,
-        || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
-        root_params,
-        basis,
-    )
+    if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+        prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
+            stack,
+            claims,
+            false,
+            transcript,
+            non_eor_protocol_point,
+            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+            root_params,
+            basis,
+        )
+    } else {
+        prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
+            stack,
+            needs_extension_reduction,
+            claims,
+            &flat_polys,
+            &eor_opening_batch,
+            false,
+            transcript,
+            non_eor_protocol_point,
+            || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
+            root_params,
+            basis,
+        )
+    }
 }
 
 /// Prove the folded-root proof payload for an intermediate root.

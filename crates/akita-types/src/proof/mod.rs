@@ -32,6 +32,7 @@ pub use crate::opening_claims::{
     sample_public_row_coefficients, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
     PolynomialGroupClaims, PolynomialGroupLayout,
 };
+pub(crate) use batch::root_tensor_projection_enabled_for_width;
 pub use batch::{
     append_batched_commitments_to_transcript, append_claim_values_to_transcript,
     folded_root_supports_opening_shape, padded_scalar_batch_num_vars, prepare_opening_point,
@@ -102,7 +103,7 @@ pub use terminal_witness::TerminalWitnessTranscriptParts;
 use crate::EXTENSION_OPENING_REDUCTION_DEGREE;
 use akita_algebra::CyclotomicRing;
 use akita_field::AkitaError;
-use akita_field::{CanonicalField, FieldCore};
+use akita_field::{CanonicalField, ExtField, FieldCore};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, DEFAULT_MAX_SEQUENCE_LEN};
 use akita_serialization::{Compress, SerializationError};
 use akita_serialization::{Valid, Validate};

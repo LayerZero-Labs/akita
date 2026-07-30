@@ -13,6 +13,7 @@ This is the one part of "How it works" that stays a multi-page section, because
 the per-level interactive protocol is large. Subpages:
 
 - [Opening points and digit-innermost layout](./opening-points-layout.md)
+- [Fold path and field geometry](./fold-path.md)
 - [Root fold and ring switching](./root-fold-ring-switch.md)
 - [Sumcheck stages](./sumcheck-stages.md)
 - [Extension-opening reduction](./extension-opening-reduction.md)
