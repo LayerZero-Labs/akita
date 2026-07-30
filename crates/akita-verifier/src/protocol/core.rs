@@ -38,9 +38,9 @@ use akita_types::{
     AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams, EvaluationTraceInputs,
     ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding, FoldSchedule,
     FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PreparedOpeningPoint,
-    RecursiveFoldParams, RingRelationInstance,
-    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts,
+    RecursiveFoldParams, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
+    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
