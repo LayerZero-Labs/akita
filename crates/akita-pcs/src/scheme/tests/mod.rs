@@ -6,7 +6,7 @@ use akita_config::test_support::akita_batched_root_layout;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
-use akita_prover::{DensePoly, OneHotPoly, ProverOpeningData};
+use akita_prover::{DensePoly, MultilinearPolynomial, OneHotPoly, ProverOpeningData};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::CommittedGroupParams;
@@ -21,7 +21,7 @@ use akita_types::{
     TerminalLevelProofShape,
 };
 use akita_types::{
-    AkitaCommitmentHint, Commitment, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
+    AkitaCommitmentHint, CommittedGroup, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -48,6 +48,7 @@ mod batched;
 mod dense_group;
 mod fp32_ext4;
 mod layout;
+mod mixed_source;
 mod onehot;
 mod single;
 
@@ -156,7 +157,7 @@ fn expected_same_point_batched_shape(
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
+    commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, E, P, CommitF> {
     let group = PolynomialGroupClaims::new(
@@ -198,7 +199,7 @@ fn singleton_layout<C: CommitmentConfig>(num_vars: usize) -> CommittedGroupParam
 
 type VerifyFixture = (
     AkitaVerifierSetup<F>,
-    Commitment<F>,
+    CommittedGroup<F>,
     AkitaBatchedProof<F, F>,
     Vec<F>,
     F,

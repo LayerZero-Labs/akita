@@ -8,6 +8,7 @@ use crate::compute::{
     RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
 };
 use akita_field::MulBaseUnreduced;
+use akita_types::{GroupSource, GroupSourceEncoding};
 
 /// Inner (low) coordinate count for the factorized one-hot column-partials
 /// fast path. The high opening coordinates split into `inner_bits` low bits
@@ -48,8 +49,24 @@ where
         self.num_vars
     }
 
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        Some(self.onehot_k)
+    fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
+        let GroupSourceEncoding::SparseBinary { chunk_size } = source.encoding() else {
+            return Err(AkitaError::InvalidInput(
+                "one-hot polynomial requires a sparse-binary source encoding".to_string(),
+            ));
+        };
+        if source != GroupSource::one_hot(chunk_size) {
+            return Err(AkitaError::InvalidInput(
+                "one-hot polynomial requires the built-in one-hot registration".to_string(),
+            ));
+        }
+        if self.onehot_k != chunk_size {
+            return Err(AkitaError::InvalidInput(format!(
+                "one-hot polynomial uses chunk size {}, but the registration requires {chunk_size}",
+                self.onehot_k
+            )));
+        }
+        Ok(())
     }
 }
 

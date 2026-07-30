@@ -42,7 +42,7 @@ where
             lookup_key: Some(key.clone()),
         },
         || {
-            key.validate()?;
+            key.validate(Root::decomposition().field_bits())?;
             if key.precommitteds.is_empty() {
                 return Err(AkitaError::InvalidSetup(
                     "recursive ring-dimension transition requires precommitted groups".into(),
@@ -92,7 +92,7 @@ where
                 root_bd_ring_dim,
             )?;
             root.params.final_group.source =
-                RootSource::from_commitment(&root.params.final_group.commitment);
+                GroupSource::from_commitment(&root.params.final_group.commitment);
             root.params.open_commit_matrix = root
                 .params
                 .final_group
@@ -331,12 +331,13 @@ where
             ROOT_BD_RING_DIM,
             ROOT_BD_RING_DIM,
         )?;
-        let descriptor = akita_types::PrecommittedGroupDescriptor::from_params(
+        let descriptor = akita_types::CommittedGroupDescriptor::from_params(
             pre_group,
             &pre_schedule.root.params.final_group.commitment,
         );
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, final_np),
+            final_source: Self::group_source(),
             precommitteds: vec![descriptor, descriptor],
         };
         let schedule = recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
@@ -384,8 +385,11 @@ where
             .iter()
             .copied()
             .map(|group| {
-                let schedule = Self::runtime_schedule(AkitaScheduleLookupKey::single(group))?;
-                Ok(akita_types::PrecommittedGroupDescriptor::from_params(
+                let schedule = Self::runtime_schedule(AkitaScheduleLookupKey::single(
+                    group,
+                    Self::group_source(),
+                ))?;
+                Ok(akita_types::CommittedGroupDescriptor::from_params(
                     group,
                     &schedule.root.params.final_group.commitment,
                 ))
@@ -393,6 +397,7 @@ where
             .collect::<Result<Vec<_>, AkitaError>>()?;
         Self::runtime_schedule(AkitaScheduleLookupKey {
             final_group: opening_batch.root_final_group_layout()?,
+            final_source: Self::group_source(),
             precommitteds,
         })
     }

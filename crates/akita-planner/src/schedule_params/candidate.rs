@@ -144,6 +144,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let params = CommittedGroupParams {
+        source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -158,7 +159,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_digits_inner: delta_commit,
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
-        onehot_chunk_size: 0,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,
@@ -468,8 +468,9 @@ pub(super) fn derive_setup_prefix_group(
             FoldWitnessNorms::new(log_basis_inner, d, 1, false),
             &fold_linf_cap_config,
         )?;
-        let layout = PrecommittedGroupDescriptor {
+        let layout = CommittedGroupDescriptor {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             num_live_ring_elements_per_claim: ring_slots,
             num_positions_per_block,
             num_live_blocks,
@@ -1048,12 +1049,11 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
     let params = (CommittedGroupParams {
+        source: akita_types::GroupSource::from_config(
+            policy.decomposition,
+            policy.onehot_chunk_size,
+        ),
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -1068,7 +1068,6 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_inner,
         num_digits_outer: num_digits_open,
         num_digits_open,
-        onehot_chunk_size,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,
@@ -1113,7 +1112,7 @@ mod tests {
         .with_decomp(2, 2, 2, 2, 2)
         .expect("precommitted params");
         params.precommitted_groups = vec![PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(
+            layout: CommittedGroupDescriptor::from_params(
                 PolynomialGroupLayout::new(6, 1),
                 &precommitted,
             ),

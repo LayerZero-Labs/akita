@@ -155,7 +155,7 @@ fn assert_mixed_d_fixture_schedule(schedule: &FoldSchedule) {
 struct MixedDFixture {
     point: Vec<F>,
     openings: [F; 1],
-    commitment: akita_types::Commitment<F>,
+    commitment: akita_types::CommittedGroup<F>,
     verifier_setup: akita_types::AkitaVerifierSetup<F>,
     proof: AkitaBatchedProof<F, F>,
     serialized: Vec<u8>,
@@ -213,7 +213,7 @@ fn prove_mixed_fixture() -> MixedDFixture {
 fn verify_mixed(
     fixture: &MixedDFixture,
     proof: &AkitaBatchedProof<F, F>,
-    commitment: &akita_types::Commitment<F>,
+    commitment: &akita_types::CommittedGroup<F>,
 ) -> Result<(), AkitaError> {
     let mut verifier_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
     Scheme::batched_verify(
@@ -283,6 +283,7 @@ fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
 
     let schedule = TablelessMixedD::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
+        TablelessMixedD::group_source(),
     ))
     .expect("tableless mixed-D schedule");
     let required = setup_matrix_envelope_for_schedule(&schedule, TablelessMixedD::D)
@@ -355,7 +356,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         {
             let mut commitment = fixture.commitment.clone();
             let len = commitment.rows().coeffs().len();
-            truncate_ring_vec(&mut commitment.0, len / (ENVELOPE_D / SUFFIX_D));
+            truncate_ring_vec(&mut commitment.commitment.0, len / (ENVELOPE_D / SUFFIX_D));
             let err = verify_mixed(&fixture, &fixture.proof, &commitment)
                 .expect_err("wrong-dim root commitment must be rejected");
             let _: AkitaError = err;
@@ -364,9 +365,9 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // A value-level root commitment-row tamper must fail root replay.
         {
             let mut commitment = fixture.commitment.clone();
-            let mut coeffs = commitment.0.coeffs().to_vec();
+            let mut coeffs = commitment.commitment.0.coeffs().to_vec();
             coeffs[0] += F::one();
-            commitment.0 = RingVec::from_coeffs(coeffs);
+            commitment.commitment.0 = RingVec::from_coeffs(coeffs);
             verify_mixed(&fixture, &fixture.proof, &commitment)
                 .expect_err("tampered commitment row must be rejected");
         }

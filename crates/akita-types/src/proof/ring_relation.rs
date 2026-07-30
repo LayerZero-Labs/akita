@@ -771,7 +771,7 @@ mod tests {
     }
 
     fn multi_group_one_three_fixture() -> (CommittedGroupParams, OpeningClaimsLayout) {
-        use crate::schedule::PrecommittedGroupDescriptor;
+        use crate::schedule::CommittedGroupDescriptor;
         let fold_challenge_config = SparseChallengeConfig::production_for_ring_dim(MULTI_GROUP_D)
             .expect("multi-group test ring dimension has a production challenge");
         let lp = CommittedGroupParams::params_only(
@@ -798,7 +798,7 @@ mod tests {
         .expect("multi-group precommit params");
         certify_test_sis_bounds(&mut precommit_lp);
         let precommit = PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(
+            layout: CommittedGroupDescriptor::from_params(
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),

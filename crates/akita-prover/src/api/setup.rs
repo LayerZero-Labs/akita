@@ -287,8 +287,8 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks, InnerCommitMatrixParams,
-            OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupDescriptor, DigitBlocks,
+            InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
         };
@@ -303,8 +303,9 @@ mod tests {
         let decomposed = DigitBlocks::empty(64);
         let hint = AkitaCommitmentHint::singleton(decomposed);
         let commitment_params = PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor {
+            layout: CommittedGroupDescriptor {
                 group: PolynomialGroupLayout::singleton(6),
+                source: akita_types::GroupSource::bounded(128),
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,

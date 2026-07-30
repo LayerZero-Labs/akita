@@ -19,7 +19,7 @@ use akita_serialization::{AkitaDeserialize, AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{lagrange_weights, CommittedGroupParams, FpExtEncoding};
 use akita_types::{
-    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, Commitment,
+    AkitaBatchedProof, AkitaCommitmentHint, AkitaVerifierSetup, BasisMode, CommittedGroup,
     OpeningClaims, PolynomialGroupClaims,
 };
 use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
@@ -109,7 +109,7 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
 fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
+    commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, FF, P, CommitF> {
     let group = PolynomialGroupClaims::new(
@@ -139,7 +139,7 @@ fn verify_input<'a, FF: FieldCore, C>(
 
 type DenseFixture<FField, E, const D: usize> = (
     AkitaVerifierSetup<FField>,
-    Commitment<FField>,
+    CommittedGroup<FField>,
     AkitaBatchedProof<FField, E>,
     Vec<E>,
     E,
@@ -468,6 +468,7 @@ fn dense_d64_prove_verify() {
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(DENSE_TEST_NV),
+            Cfg::group_source(),
         ))
         .expect("schedule plan");
         assert_eq!(total_fold_levels, plan.num_fold_levels());
@@ -489,6 +490,21 @@ fn dense_d64_prove_verify() {
             verify_result.is_ok(),
             "verification must pass: {:?}",
             verify_result.err()
+        );
+
+        let mut mismatched_source = commitments[0].clone();
+        mismatched_source.descriptor.source = akita_types::GroupSource::bounded(64);
+        let mut mismatch_transcript = AkitaTranscript::<F>::new(b"akita_e2e");
+        let mismatch_result = AkitaCommitmentScheme::<Cfg>::batched_verify(
+            &proof,
+            &verifier_setup,
+            &mut mismatch_transcript,
+            verify_input(&pt[..], opening_groups[0], &mismatched_source),
+            BasisMode::Lagrange,
+        );
+        assert_invalid_proof(
+            "mismatched committed-group source descriptor",
+            mismatch_result,
         );
 
         tracing::info!(
@@ -672,9 +688,11 @@ fn small_field_d64_dense_degenerate_roots_fail_fast() {
     for result in [
         fp32::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV),
+            fp32::D64Dense::group_source(),
         )),
         fp64::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(SMALL_FIELD_TEST_NV + 1),
+            fp64::D64Dense::group_source(),
         )),
     ] {
         assert!(matches!(
@@ -693,6 +711,7 @@ fn dense_d64_tiny_roots_and_setup_capacities_are_rejected() {
         let nv = 4;
         let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
+            Cfg::group_source(),
         ))
         .expect_err("tiny roots must not produce a degenerate proof schedule");
         assert!(matches!(
@@ -722,6 +741,7 @@ fn dense_d64_adaptive_mixed_basis_roundtrip_and_serialization() {
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
+            Cfg::group_source(),
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -832,6 +852,7 @@ fn adaptive_onehot_direct_tail_uses_terminal_schedule_basis() {
 
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
+            Cfg::group_source(),
         ))
         .expect("schedule plan");
         assert_eq!(batched_total_fold_levels(&proof), plan.num_fold_levels());
@@ -870,6 +891,7 @@ fn batched_onehot_same_point_round_trip() {
         let layout = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(NV),
+            Cfg::group_source(),
         ))
         .expect("runtime schedule");
         let fold_params = std::iter::once(&plan.root.params.final_group.commitment)

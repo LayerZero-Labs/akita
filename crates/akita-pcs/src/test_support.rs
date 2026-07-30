@@ -11,7 +11,7 @@
 //! `ring_plan_test_seed`) remain in [`akita_config::test_support`].
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
-use akita_config::{policy_of, CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -21,10 +21,10 @@ use akita_types::sis::{
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, setup_prefix_slot_id, AkitaScheduleInputs,
     AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
-    RecursiveFoldParams, RecursiveFoldStep, RootFoldStep, RootSource, SetupMatrixEnvelope,
-    SisMatrixRole, SisModulusProfileId, SisTableDigest, TerminalFoldParams, TerminalFoldStep,
-    WitnessLayout, WitnessPartition,
+    DecompositionParams, FoldSchedule, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
+    RecursiveFoldParams, RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole,
+    SisModulusProfileId, SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessLayout,
+    WitnessPartition,
 };
 use std::{
     any::TypeId,
@@ -91,10 +91,9 @@ fn cached_synthetic_schedule(
 /// Test config for a multi-group root whose precommitted groups use
 /// `Envelope::D` while the final group and recursive suffix use `Final::D`.
 ///
-/// `Self::D` remains the setup-generation envelope. Runtime schedules are
-/// selected by `Final`, but [`Self::get_params_for_prove`] freezes preceding
-/// groups through `PrecommittedCommitmentConfig<Self>`, so their native
-/// dimensions are retained in the grouped schedule.
+/// `Self::D` remains the setup-generation envelope. Exact grouped runtime keys
+/// select schedules under `Final`, retaining each preceding group's frozen
+/// native descriptor.
 #[derive(Debug)]
 pub struct EnvelopeFinalGroupConfig<Envelope, Final>(PhantomData<fn() -> (Envelope, Final)>);
 
@@ -204,25 +203,15 @@ where
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {
         opening_batch.check()?;
-        let final_group = opening_batch.root_final_group_layout()?;
-        let precommitteds = opening_batch
-            .root_precommitted_group_layouts()?
-            .iter()
-            .copied()
-            .map(|group| {
-                let singleton =
-                    OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-                let params = <PrecommittedCommitmentConfig<Self> as CommitmentConfig>::
-                    get_params_for_batched_commitment(&singleton)?;
-                Ok(akita_types::PrecommittedGroupDescriptor::from_params(
-                    group, &params,
-                ))
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        Self::runtime_schedule(AkitaScheduleLookupKey {
-            final_group,
-            precommitteds,
-        })
+        if opening_batch.num_groups() != 1 {
+            return Err(AkitaError::InvalidInput(
+                "grouped schedule selection requires exact committed-group descriptors".into(),
+            ));
+        }
+        Self::runtime_schedule(AkitaScheduleLookupKey::single(
+            opening_batch.root_final_group_layout()?,
+            Self::group_source(),
+        ))
     }
 }
 

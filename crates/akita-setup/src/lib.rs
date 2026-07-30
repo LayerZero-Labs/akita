@@ -198,26 +198,28 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // `digest_effective_schedule`. Akita is still in development, so the cache
     // namespace remains v1; the digest prevents incompatible schedules from
     // aliasing within that namespace.
-    let raw_schedule =
-        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
-            Ok(schedule) => {
-                let digest = digest_effective_schedule(&schedule);
-                let mut hex = String::with_capacity(digest.len() * 2);
-                for byte in digest {
-                    let _ = write!(hex, "{byte:02x}");
-                }
-                format!(
-                    "planner_v1_nv{}_batch{}_{hex}",
-                    schedule_lookup_key.num_vars(),
-                    schedule_lookup_key.num_polynomials(),
-                )
+    let raw_schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        schedule_lookup_key,
+        Cfg::group_source(),
+    )) {
+        Ok(schedule) => {
+            let digest = digest_effective_schedule(&schedule);
+            let mut hex = String::with_capacity(digest.len() * 2);
+            for byte in digest {
+                let _ = write!(hex, "{byte:02x}");
             }
-            Err(_) => format!(
-                "miss_nv{}_batch{}",
+            format!(
+                "planner_v1_nv{}_batch{}_{hex}",
                 schedule_lookup_key.num_vars(),
                 schedule_lookup_key.num_polynomials(),
-            ),
-        };
+            )
+        }
+        Err(_) => format!(
+            "miss_nv{}_batch{}",
+            schedule_lookup_key.num_vars(),
+            schedule_lookup_key.num_polynomials(),
+        ),
+    };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -556,9 +558,9 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, DigitBlocks,
-                    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-                    PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec,
+                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupDescriptor,
+                    DigitBlocks, InnerCommitMatrixParams, OuterCommitMatrixParams,
+                    PolynomialGroupLayout, PrecommittedLevelParams, RingVec,
                     SetupPrefixPublicCommitment, SetupPrefixSlot, SisModulusProfileId,
                     SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
                 };
@@ -569,8 +571,9 @@ mod tests {
 
                 let mut setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
                 let commitment_params = PrecommittedLevelParams {
-                    layout: PrecommittedGroupDescriptor {
+                    layout: CommittedGroupDescriptor {
                         group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                        source: Cfg::group_source(),
                         num_live_ring_elements_per_claim: 1,
                         num_positions_per_block: 1,
                         num_live_blocks: 1,

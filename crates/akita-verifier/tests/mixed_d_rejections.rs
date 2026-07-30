@@ -5,8 +5,8 @@
 use akita_field::{AkitaError, Prime128OffsetA7F7 as F};
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
-    CommitmentRingDims, CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootSource, SisModulusProfileId,
+    CommitmentRingDims, CommittedGroupParams, FoldSchedule, GroupSource, RingRole, RingView,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep, SisModulusProfileId,
     TailSegmentGroupLayout, TailSegmentLayout, TerminalCommittedGroupParams, TerminalFoldParams,
     TerminalFoldStep, TerminalResponseShape, WitnessPartition,
 };
@@ -67,9 +67,7 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
+                    source: GroupSource::bounded(128),
                     challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },

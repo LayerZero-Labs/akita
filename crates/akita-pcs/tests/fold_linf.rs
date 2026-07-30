@@ -8,7 +8,7 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, Commitment,
+    sis::MAX_FOLD_GRIND_ATTEMPTS, AkitaBatchedProof, AkitaVerifierSetup, CommittedGroup,
 };
 use common::*;
 
@@ -30,7 +30,7 @@ fn bump_flat_ring_vec(flat: &mut akita_types::RingVec<F>) {
 struct TailBoundGrindFixture {
     proof: AkitaBatchedProof<F, F>,
     verifier_setup: AkitaVerifierSetup<F>,
-    commitment: Commitment<F>,
+    commitment: CommittedGroup<F>,
     point: Vec<F>,
     opening: F,
 }

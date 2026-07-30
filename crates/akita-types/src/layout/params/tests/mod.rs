@@ -81,7 +81,7 @@ fn certify_test_sis_bounds(lp: &mut CommittedGroupParams) {
 }
 
 fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayout) {
-    use crate::schedule::PrecommittedGroupDescriptor;
+    use crate::schedule::CommittedGroupDescriptor;
     let mut lp = sample_params_only()
         .with_layout(&sample_layout_lp(), 128)
         .unwrap();
@@ -108,7 +108,7 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
         precommit_lp.d_a(),
     );
     let mut layout =
-        PrecommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
+        CommittedGroupDescriptor::from_params(PolynomialGroupLayout::new(4, 1), &precommit_lp);
     layout.n_b = outer_commit_matrix.output_rank();
     layout.b_coeff_linf_bound = outer_commit_matrix.coeff_linf_bound();
     let precommit = PrecommittedLevelParams {
@@ -136,6 +136,27 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
+}
+
+#[test]
+fn grouped_fold_witness_norms_use_each_groups_source() {
+    let (mut grouped, batch) = sample_multi_group_root_params();
+    grouped.source = crate::GroupSource::one_hot(16);
+    grouped.precommitted_groups[0].layout.source = crate::GroupSource::bounded(32);
+
+    let precommitted = grouped
+        .group_params(&batch, 0)
+        .expect("precommitted group params");
+    let final_group = grouped.group_params(&batch, 1).expect("final group params");
+
+    let precommitted_norms = grouped.fold_witness_norms_for_params(precommitted);
+    let final_norms = grouped.fold_witness_norms_for_params(final_group);
+    assert_eq!(
+        precommitted_norms.infinity_norm(),
+        1u128 << (precommitted.log_basis_inner() - 1)
+    );
+    assert_eq!(final_norms.infinity_norm(), 1);
+    assert_ne!(precommitted_norms, final_norms);
 }
 
 #[test]

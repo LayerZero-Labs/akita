@@ -10,8 +10,8 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, DecompositionParams,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    DecompositionParams, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
     PrecommittedLevelParams, WitnessLayout,
 };
 
@@ -39,7 +39,7 @@ fn sis_key(
 
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
-    layout: PrecommittedGroupDescriptor,
+    layout: CommittedGroupDescriptor,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
     num_digits_inner: usize,
@@ -51,18 +51,18 @@ struct PrecommittedGroupSeed {
 /// multi-group root opening basis: `log_basis_open` is selected later by the
 /// root candidate search.
 fn freeze_precommitted_group_layout(
-    layout: &PrecommittedGroupDescriptor,
+    layout: &CommittedGroupDescriptor,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
-    layout.validate_frozen_precommit()?;
+    layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
 
     let d_a = layout.inner_ring_dimension;
     let d_b = layout.outer_ring_dimension;
     let family = policy.sis_modulus_profile;
-    let witness_decomp = DecompositionParams {
+    let witness_decomp = layout.source.decomposition(DecompositionParams {
         log_basis: layout.log_basis_inner,
         ..policy.decomposition
-    };
+    });
     let outer_decomp = DecompositionParams {
         log_basis: layout.log_basis_outer,
         ..policy.decomposition
@@ -145,11 +145,7 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
+    let onehot_chunk_size = group.layout.source.sparse_chunk_size();
     let challenge_shape = TensorChallengeShape::Flat;
     let challenge = FoldChallengeNorms {
         infinity_norm: challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
@@ -180,10 +176,10 @@ fn materialize_precommitted_group_for_open_basis(
         witness,
         &cap_config,
     )?;
-    let witness_decomposition = DecompositionParams {
+    let witness_decomposition = group.layout.source.decomposition(DecompositionParams {
         log_basis: group.layout.log_basis_inner,
         ..policy.decomposition
-    };
+    });
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
@@ -194,7 +190,7 @@ fn materialize_precommitted_group_for_open_basis(
         ring_challenge_cfg,
         challenge_shape,
         true,
-        policy.onehot_chunk_size,
+        onehot_chunk_size,
         policy.ring_subfield_norm_bound,
         group.layout.num_live_blocks,
         group.layout.group.num_polynomials(),
@@ -236,6 +232,7 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
+    final_source: akita_types::GroupSource,
 }
 
 fn multi_group_root_precommitted_group_seeds(
@@ -326,6 +323,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
         policy,
         ring_challenge_cfg,
         requested_fold_shape,
+        final_source: key.final_source,
     };
     let opening_batch = key.opening_layout()?;
     let initial_witness_len_bits = root_input_witness_len
@@ -399,16 +397,19 @@ fn multi_group_root_main_level_params_candidate(
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
     let d = policy.ring_dimension;
+    let source = ctx.final_source;
+    source.validate_for_ring_dimension(policy.decomposition.field_bits(), d)?;
     let family = policy.sis_modulus_profile;
-    let decomp = policy.decomposition;
+    let decomp = ctx.policy.decomposition;
+    let source_decomp = source.decomposition(decomp);
     let level_decomp = DecompositionParams {
         log_basis,
-        ..decomp
+        ..source_decomp
     };
     let log_basis_inner = log_basis;
     let witness_decomp = DecompositionParams {
         log_basis: log_basis_inner,
-        ..decomp
+        ..source_decomp
     };
     let num_digits_inner = num_digits_inner(witness_decomp, true);
     let num_digits_outer = num_digits_open(level_decomp);
@@ -441,7 +442,7 @@ fn multi_group_root_main_level_params_candidate(
         ctx.ring_challenge_cfg,
         fold_challenge_shape,
         true,
-        policy.onehot_chunk_size,
+        source.sparse_chunk_size(),
         policy.ring_subfield_norm_bound,
         num_live_blocks,
         main_num_polys,
@@ -502,12 +503,8 @@ fn multi_group_root_main_level_params_candidate(
         return Ok(None);
     };
 
-    let onehot_chunk_size = if decomp.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
     let params = CommittedGroupParams {
+        source,
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -522,7 +519,6 @@ fn multi_group_root_main_level_params_candidate(
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
-        onehot_chunk_size,
         fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
         num_digits_fold_one: 1,
         field_bits_hint: 0,
@@ -580,11 +576,11 @@ fn find_group_batch_schedule_inner(
     fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     setup_envelope_budget: Option<usize>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
-    key.validate()?;
+    key.validate(policy.decomposition.field_bits())?;
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
-        let scalar_policy = policy.direct_only();
+        let scalar_policy = policy.with_group_source(key.final_source).direct_only();
         return find_schedule(
             key.final_group,
             &scalar_policy,

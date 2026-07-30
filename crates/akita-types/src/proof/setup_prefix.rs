@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
+    CommittedGroupDescriptor, CommittedGroupParams, GroupSource, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -370,6 +370,10 @@ fn serialize_precommitted_level_params<W: Write>(
         .serialize_with_mode(&mut writer, compress)?;
     params
         .layout
+        .source
+        .serialize_with_mode(&mut writer, Compress::No)?;
+    params
+        .layout
         .num_live_ring_elements_per_claim
         .serialize_with_mode(&mut writer, compress)?;
     params
@@ -431,6 +435,7 @@ fn deserialize_precommitted_level_params<R: Read>(
 ) -> Result<PrecommittedLevelParams, SerializationError> {
     let group_num_vars = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let group_num_polynomials = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let source = GroupSource::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
     let num_live_ring_elements_per_claim =
         usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_positions_per_block =
@@ -452,8 +457,9 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold_one = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor {
+        layout: CommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(group_num_vars, group_num_polynomials),
+            source,
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -490,6 +496,7 @@ fn precommitted_level_params_serialized_size(
             .group
             .num_polynomials()
             .serialized_size(compress)
+        + params.layout.source.serialized_size(Compress::No)
         + params
             .layout
             .num_live_ring_elements_per_claim
@@ -1268,8 +1275,9 @@ pub fn setup_prefix_precommitted_params(
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
         {
             return Ok(PrecommittedLevelParams {
-                layout: PrecommittedGroupDescriptor {
+                layout: CommittedGroupDescriptor {
                     group: PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+                    source: GroupSource::from_commitment(prefix_params),
                     num_live_ring_elements_per_claim: ring_slots,
                     num_positions_per_block,
                     num_live_blocks,

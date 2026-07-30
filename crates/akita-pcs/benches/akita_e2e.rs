@@ -8,7 +8,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -44,7 +44,7 @@ fn random_point(nv: usize) -> Vec<F> {
 fn prover_claims<'a, P, CommitF: FieldCore>(
     point: &'a [F],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
+    commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, F, P, CommitF> {
     let group = PolynomialGroupClaims::new(

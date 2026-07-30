@@ -70,8 +70,7 @@ fn group_batch_emission_matches_supported_policy_shape() {
 fn generated_entry_rejects_root_source_policy_mismatch() {
     let catalog = fp128::D64Dense::schedule_catalog().expect("dense schedule catalog");
     let mut entry = catalog.entries[0];
-    entry.root.final_group.source =
-        akita_schedules::generated::GeneratedRootSource::OneHot { chunk_size: 256 };
+    entry.root.final_group.source = akita_types::GroupSource::one_hot(256);
     let key = AkitaScheduleLookupKey {
         final_group: entry.root.final_group.layout,
         precommitteds: entry

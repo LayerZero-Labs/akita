@@ -495,8 +495,8 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
-        InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-        PrecommittedGroupDescriptor, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
+        CommittedGroupDescriptor, GroupSource, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
         SetupPrefixVerifierSlot, SisModulusProfileId, SisTableDigest, DEFAULT_SIS_SECURITY_POLICY,
     };
 
@@ -514,8 +514,11 @@ mod tests {
 
     fn prefix_commitment_params() -> PrecommittedLevelParams {
         PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor {
+            layout: CommittedGroupDescriptor {
                 group: PolynomialGroupLayout::singleton(TEST_D.trailing_zeros() as usize),
+                source: GroupSource::Dense {
+                    coefficient_bits: 128,
+                },
                 num_live_ring_elements_per_claim: 1,
                 num_positions_per_block: 1,
                 num_live_blocks: 1,

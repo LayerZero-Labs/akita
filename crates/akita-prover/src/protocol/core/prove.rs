@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::commitment::validate_batched_onehot_chunk_size_for_params;
+use crate::api::commitment::validate_source_contract;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
@@ -88,17 +88,42 @@ where
     let opening_claims = claims.opening_claims();
     opening_claims.validate(expanded.seed())?;
     let opening_batch = opening_claims.layout()?;
-    let flat_polys = claims.flat_polys();
+    let schedule_key = claims.schedule_key()?;
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, final_group_point)?;
+    let schedule =
+        effective_batched_schedule::<Cfg>(&schedule_key, &opening_batch, final_group_point)?;
+    let root_params = &schedule.root_fold().params;
+    let final_descriptor = claims.final_descriptor()?;
+    if final_descriptor
+        != akita_types::CommittedGroupDescriptor::from_params(
+            schedule_key.final_group,
+            &root_params.final_group.commitment,
+        )
+        || root_params.precommitted_groups.len() != schedule_key.precommitteds.len()
+        || root_params
+            .precommitted_groups
+            .iter()
+            .zip(&schedule_key.precommitteds)
+            .any(|(params, descriptor)| params.commitment.layout != *descriptor)
+    {
+        return Err(AkitaError::InvalidInput(
+            "committed-group descriptors do not match the resolved schedule".to_string(),
+        ));
+    }
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
     schedule.validate_structure()?;
     let root_step = schedule.root_fold();
-    let root_commit_params = &root_step.params.final_group.commitment;
-    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, &P>(
-        &flat_polys,
-        root_commit_params,
+    for (group_index, group) in root_step.params.precommitted_groups.iter().enumerate() {
+        validate_source_contract::<Cfg::Field, &P>(
+            claims.group_polys(group_index)?,
+            group.commitment.layout.source,
+        )?;
+    }
+    let final_group_index = root_step.params.precommitted_groups.len();
+    validate_source_contract::<Cfg::Field, &P>(
+        claims.group_polys(final_group_index)?,
+        root_step.params.final_group.commitment.source,
     )?;
 
     // The transcript instance descriptor binds the setup-wide root ring

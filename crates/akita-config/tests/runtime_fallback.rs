@@ -18,8 +18,8 @@ use akita_config::{
 use akita_planner::find_group_batch_schedule;
 use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{
-    AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, RootSource,
+    AkitaScheduleLookupKey, CommittedGroupDescriptor, GroupSource, OpeningClaimsLayout,
+    PolynomialGroupLayout,
 };
 
 /// A one-point 3-poly key that no generated table carries (generated tables only
@@ -63,7 +63,10 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
     let _policy = policy_of::<Cfg>();
     let table_has_key = Cfg::schedule_catalog()
         .and_then(|table| {
-            akita_schedules::generated::table_entry(table, &AkitaScheduleLookupKey::single(key))
+            akita_schedules::generated::table_entry(
+                table,
+                &AkitaScheduleLookupKey::single(key, Cfg::group_source()),
+            )
         })
         .is_some();
     assert!(
@@ -71,7 +74,7 @@ fn check_table_miss_rejection<Cfg: CommitmentConfig>(num_vars: usize) {
         "expected a table miss for the 3-poly key; the table unexpectedly carries it"
     );
 
-    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    let err = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key, Cfg::group_source()))
         .expect_err("runtime_schedule must reject uncataloged keys");
     assert!(
         matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
@@ -88,7 +91,10 @@ fn catalog_miss_rejects_non_shipped_keys() {
 
 #[test]
 fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
-    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
+    let key = AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(18),
+        fp128::D64OneHot::group_source(),
+    );
     let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
         .expect("ordinary scalar schedule must resolve");
     let recursive = RecursiveCommitmentConfig::<fp128::D64OneHot>::runtime_schedule(key)
@@ -149,7 +155,8 @@ fn offline_planner_admits_dense_multi_group_roots() {
         .expect("dense precommit params");
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
-        precommitteds: vec![PrecommittedGroupDescriptor::from_params(
+        final_source: Cfg::group_source(),
+        precommitteds: vec![CommittedGroupDescriptor::from_params(
             pre_group,
             &pre_params,
         )],
@@ -164,9 +171,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
 
     assert_eq!(
         planned.schedule.root.params.final_group.source,
-        RootSource::Dense {
-            coefficient_bits: Cfg::decomposition().field_bits(),
-        }
+        GroupSource::bounded(Cfg::decomposition().field_bits())
     );
     assert_eq!(
         planned.schedule.root.params.precommitted_groups.len(),
@@ -205,6 +210,71 @@ fn runtime_schedule_never_panics_on_bounded_adversarial_keys() {
     ];
     for key in adversarial {
         // Must return without panicking; either branch (Ok/Err) is fine.
-        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key));
+        let _ = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
+            key,
+            fp128::D64OneHot::group_source(),
+        ));
     }
+}
+
+fn cataloged_committed_descriptor<Cfg: CommitmentConfig>(
+    group: PolynomialGroupLayout,
+    source: GroupSource,
+) -> CommittedGroupDescriptor {
+    let params = akita_config::committed_group_params::<Cfg>(&group, source)
+        .expect("cataloged heterogeneous group must resolve");
+    CommittedGroupDescriptor::from_params(group, &params)
+}
+
+#[test]
+fn mixed_group_sources_match_generated_lookup_and_reject_unlisted_order() {
+    type Cfg = fp128::D64OneHot;
+    let onehot_16 = cataloged_committed_descriptor::<Cfg>(
+        PolynomialGroupLayout::new(14, 1),
+        GroupSource::one_hot(16),
+    );
+    let dense = cataloged_committed_descriptor::<Cfg>(
+        PolynomialGroupLayout::new(15, 2),
+        GroupSource::bounded(32),
+    );
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        final_source: GroupSource::one_hot(256),
+        precommitteds: vec![onehot_16, dense],
+    };
+
+    let planned = find_group_batch_schedule(
+        &key,
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )
+    .expect("mixed one-hot/dense/one-hot group batch must plan offline");
+    let root = &planned.schedule.root.params;
+    assert_eq!(
+        root.precommitted_groups[0].descriptor.source,
+        onehot_16.source
+    );
+    assert_eq!(root.precommitted_groups[1].descriptor.source, dense.source);
+    assert_eq!(root.final_group.source, key.final_source);
+
+    let runtime = Cfg::runtime_schedule(key.clone()).expect("curated mixed catalog row");
+    assert_schedule_eq("curated mixed row replay", &runtime, &planned.schedule);
+
+    let reordered = AkitaScheduleLookupKey {
+        precommitteds: vec![dense, onehot_16],
+        ..key
+    };
+    assert_ne!(
+        key.canonical_descriptor_bytes(),
+        reordered.canonical_descriptor_bytes(),
+        "ordered per-group contracts must be part of catalog identity"
+    );
+    assert!(
+        matches!(
+            Cfg::runtime_schedule(reordered),
+            Err(akita_field::AkitaError::UnsupportedSchedule(_))
+        ),
+        "an unlisted mixed ordering must reject without runtime planner search"
+    );
 }

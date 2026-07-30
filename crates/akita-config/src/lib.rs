@@ -105,7 +105,7 @@ pub mod tensor_verifier;
 #[cfg(feature = "test-support")]
 pub mod test_support;
 mod transcript_binding;
-pub use precommitted_commitment::PrecommittedCommitmentConfig;
+pub use precommitted_commitment::{committed_group_params, PrecommittedCommitmentConfig};
 pub use proof_optimized::{ensure_schedule_fits_setup, setup_level_params_from_schedule};
 pub use recursive_commitment::RecursiveCommitmentConfig;
 pub use schedule_selection::effective_batched_schedule;
@@ -117,16 +117,6 @@ pub use transcript_binding::bind_transcript_instance_descriptor;
 /// Every validation input is *derived* from the `Cfg` impl, so the `Cfg` impl
 /// stays the one source of truth for each preset's `(D, decomposition,
 /// sis_modulus_profile, ...)`.
-/// Build the canonical schedule key for a root opening batch under `Cfg`.
-///
-/// Scalar layouts yield an empty `precommitteds` vector. Multi-group layouts
-/// freeze each earlier group through the exact precommit adapter.
-pub fn opening_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    proof_optimized::proof_optimized_schedule_key::<Cfg>(layout)
-}
-
 pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
@@ -297,6 +287,11 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         1
     }
 
+    /// Default group source contract selected by this preset.
+    fn group_source() -> akita_types::GroupSource {
+        akita_types::GroupSource::from_config(Self::decomposition(), Self::onehot_chunk_size())
+    }
+
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
     ///
@@ -440,7 +435,10 @@ mod tests {
 
         fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
             layout.check()?;
-            let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
+            let key = AkitaScheduleLookupKey::single(
+                layout.root_final_group_layout()?,
+                Self::group_source(),
+            );
             Self::runtime_schedule(key)
         }
     }
@@ -582,6 +580,7 @@ mod fp128_policy_tests {
         for &num_vars in num_vars_values {
             let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
                 PolynomialGroupLayout::singleton(num_vars),
+                Cfg::group_source(),
             ))
             .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
@@ -691,12 +690,12 @@ mod precommit_tests {
                 &singleton,
             )
             .expect("precommitted group params");
-        let precommitted = akita_types::PrecommittedGroupDescriptor::from_params(group, &params);
+        let precommitted = akita_types::CommittedGroupDescriptor::from_params(group, &params);
         let mut policy = policy_of::<fp128::D64OneHot>();
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();
         let planned = akita_planner::find_group_batch_schedule(
-            &AkitaScheduleLookupKey::single(group),
+            &AkitaScheduleLookupKey::single(group, fp128::D64OneHot::group_source()),
             &policy,
             fp128::D64OneHot::ring_challenge_config,
             fp128::D64OneHot::fold_challenge_shape_at_level,
@@ -706,7 +705,7 @@ mod precommit_tests {
 
         assert_eq!(
             precommitted,
-            akita_types::PrecommittedGroupDescriptor::from_params(group, root)
+            akita_types::CommittedGroupDescriptor::from_params(group, root)
         );
         let root_basis = fp128::D64OneHot::basis_range().0;
         assert_eq!(precommitted.log_basis_inner, root_basis);

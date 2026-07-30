@@ -7,15 +7,15 @@ use crate::compute::{
 };
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{CommitInnerWitness, RootTensorProjectionPoly};
-use akita_config::{ensure_schedule_fits_setup, CommitmentConfig, PrecommittedCommitmentConfig};
+use akita_config::{ensure_schedule_fits_setup, CommitmentConfig};
 use akita_field::parallel::*;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt, RandomSampling};
 use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
-    Commitment, CommittedGroupParams, DigitBlocks, FpExtEncoding, OpeningClaimsLayout,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    Commitment, CommittedGroup, CommittedGroupDescriptor, CommittedGroupParams, DigitBlocks,
+    FpExtEncoding, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -26,11 +26,7 @@ use akita_types::{
 pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Frozen layout, commitment rows, and prover hint for one standalone group.
-pub type CommittedGroupWithHint<F> = (
-    PrecommittedGroupDescriptor,
-    Commitment<F>,
-    AkitaCommitmentHint<F>,
-);
+pub type CommittedGroupWithHint<F> = (CommittedGroup<F>, AkitaCommitmentHint<F>);
 
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
@@ -266,59 +262,20 @@ where
     OpeningClaimsLayout::new(num_vars, polys.len())
 }
 
-pub(crate) fn validate_onehot_chunk_size_for_params<F, P>(
+pub(crate) fn validate_source_contract<F, P>(
     polys: &[P],
-    params: &CommittedGroupParams,
+    source: GroupSource,
 ) -> Result<(), AkitaError>
 where
     F: FieldCore,
     P: RootPolyMeta<F>,
 {
-    let expected = params.onehot_chunk_size;
-    if expected <= 1 {
-        return Ok(());
-    }
     for (poly_idx, poly) in polys.iter().enumerate() {
-        if let Some(actual) = poly.onehot_chunk_size() {
-            if actual != expected {
-                return Err(AkitaError::InvalidInput(format!(
-                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                     config/layout requires onehot_k={expected}"
-                )));
-            }
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_batched_onehot_chunk_size_for_params<F, P>(
-    polys: &[P],
-    params: &CommittedGroupParams,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    P: RootPolyMeta<F>,
-{
-    let expected = params.onehot_chunk_size;
-    if expected <= 1 {
-        return Ok(());
-    }
-    for (poly_idx, poly) in polys.iter().enumerate() {
-        match poly.onehot_chunk_size() {
-            Some(actual) if actual == expected => {}
-            Some(actual) => {
-                return Err(AkitaError::InvalidInput(format!(
-                    "one-hot polynomial {poly_idx} uses onehot_k={actual}, but this \
-                     config/layout requires onehot_k={expected}"
-                )));
-            }
-            None => {
-                return Err(AkitaError::InvalidInput(format!(
-                    "polynomial {poly_idx} is dense, but this config/layout requires \
-                     one-hot polynomials with onehot_k={expected}"
-                )));
-            }
-        }
+        poly.validate_group_source(source).map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "polynomial {poly_idx} does not satisfy source registration: {err}"
+            ))
+        })?;
     }
     Ok(())
 }
@@ -500,7 +457,7 @@ where
 {
     prepare_commit_inputs::<F, P>(polys, expanded)?;
     validate_commit_level_params::<F>(params, expanded)?;
-    validate_onehot_chunk_size_for_params::<F, P>(polys, params)?;
+    validate_source_contract::<F, P>(polys, params.source)?;
     commit_with_validated_params::<F, P, B>(polys, ctx, params)
 }
 
@@ -537,18 +494,11 @@ where
 }
 
 /// `ring_d` is the group-commit layout's schedule-derived ring dimension.
-fn should_transform_group_commitment<Cfg>(
-    key: &PolynomialGroupLayout,
-    ring_d: usize,
-) -> Result<bool, AkitaError>
+fn should_transform_group_commitment<Cfg>(key: &PolynomialGroupLayout, ring_d: usize) -> bool
 where
     Cfg: CommitmentConfig,
 {
-    if !root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(ring_d, key.num_vars()) {
-        return Ok(false);
-    }
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?;
-    Ok(true)
+    root_tensor_projection_enabled::<Cfg::Field, Cfg::ExtField>(ring_d, key.num_vars())
 }
 
 /// Commit a group of polynomials under config `Cfg`.
@@ -566,7 +516,7 @@ pub fn commit<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -579,24 +529,29 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
-    if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
-        // A-role tensor-projection operation at the prove schedule's root fold
-        // ring dimension.
-        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-            transform_ring_d,
-            tensor_ctx,
-            polys,
-        )?;
-        validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-        return commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-            &transformed,
-            commit_ctx,
-            &params,
-        );
-    }
-    validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
+    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
+    let (commitment, hint) =
+        if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
+            // A-role tensor-projection operation at the prove schedule's root fold
+            // ring dimension.
+            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+                transform_ring_d,
+                tensor_ctx,
+                polys,
+            )?;
+            validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
+            commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
+                &transformed,
+                commit_ctx,
+                &params,
+            )?
+        } else {
+            validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
+            commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
+        };
+    let group = opening_batch.root_final_group_layout()?;
+    let descriptor = CommittedGroupDescriptor::from_params(group, &params);
+    Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
 /// Validate a batched commitment request and derive its `OpeningClaimsLayout`.
@@ -676,6 +631,7 @@ pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
+    source: GroupSource,
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -688,15 +644,12 @@ where
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
-    let opening_batch = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-    let params =
-        <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-            &opening_batch,
-        )?;
+    source.validate(Cfg::decomposition().field_bits())?;
+    let params = akita_config::committed_group_params::<Cfg>(&key, source)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    validate_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
+    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     let (commitment, hint) =
-        if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a())? {
+        if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a()) {
             // A-role tensor-projection operation at the group layout's ring
             // dimension.
             let transform_d = params.role_dims().d_a();
@@ -713,55 +666,36 @@ where
         } else {
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
         };
-    Ok((
-        PrecommittedGroupDescriptor::from_params(key, &params),
-        commitment,
-        hint,
-    ))
-}
-
-fn precommitted_layouts_from_keys<Cfg>(
-    precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<Vec<PrecommittedGroupDescriptor>, AkitaError>
-where
-    Cfg: CommitmentConfig,
-{
-    if precommitteds.is_empty() {
-        return Err(AkitaError::InvalidInput(
-            "commit_final_group requires at least one precommitted group".to_string(),
-        ));
-    }
-    precommitteds
-        .into_iter()
-        .map(|key| {
-            key.validate()?;
-            let singleton = OpeningClaimsLayout::new(key.num_vars(), key.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(key, &params))
-        })
-        .collect()
+    let descriptor = CommittedGroupDescriptor::from_params(key, &params);
+    Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
 fn final_group_key_from_polys<Cfg, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<Cfg::Field>,
-    precommitteds: Vec<PolynomialGroupLayout>,
+    precommitteds: Vec<CommittedGroupDescriptor>,
+    final_source: GroupSource,
 ) -> Result<AkitaScheduleLookupKey, AkitaError>
 where
     Cfg: CommitmentConfig,
     P: RootPolyMeta<Cfg::Field>,
 {
     let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, P>(polys, setup)?;
+    if precommitteds.is_empty() {
+        return Err(AkitaError::InvalidInput(
+            "commit_final_group requires at least one precommitted group".to_string(),
+        ));
+    }
+    final_source.validate(Cfg::decomposition().field_bits())?;
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
         ),
-        precommitteds: precommitted_layouts_from_keys::<Cfg>(precommitteds)?,
+        final_source,
+        precommitteds,
     };
-    key.validate()?;
+    key.validate(Cfg::decomposition().field_bits())?;
     Ok(key)
 }
 
@@ -797,8 +731,9 @@ pub fn commit_final_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-    precommitteds: Vec<PolynomialGroupLayout>,
-) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+    precommitteds: Vec<CommittedGroupDescriptor>,
+    final_source: GroupSource,
+) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -809,28 +744,33 @@ where
 {
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
-    let schedule_key = final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds)?;
+    let schedule_key =
+        final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds, final_source)?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
     let params = schedule.root_fold().params.final_group.commitment.clone();
-    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
+    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())? {
-        let transform_d = params.role_dims().d_a();
-        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-            transform_d,
-            tensor_ctx,
-            polys,
-        )?;
-        commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-            &transformed,
-            commit_ctx,
-            &params,
-        )
-    } else {
-        commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
-    }
+    let (commitment, hint) =
+        if should_transform_final_group_commitment::<Cfg>(&schedule_key, params.role_dims().d_a())?
+        {
+            let transform_d = params.role_dims().d_a();
+            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+                transform_d,
+                tensor_ctx,
+                polys,
+            )?;
+            commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
+                &transformed,
+                commit_ctx,
+                &params,
+            )
+        } else {
+            commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
+        }?;
+    let descriptor = CommittedGroupDescriptor::from_params(schedule_key.final_group, &params);
+    Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
 /// Commit one polynomial bundle under config `Cfg`.
@@ -847,7 +787,7 @@ pub fn batched_commit<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -860,24 +800,29 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    validate_batched_onehot_chunk_size_for_params::<Cfg::Field, P>(polys, &params)?;
-    if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
-        // A-role tensor-projection operation at the prove schedule's root fold
-        // ring dimension.
-        let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
-            transform_ring_d,
-            tensor_ctx,
-            polys,
-        )?;
-        validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-        return commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
-            &transformed,
-            commit_ctx,
-            &params,
-        );
-    }
-    validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
-    commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
+    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
+    let (commitment, hint) =
+        if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
+            // A-role tensor-projection operation at the prove schedule's root fold
+            // ring dimension.
+            let transformed = tensor_project_roots::<Cfg::Field, P, Cfg::ExtField, B>(
+                transform_ring_d,
+                tensor_ctx,
+                polys,
+            )?;
+            validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
+            commit_with_validated_params::<Cfg::Field, RootTensorProjectionPoly<Cfg::Field>, B>(
+                &transformed,
+                commit_ctx,
+                &params,
+            )?
+        } else {
+            validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
+            commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)?
+        };
+    let group = opening_batch.root_final_group_layout()?;
+    let descriptor = CommittedGroupDescriptor::from_params(group, &params);
+    Ok((CommittedGroup::new(descriptor, commitment), hint))
 }
 
 /// Commit one polynomial bundle using already-selected level parameters.
@@ -909,7 +854,7 @@ where
 {
     prepare_batched_commit_inputs::<F, P>(polys, expanded)?;
     validate_commit_level_params::<F>(params, expanded)?;
-    validate_batched_onehot_chunk_size_for_params::<F, P>(polys, params)?;
+    validate_source_contract::<F, P>(polys, params.source)?;
     commit_with_validated_params::<F, P, B>(polys, ctx, params)
 }
 
@@ -917,6 +862,7 @@ where
 mod tests {
     use super::*;
     use crate::kernels::linear::check_decomposed_rows_i8_match;
+    use crate::DensePoly;
     use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
@@ -1037,15 +983,22 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_onehot_chunk_size(256);
+        .with_source(akita_types::GroupSource::one_hot(256));
         let wrong = OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap();
         let ok = OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap();
+        let dense =
+            DensePoly::<F>::from_field_evals(D.trailing_zeros() as usize, D, &vec![F::one(); D])
+                .expect("dense polynomial");
 
         assert!(matches!(
-            validate_onehot_chunk_size_for_params::<F, _>(&[wrong], &params),
+            validate_source_contract::<F, _>(&[wrong], params.source),
             Err(AkitaError::InvalidInput(_))
         ));
-        validate_onehot_chunk_size_for_params::<F, _>(&[ok], &params)
+        assert!(matches!(
+            validate_source_contract::<F, _>(&[dense], params.source),
+            Err(AkitaError::InvalidInput(_))
+        ));
+        validate_source_contract::<F, _>(&[ok], params.source)
             .expect("matching onehot_k should be accepted");
     }
 
@@ -1060,7 +1013,7 @@ mod tests {
             1,
             SparseChallengeConfig::pm1_only(1),
         )
-        .with_onehot_chunk_size(256);
+        .with_source(akita_types::GroupSource::one_hot(256));
         let wrong_wrapped = MultilinearPolynomial::<F, u16>::onehot(
             OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap(),
         );
@@ -1069,11 +1022,28 @@ mod tests {
         );
 
         assert!(matches!(
-            validate_onehot_chunk_size_for_params::<F, _>(&[wrong_wrapped], &params),
+            validate_source_contract::<F, _>(&[wrong_wrapped], params.source),
             Err(AkitaError::InvalidInput(_))
         ));
-        validate_onehot_chunk_size_for_params::<F, _>(&[ok_wrapped], &params)
+        validate_source_contract::<F, _>(&[ok_wrapped], params.source)
             .expect("matching wrapped onehot_k should be accepted");
+    }
+
+    #[test]
+    fn dense_source_validator_enforces_declared_coefficient_bits() {
+        let num_vars = D.trailing_zeros() as usize;
+        let within = DensePoly::<F>::from_field_evals(num_vars, D, &vec![F::from_u64(255); D])
+            .expect("bounded dense polynomial");
+        let above = DensePoly::<F>::from_field_evals(num_vars, D, &vec![F::from_u64(256); D])
+            .expect("out-of-bound dense polynomial");
+        let source = GroupSource::bounded(8);
+
+        validate_source_contract::<F, _>(&[within], source)
+            .expect("8-bit coefficients satisfy the dense contract");
+        assert!(matches!(
+            validate_source_contract::<F, _>(&[above], source),
+            Err(AkitaError::InvalidInput(_))
+        ));
     }
 
     #[test]

@@ -589,7 +589,7 @@ mod tests {
             PolynomialGroupLayout::singleton(WITNESS_VARS),
         ])
         .expect("recursive setup-prefix opening layout");
-        let group_points = vec![
+        let group_points = [
             extension_point(SETUP_PREFIX_VARS, 10),
             extension_point(WITNESS_VARS, 100),
         ];
@@ -668,7 +668,7 @@ mod tests {
         let opening_batch =
             OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::singleton(NUM_VARS)])
                 .expect("single-group opening layout");
-        let group_points = vec![extension_point(NUM_VARS, 10)];
+        let group_points = [extension_point(NUM_VARS, 10)];
         let group_point_refs = group_points.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];

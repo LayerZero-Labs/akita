@@ -16,15 +16,15 @@ use akita_prover::{AkitaProverSetup, CommittedGroupWithHint};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::{
-    dispatch_for_field, validate_ring_subfield_role, BasisMode, Commitment, FpExtEncoding,
-    PolynomialGroupLayout,
+    dispatch_for_field, validate_ring_subfield_role, BasisMode, CommittedGroup,
+    CommittedGroupDescriptor, FpExtEncoding, GroupSource,
 };
 use akita_types::{AkitaBatchedProof, AkitaCommitmentHint};
 use akita_types::{AkitaVerifierSetup, OpeningClaims};
 use std::marker::PhantomData;
 use std::time::Instant;
 
-type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
+type CommitmentWithHint<F> = (CommittedGroup<F>, AkitaCommitmentHint<F>);
 
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
@@ -166,6 +166,7 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
+        source: GroupSource,
     ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
@@ -174,7 +175,7 @@ where
         B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
     {
         Self::validate_policy_ring_dim(setup)?;
-        akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack)
+        akita_prover::commit_group::<Cfg, P, B>(polys, setup.expanded.as_ref(), stack, source)
     }
 
     /// Commit the final polynomial bundle for a multi-group root commitment.
@@ -188,8 +189,9 @@ where
         setup: &AkitaProverSetup<Cfg::Field>,
         polys: &[P],
         stack: &UniformProverStack<'_, Cfg::Field, B>,
-        precommitteds: Vec<PolynomialGroupLayout>,
-    ) -> Result<CommitmentWithHint<Cfg::Field>, AkitaError>
+        precommitteds: Vec<CommittedGroupDescriptor>,
+        final_source: GroupSource,
+    ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
     where
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field>,
@@ -202,6 +204,7 @@ where
             setup.expanded.as_ref(),
             stack,
             precommitteds,
+            final_source,
         )
     }
 
@@ -266,7 +269,7 @@ where
         proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
         setup: &AkitaVerifierSetup<Cfg::Field>,
         transcript: &mut T,
-        claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+        claims: OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
         basis: BasisMode,
     ) -> Result<(), AkitaError> {
         Self::validate_verifier_policy_ring_dim(setup)?;
@@ -284,7 +287,7 @@ fn batched_verify_inner<Cfg, T>(
     proof: &AkitaBatchedProof<Cfg::Field, Cfg::ExtField>,
     setup: &AkitaVerifierSetup<Cfg::Field>,
     transcript: &mut T,
-    claims: OpeningClaims<'_, Cfg::ExtField, &Commitment<Cfg::Field>>,
+    claims: OpeningClaims<'_, Cfg::ExtField, &CommittedGroup<Cfg::Field>>,
     basis: BasisMode,
 ) -> Result<(), AkitaError>
 where

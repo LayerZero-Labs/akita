@@ -21,8 +21,8 @@ use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, Plann
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    FoldSchedule, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
@@ -152,7 +152,7 @@ fn plan_regen<Cfg: CommitmentConfig>(
 
 /// Pure DP regeneration for `Cfg` — never consults the generated table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key))
+    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key, Cfg::group_source()))
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -174,7 +174,7 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
 fn table_backed<Cfg: CommitmentConfig>(
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key, Cfg::group_source()))
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -263,15 +263,17 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             for &precommitted_num_polynomials in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_POLYNOMIALS {
                 let precommitted_group =
                     PolynomialGroupLayout::new(pre_num_vars, precommitted_num_polynomials);
-                let Ok(params) = planner_precommitted_commit_params::<Cfg>(&precommitted_group)
+                let Ok(params) =
+                    planner_committed_group_params::<Cfg>(&precommitted_group, Cfg::group_source())
                 else {
                     continue;
                 };
                 let precommitted =
-                    PrecommittedGroupDescriptor::from_params(precommitted_group, &params);
+                    CommittedGroupDescriptor::from_params(precommitted_group, &params);
                 for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
                     let candidate = AkitaScheduleLookupKey {
                         final_group: main,
+                        final_source: Cfg::group_source(),
                         precommitteds: vec![precommitted; num_precommitted],
                     };
                     candidates.push(candidate);
@@ -288,7 +290,9 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
 fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
-        return recursive_d64_onehot_profile_keys::<fp128::D64OneHot>();
+        let mut keys = recursive_d64_onehot_profile_keys::<fp128::D64OneHot>()?;
+        keys.push(heterogeneous_d64_onehot_catalog_key::<fp128::D64OneHot>()?);
+        return Ok(keys);
     }
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHotMultiChunk>() {
         return recursive_d64_onehot_profile_keys::<fp128::D64OneHotMultiChunk>();
@@ -320,24 +324,45 @@ fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 
 fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params = planner_precommitted_commit_params::<BaseCfg>(&precommitted_group)?;
+    let precommitted_params =
+        planner_committed_group_params::<BaseCfg>(&precommitted_group, BaseCfg::group_source())?;
     let precommitted =
-        PrecommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
+        CommittedGroupDescriptor::from_params(precommitted_group, &precommitted_params);
     Ok(vec![AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
+        final_source: BaseCfg::group_source(),
         precommitteds: vec![precommitted, precommitted],
     }])
 }
 
-fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
+fn heterogeneous_d64_onehot_catalog_key<Cfg: CommitmentConfig>(
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    let onehot_group = PolynomialGroupLayout::new(14, 1);
+    let dense_group = PolynomialGroupLayout::new(15, 2);
+    let onehot_source = GroupSource::one_hot(16);
+    let dense_source = GroupSource::bounded(32);
+    let onehot_params = planner_committed_group_params::<Cfg>(&onehot_group, onehot_source)?;
+    let dense_params = planner_committed_group_params::<Cfg>(&dense_group, dense_source)?;
+    Ok(AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        final_source: GroupSource::one_hot(256),
+        precommitteds: vec![
+            CommittedGroupDescriptor::from_params(onehot_group, &onehot_params),
+            CommittedGroupDescriptor::from_params(dense_group, &dense_params),
+        ],
+    })
+}
+
+fn planner_committed_group_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
+    source: GroupSource,
 ) -> Result<CommittedGroupParams, AkitaError> {
     key.validate()?;
     let mut policy = policy_of::<Cfg>().direct_only();
     policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
     let planned = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key),
+        &AkitaScheduleLookupKey::single(*key, source),
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -375,6 +400,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
             }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
+                final_source: entry.root.final_group.source,
                 precommitteds: entry
                     .root
                     .precommitted_groups

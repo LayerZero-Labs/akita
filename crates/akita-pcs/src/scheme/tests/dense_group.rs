@@ -1,6 +1,6 @@
 use super::*;
 use crate::test_support::EnvelopeFinalGroupConfig;
-use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout, RootSource};
+use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
 
 type DenseGroupCfg = EnvelopeFinalGroupConfig<Cfg, Cfg>;
 type DenseGroupScheme = AkitaCommitmentScheme<DenseGroupCfg>;
@@ -29,25 +29,32 @@ fn dense_multi_group_root_round_trips() {
     let final_poly =
         DensePoly::<F>::from_field_evals(NUM_VARS, D, &final_evals).expect("final dense poly");
 
-    let (pre_descriptor, pre_commitment, pre_hint) =
-        DenseGroupScheme::commit_group(&setup, std::slice::from_ref(&pre_poly), &stack)
-            .expect("dense precommit");
+    let (pre_commitment, pre_hint) = DenseGroupScheme::commit_group(
+        &setup,
+        std::slice::from_ref(&pre_poly),
+        &stack,
+        DenseGroupCfg::group_source(),
+    )
+    .expect("dense precommit");
+    let pre_descriptor = pre_commitment.descriptor;
     let (final_commitment, final_hint) = DenseGroupScheme::commit_final_group(
         &setup,
         std::slice::from_ref(&final_poly),
         &stack,
-        vec![pre_descriptor.group],
+        vec![pre_descriptor],
+        DenseGroupCfg::group_source(),
     )
     .expect("dense final commit");
 
     let lookup_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::singleton(NUM_VARS),
+        final_source: DenseGroupCfg::group_source(),
         precommitteds: vec![pre_descriptor],
     };
     let schedule = DenseGroupCfg::runtime_schedule(lookup_key).expect("dense multi-group schedule");
     assert!(matches!(
-        schedule.root.params.final_group.source,
-        RootSource::Dense { .. }
+        schedule.root.params.final_group.source.encoding(),
+        akita_types::GroupSourceEncoding::Bounded { .. }
     ));
     assert_eq!(schedule.root.params.precommitted_groups.len(), 1);
 
@@ -108,6 +115,56 @@ fn dense_multi_group_root_round_trips() {
         BasisMode::Lagrange,
     )
     .expect("dense multi-group verification");
+
+    let mut wrong_source_commitment = pre_commitment.clone();
+    wrong_source_commitment.descriptor.source = GroupSource::bounded(32);
+    let wrong_source_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            pre_point.clone(),
+            vec![pre_opening],
+            &wrong_source_commitment,
+        )
+        .expect("wrong-source precommitted verifier claim"),
+        PolynomialGroupClaims::new(final_point.clone(), vec![final_opening], &final_commitment)
+            .expect("final verifier claim"),
+    ])
+    .expect("wrong-source verifier claims");
+    let mut wrong_source_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    DenseGroupScheme::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut wrong_source_transcript,
+        wrong_source_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("changed precommitted source descriptor must reject");
+
+    let mut wrong_final_descriptor = final_commitment.clone();
+    wrong_final_descriptor.descriptor.n_b = wrong_final_descriptor
+        .descriptor
+        .n_b
+        .checked_add(1)
+        .expect("test n_b increment");
+    let wrong_final_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
+            .expect("precommitted verifier claim"),
+        PolynomialGroupClaims::new(
+            final_point.clone(),
+            vec![final_opening],
+            &wrong_final_descriptor,
+        )
+        .expect("wrong final verifier claim"),
+    ])
+    .expect("wrong-final-descriptor verifier claims");
+    let mut wrong_final_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_DOMAIN);
+    DenseGroupScheme::batched_verify(
+        &proof,
+        &verifier_setup,
+        &mut wrong_final_transcript,
+        wrong_final_claims,
+        BasisMode::Lagrange,
+    )
+    .expect_err("changed final frozen descriptor must reject");
 
     let mut wrong_pre_point = pre_point;
     wrong_pre_point[0] += F::one();

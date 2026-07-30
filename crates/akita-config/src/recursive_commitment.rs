@@ -1,12 +1,12 @@
 //! Recursive setup-offloading config adapter.
 
-use crate::{CommitmentConfig, PrecommittedCommitmentConfig};
+use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, PrecommittedGroupDescriptor, SetupMatrixEnvelope,
-    SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -119,29 +119,15 @@ fn recursive_schedule_key<Cfg: CommitmentConfig>(
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
     layout.check()?;
     let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() == 1 {
-        return Ok(AkitaScheduleLookupKey::single(final_group));
+    if layout.num_groups() != 1 {
+        return Err(AkitaError::InvalidInput(
+            "grouped schedule selection requires exact committed-group descriptors".to_string(),
+        ));
     }
-    let precommitteds = layout
-        .root_precommitted_group_layouts()?
-        .iter()
-        .copied()
-        .map(|group| {
-            group.validate()?;
-            let singleton =
-                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = AkitaScheduleLookupKey {
+    Ok(AkitaScheduleLookupKey::single(
         final_group,
-        precommitteds,
-    };
-    key.validate()?;
-    Ok(key)
+        Cfg::group_source(),
+    ))
 }
 
 #[cfg(all(
@@ -183,7 +169,7 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let descriptor = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let descriptor = CommittedGroupDescriptor::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![descriptor, descriptor],
@@ -208,7 +194,7 @@ mod tests {
         let params =
             PrecommittedCommitmentConfig::<Cfg>::get_params_for_batched_commitment(&singleton)
                 .expect("recursive-catalog precommit params");
-        let expected = PrecommittedGroupDescriptor::from_params(precommitted, &params);
+        let expected = CommittedGroupDescriptor::from_params(precommitted, &params);
 
         assert_eq!(schedule.root.params.precommitted_groups.len(), 2);
         assert!(schedule

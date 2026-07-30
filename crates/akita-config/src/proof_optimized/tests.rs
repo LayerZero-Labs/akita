@@ -16,6 +16,7 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 fn setup_levels_are_exactly_root_and_recursive_folds() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
+        fp128::D64Dense::group_source(),
     ))
     .expect("generated fp128 schedule");
     let setup_levels = setup_level_params_from_schedule(&schedule);
@@ -31,6 +32,7 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
     let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(32),
+        fp128::D64OneHot::group_source(),
     ))
     .expect("generated one-hot schedule");
     schedule.validate_structure().expect("typed topology");
@@ -50,6 +52,7 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 fn setup_envelope_includes_terminal_inner_matrix() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
+        fp128::D64Dense::group_source(),
     ))
     .expect("generated fp128 schedule");
     let envelope =
@@ -78,7 +81,7 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         let key = entry.root.final_group.layout;
         let schedule = schedule_from_entry(
             entry,
-            &AkitaScheduleLookupKey::single(key),
+            &AkitaScheduleLookupKey::single(key, Cfg::group_source()),
             &policy,
             Cfg::ring_challenge_config,
             Cfg::fold_challenge_shape_at_level,

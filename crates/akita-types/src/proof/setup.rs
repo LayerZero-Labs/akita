@@ -595,8 +595,9 @@ mod tests {
 
     fn prefix_commitment_params(n_prefix: usize, d_setup: usize) -> crate::PrecommittedLevelParams {
         crate::PrecommittedLevelParams {
-            layout: crate::PrecommittedGroupDescriptor {
+            layout: crate::CommittedGroupDescriptor {
                 group: crate::PolynomialGroupLayout::singleton(n_prefix.trailing_zeros() as usize),
+                source: crate::GroupSource::bounded(128),
                 num_live_ring_elements_per_claim: n_prefix / d_setup,
                 num_positions_per_block: 1,
                 num_live_blocks: n_prefix / d_setup,

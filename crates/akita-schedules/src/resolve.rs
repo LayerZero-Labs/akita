@@ -23,7 +23,7 @@ pub fn resolve_group_batch_schedule(
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
-    key.validate()?;
+    key.validate(policy.decomposition.field_bits())?;
     validate_policy(policy)?;
     let table = catalog.ok_or_else(|| {
         AkitaError::UnsupportedSchedule(format!(
@@ -58,7 +58,10 @@ pub fn resolve_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
     resolve_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
+        &AkitaScheduleLookupKey::single(
+            key,
+            akita_types::GroupSource::from_config(policy.decomposition, policy.onehot_chunk_size),
+        ),
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,

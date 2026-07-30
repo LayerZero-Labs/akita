@@ -37,12 +37,6 @@ pub struct GeneratedCommittedGroup {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GeneratedRootSource {
-    Dense { coefficient_bits: u32 },
-    OneHot { chunk_size: u32 },
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GeneratedRootFinalChallenge {
     Flat,
     Tensor { fold_low_len: u32 },
@@ -51,14 +45,14 @@ pub enum GeneratedRootFinalChallenge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
-    pub source: GeneratedRootSource,
+    pub source: akita_types::GroupSource,
     pub challenge: GeneratedRootFinalChallenge,
     pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
-    pub descriptor: akita_types::PrecommittedGroupDescriptor,
+    pub descriptor: akita_types::CommittedGroupDescriptor,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -106,9 +100,10 @@ pub struct GeneratedFoldScheduleEntry {
 
 impl GeneratedFoldScheduleEntry {
     /// Build the runtime schedule lookup key represented by this generated row.
-    pub(crate) fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
+    pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
             final_group: self.root.final_group.layout,
+            final_source: self.root.final_group.source,
             precommitteds: self
                 .root
                 .precommitted_groups
@@ -163,7 +158,10 @@ pub use crate::{
     ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, SelectionPolicyId,
     SisSecurityPolicyId, TensorChallengeShape,
 };
-pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
+pub use akita_types::{
+    CommittedGroupDescriptor, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
+    PolynomialGroupLayout,
+};
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
 
@@ -202,6 +200,12 @@ pub fn generated_schedule_key_cmp(
         .cmp(&right_main)
         .then_with(|| {
             left.root
+                .final_group
+                .source
+                .cmp(&right.root.final_group.source)
+        })
+        .then_with(|| {
+            left.root
                 .precommitted_groups
                 .len()
                 .cmp(&right.root.precommitted_groups.len())
@@ -235,6 +239,7 @@ pub fn generated_schedule_key_cmp_runtime(
     );
     left_main
         .cmp(&right_main)
+        .then_with(|| generated.root.final_group.source.cmp(&runtime.final_source))
         .then_with(|| {
             generated
                 .root
@@ -273,6 +278,7 @@ pub fn runtime_schedule_key_cmp(
     );
     left_main
         .cmp(&right_main)
+        .then_with(|| left.final_source.cmp(&right.final_source))
         .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
         .then_with(|| {
             left.precommitteds
@@ -282,24 +288,28 @@ pub fn runtime_schedule_key_cmp(
         })
 }
 
+type CommittedGroupSortKey = (
+    usize,
+    usize,
+    akita_types::GroupSource,
+    usize,
+    usize,
+    usize,
+    u32,
+    u32,
+    usize,
+    usize,
+    usize,
+    usize,
+);
+
 fn precommitted_group_sort_key(
-    key: &akita_types::PrecommittedGroupDescriptor,
-) -> (
-    usize,
-    usize,
-    usize,
-    usize,
-    usize,
-    u32,
-    u32,
-    usize,
-    usize,
-    usize,
-    usize,
-) {
+    key: &akita_types::CommittedGroupDescriptor,
+) -> CommittedGroupSortKey {
     (
         key.group.num_vars(),
         key.group.num_polynomials(),
+        key.source,
         key.num_live_ring_elements_per_claim,
         key.num_positions_per_block,
         key.num_live_blocks,
@@ -317,6 +327,7 @@ fn schedule_key_eq(
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
     generated.root.final_group.layout == key.final_group
+        && generated.root.final_group.source == key.final_source
         && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root
@@ -327,10 +338,11 @@ fn schedule_key_eq(
 }
 
 fn precommitted_group_key_eq(
-    generated: &akita_types::PrecommittedGroupDescriptor,
-    layout: &akita_types::PrecommittedGroupDescriptor,
+    generated: &akita_types::CommittedGroupDescriptor,
+    layout: &akita_types::CommittedGroupDescriptor,
 ) -> bool {
     generated.group == layout.group
+        && generated.source == layout.source
         && generated.num_live_ring_elements_per_claim == layout.num_live_ring_elements_per_claim
         && generated.num_positions_per_block == layout.num_positions_per_block
         && generated.num_live_blocks == layout.num_live_blocks
@@ -347,11 +359,12 @@ fn precommitted_group_key_eq(
 #[cfg(test)]
 mod mixed_dimension_key_tests {
     use super::{precommitted_group_key_eq, precommitted_group_sort_key};
-    use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
+    use akita_types::{CommittedGroupDescriptor, GroupSource, PolynomialGroupLayout};
 
-    fn descriptor() -> PrecommittedGroupDescriptor {
-        PrecommittedGroupDescriptor {
+    fn descriptor() -> CommittedGroupDescriptor {
+        CommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(12, 1),
+            source: GroupSource::bounded(128),
             num_live_ring_elements_per_claim: 64,
             num_positions_per_block: 8,
             num_live_blocks: 8,
@@ -370,11 +383,11 @@ mod mixed_dimension_key_tests {
     fn precommitted_key_identity_includes_both_native_ring_dimensions() {
         let base = descriptor();
         for changed in [
-            PrecommittedGroupDescriptor {
+            CommittedGroupDescriptor {
                 inner_ring_dimension: 64,
                 ..base
             },
-            PrecommittedGroupDescriptor {
+            CommittedGroupDescriptor {
                 outer_ring_dimension: 32,
                 ..base
             },

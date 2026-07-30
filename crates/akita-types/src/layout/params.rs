@@ -70,6 +70,8 @@ pub fn shared_d_digit_log_basis(
 /// single authoritative struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroupParams {
+    /// Exact coefficient class committed by this group.
+    pub source: crate::GroupSource,
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -100,15 +102,6 @@ pub struct CommittedGroupParams {
     pub num_digits_outer: usize,
     /// Gadget decomposition depth for D/opening evaluations.
     pub num_digits_open: usize,
-    /// One-hot chunk size `K` of the committed witness at this level, used to
-    /// derive the per-block witness L1 mass `nonzeros = ceil(D/K)` for the
-    /// folded-witness `min(||c||_inf·||s||_1, ||c||_1·||s||_inf)` bound.
-    ///
-    /// `0` means the level commits a dense witness (balanced gadget digits:
-    /// `||s||_inf = b/2`, `nonzeros = D`). A non-zero value `K` means the level
-    /// commits a one-hot witness (`||s||_inf = 1`, `nonzeros = ceil(D/K)`);
-    /// this is only ever set on a root level whose `log_commit_bound == 1`.
-    pub onehot_chunk_size: usize,
     /// Level-static fold-linf cap inputs for [`crate::sis::fold_witness_digit_plan`].
     pub fold_linf_cap_config: FoldWitnessLinfCapConfig,
     /// Cached [`Self::num_digits_fold`] at `num_claims = 1` for the preset
@@ -178,6 +171,7 @@ impl CommittedGroupParams {
         fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
+            source: crate::GroupSource::bounded(128),
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -216,7 +210,6 @@ impl CommittedGroupParams {
             num_digits_inner: 0,
             num_digits_outer: 0,
             num_digits_open: 0,
-            onehot_chunk_size: 0,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
             num_digits_fold_one: 1,
             field_bits_hint: 0,
@@ -283,14 +276,15 @@ impl CommittedGroupParams {
     }
 
     /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
-    /// witness at this level (one-hot vs dense, see [`Self::onehot_chunk_size`]).
+    /// witness at this level (one-hot vs dense, see [`Self::source`]).
     #[inline]
     pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
-        let is_onehot = self.onehot_chunk_size > 0;
+        let onehot_chunk_size = self.source.sparse_chunk_size();
+        let is_onehot = onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
             self.log_basis_inner,
             self.d_a(),
-            if is_onehot { self.onehot_chunk_size } else { 1 },
+            if is_onehot { onehot_chunk_size } else { 1 },
             is_onehot,
         )
     }
@@ -301,11 +295,12 @@ impl CommittedGroupParams {
         &self,
         params: &(impl LevelParamsLike + ?Sized),
     ) -> crate::sis::FoldWitnessNorms {
-        let is_onehot = self.onehot_chunk_size > 0;
+        let onehot_chunk_size = params.source().sparse_chunk_size();
+        let is_onehot = onehot_chunk_size > 0;
         crate::sis::FoldWitnessNorms::new(
             params.log_basis_inner(),
             params.inner_commit_matrix_params().ring_dimension(),
-            if is_onehot { self.onehot_chunk_size } else { 1 },
+            if is_onehot { onehot_chunk_size } else { 1 },
             is_onehot,
         )
     }
@@ -671,11 +666,11 @@ impl CommittedGroupParams {
         })
     }
 
-    /// Set the one-hot chunk size `K`, returning the updated params.
+    /// Set the exact group source contract, returning the updated params.
     #[inline]
     #[must_use]
-    pub fn with_onehot_chunk_size(mut self, onehot_chunk_size: usize) -> Self {
-        self.onehot_chunk_size = onehot_chunk_size;
+    pub fn with_source(mut self, source: crate::GroupSource) -> Self {
+        self.source = source;
         self
     }
 
@@ -794,7 +789,7 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);
-        push_usize(bytes, self.onehot_chunk_size);
+        self.source.append_descriptor_bytes(bytes);
         // Chunk binding is appended only when the level is chunked, so
         // single-chunk descriptors stay byte-for-byte identical to the historical
         // layout (the flag-off no-op invariant). When chunked, bind the chunk
@@ -1303,6 +1298,7 @@ impl CommittedGroupParams {
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
+            source: self.source,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
@@ -1341,7 +1337,6 @@ impl CommittedGroupParams {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            onehot_chunk_size: self.onehot_chunk_size,
             fold_linf_cap_config: self.fold_linf_cap_config,
             num_digits_fold_one: self.num_digits_fold_one,
             field_bits_hint: self.field_bits_hint,
@@ -1377,6 +1372,7 @@ impl CommittedGroupParams {
         field_bits: u32,
     ) -> Result<Self, AkitaError> {
         Self {
+            source: other.source,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,
@@ -1415,7 +1411,6 @@ impl CommittedGroupParams {
             num_digits_inner: other.num_digits_inner,
             num_digits_outer: other.num_digits_outer,
             num_digits_open: other.num_digits_open,
-            onehot_chunk_size: other.onehot_chunk_size,
             fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
             num_digits_fold_one: 1,
             field_bits_hint: 0,

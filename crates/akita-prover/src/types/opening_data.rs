@@ -4,27 +4,102 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, CommittedGroupParams, OpeningClaims, OpeningClaimsLayout,
+    AkitaCommitmentHint, AkitaScheduleLookupKey, Commitment, CommittedGroup,
+    CommittedGroupDescriptor, CommittedGroupParams, OpeningClaims, OpeningClaimsLayout,
     PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
 };
+
+fn schedule_key_from_committed_claims<F: Clone, CommitF: FieldCore>(
+    claims: &OpeningClaims<'_, F, CommittedGroup<CommitF>>,
+) -> Result<AkitaScheduleLookupKey, AkitaError> {
+    let (final_group, precommitteds) = claims
+        .groups()
+        .split_last()
+        .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?;
+    let final_descriptor = *final_group.commitment().descriptor();
+    if final_descriptor.group.num_polynomials() != final_group.num_evaluations()
+        || final_descriptor.group.num_vars() != final_group.num_vars()
+    {
+        return Err(AkitaError::InvalidInput(
+            "final committed-group descriptor does not match its claims".to_string(),
+        ));
+    }
+    for group in precommitteds {
+        let descriptor = group.commitment().descriptor();
+        if descriptor.group.num_polynomials() != group.num_evaluations()
+            || descriptor.group.num_vars() != group.num_vars()
+        {
+            return Err(AkitaError::InvalidInput(
+                "precommitted-group descriptor does not match its claims".to_string(),
+            ));
+        }
+    }
+    let key = AkitaScheduleLookupKey {
+        final_group: final_descriptor.group,
+        final_source: final_descriptor.source,
+        precommitteds: precommitteds
+            .iter()
+            .map(|group| *group.commitment().descriptor())
+            .collect(),
+    };
+    Ok(key)
+}
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, P, CommitF: FieldCore> {
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
+    schedule_key: Option<AkitaScheduleLookupKey>,
+    final_descriptor: Option<CommittedGroupDescriptor>,
     hints: Vec<AkitaCommitmentHint<CommitF>>,
     polynomials: Vec<&'a [&'a P]>,
 }
 
 impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, CommitF> {
-    /// Bundle public claims with matching prover hints and polynomial groups.
-    pub fn new(
+    fn new_internal(
         opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError> {
         let data = Self {
             opening_claims,
+            schedule_key: None,
+            final_descriptor: None,
+            hints,
+            polynomials,
+        };
+        data.check_alignment()?;
+        Ok(data)
+    }
+
+    /// Bundle public claims with matching prover hints and polynomial groups.
+    pub fn new(
+        opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
+        hints: Vec<AkitaCommitmentHint<CommitF>>,
+        polynomials: Vec<&'a [&'a P]>,
+    ) -> Result<Self, AkitaError> {
+        let schedule_key = schedule_key_from_committed_claims(&opening_claims)?;
+        let raw_groups = opening_claims
+            .groups()
+            .iter()
+            .map(|group| {
+                PolynomialGroupClaims::new(
+                    group.point().to_vec(),
+                    group.evaluations().to_vec(),
+                    group.commitment().commitment().clone(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let final_descriptor = *opening_claims
+            .groups()
+            .last()
+            .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?
+            .commitment()
+            .descriptor();
+        let data = Self {
+            opening_claims: OpeningClaims::from_groups(raw_groups)?,
+            schedule_key: Some(schedule_key),
+            final_descriptor: Some(final_descriptor),
             hints,
             polynomials,
         };
@@ -87,6 +162,20 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
     /// Public claims carried by this prover input.
     pub fn opening_claims(&self) -> &OpeningClaims<'a, PointF, Commitment<CommitF>> {
         &self.opening_claims
+    }
+
+    /// Exact ordered schedule key carried by the committed groups.
+    pub fn schedule_key(&self) -> Result<AkitaScheduleLookupKey, AkitaError> {
+        self.schedule_key.clone().ok_or_else(|| {
+            AkitaError::InvalidInput("top-level opening data requires committed descriptors".into())
+        })
+    }
+
+    /// Exact frozen descriptor returned with the final public commitment.
+    pub fn final_descriptor(&self) -> Result<CommittedGroupDescriptor, AkitaError> {
+        self.final_descriptor.ok_or_else(|| {
+            AkitaError::InvalidInput("top-level opening data requires a final descriptor".into())
+        })
     }
 
     /// Layout-only opening geometry derived from prover polynomials.
@@ -269,7 +358,15 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
                 "fold input group coverage mismatch".to_string(),
             ));
         }
-        ProverOpeningData::new(self.opening_claims, self.hints, regrouped)
+        let data = ProverOpeningData {
+            opening_claims: self.opening_claims,
+            schedule_key: self.schedule_key,
+            final_descriptor: self.final_descriptor,
+            hints: self.hints,
+            polynomials: regrouped,
+        };
+        data.check_alignment()?;
+        Ok(data)
     }
 }
 
@@ -308,7 +405,7 @@ where
         let mut padded_point = opening_point.to_vec();
         padded_point.resize(recursive_num_vars, PointF::zero());
         let claims = PolynomialGroupClaims::new(padded_point, vec![PointF::zero()], commitment.0)?;
-        ProverOpeningData::new(
+        ProverOpeningData::new_internal(
             OpeningClaims::from_groups(vec![claims])?,
             vec![commitment.1],
             vec![witness_polys],
@@ -402,7 +499,7 @@ where
         )?;
         let witness_group =
             PolynomialGroupClaims::new(witness_point, vec![witness_eval], witness_commitment)?;
-        ProverOpeningData::new(
+        ProverOpeningData::new_internal(
             OpeningClaims::from_groups(vec![setup_group, witness_group])?,
             vec![setup_hint, witness_hint],
             vec![setup_polys, witness_polys],
@@ -417,7 +514,7 @@ mod tests {
     use akita_field::Fp32;
     use akita_transcript::labels::ABSORB_COMMITMENT;
     use akita_transcript::AkitaTranscript;
-    use akita_types::{PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId};
+    use akita_types::{CommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId};
 
     type F = Fp32<251>;
 
@@ -491,7 +588,7 @@ mod tests {
         .with_decomp(1, 1, 1, 1, 1)
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
-            layout: PrecommittedGroupDescriptor::from_params(pre_layout, &pre),
+            layout: CommittedGroupDescriptor::from_params(pre_layout, &pre),
             inner_commit_matrix: pre.inner_commit_matrix,
             outer_commit_matrix: pre.outer_commit_matrix,
             log_basis_open: pre.log_basis_open,
@@ -519,7 +616,7 @@ mod tests {
             .expect("final group"),
         ])
         .expect("claims");
-        ProverOpeningData::new(
+        ProverOpeningData::new_internal(
             claims,
             vec![empty_hint(), empty_hint()],
             vec![pre_refs, final_refs],

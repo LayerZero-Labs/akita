@@ -30,7 +30,7 @@ fn root_params(schedule: &akita_types::FoldSchedule) -> Result<&CommittedGroupPa
 fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSummary, AkitaError> {
     let key = PolynomialGroupLayout::new(num_vars, 1);
     let schedule = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(key),
+        &AkitaScheduleLookupKey::single(key, Cfg::group_source()),
         policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

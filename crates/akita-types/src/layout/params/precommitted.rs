@@ -2,7 +2,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
 use crate::descriptor_bytes::push_usize;
-use crate::schedule::PrecommittedGroupDescriptor;
+use crate::schedule::CommittedGroupDescriptor;
 use crate::sis::{InnerCommitMatrixParams, OuterCommitMatrixParams};
 use crate::CommitmentRingDims;
 
@@ -15,7 +15,7 @@ use super::CommittedGroupParams;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PrecommittedLevelParams {
     /// Frozen standalone group layout bound into the multi-group root key.
-    pub layout: PrecommittedGroupDescriptor,
+    pub layout: CommittedGroupDescriptor,
     /// Inner Ajtai matrix (A) used by this group.
     pub inner_commit_matrix: InnerCommitMatrixParams,
     /// Outer commitment matrix (B) used by this group.
@@ -48,7 +48,8 @@ impl PrecommittedLevelParams {
 
     /// Validate role ownership and exact A/B widths for serialized group params.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        self.layout.validate()?;
+        self.layout
+            .validate(self.inner_commit_matrix.sis_modulus_profile().field_bits())?;
         if self.fold_challenge_config.weight() != 0 {
             self.fold_challenge_config
                 .validate_for_ring_dim(self.layout.inner_ring_dimension)
@@ -173,6 +174,7 @@ impl PrecommittedLevelParams {
 /// Use this trait when code only needs the shared commitment geometry carried
 /// by both [`CommittedGroupParams`] and [`PrecommittedLevelParams`].
 pub trait LevelParamsLike {
+    fn source(&self) -> crate::GroupSource;
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams;
     fn a_rows_len(&self) -> usize;
     fn a_col_len(&self) -> usize;
@@ -195,6 +197,10 @@ pub trait LevelParamsLike {
 }
 
 impl LevelParamsLike for CommittedGroupParams {
+    fn source(&self) -> crate::GroupSource {
+        self.source
+    }
+
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.inner_commit_matrix
     }
@@ -273,6 +279,10 @@ impl LevelParamsLike for CommittedGroupParams {
 }
 
 impl LevelParamsLike for PrecommittedLevelParams {
+    fn source(&self) -> crate::GroupSource {
+        self.layout.source
+    }
+
     fn inner_commit_matrix_params(&self) -> &InnerCommitMatrixParams {
         &self.inner_commit_matrix
     }

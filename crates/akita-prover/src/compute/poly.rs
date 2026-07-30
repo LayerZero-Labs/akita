@@ -13,6 +13,7 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::RandomSampling;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
+use akita_types::GroupSource;
 
 /// D-free shape metadata every root polynomial exposes.
 ///
@@ -36,11 +37,15 @@ where
     /// Total number of variables (representation-derived, D-independent).
     fn num_vars(&self) -> usize;
 
-    /// One-hot chunk size for sparse one-hot backends.
+    /// Validate this concrete representation against a registered group source.
     ///
-    /// `None` means this backend is not a one-hot root representation.
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
+    /// This is the prover-side registration boundary. The public
+    /// [`GroupSource`] remains erased and serializable; each backend owns the
+    /// check that its values satisfy the registration and certified encoding.
+    fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
+        Err(AkitaError::InvalidInput(format!(
+            "polynomial backend does not implement source registration {source:?}"
+        )))
     }
 }
 
@@ -980,7 +985,7 @@ where
         RootPolyMeta::num_vars(*self)
     }
 
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        RootPolyMeta::onehot_chunk_size(*self)
+    fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
+        RootPolyMeta::validate_group_source(*self, source)
     }
 }

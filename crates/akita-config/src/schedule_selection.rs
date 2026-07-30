@@ -4,7 +4,7 @@ use crate::CommitmentConfig;
 use akita_field::{AkitaError, FieldCore};
 use akita_types::{
     dispatch_for_field, folded_root_supports_opening_shape, root_tensor_projection_enabled,
-    FoldSchedule, FpExtEncoding, OpeningClaimsLayout,
+    AkitaScheduleLookupKey, FoldSchedule, FpExtEncoding, OpeningClaimsLayout,
 };
 
 /// Select the effective folded runtime schedule for a batched opening.
@@ -20,6 +20,7 @@ use akita_types::{
 /// Returns an error when schedule lookup fails or an unsupported ring dimension
 /// is encountered during dispatch.
 pub fn effective_batched_schedule<Cfg>(
+    key: &AkitaScheduleLookupKey,
     opening_batch: &OpeningClaimsLayout,
     final_group_point: &[Cfg::ExtField],
 ) -> Result<FoldSchedule, AkitaError>
@@ -29,7 +30,12 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
 {
     let num_vars = opening_batch.max_num_vars();
-    let schedule = Cfg::get_params_for_prove(opening_batch)?;
+    if key.opening_layout()? != *opening_batch {
+        return Err(AkitaError::InvalidInput(
+            "committed-group descriptors do not match the opening layout".to_string(),
+        ));
+    }
+    let schedule = Cfg::runtime_schedule(key.clone())?;
     schedule.validate_structure()?;
     let root_step = &schedule.root;
     let root_params = &root_step.params.final_group.commitment;

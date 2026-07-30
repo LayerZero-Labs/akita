@@ -41,7 +41,7 @@ pub use batch::{
     PreparedOpeningPoint, RingMultiplierOpeningPoint,
 };
 pub use commitment::{
-    AkitaCommitment, Commitment, DummyProof, ProverCommitmentRows, RingCommitment,
+    AkitaCommitment, Commitment, CommittedGroup, DummyProof, ProverCommitmentRows, RingCommitment,
 };
 pub use containers::{
     append_flat_coefficients, DigitBlockIter, DigitBlocks, FlatCoeffSerializer, RingVec, RingView,

@@ -9,15 +9,14 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisMatrixRole,
 };
 use akita_types::{
-    AkitaScheduleLookupKey, DecompositionParams, PrecommittedGroupDescriptor,
-    PrecommittedLevelParams,
+    AkitaScheduleLookupKey, CommittedGroupDescriptor, DecompositionParams, PrecommittedLevelParams,
 };
 
 use crate::PlannerPolicy;
 
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
-    layout: PrecommittedGroupDescriptor,
+    layout: CommittedGroupDescriptor,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
     num_digits_inner: usize,
@@ -25,18 +24,18 @@ struct PrecommittedGroupSeed {
 }
 
 fn freeze_precommitted_group_layout(
-    layout: &PrecommittedGroupDescriptor,
+    layout: &CommittedGroupDescriptor,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
-    layout.validate_frozen_precommit()?;
+    layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
 
     let d_a = layout.inner_ring_dimension;
     let d_b = layout.outer_ring_dimension;
     let family = policy.sis_modulus_profile;
-    let witness_decomp = DecompositionParams {
+    let witness_decomp = layout.source.decomposition(DecompositionParams {
         log_basis: layout.log_basis_inner,
         ..policy.decomposition
-    };
+    });
     let outer_decomp = DecompositionParams {
         log_basis: layout.log_basis_outer,
         ..policy.decomposition
@@ -114,11 +113,7 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-        policy.onehot_chunk_size
-    } else {
-        0
-    };
+    let onehot_chunk_size = group.layout.source.sparse_chunk_size();
     let challenge_shape = TensorChallengeShape::Flat;
     let challenge = FoldChallengeNorms {
         infinity_norm: challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
@@ -149,10 +144,10 @@ fn materialize_precommitted_group_for_open_basis(
         witness,
         &cap_config,
     )?;
-    let witness_decomposition = DecompositionParams {
+    let witness_decomposition = group.layout.source.decomposition(DecompositionParams {
         log_basis: group.layout.log_basis_inner,
         ..policy.decomposition
-    };
+    });
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
@@ -163,7 +158,7 @@ fn materialize_precommitted_group_for_open_basis(
         ring_challenge_cfg,
         challenge_shape,
         true,
-        policy.onehot_chunk_size,
+        onehot_chunk_size,
         policy.ring_subfield_norm_bound,
         group.layout.num_live_blocks,
         group.layout.group.num_polynomials(),

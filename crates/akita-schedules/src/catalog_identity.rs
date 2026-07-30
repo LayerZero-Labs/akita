@@ -12,7 +12,7 @@ use std::sync::{LazyLock, Mutex};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
-use akita_types::{AkitaScheduleInputs, PolynomialGroupLayout, PrecommittedGroupDescriptor};
+use akita_types::{AkitaScheduleInputs, CommittedGroupDescriptor, PolynomialGroupLayout};
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
@@ -478,6 +478,7 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
     let mut h = Fnv64::new();
     for entry in entries {
         write_generated_schedule_key(&mut h, entry.root.final_group.layout);
+        write_generated_source(&mut h, entry.root.final_group.source);
         write_generated_group(&mut h, entry.root.final_group.commitment);
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
@@ -541,8 +542,9 @@ fn write_generated_schedule_key(h: &mut Fnv64, key: PolynomialGroupLayout) {
     h.write_u64(key.num_polynomials() as u64);
 }
 
-fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroupDescriptor) {
+fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupDescriptor) {
     write_generated_schedule_key(h, key.group);
+    write_generated_source(h, key.source);
     h.write_u64(key.num_live_ring_elements_per_claim as u64);
     h.write_u64(key.num_positions_per_block as u64);
     h.write_u64(key.num_live_blocks as u64);
@@ -554,6 +556,22 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &PrecommittedGroup
     h.write_bytes(&key.a_coeff_linf_bound.to_le_bytes());
     h.write_u64(key.n_b as u64);
     h.write_bytes(&key.b_coeff_linf_bound.to_le_bytes());
+}
+
+fn write_generated_source(h: &mut Fnv64, source: akita_types::GroupSource) {
+    let registration = source.registration();
+    h.write_bytes(&registration.type_id());
+    h.write_bytes(&registration.parameters());
+    match source.encoding() {
+        akita_types::GroupSourceEncoding::Bounded { coefficient_bits } => {
+            h.write_u64(0);
+            h.write_u64(u64::from(coefficient_bits));
+        }
+        akita_types::GroupSourceEncoding::SparseBinary { chunk_size } => {
+            h.write_u64(1);
+            h.write_u64(chunk_size as u64);
+        }
+    }
 }
 
 pub fn ring_challenge_config_digest(
@@ -612,5 +630,33 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_types::GroupSource;
+
+    fn source_digest(source: GroupSource) -> u64 {
+        let mut h = Fnv64::new();
+        write_generated_source(&mut h, source);
+        h.finish()
+    }
+
+    #[test]
+    fn generated_source_identity_distinguishes_kind_and_bound() {
+        let digests = [
+            source_digest(GroupSource::bounded(32)),
+            source_digest(GroupSource::bounded(64)),
+            source_digest(GroupSource::one_hot(16)),
+            source_digest(GroupSource::one_hot(256)),
+        ];
+        for (index, digest) in digests.iter().enumerate() {
+            assert!(
+                !digests[..index].contains(digest),
+                "generated source identity collision at index {index}"
+            );
+        }
     }
 }

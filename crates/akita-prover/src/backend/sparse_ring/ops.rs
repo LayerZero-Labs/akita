@@ -5,7 +5,7 @@ use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
     MulBaseUnreduced,
 };
-use akita_types::FpExtEncoding;
+use akita_types::{FpExtEncoding, GroupSource, GroupSourceEncoding};
 
 use super::SparseRingPoly;
 use crate::backend::RootTensorProjectionPoly;
@@ -47,6 +47,21 @@ where
 
     fn num_vars(&self) -> usize {
         self.num_vars
+    }
+
+    fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
+        let GroupSourceEncoding::Bounded { coefficient_bits } = source.encoding() else {
+            return Err(AkitaError::InvalidInput(
+                "signed sparse-ring polynomial requires a bounded source encoding".to_string(),
+            ));
+        };
+        if source != GroupSource::bounded(coefficient_bits) || coefficient_bits < 1 {
+            return Err(AkitaError::InvalidInput(
+                "signed sparse-ring polynomial requires the built-in bounded registration"
+                    .to_string(),
+            ));
+        }
+        Ok(())
     }
 }
 

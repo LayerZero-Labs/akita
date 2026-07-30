@@ -3,13 +3,13 @@
 //! Presets are unit structs that bind [`CommitmentConfig`] hooks to
 //! [`akita_types`] SIS primitives and generated schedule tables.
 
-use super::{CommitmentConfig, PrecommittedCommitmentConfig};
+use super::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
     setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
     AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, PrecommittedGroupDescriptor, SetupMatrixEnvelope,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -58,29 +58,15 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
     layout.check()?;
     let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() == 1 {
-        return Ok(AkitaScheduleLookupKey::single(final_group));
+    if layout.num_groups() != 1 {
+        return Err(AkitaError::InvalidInput(
+            "grouped schedule selection requires exact committed-group descriptors".to_string(),
+        ));
     }
-    let precommitteds = layout
-        .root_precommitted_group_layouts()?
-        .iter()
-        .copied()
-        .map(|group| {
-            group.validate()?;
-            let singleton =
-                OpeningClaimsLayout::new(group.num_vars(), group.num_polynomials())?;
-            let params = <PrecommittedCommitmentConfig<Cfg> as CommitmentConfig>::get_params_for_batched_commitment(
-                &singleton,
-            )?;
-            Ok(PrecommittedGroupDescriptor::from_params(group, &params))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let key = AkitaScheduleLookupKey {
+    Ok(AkitaScheduleLookupKey::single(
         final_group,
-        precommitteds,
-    };
-    key.validate()?;
-    Ok(key)
+        Cfg::group_source(),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +139,7 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
             }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
+                final_source: entry.root.final_group.source,
                 precommitteds: entry
                     .root
                     .precommitted_groups

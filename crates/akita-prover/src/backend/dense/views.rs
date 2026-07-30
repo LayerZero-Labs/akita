@@ -10,6 +10,7 @@ use crate::compute::{
     RootCommitSource, RootOpeningSource, RootPolyMeta, RootPolyShape, RootTensorSource,
 };
 use akita_field::{AkitaError, FieldCore};
+use akita_types::{GroupSource, GroupSourceEncoding};
 
 /// Borrowed single-polynomial view over dense ring storage at dimension `D`.
 ///
@@ -36,6 +37,27 @@ where
 
     fn num_vars(&self) -> usize {
         self.num_vars
+    }
+
+    fn validate_group_source(&self, source: GroupSource) -> Result<(), AkitaError> {
+        let GroupSourceEncoding::Bounded { coefficient_bits } = source.encoding() else {
+            return Err(AkitaError::InvalidInput(
+                "dense polynomial requires a bounded source encoding".to_string(),
+            ));
+        };
+        if source != GroupSource::bounded(coefficient_bits) {
+            return Err(AkitaError::InvalidInput(
+                "dense polynomial requires the built-in bounded registration".to_string(),
+            ));
+        }
+        let actual = self.dense_coefficient_bits();
+        if actual > coefficient_bits {
+            return Err(AkitaError::InvalidInput(format!(
+                "dense polynomial requires {actual} coefficient bits, but the registration \
+                 permits at most {coefficient_bits}"
+            )));
+        }
+        Ok(())
     }
 }
 

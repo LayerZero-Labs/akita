@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, SisModulusProfileId,
+    CommittedGroupDescriptor, CommittedGroupParams, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
 
@@ -142,7 +142,7 @@ fn precommitted_group(
     group: PolynomialGroupLayout,
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor::from_params(group, params),
+        layout: CommittedGroupDescriptor::from_params(group, params),
         inner_commit_matrix: params.inner_commit_matrix.clone(),
         outer_commit_matrix: params.outer_commit_matrix.clone(),
         log_basis_open: params.log_basis_open,

@@ -10,13 +10,12 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, RootSource, TerminalResponseShape,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, GroupSource, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedLevelParams, TerminalResponseShape,
 };
 
 use crate::generated::{
     validate_entry_key, GeneratedFoldScheduleEntry, GeneratedRootFinalChallenge,
-    GeneratedRootSource,
 };
 use crate::group_batch::multi_group_root_precommitted_groups_for_open_basis;
 use crate::runtime::{
@@ -36,21 +35,15 @@ pub(crate) fn walk_generated_schedule_entry(
     ring_challenge_config: &impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: &impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<GeneratedEntryWalkOutput, AkitaError> {
-    key.validate()?;
+    key.validate(policy.decomposition.field_bits())?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
-    let stored_root_source = match entry.root.final_group.source {
-        GeneratedRootSource::Dense { coefficient_bits } => RootSource::Dense { coefficient_bits },
-        GeneratedRootSource::OneHot { chunk_size } => RootSource::OneHot {
-            chunk_size: chunk_size as usize,
-        },
-    };
-    let configured_root_source =
-        RootSource::from_config(policy.decomposition, policy.onehot_chunk_size);
-    if stored_root_source != configured_root_source {
+    let stored_root_source = entry.root.final_group.source;
+    if stored_root_source != key.final_source {
         return Err(AkitaError::InvalidSetup(format!(
-            "generated root source {stored_root_source:?} disagrees with catalog policy \
-             source {configured_root_source:?}"
+            "generated root source {stored_root_source:?} disagrees with request \
+             source {:?}",
+            key.final_source
         )));
     }
     let is_multi_group = !key.precommitteds.is_empty();
@@ -107,6 +100,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 ring_challenge_config,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
+                key.final_source,
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
@@ -120,6 +114,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 0,
+                key.final_source,
                 expected_root_w_len,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
@@ -154,6 +149,7 @@ pub(crate) fn walk_generated_schedule_entry(
             policy,
             ring_challenge_config,
             index + 1,
+            GroupSource::bounded(policy.decomposition.field_bits()),
             input_witness_len,
             TensorChallengeShape::Flat,
             1,

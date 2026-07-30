@@ -77,8 +77,8 @@ impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
         self.num_vars
     }
 
-    fn onehot_chunk_size(&self) -> Option<usize> {
-        None
+    fn validate_group_source(&self, source: akita_types::GroupSource) -> Result<(), AkitaError> {
+        akita_prover::RootPolyMeta::validate_group_source(&self.dense, source)
     }
 }
 

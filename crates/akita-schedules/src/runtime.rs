@@ -4,12 +4,11 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
     intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate, GroupSource,
     OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
     RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
-    DEFAULT_SIS_SECURITY_POLICY,
+    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
 };
 
 /// Quantities materialized and checked by the current bounded planner cost model.
@@ -93,6 +92,15 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Root-source-specialized policy for offline scalar/precommit planning.
+    pub fn with_group_source(self, source: akita_types::GroupSource) -> Self {
+        Self {
+            decomposition: source.decomposition(self.decomposition),
+            onehot_chunk_size: source.sparse_chunk_size(),
+            ..self
+        }
+    }
+
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
@@ -307,7 +315,7 @@ pub(crate) fn materialize_candidate_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::from_commitment(&root.params),
+                    source: GroupSource::from_commitment(&root.params),
                     challenge: match root.params.fold_challenge_shape {
                         TensorChallengeShape::Flat => RootFinalChallenge::Flat,
                         TensorChallengeShape::Tensor { fold_low_len } => {

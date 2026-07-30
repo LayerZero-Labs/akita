@@ -146,10 +146,10 @@ where
         }
     }
 
-    fn onehot_chunk_size(&self) -> Option<usize> {
+    fn validate_group_source(&self, source: akita_types::GroupSource) -> Result<(), AkitaError> {
         match self {
-            Self::Dense(_) => None,
-            Self::OneHot(poly) => RootPolyMeta::onehot_chunk_size(poly),
+            Self::Dense(poly) => RootPolyMeta::validate_group_source(poly, source),
+            Self::OneHot(poly) => RootPolyMeta::validate_group_source(poly, source),
         }
     }
 }

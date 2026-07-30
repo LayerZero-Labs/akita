@@ -228,7 +228,7 @@ fn candidate<Cfg: CommitmentConfig>(
     preset: Fp128Preset,
     key: PolynomialGroupLayout,
 ) -> Result<Option<Fp128ScheduleSelection>, AkitaError> {
-    let lookup_key = AkitaScheduleLookupKey::single(key);
+    let lookup_key = AkitaScheduleLookupKey::single(key, Cfg::group_source());
     let Some(catalog) = Cfg::schedule_catalog() else {
         return Ok(None);
     };

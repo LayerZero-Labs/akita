@@ -15,11 +15,11 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
+    BasisMode, CommittedGroup, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_types::{
-    AkitaBatchedProof, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, SetupSumcheckProof,
+    AkitaBatchedProof, AkitaScheduleLookupKey, CommittedGroupDescriptor, OpeningClaimsLayout,
+    PolynomialGroupLayout, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -163,7 +163,7 @@ where
 pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
     point: &'a [FF],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
+    commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, FF, P, CommitF> {
     let group = PolynomialGroupClaims::new(
@@ -350,13 +350,12 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 &OpeningClaimsLayout::new(PRE_NV, PRE_GROUP_SIZE).expect("precommit batch"),
             )
             .expect("precommit params");
-        let pre_frozen = PrecommittedGroupDescriptor::from_params(pre_key, &pre_layout);
+        let pre_frozen = CommittedGroupDescriptor::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
+            final_source: BaseCfg::group_source(),
             precommitteds: vec![pre_frozen, pre_frozen],
         };
-        let pre_keys = vec![pre_key; PRE_GROUPS];
-
         let schedule = RecursiveCommitmentConfig::<BaseCfg>::runtime_schedule(schedule_key)
             .expect("recursive profile schedule resolves");
         assert!(
@@ -399,9 +398,17 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         let final_polys: Vec<OneHotPoly<F, u8>> = (0..FINAL_GROUP_SIZE)
             .map(|poly_idx| make_onehot_poly(root_params, 0x0bee_fcaf_2026_1000 + poly_idx as u64))
             .collect();
-        let (final_commitment, final_hint) =
-            Recursive::<BaseCfg>::commit_final_group(&setup, &final_polys, &stack, pre_keys)
-                .expect("final generated-profile commitment");
+        let (final_commitment, final_hint) = Recursive::<BaseCfg>::commit_final_group(
+            &setup,
+            &final_polys,
+            &stack,
+            pre_commitments
+                .iter()
+                .map(|group| group.descriptor)
+                .collect(),
+            BaseCfg::group_source(),
+        )
+        .expect("final generated-profile commitment");
 
         let point = random_point(FINAL_NV, 0xcafe_2026_0001);
         let pre_openings: Vec<Vec<F>> = pre_polys_by_group

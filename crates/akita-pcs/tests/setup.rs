@@ -183,8 +183,9 @@ where
     // The committed poly's one-hot chunk size must match the config's required
     // `onehot_chunk_size` (e.g. 256 for D64OneHot); configs with no constraint
     // (`<= 1`) use the K = D one-chunk-per-ring-element representation.
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
+    let source_chunk_size = layout.source.sparse_chunk_size();
+    let k = if source_chunk_size > 1 {
+        source_chunk_size
     } else {
         D
     };
@@ -384,8 +385,9 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
-    let k = if layout.onehot_chunk_size > 1 {
-        layout.onehot_chunk_size
+    let source_chunk_size = layout.source.sparse_chunk_size();
+    let k = if source_chunk_size > 1 {
+        source_chunk_size
     } else {
         D
     };

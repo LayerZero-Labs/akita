@@ -24,7 +24,7 @@ fn precommit_config_commit_returns_exact_frozen_layout() {
             .expect("stack");
     let (commitment, _hint) =
         PrecommitCommitter::commit(&setup, &polys, &stack).expect("precommit");
-    let frozen_layout = akita_types::PrecommittedGroupDescriptor::from_params(key, &layout);
+    let frozen_layout = akita_types::CommittedGroupDescriptor::from_params(key, &layout);
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -89,9 +89,9 @@ fn precommit_config_allows_independent_precommitted_groups() {
         let (pre_b_commitment, _pre_b_hint) =
             PrecommitCommitter::commit(setup, &pre_b_polys, stack).expect("precommit B");
         let pre_a_frozen =
-            akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
+            akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
         let pre_b_frozen =
-            akita_types::PrecommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+            akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
 
         assert_eq!(pre_a_frozen.group, pre_a_key);
         assert_eq!(pre_b_frozen.group, pre_b_key);
@@ -128,14 +128,12 @@ fn group_batch_schedule_preserves_precommitted_order() {
     let pre_c_layout =
         PrecommittedOneHotCfg::get_params_for_batched_commitment(&pre_c_opening_batch)
             .expect("precommit C layout");
-    let pre_a_frozen =
-        akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen =
-        akita_types::PrecommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
-    let pre_c_frozen =
-        akita_types::PrecommittedGroupDescriptor::from_params(pre_c_key, &pre_c_layout);
+    let pre_a_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+    let pre_c_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_c_key, &pre_c_layout);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, MAIN_SIZE),
+        final_source: OneHotCfg::group_source(),
         precommitteds: vec![pre_a_frozen, pre_b_frozen, pre_c_frozen],
     };
 
@@ -195,12 +193,11 @@ fn group_batch_commits_independent_arity_precommitteds() {
         PrecommitCommitter::commit::<_, _>(&setup, &pre_a_polys, &stack).expect("precommit A");
     let (pre_b_commitment, _pre_b_hint) =
         PrecommitCommitter::commit::<_, _>(&setup, &pre_b_polys, &stack).expect("precommit B");
-    let pre_a_frozen =
-        akita_types::PrecommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
-    let pre_b_frozen =
-        akita_types::PrecommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
+    let pre_a_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_a_key, &pre_a_layout);
+    let pre_b_frozen = akita_types::CommittedGroupDescriptor::from_params(pre_b_key, &pre_b_layout);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
+        final_source: OneHotCfg::group_source(),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
 
@@ -217,7 +214,8 @@ fn group_batch_commits_independent_arity_precommitteds() {
         &setup,
         &final_polys,
         &stack,
-        vec![pre_a_key, pre_b_key],
+        vec![pre_a_commitment.descriptor, pre_b_commitment.descriptor],
+        OneHotCfg::group_source(),
     )
     .expect("final multi-group commitment");
 
@@ -271,8 +269,10 @@ fn commit_group_returns_frozen_exact_layout() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let (frozen_layout, commitment, _hint) =
-        OneHotScheme::commit_group::<_, _>(&setup, &polys, &stack).expect("commit group");
+    let (commitment, _hint) =
+        OneHotScheme::commit_group::<_, _>(&setup, &polys, &stack, OneHotCfg::group_source())
+            .expect("commit group");
+    let frozen_layout = commitment.descriptor;
 
     assert_eq!(frozen_layout.group, key);
     assert_eq!(
@@ -310,23 +310,6 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let precommit_capacity = pre_sizes.iter().copied().max().unwrap_or(1);
-    let precommit_setup =
-        AkitaCommitmentScheme::<PrecommittedCommitmentConfig<TestCfg>>::setup_prover(
-            pre_num_vars,
-            precommit_capacity,
-        )
-        .expect("precommit setup");
-    let prepared_precommit = CpuBackend
-        .prepare_setup(&precommit_setup)
-        .expect("prepared precommit setup");
-    let precommit_stack = akita_prover::UniformProverStack::uniform(
-        &CpuBackend,
-        &prepared_precommit,
-        precommit_setup.expanded.as_ref(),
-    )
-    .expect("precommit stack");
-
     // Commit every precommitted group under the exact precommit config; keep the
     // polynomials alive so the prover/verifier can borrow references.
     let mut pre_keys = Vec::new();
@@ -335,14 +318,11 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     let mut pre_hints = Vec::new();
     let mut pre_layouts = Vec::new();
     let mut pre_polys_by_group: Vec<Vec<OneHotPoly<OneHotF, u8>>> = Vec::new();
+    let source = akita_types::GroupSource::one_hot(BENCH_ONEHOT_K);
     for (group_idx, &num_polynomials) in pre_sizes.iter().enumerate() {
         let key = akita_types::PolynomialGroupLayout::new(pre_num_vars, num_polynomials);
-        let opening_batch =
-            OpeningClaimsLayout::new(pre_num_vars, num_polynomials).expect("precommit batch");
-        let layout = PrecommittedCommitmentConfig::<TestCfg>::get_params_for_batched_commitment(
-            &opening_batch,
-        )
-        .expect("precommit layout");
+        let layout = akita_config::committed_group_params::<ProtocolCfg>(&key, source)
+            .expect("precommit params");
         let polys: Vec<OneHotPoly<OneHotF, u8>> = (0..num_polynomials)
             .map(|poly_idx| {
                 debug_make_onehot_poly(
@@ -352,15 +332,9 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             })
             .collect();
         let (commitment, hint) =
-            AkitaCommitmentScheme::<PrecommittedCommitmentConfig<TestCfg>>::batched_commit(
-                &precommit_setup,
-                &polys[..],
-                &precommit_stack,
-            )
-            .expect("precommit");
-        pre_frozen.push(akita_types::PrecommittedGroupDescriptor::from_params(
-            key, &layout,
-        ));
+            AkitaCommitmentScheme::<ProtocolCfg>::commit_group(&setup, &polys, &stack, source)
+                .expect("precommit");
+        pre_frozen.push(commitment.descriptor);
         pre_keys.push(key);
         pre_commitments.push(commitment);
         pre_hints.push(hint);
@@ -370,6 +344,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(final_num_vars, final_size),
+        final_source: source,
         precommitteds: pre_frozen,
     };
     let opening_layout = multi_group_key
@@ -427,7 +402,11 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
         &setup,
         &final_polys,
         &stack,
-        pre_keys,
+        pre_commitments
+            .iter()
+            .map(|group| group.descriptor)
+            .collect(),
+        source,
     )
     .expect("final multi-group commitment");
 
@@ -653,7 +632,8 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
     );
     let key = akita_types::AkitaScheduleLookupKey {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, 2),
-        precommitteds: vec![akita_types::PrecommittedGroupDescriptor::from_params(
+        final_source: ProtocolCfg::group_source(),
+        precommitteds: vec![akita_types::CommittedGroupDescriptor::from_params(
             akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
             &pre_params,
         )],

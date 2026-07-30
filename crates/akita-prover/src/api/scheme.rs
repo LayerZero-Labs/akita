@@ -13,7 +13,7 @@ use akita_field::{
     RandomSampling,
 };
 use akita_transcript::Transcript;
-use akita_types::{BasisMode, FpExtEncoding, PolynomialGroupLayout};
+use akita_types::{BasisMode, CommittedGroupDescriptor, FpExtEncoding, GroupSource};
 
 /// Prover-side commitment-scheme interface used by Akita protocol code.
 ///
@@ -109,7 +109,8 @@ where
         setup: &Self::ProverSetup,
         polys: &[P],
         stack: &UniformProverStack<'_, F, B>,
-        precommitteds: Vec<PolynomialGroupLayout>,
+        precommitteds: Vec<CommittedGroupDescriptor>,
+        final_source: GroupSource,
     ) -> Result<(Self::Commitment, Self::CommitHint), AkitaError>
     where
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,

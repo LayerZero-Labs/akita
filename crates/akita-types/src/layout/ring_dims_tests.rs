@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, FoldSchedule, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, RootSource, TailSegmentGroupLayout, TailSegmentLayout,
+    CommittedGroupParams, FoldSchedule, GroupSource, RootFinalChallenge, RootFinalGroupParams,
+    RootFoldParams, RootFoldStep, TailSegmentGroupLayout, TailSegmentLayout,
     TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
     WitnessPartition,
 };
@@ -28,9 +28,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
+                    source: GroupSource::bounded(128),
                     challenge: RootFinalChallenge::Flat,
                     commitment: root.clone(),
                 },

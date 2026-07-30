@@ -36,9 +36,11 @@ pub enum NextWitnessBindingPolicy {
 
 /// Root layout metadata frozen when a standalone commitment group is created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PrecommittedGroupDescriptor {
+pub struct CommittedGroupDescriptor {
     /// Per-group root schedule entry shape.
     pub group: PolynomialGroupLayout,
+    /// Exact coefficient class committed by this group.
+    pub source: GroupSource,
     /// Exact number of live source ring elements per claim (`N`).
     pub num_live_ring_elements_per_claim: usize,
     /// Number of positions per block (`M`), power-of-two in the current Boolean layout.
@@ -63,11 +65,12 @@ pub struct PrecommittedGroupDescriptor {
     pub b_coeff_linf_bound: u128,
 }
 
-impl PrecommittedGroupDescriptor {
+impl CommittedGroupDescriptor {
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {
         Self {
             group,
+            source: params.source,
             num_live_ring_elements_per_claim: params.num_live_ring_elements_per_claim,
             num_positions_per_block: params.num_positions_per_block,
             num_live_blocks: params.num_live_blocks,
@@ -85,6 +88,7 @@ impl PrecommittedGroupDescriptor {
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         push_usize(bytes, self.group.num_vars());
         push_usize(bytes, self.group.num_polynomials());
+        self.source.append_descriptor_bytes(bytes);
         push_usize(bytes, self.num_live_ring_elements_per_claim);
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
@@ -99,8 +103,10 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate that this layout is a well-formed standalone commitment group.
-    pub fn validate(&self) -> Result<(), AkitaError> {
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.group.validate()?;
+        self.source
+            .validate_for_ring_dimension(field_bits, self.inner_ring_dimension)?;
         if self.n_a == 0
             || self.n_b == 0
             || self.inner_ring_dimension == 0
@@ -175,20 +181,11 @@ impl PrecommittedGroupDescriptor {
     }
 
     /// Validate metadata frozen by a precommitted group at precommit time.
-    pub fn validate_frozen_precommit(&self) -> Result<(), AkitaError> {
-        self.validate()?;
+    pub fn validate_frozen_precommit(&self, field_bits: u32) -> Result<(), AkitaError> {
+        self.validate(field_bits)?;
         self.validate_root_geometry()?;
         Ok(())
     }
-}
-
-/// Freezes exact root-commit metadata for each precommitted group when
-/// building a schedule lookup key from an opening layout.
-pub trait ScheduleKeyPrecommitSource {
-    /// Resolve frozen standalone-commit params for one precommitted group.
-    fn precommitted_group_params(
-        group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupDescriptor, AkitaError>;
 }
 
 /// Canonical runtime schedule lookup key.
@@ -200,44 +197,33 @@ pub trait ScheduleKeyPrecommitSource {
 pub struct AkitaScheduleLookupKey {
     /// Final group shape for the multi-group root commitment.
     pub final_group: PolynomialGroupLayout,
+    /// Exact coefficient class requested for the final group.
+    pub final_source: GroupSource,
     /// Previously committed groups in caller-supplied transcript order.
-    pub precommitteds: Vec<PrecommittedGroupDescriptor>,
+    pub precommitteds: Vec<CommittedGroupDescriptor>,
 }
 
 impl AkitaScheduleLookupKey {
     /// Scalar root-opening context with no precommitted groups.
-    pub fn single(final_group: PolynomialGroupLayout) -> Self {
+    pub fn single(final_group: PolynomialGroupLayout, final_source: GroupSource) -> Self {
         Self {
             final_group,
+            final_source,
             precommitteds: Vec::new(),
         }
     }
 
-    /// Build the canonical schedule lookup key for `layout`.
-    ///
-    /// Scalar layouts leave `precommitteds` empty. Grouped layouts freeze each
-    /// earlier group through `S` (production uses the exact precommit
-    /// adapter wired by `akita-config`'s `opening_schedule_key`).
-    pub fn from_layout<S: ScheduleKeyPrecommitSource>(
-        layout: &OpeningClaimsLayout,
-    ) -> Result<Self, AkitaError> {
-        layout.check()?;
-        let precommitteds = if layout.num_groups() == 1 {
-            Vec::new()
-        } else {
-            layout
-                .root_precommitted_group_layouts()?
-                .iter()
-                .copied()
-                .map(S::precommitted_group_params)
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        let key = Self {
-            final_group: layout.root_final_group_layout()?,
-            precommitteds,
-        };
-        key.validate()?;
-        Ok(key)
+    /// Canonical ordered bytes used for schedule-key identity tests and caches.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        push_usize(&mut bytes, self.final_group.num_vars());
+        push_usize(&mut bytes, self.final_group.num_polynomials());
+        self.final_source.append_descriptor_bytes(&mut bytes);
+        push_usize(&mut bytes, self.precommitteds.len());
+        for descriptor in &self.precommitteds {
+            descriptor.append_descriptor_bytes(&mut bytes);
+        }
+        bytes
     }
 
     /// Build a multi-group opening layout from this schedule lookup key.
@@ -293,8 +279,9 @@ impl AkitaScheduleLookupKey {
     }
 
     /// Validate per-group metadata.
-    pub fn validate(&self) -> Result<(), AkitaError> {
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
         self.final_group.validate()?;
+        self.final_source.validate(field_bits)?;
         if self.final_group.num_vars() == 0 {
             return Err(AkitaError::InvalidSetup(
                 "schedule lookup key dimensions must be at least 1".to_string(),
@@ -302,7 +289,7 @@ impl AkitaScheduleLookupKey {
         }
         for layout in &self.precommitteds {
             layout.group.validate()?;
-            layout.validate()?;
+            layout.validate(field_bits)?;
         }
         Ok(())
     }
@@ -451,40 +438,222 @@ pub fn intermediate_w_ring_element_count_for_chunks(
         .ok_or_else(overflow)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RootSource {
-    Dense { coefficient_bits: u32 },
-    OneHot { chunk_size: usize },
+/// Canonical identity of one registered polynomial-source family.
+///
+/// The fixed-width identifier and parameters are transcript-safe value data.
+/// They erase the source's Rust type without erasing its public protocol
+/// identity. Applications can define new registrations without extending an
+/// Akita enum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GroupSourceRegistration {
+    type_id: [u8; 16],
+    parameters: [u8; 16],
 }
 
-impl RootSource {
+impl GroupSourceRegistration {
+    /// Build a fixed-width source registration.
+    pub const fn new(type_id: [u8; 16], parameters: [u8; 16]) -> Self {
+        Self {
+            type_id,
+            parameters,
+        }
+    }
+
+    /// Stable source-family identifier.
+    pub const fn type_id(self) -> [u8; 16] {
+        self.type_id
+    }
+
+    /// Canonical registration parameters.
+    pub const fn parameters(self) -> [u8; 16] {
+        self.parameters
+    }
+}
+
+/// Certified source encoding understood by the current Akita protocol.
+///
+/// Registrations are open-world. Encodings are the smaller, versioned
+/// protocol vocabulary whose decomposition and fold-norm rules the verifier
+/// enforces. A new storage format can register against an existing encoding;
+/// adding a new encoding requires a protocol change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum GroupSourceEncoding {
+    /// Balanced decomposition of centered coefficients with this public bound.
+    Bounded { coefficient_bits: u32 },
+    /// Binary coefficients with at most one nonzero per logical chunk.
+    SparseBinary { chunk_size: usize },
+}
+
+/// Erased, self-describing source contract for one commitment group.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct GroupSource {
+    registration: GroupSourceRegistration,
+    encoding: GroupSourceEncoding,
+}
+
+/// Compile-time registration that erases into a canonical [`GroupSource`].
+///
+/// A concrete polynomial backend separately validates that its values belong
+/// to the returned registration before commitment or proving.
+pub trait RegisteredGroupSource {
+    /// Stable source-family identifier and canonical public parameters.
+    fn registration(&self) -> GroupSourceRegistration;
+
+    /// Certified protocol encoding used for decomposition and security sizing.
+    fn encoding(&self) -> GroupSourceEncoding;
+
+    /// Erase this registration into the public group-source contract.
+    fn group_source(&self) -> GroupSource {
+        GroupSource::registered(self.registration(), self.encoding())
+    }
+}
+
+impl GroupSource {
+    /// Built-in bounded-dense registration identifier.
+    pub const BOUNDED_REGISTRATION_ID: [u8; 16] = *b"akita/dense/v1\0\0";
+    /// Built-in one-hot registration identifier.
+    pub const ONE_HOT_REGISTRATION_ID: [u8; 16] = *b"akita/onehot/v1\0";
+    /// Encoded byte length in canonical commitment serialization.
+    pub const SERIALIZED_SIZE: usize = 16 + 16 + 1 + 8;
+
+    /// Build an open-world registered source contract.
+    pub const fn registered(
+        registration: GroupSourceRegistration,
+        encoding: GroupSourceEncoding,
+    ) -> Self {
+        Self {
+            registration,
+            encoding,
+        }
+    }
+
+    /// Built-in bounded-dense source contract.
+    pub const fn bounded(coefficient_bits: u32) -> Self {
+        Self::registered(
+            GroupSourceRegistration::new(Self::BOUNDED_REGISTRATION_ID, [0; 16]),
+            GroupSourceEncoding::Bounded { coefficient_bits },
+        )
+    }
+
+    /// Built-in one-hot source contract.
+    pub const fn one_hot(chunk_size: usize) -> Self {
+        Self::registered(
+            GroupSourceRegistration::new(Self::ONE_HOT_REGISTRATION_ID, [0; 16]),
+            GroupSourceEncoding::SparseBinary { chunk_size },
+        )
+    }
+
+    /// Canonical registration identity and parameters.
+    pub const fn registration(self) -> GroupSourceRegistration {
+        self.registration
+    }
+
+    /// Certified protocol encoding.
+    pub const fn encoding(self) -> GroupSourceEncoding {
+        self.encoding
+    }
+
+    /// Validate a checked group-local source contract.
+    pub fn validate(&self, field_bits: u32) -> Result<(), AkitaError> {
+        if self.registration.type_id == [0; 16] {
+            return Err(AkitaError::InvalidSetup(
+                "group source registration identifier must be nonzero".into(),
+            ));
+        }
+        match self.encoding {
+            GroupSourceEncoding::Bounded { coefficient_bits }
+                if coefficient_bits == 0 || coefficient_bits > field_bits =>
+            {
+                Err(AkitaError::InvalidSetup(format!(
+                    "dense source coefficient_bits={coefficient_bits} must be in 1..={field_bits}"
+                )))
+            }
+            GroupSourceEncoding::SparseBinary { chunk_size: 0 } => Err(AkitaError::InvalidSetup(
+                "one-hot source chunk_size must be nonzero".into(),
+            )),
+            GroupSourceEncoding::SparseBinary { chunk_size } if !chunk_size.is_power_of_two() => {
+                Err(AkitaError::InvalidSetup(format!(
+                    "one-hot source chunk_size={chunk_size} must be a power of two"
+                )))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// Validate the source representation against its commitment ring.
+    pub fn validate_for_ring_dimension(
+        &self,
+        field_bits: u32,
+        ring_dimension: usize,
+    ) -> Result<(), AkitaError> {
+        self.validate(field_bits)?;
+        if ring_dimension == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "source ring dimension must be nonzero".to_string(),
+            ));
+        }
+        if let GroupSourceEncoding::SparseBinary { chunk_size } = self.encoding {
+            if !(chunk_size.is_multiple_of(ring_dimension)
+                || ring_dimension.is_multiple_of(chunk_size))
+            {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "one-hot chunk_size={chunk_size} and ring dimension {ring_dimension} must divide one another"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// Apply this source contract to the preset's field/opening decomposition.
+    pub fn decomposition(self, base: crate::DecompositionParams) -> crate::DecompositionParams {
+        crate::DecompositionParams {
+            log_commit_bound: match self.encoding {
+                GroupSourceEncoding::Bounded { coefficient_bits } => coefficient_bits,
+                GroupSourceEncoding::SparseBinary { .. } => 1,
+            },
+            log_open_bound: Some(base.field_bits()),
+            ..base
+        }
+    }
+
+    /// Sparse-binary chunk size used by fold-norm pricing, or zero otherwise.
+    pub const fn sparse_chunk_size(self) -> usize {
+        match self.encoding {
+            GroupSourceEncoding::Bounded { .. } => 0,
+            GroupSourceEncoding::SparseBinary { chunk_size } => chunk_size,
+        }
+    }
+
+    pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.extend_from_slice(&self.registration.type_id);
+        bytes.extend_from_slice(&self.registration.parameters);
+        match self.encoding {
+            GroupSourceEncoding::Bounded { coefficient_bits } => {
+                bytes.push(0);
+                push_u32(bytes, coefficient_bits);
+            }
+            GroupSourceEncoding::SparseBinary { chunk_size } => {
+                bytes.push(1);
+                push_usize(bytes, chunk_size);
+            }
+        }
+    }
+
     /// Derive the root-source contract selected by a configuration.
     pub fn from_config(
         decomposition: crate::DecompositionParams,
         onehot_chunk_size: usize,
     ) -> Self {
         if decomposition.log_commit_bound == 1 && onehot_chunk_size > 0 {
-            Self::OneHot {
-                chunk_size: onehot_chunk_size,
-            }
+            Self::one_hot(onehot_chunk_size)
         } else {
-            Self::Dense {
-                coefficient_bits: decomposition.field_bits(),
-            }
+            Self::bounded(decomposition.log_commit_bound)
         }
     }
 
     /// Derive the root-source contract encoded by committed-group parameters.
     pub fn from_commitment(commitment: &CommittedGroupParams) -> Self {
-        if commitment.onehot_chunk_size > 0 {
-            Self::OneHot {
-                chunk_size: commitment.onehot_chunk_size,
-            }
-        } else {
-            Self::Dense {
-                coefficient_bits: commitment.field_bits_for_cache(),
-            }
-        }
+        commitment.source
     }
 }
 
@@ -511,7 +680,7 @@ impl WitnessPartition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootFinalGroupParams {
-    pub source: RootSource,
+    pub source: GroupSource,
     pub challenge: RootFinalChallenge,
     pub commitment: CommittedGroupParams,
 }
@@ -519,7 +688,7 @@ pub struct RootFinalGroupParams {
 impl RootFinalGroupParams {
     /// Validate that source metadata and commitment bounds describe one root.
     pub fn validate(&self) -> Result<(), AkitaError> {
-        let expected = RootSource::from_commitment(&self.commitment);
+        let expected = GroupSource::from_commitment(&self.commitment);
         if self.source != expected {
             return Err(AkitaError::InvalidSetup(format!(
                 "root source {:?} disagrees with commitment source {expected:?}",
@@ -532,7 +701,7 @@ impl RootFinalGroupParams {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RootPrecommittedGroupParams {
-    pub descriptor: PrecommittedGroupDescriptor,
+    pub descriptor: CommittedGroupDescriptor,
     pub commitment: crate::PrecommittedLevelParams,
 }
 
@@ -898,16 +1067,11 @@ impl FoldSchedule {
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
         bytes.push(1);
-        match self.root.params.final_group.source {
-            RootSource::Dense { coefficient_bits } => {
-                bytes.push(0);
-                push_u32(bytes, coefficient_bits);
-            }
-            RootSource::OneHot { chunk_size } => {
-                bytes.push(1);
-                push_usize(bytes, chunk_size);
-            }
-        }
+        self.root
+            .params
+            .final_group
+            .source
+            .append_descriptor_bytes(bytes);
         match self.root.params.final_group.challenge {
             RootFinalChallenge::Flat => bytes.push(0),
             RootFinalChallenge::Tensor { fold_low_len } => {

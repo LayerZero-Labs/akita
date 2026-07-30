@@ -109,7 +109,7 @@ fn precommitted_group_params(
     group: PolynomialGroupLayout,
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
-        layout: PrecommittedGroupDescriptor::from_params(group, params),
+        layout: CommittedGroupDescriptor::from_params(group, params),
         inner_commit_matrix: params.inner_commit_matrix.clone(),
         outer_commit_matrix: params.outer_commit_matrix.clone(),
         log_basis_open: params.log_basis_open,
@@ -144,9 +144,7 @@ fn recursive_schedule(
         root: RootFoldStep {
             params: RootFoldParams {
                 final_group: RootFinalGroupParams {
-                    source: RootSource::Dense {
-                        coefficient_bits: 128,
-                    },
+                    source: GroupSource::bounded(128),
                     challenge: RootFinalChallenge::Flat,
                     commitment: predecessor.clone(),
                 },
@@ -196,13 +194,11 @@ fn recursive_schedule(
 fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
     let dense = committed_params(64);
     assert_eq!(
-        RootSource::from_commitment(&dense),
-        RootSource::Dense {
-            coefficient_bits: 128
-        }
+        GroupSource::from_commitment(&dense),
+        GroupSource::bounded(128)
     );
     assert_eq!(
-        RootSource::from_config(
+        GroupSource::from_config(
             DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 128,
@@ -210,18 +206,27 @@ fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
             },
             256,
         ),
-        RootSource::Dense {
-            coefficient_bits: 128
-        }
+        GroupSource::bounded(128)
+    );
+    assert_eq!(
+        GroupSource::from_config(
+            DecompositionParams {
+                log_basis: 3,
+                log_commit_bound: 32,
+                log_open_bound: Some(128),
+            },
+            0,
+        ),
+        GroupSource::bounded(32)
     );
 
-    let onehot = dense.with_onehot_chunk_size(256);
+    let onehot = dense.with_source(GroupSource::one_hot(256));
     assert_eq!(
-        RootSource::from_commitment(&onehot),
-        RootSource::OneHot { chunk_size: 256 }
+        GroupSource::from_commitment(&onehot),
+        GroupSource::one_hot(256)
     );
     assert_eq!(
-        RootSource::from_config(
+        GroupSource::from_config(
             DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 1,
@@ -229,22 +234,20 @@ fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
             },
             256,
         ),
-        RootSource::OneHot { chunk_size: 256 }
+        GroupSource::one_hot(256)
     );
 }
 
 #[test]
 fn schedule_rejects_root_source_that_disagrees_with_commitment_bounds() {
     let mut schedule = recursive_schedule(64, 64, false);
-    schedule.root.params.final_group.source = RootSource::OneHot { chunk_size: 256 };
+    schedule.root.params.final_group.source = GroupSource::one_hot(256);
     assert!(matches!(
         schedule.validate_structure(),
         Err(AkitaError::InvalidSetup(_))
     ));
 
-    schedule.root.params.final_group.source = RootSource::Dense {
-        coefficient_bits: 32,
-    };
+    schedule.root.params.final_group.source = GroupSource::bounded(32);
     assert!(matches!(
         schedule.validate_structure(),
         Err(AkitaError::InvalidSetup(_))
@@ -796,49 +799,57 @@ fn planned_root_extension_reduction_bytes_match_payload() {
 }
 
 #[test]
-fn from_layout_accepts_scalar_layout() {
+fn scalar_schedule_key_accepts_single_group_layout() {
     let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
-    let key = AkitaScheduleLookupKey::from_layout::<NoPrecommitSource>(&layout)
-        .expect("scalar layout lookup");
+    let key = AkitaScheduleLookupKey::single(
+        layout.root_final_group_layout().expect("final group"),
+        GroupSource::bounded(128),
+    );
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
     assert_eq!(key.num_commitment_groups(), 1);
 }
 
-struct NoPrecommitSource;
-
-impl ScheduleKeyPrecommitSource for NoPrecommitSource {
-    fn precommitted_group_params(
-        _group: PolynomialGroupLayout,
-    ) -> Result<PrecommittedGroupDescriptor, AkitaError> {
-        Err(AkitaError::InvalidSetup(
-            "NoPrecommitSource is only valid for scalar layouts".to_string(),
-        ))
-    }
+#[test]
+fn group_source_rejects_unrepresentable_bounds_and_chunks() {
+    assert!(GroupSource::bounded(0).validate(128).is_err());
+    assert!(GroupSource::bounded(129).validate(128).is_err());
+    assert!(GroupSource::one_hot(0).validate(128).is_err());
+    assert!(GroupSource::one_hot(3).validate(128).is_err());
+    assert!(GroupSource::one_hot(16)
+        .validate_for_ring_dimension(128, 64)
+        .is_ok());
+    assert!(GroupSource::one_hot(32)
+        .validate_for_ring_dimension(128, 48)
+        .is_err());
 }
 
 #[test]
 fn validate_rejects_zero_dimensions() {
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
-            .validate()
-            .is_err()
-    );
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
-            .validate()
-            .is_err()
-    );
-    assert!(
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
-            .validate()
-            .is_ok()
-    );
+    assert!(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::new(0, 1),
+        GroupSource::bounded(128),
+    )
+    .validate(128)
+    .is_err());
+    assert!(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::new(20, 0),
+        GroupSource::bounded(128),
+    )
+    .validate(128)
+    .is_err());
+    assert!(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::new(20, 4),
+        GroupSource::bounded(128),
+    )
+    .validate(128)
+    .is_ok());
 }
 
-fn precommitted_descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
-    PrecommittedGroupDescriptor {
+fn precommitted_descriptor(num_vars: usize) -> CommittedGroupDescriptor {
+    CommittedGroupDescriptor {
         group: PolynomialGroupLayout::new(num_vars, 1),
+        source: GroupSource::bounded(128),
         num_live_ring_elements_per_claim: 1usize << (num_vars - 6),
         num_positions_per_block: 16,
         num_live_blocks: 1usize << (num_vars - 10),
@@ -857,11 +868,12 @@ fn precommitted_descriptor(num_vars: usize) -> PrecommittedGroupDescriptor {
 fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(14, 3),
+        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
     };
 
     multi_group_key
-        .validate()
+        .validate(128)
         .expect("commit order must not impose an arity ordering");
     assert_eq!(multi_group_key.final_group.num_vars(), 14);
     assert_eq!(multi_group_key.max_num_vars(), 20);
@@ -884,11 +896,12 @@ fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
 fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
+        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(12)],
     };
 
     multi_group_key
-        .validate()
+        .validate(128)
         .expect("precommitted group arity is not derived from the final group");
 }
 
@@ -896,11 +909,12 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
+        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
     };
 
     multi_group_key
-        .validate()
+        .validate(128)
         .expect("precommitted groups may use the final group's full arity");
 }
 
@@ -908,8 +922,10 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        precommitteds: vec![PrecommittedGroupDescriptor {
+        final_source: GroupSource::bounded(128),
+        precommitteds: vec![CommittedGroupDescriptor {
             group: PolynomialGroupLayout::new(10, 2),
+            source: GroupSource::bounded(128),
             num_live_ring_elements_per_claim: 16,
             num_positions_per_block: 4,
             num_live_blocks: 4,
@@ -925,7 +941,7 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
     };
 
     multi_group_key
-        .validate()
+        .validate(128)
         .expect("a precommitted group may contain multiple polynomials");
     assert_eq!(multi_group_key.num_commitment_groups(), 2);
     assert_eq!(multi_group_key.num_polynomials().unwrap(), 5);
@@ -934,9 +950,45 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 }
 
 #[test]
+fn group_batch_key_identity_binds_ordered_source_contracts() {
+    let mut first = precommitted_descriptor(12);
+    first.source = GroupSource::one_hot(16);
+    let mut second = precommitted_descriptor(14);
+    second.source = GroupSource::bounded(32);
+    let key = AkitaScheduleLookupKey {
+        final_group: PolynomialGroupLayout::new(16, 1),
+        final_source: GroupSource::one_hot(256),
+        precommitteds: vec![first, second],
+    };
+
+    let mut reordered = key.clone();
+    reordered.precommitteds.swap(0, 1);
+    assert_ne!(
+        key.canonical_descriptor_bytes(),
+        reordered.canonical_descriptor_bytes(),
+        "group ordering is transcript and catalog identity"
+    );
+
+    let mut changed_pre_source = key.clone();
+    changed_pre_source.precommitteds[0].source = GroupSource::one_hot(256);
+    assert_ne!(
+        key.canonical_descriptor_bytes(),
+        changed_pre_source.canonical_descriptor_bytes()
+    );
+
+    let mut changed_final_source = key.clone();
+    changed_final_source.final_source = GroupSource::bounded(128);
+    assert_ne!(
+        key.canonical_descriptor_bytes(),
+        changed_final_source.canonical_descriptor_bytes()
+    );
+}
+
+#[test]
 fn validate_frozen_precommit_rejects_geometry_mismatch() {
-    let layout = PrecommittedGroupDescriptor {
+    let layout = CommittedGroupDescriptor {
         group: PolynomialGroupLayout::new(20, 1),
+        source: GroupSource::bounded(128),
         num_live_ring_elements_per_claim: 1,
         num_positions_per_block: 16,
         num_live_blocks: 1,
@@ -950,7 +1002,7 @@ fn validate_frozen_precommit_rejects_geometry_mismatch() {
         b_coeff_linf_bound: 1,
     };
     let err = layout
-        .validate_frozen_precommit()
+        .validate_frozen_precommit(128)
         .expect_err("geometry must match num_vars");
     assert!(matches!(err, AkitaError::InvalidSetup(_)));
 }

@@ -24,9 +24,9 @@ use akita_types::sis::{
     FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, CommittedGroupParams, DecompositionParams, InnerCommitMatrixParams,
-    OpenCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor, PrecommittedLevelParams, TerminalCommittedGroupParams,
+    shared_d_digit_log_basis, CommittedGroupDescriptor, CommittedGroupParams, DecompositionParams,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -102,8 +102,9 @@ impl GeneratedSetupPrefixInput {
             ));
         }
         let prefix_num_vars = n_prefix.trailing_zeros() as usize;
-        let mut layout = PrecommittedGroupDescriptor {
+        let mut layout = CommittedGroupDescriptor {
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
+            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -288,6 +289,7 @@ impl GeneratedCommittedGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
+        source: akita_types::GroupSource,
         input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
@@ -302,6 +304,7 @@ impl GeneratedCommittedGroup {
             )));
         }
         let is_root = fold_level == 0;
+        source.validate_for_ring_dimension(policy.decomposition.field_bits(), ring_d)?;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
         let log_basis_open = open_commit_matrix.log_basis;
@@ -366,7 +369,7 @@ impl GeneratedCommittedGroup {
         };
         let witness_decomp = DecompositionParams {
             log_basis: log_basis_inner,
-            ..policy.decomposition
+            ..source.decomposition(policy.decomposition)
         };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
@@ -389,7 +392,7 @@ impl GeneratedCommittedGroup {
             &ring_challenge_cfg,
             fold_shape,
             is_root,
-            policy.onehot_chunk_size,
+            source.sparse_chunk_size(),
             policy.ring_subfield_norm_bound,
             num_live_blocks,
             num_claims,
@@ -467,14 +470,6 @@ impl GeneratedCommittedGroup {
 
         let num_digits_open = num_digits_open_val;
 
-        // A one-hot root (`log_commit_bound == 1`) commits a sparse witness;
-        // recursive and dense levels are dense (`onehot_chunk_size = 0`).
-        let onehot_chunk_size = if is_root && policy.decomposition.log_commit_bound == 1 {
-            policy.onehot_chunk_size
-        } else {
-            0
-        };
-
         // Size the committed B matrix at the full outer width.
         let n_b = secure_rank(
             "b",
@@ -501,6 +496,7 @@ impl GeneratedCommittedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
+            source,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -539,7 +535,6 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            onehot_chunk_size,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
             ),
             num_digits_fold_one: 1,
@@ -570,6 +565,7 @@ impl GeneratedCommittedGroup {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_shape: TensorChallengeShape,
         main_num_polys: usize,
+        source: akita_types::GroupSource,
         precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -623,7 +619,7 @@ impl GeneratedCommittedGroup {
         };
         let witness_decomp = DecompositionParams {
             log_basis: log_basis_inner,
-            ..policy.decomposition
+            ..source.decomposition(policy.decomposition)
         };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
@@ -646,7 +642,7 @@ impl GeneratedCommittedGroup {
             &ring_challenge_cfg,
             fold_shape,
             true,
-            policy.onehot_chunk_size,
+            source.sparse_chunk_size(),
             policy.ring_subfield_norm_bound,
             num_live_blocks,
             main_num_polys,
@@ -694,12 +690,6 @@ impl GeneratedCommittedGroup {
         )
         .ok_or_else(|| no_layout("D"))?;
 
-        let onehot_chunk_size = if policy.decomposition.log_commit_bound == 1 {
-            policy.onehot_chunk_size
-        } else {
-            0
-        };
-
         let n_b = secure_rank(
             "b",
             sis_key(
@@ -721,6 +711,7 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
         let params = CommittedGroupParams {
+            source,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -763,7 +754,6 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
-            onehot_chunk_size,
             fold_linf_cap_config: akita_types::sis::FoldWitnessLinfCapConfig::worst_case_beta_only(
             ),
             num_digits_fold_one: 1,

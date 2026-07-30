@@ -12,9 +12,9 @@ use std::process::Command;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpenCommitMatrixParams, PolynomialGroupLayout, PrecommittedGroupDescriptor, RootFinalChallenge,
-    RootSource, SetupPrefixSlotId, WitnessPartition,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupDescriptor, CommittedGroupParams,
+    FoldSchedule, GroupSource, GroupSourceEncoding, OpenCommitMatrixParams, PolynomialGroupLayout,
+    RootFinalChallenge, SetupPrefixSlotId, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -23,9 +23,8 @@ use akita_schedules::generated::{
     GeneratedBlockGeometry, GeneratedCommittedGroup, GeneratedFoldScheduleEntry,
     GeneratedInnerCommitMatrix, GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix,
     GeneratedRecursiveFold, GeneratedRootFinalChallenge, GeneratedRootFinalGroup,
-    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedRootSource,
-    GeneratedScheduleCatalogIdentity, GeneratedSetupPrefixInput, GeneratedTerminalFold,
-    GeneratedWitnessPartition,
+    GeneratedRootFold, GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity,
+    GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition,
 };
 
 /// One family the emitter writes to `akita-schedules/src/generated/`.
@@ -172,17 +171,11 @@ fn generated_entry(
             fold_low_len: fold_low_len as u32,
         },
     };
-    let source = match root_fold.final_group.source {
-        RootSource::Dense { coefficient_bits } => GeneratedRootSource::Dense { coefficient_bits },
-        RootSource::OneHot { chunk_size } => GeneratedRootSource::OneHot {
-            chunk_size: chunk_size as u32,
-        },
-    };
     GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup {
                 layout: key.final_group,
-                source,
+                source: root_fold.final_group.source,
                 challenge,
                 commitment: committed_group(root_params),
             },
@@ -227,10 +220,11 @@ fn emit_key(key: PolynomialGroupLayout) -> String {
     )
 }
 
-fn emit_precommitted_group_key(layout: &PrecommittedGroupDescriptor) -> String {
+fn emit_precommitted_group_key(layout: &CommittedGroupDescriptor) -> String {
     format!(
-        "PrecommittedGroupDescriptor {{ group: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
+        "CommittedGroupDescriptor {{ group: {}, source: {}, num_live_ring_elements_per_claim: {}, num_positions_per_block: {}, num_live_blocks: {}, log_basis_inner: {}, log_basis_outer: {}, inner_ring_dimension: {}, outer_ring_dimension: {}, n_a: {}, a_coeff_linf_bound: {}, n_b: {}, b_coeff_linf_bound: {} }}",
         emit_key(layout.group),
+        emit_group_source(layout.source),
         layout.num_live_ring_elements_per_claim,
         layout.num_positions_per_block,
         layout.num_live_blocks,
@@ -242,6 +236,37 @@ fn emit_precommitted_group_key(layout: &PrecommittedGroupDescriptor) -> String {
         layout.a_coeff_linf_bound,
         layout.n_b,
         layout.b_coeff_linf_bound,
+    )
+}
+
+fn emit_group_source(source: GroupSource) -> String {
+    let registration = source.registration();
+    if registration.type_id() == GroupSource::BOUNDED_REGISTRATION_ID
+        && registration.parameters() == [0; 16]
+    {
+        if let GroupSourceEncoding::Bounded { coefficient_bits } = source.encoding() {
+            return format!("GroupSource::bounded({coefficient_bits})");
+        }
+    }
+    if registration.type_id() == GroupSource::ONE_HOT_REGISTRATION_ID
+        && registration.parameters() == [0; 16]
+    {
+        if let GroupSourceEncoding::SparseBinary { chunk_size } = source.encoding() {
+            return format!("GroupSource::one_hot({chunk_size})");
+        }
+    }
+    let encoding = match source.encoding() {
+        GroupSourceEncoding::Bounded { coefficient_bits } => {
+            format!("GroupSourceEncoding::Bounded {{ coefficient_bits: {coefficient_bits} }}")
+        }
+        GroupSourceEncoding::SparseBinary { chunk_size } => {
+            format!("GroupSourceEncoding::SparseBinary {{ chunk_size: {chunk_size} }}")
+        }
+    };
+    format!(
+        "GroupSource::registered(GroupSourceRegistration::new({:?}, {:?}), {encoding})",
+        registration.type_id(),
+        registration.parameters(),
     )
 }
 
@@ -298,14 +323,7 @@ fn emit_schedule_entry(
     schedule: &FoldSchedule,
 ) -> Result<(), String> {
     let entry = generated_entry(key, schedule);
-    let source = match entry.root.final_group.source {
-        GeneratedRootSource::Dense { coefficient_bits } => {
-            format!("GeneratedRootSource::Dense {{ coefficient_bits: {coefficient_bits} }}")
-        }
-        GeneratedRootSource::OneHot { chunk_size } => {
-            format!("GeneratedRootSource::OneHot {{ chunk_size: {chunk_size} }}")
-        }
-    };
+    let source = emit_group_source(entry.root.final_group.source);
     let challenge = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => "GeneratedRootFinalChallenge::Flat".to_string(),
         GeneratedRootFinalChallenge::Tensor { fold_low_len } => {
@@ -504,12 +522,12 @@ fn materialized_entries(
     spec: &EmitSpec,
 ) -> Result<Vec<(AkitaScheduleLookupKey, FoldSchedule)>, String> {
     let mut keys = Vec::with_capacity(spec.keys.len() + spec.group_batch_keys.len());
-    keys.extend(
-        spec.keys
-            .iter()
-            .copied()
-            .map(AkitaScheduleLookupKey::single),
-    );
+    keys.extend(spec.keys.iter().copied().map(|key| {
+        AkitaScheduleLookupKey::single(
+            key,
+            GroupSource::from_config(spec.policy.decomposition, spec.policy.onehot_chunk_size),
+        )
+    }));
     keys.extend(spec.group_batch_keys.iter().cloned());
 
     let workers = std::thread::available_parallelism()
@@ -602,9 +620,10 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedCommittedGroup, GeneratedFoldScheduleEntry, GeneratedInnerCommitMatrix, \
          GeneratedOpenCommitMatrix, GeneratedOuterCommitMatrix, GeneratedRecursiveFold, \
          GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
-         GeneratedRootPrecommittedGroup, GeneratedRootSource, GeneratedScheduleCatalogIdentity, \
+         GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         PlannerCostModelId, PolynomialGroupLayout, PrecommittedGroupDescriptor, \
+         GroupSource, GroupSourceEncoding, GroupSourceRegistration, PlannerCostModelId, \
+         PolynomialGroupLayout, CommittedGroupDescriptor, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )

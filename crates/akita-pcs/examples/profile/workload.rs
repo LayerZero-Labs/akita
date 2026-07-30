@@ -23,9 +23,9 @@ use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
-    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, CommittedGroupParams,
-    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, SetupContributionMode,
+    AkitaBatchedProof, AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupDescriptor,
+    CommittedGroupParams, FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout, SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -39,6 +39,7 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
 ) -> usize {
     let key = akita_types::AkitaScheduleLookupKey {
         final_group,
+        final_source: Cfg::group_source(),
         precommitteds: schedule
             .root
             .params
@@ -72,7 +73,7 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
 fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     point: &'a [E],
     polynomials: &'a [&'a P],
-    commitment: &'a Commitment<CommitF>,
+    commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, E, P, CommitF> {
     let group = PolynomialGroupClaims::new(
@@ -1135,9 +1136,10 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         &pre_opening_batch,
     )
     .expect("precommit layout");
-    let pre_descriptor = PrecommittedGroupDescriptor::from_params(pre_key, &pre_params);
+    let pre_descriptor = CommittedGroupDescriptor::from_params(pre_key, &pre_params);
     let multi_group_key = akita_types::AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(final_num_vars, final_num_polys),
+        final_source: ProofCfg::group_source(),
         precommitteds: vec![pre_descriptor; PRE_GROUPS],
     };
     let schedule =
@@ -1224,7 +1226,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &setup,
             &final_polys,
             &stack,
-            pre_keys,
+            pre_commitments
+                .iter()
+                .map(|group| group.descriptor)
+                .collect(),
+            ProofCfg::group_source(),
         )
         .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());

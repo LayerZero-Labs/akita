@@ -22,7 +22,9 @@ use akita_pcs::test_support::PerMatrixRingDimsRootConfig;
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_transcript::AkitaTranscript;
-use akita_types::{validate_schedule_ring_dims, CommitmentRingDims, OpeningClaimsLayout, RingVec};
+use akita_types::{
+    validate_schedule_ring_dims, CommitmentRingDims, CommittedGroup, OpeningClaimsLayout, RingVec,
+};
 use common::*;
 
 /// Envelope preset: uniform `D = 128`, generation ring dimension 128.
@@ -50,7 +52,7 @@ fn verify_with(
     proof: &akita_types::AkitaBatchedProof<F, F>,
     point: &[F],
     openings: &[F],
-    commitment: &Commitment<F>,
+    commitment: &CommittedGroup<F>,
 ) -> Result<(), AkitaError> {
     let mut transcript = AkitaTranscript::<F>::new(LABEL);
     Scheme::batched_verify(
@@ -128,9 +130,9 @@ fn per_matrix_ring_dims_root_proves_verifies_and_rejects_tamper() {
 
         // Soundness (commitment): a tampered commitment row must be rejected.
         let mut tampered_commitment = commitment.clone();
-        let mut coeffs = tampered_commitment.0.coeffs().to_vec();
+        let mut coeffs = tampered_commitment.commitment.0.coeffs().to_vec();
         coeffs[0] += F::one();
-        tampered_commitment.0 = RingVec::from_coeffs(coeffs);
+        tampered_commitment.commitment.0 = RingVec::from_coeffs(coeffs);
         verify_with(
             &verifier_setup,
             &proof,

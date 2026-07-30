@@ -122,6 +122,11 @@ impl SisModulusProfileId {
         }
     }
 
+    /// Bit width of the represented field modulus.
+    pub const fn field_bits(self) -> u32 {
+        128 - (self.modulus() - 1).leading_zeros()
+    }
+
     /// Stable serialized tag.
     pub const fn tag(self) -> u8 {
         match self {

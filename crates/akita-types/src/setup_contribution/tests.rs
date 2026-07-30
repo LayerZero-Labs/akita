@@ -191,7 +191,7 @@ fn test_inputs_for_group_sizes(
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
             .map(|&_group_size| {
-                let layout = crate::PrecommittedGroupDescriptor::from_params(
+                let layout = crate::CommittedGroupDescriptor::from_params(
                     crate::PolynomialGroupLayout::new(0, 1),
                     &lp,
                 );
