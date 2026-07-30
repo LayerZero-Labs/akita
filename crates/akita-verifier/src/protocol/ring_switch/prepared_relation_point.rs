@@ -5,14 +5,11 @@
 
 #[cfg(test)]
 use akita_algebra::poly::multilinear_eval;
-use akita_algebra::{
-    offset_eq::OffsetEqWindow,
-    ring::{evaluate_power_sequence_mle, scalar_powers},
-};
+use akita_algebra::ring::{evaluate_power_sequence_mle, scalar_powers};
 use akita_field::{AkitaError, FieldCore};
-use akita_types::RelationAddressGeometry;
 #[cfg(test)]
 use akita_types::{opening_domain_len, CommitmentRingDims, RingRole};
+use akita_types::{PreparedRelationAddress, RelationAddressGeometry};
 use std::sync::Arc;
 
 pub(super) struct PreparedRolePoint<E: FieldCore> {
@@ -27,12 +24,11 @@ pub(super) struct PreparedRolePoint<E: FieldCore> {
 /// roles. The remaining point addresses relation lanes followed by semantic
 /// witness columns. Role-native setup columns split one A-role witness column
 /// into `d_a / d_role` subcolumns.
-pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
+pub(super) struct PreparedRelationPoint<E: FieldCore> {
     relation_address_geometry: RelationAddressGeometry,
     common_alpha_evaluation: E,
     alpha: E,
-    address_point: &'a [E],
-    equality_window: OffsetEqWindow<E>,
+    relation_address: PreparedRelationAddress<E>,
     #[cfg(test)]
     role_dims: CommitmentRingDims,
     inner: Arc<PreparedRolePoint<E>>,
@@ -41,9 +37,9 @@ pub(super) struct PreparedRelationPoint<'a, E: FieldCore> {
     additional: Vec<Arc<PreparedRolePoint<E>>>,
 }
 
-impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
+impl<E: FieldCore> PreparedRelationPoint<E> {
     pub(super) fn new(
-        point: &'a [E],
+        point: &[E],
         alpha: E,
         geometry: RelationAddressGeometry,
         additional_ring_dims: &[usize],
@@ -56,7 +52,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
         let coeff_point = point.get(..coeff_bits).ok_or(AkitaError::InvalidProof)?;
         let lane_and_column_point = point.get(coeff_bits..).ok_or(AkitaError::InvalidProof)?;
         let coeff_eval = evaluate_power_sequence_mle(alpha, coeff_point);
-        let equality_window = OffsetEqWindow::new(lane_and_column_point)?;
+        let relation_address = PreparedRelationAddress::new(lane_and_column_point)?;
 
         let prepare_role = |ring_dim: usize| -> Result<Arc<PreparedRolePoint<E>>, AkitaError> {
             let lane_count = ring_dim
@@ -121,8 +117,7 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
             relation_address_geometry: geometry,
             common_alpha_evaluation: coeff_eval,
             alpha,
-            address_point: lane_and_column_point,
-            equality_window,
+            relation_address,
             #[cfg(test)]
             role_dims,
             inner,
@@ -145,11 +140,11 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
     }
 
     pub(super) fn address_point(&self) -> &[E] {
-        self.address_point
+        self.relation_address.point()
     }
 
-    pub(super) fn equality_window(&self) -> &OffsetEqWindow<E> {
-        &self.equality_window
+    pub(super) fn relation_address(&self) -> &PreparedRelationAddress<E> {
+        &self.relation_address
     }
 
     pub(super) fn inner(&self) -> &PreparedRolePoint<E> {
@@ -231,7 +226,10 @@ impl<'a, E: FieldCore> PreparedRelationPoint<'a, E> {
                 let address = lane_start.checked_add(lane).ok_or_else(|| {
                     AkitaError::InvalidSetup("relation lane address overflow".into())
                 })?;
-                Ok(evaluation + self.equality_window.eval(address) * alpha_power)
+                Ok(
+                    evaluation
+                        + self.relation_address.equality_window().eval(address) * alpha_power,
+                )
             },
         )
     }

@@ -61,7 +61,9 @@ Proposed names are recommendations; the exact spelling is the main thing to sett
 
 3. `r_stage1` (verifier, e.g. `crates/akita-verifier/src/stages/stage2.rs:181`) -> `stage1_point`.
    It is the random point output by the stage-1 norm sumcheck, not the divisibility quotient `r`.
-   This removes the collision with quotient `r` and with the verifier helper `compute_r_contribution` (`crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs:334`).
+   This removes the collision with quotient `r` and with the former verifier
+   `compute_r_contribution` helper, whose surviving quotient contraction lives in
+   `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`.
 
 4. `RelationMatrixRowLayout::Intermediate` / `RelationMatrixRowLayout::Terminal` (`crates/akita-types/src/layout/params.rs:26`) -> `RelationMatrixRowLayout::WithDBlock` / `RelationMatrixRowLayout::WithoutDBlock`.
    The variant selects whether the `D`-block rows `v = D * w_hat` appear in the relation, not the position in the fold chain.
@@ -438,4 +440,6 @@ Important risks to resolve first:
 - `crates/akita-types/src/proof/levels.rs`, `AkitaProofStep`, `AkitaBatchedRootProof`, and `TerminalLevelProof`.
 - `crates/akita-types/src/proof/direct_witness.rs`, `DirectWitnessProof`.
 - `crates/akita-prover/src/lib.rs`, `DecomposeFoldWitness` and `z_pre`.
-- `crates/akita-verifier/src/stages/stage2.rs` and `crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs`, `r_stage1` versus quotient `r`.
+- `crates/akita-verifier/src/stages/stage2.rs` and
+  `crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`,
+  `stage1_point` versus quotient `r`.

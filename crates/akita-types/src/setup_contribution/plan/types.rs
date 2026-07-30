@@ -270,22 +270,58 @@ impl SetupContributionGroupInputs {
     }
 }
 
+/// Checked relation-address point and its bounded equality window.
+///
+/// Clones share both allocations. Keeping the point and window in one value
+/// prevents setup planning from consuming a window prepared for different
+/// challenges.
+#[derive(Clone)]
+pub struct PreparedRelationAddress<E: FieldCore> {
+    pub(crate) point: Arc<[E]>,
+    pub(crate) equality_window: Arc<OffsetEqWindow<E>>,
+}
+
+impl<E: FieldCore> PreparedRelationAddress<E> {
+    /// Prepare the reusable equality state for one relation-address point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bounded equality window cannot be constructed.
+    pub fn new(point: &[E]) -> Result<Self, AkitaError> {
+        Ok(Self {
+            point: point.to_vec().into(),
+            equality_window: Arc::new(OffsetEqWindow::new(point)?),
+        })
+    }
+
+    /// Relation lane-and-column challenges in LSB-first order.
+    #[must_use]
+    pub fn point(&self) -> &[E] {
+        &self.point
+    }
+
+    /// Equality window prepared from [`Self::point`].
+    #[must_use]
+    pub fn equality_window(&self) -> &OffsetEqWindow<E> {
+        &self.equality_window
+    }
+}
+
 pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) address_point: Arc<[E]>,
+    pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-    pub(crate) eq_window: OffsetEqWindow<E>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Equality window shared by every direct contribution over this opening point.
     #[must_use]
     pub fn eq_window(&self) -> &OffsetEqWindow<E> {
-        &self.eq_window
+        self.relation_address.equality_window()
     }
 
     /// Prepared D/B/A column equality slices for `group_id`.

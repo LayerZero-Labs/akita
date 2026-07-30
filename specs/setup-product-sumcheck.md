@@ -69,7 +69,7 @@ Key abstractions and surfaces:
   must reduce to the same setup contribution as the direct matrix scan.
   Protected at the unit level by the existing materialized-vs-direct
   equivalence fixtures in
-  `crates/akita-verifier/src/protocol/slice_mle/setup_contribution/` and at the
+  `crates/akita-types/src/setup_contribution/tests/` and at the
   e2e level by the round-trip tests above.
 - **Terminal levels never embed a stage-3 proof.** Only non-terminal fold
   levels run the setup sumcheck; terminal levels close the witness directly.

@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn prepared_relation_address_clones_share_the_equality_window() {
+    let point = (0..12)
+        .map(|index| test_scalar(17 + index as u128))
+        .collect::<Vec<_>>();
+    let prepared = PreparedRelationAddress::new(&point).unwrap();
+    let shared = prepared.clone();
+    assert!(std::sync::Arc::ptr_eq(
+        &prepared.equality_window,
+        &shared.equality_window,
+    ));
+    assert!(std::sync::Arc::ptr_eq(&prepared.point, &shared.point));
+}
+
+#[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
     let num_positions_per_block = 16;
     let depth_commit = 3;
@@ -113,7 +127,7 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         eq_tau1,
         &witness_layout,
         &[group],
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         None,
         relation_address_geometry,
         test_scalar(3),

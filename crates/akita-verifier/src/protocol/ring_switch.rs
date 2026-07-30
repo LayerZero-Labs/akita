@@ -11,9 +11,9 @@ use akita_transcript::labels::{CHALLENGE_RING_SWITCH, CHALLENGE_TAU0, CHALLENGE_
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, shared_setup_fold_gadget, validate_role_dispatch, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, RelationAddressGeometry,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingRole, SetupContributionGroupInputs,
-    SetupContributionPlan, WitnessLayout,
+    CommittedGroupParams, FpExtEncoding, OpeningClaimsLayout, PreparedRelationAddress,
+    RelationAddressGeometry, RingMultiplierOpeningPoint, RingRelationInstance, RingRole,
+    SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
 };
 use std::sync::{Arc, Mutex};
 
@@ -21,11 +21,16 @@ use super::validate_log_basis;
 use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
+#[cfg(feature = "benchmark-support")]
+mod benchmark_support;
 mod prepared_relation_point;
 mod relation_evaluation;
 mod tensor_challenges;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "benchmark-support")]
+pub use benchmark_support::{relation_evaluator_benchmark_case, RelationEvaluatorBenchmarkCase};
 
 /// Verifier-side ring-switch output, carrying only the data needed to replay
 /// the fused stage-1/stage-2 checks.
@@ -673,7 +678,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
 
     pub(crate) fn setup_contribution_plan<F>(
         &self,
-        x_challenges: &[E],
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
         alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
@@ -689,7 +694,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             self.eq_tau1.clone(),
             &context.witness_layout,
             &setup_groups,
-            x_challenges,
+            relation_address,
             fold_gadget,
             self.relation_address_geometry,
             alpha,
@@ -698,7 +703,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
 
     pub(crate) fn setup_contribution_plan_deferred<F>(
         &self,
-        x_challenges: &[E],
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
         alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
@@ -714,7 +719,7 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             self.eq_tau1.clone(),
             &context.witness_layout,
             &setup_groups,
-            x_challenges,
+            relation_address,
             fold_gadget,
             self.relation_address_geometry,
             alpha,

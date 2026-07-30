@@ -136,8 +136,8 @@ pub use schedule::{
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupProjectionGeometry,
+    ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
 };
 pub use sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,

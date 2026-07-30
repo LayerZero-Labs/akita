@@ -19,9 +19,9 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, RelationAddressGeometry, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
-    SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
+    CommittedGroupParams, FpExtEncoding, PreparedRelationAddress, RelationAddressGeometry,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -340,7 +340,7 @@ where
         eq_tau1,
         &chunk_layout,
         &groups,
-        x_challenges,
+        PreparedRelationAddress::new(x_challenges)?,
         fold_gadget.as_deref(),
         relation_address_geometry,
         alpha,

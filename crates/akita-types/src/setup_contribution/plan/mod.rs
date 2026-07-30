@@ -29,7 +29,7 @@ mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
-pub use types::{SetupContributionGroupInputs, SetupContributionPlan};
+pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 pub(crate) use types::{SetupContributionGroupPlan, SetupContributionSpan};
 
 use super::geometry::SetupProjectionGroupGeometry;

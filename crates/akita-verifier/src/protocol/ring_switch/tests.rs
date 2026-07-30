@@ -4,8 +4,8 @@ use akita_challenges::SparseChallengeConfig;
 use akita_field::{Fp32, Prime128OffsetA7F7};
 use akita_types::{
     r_decomp_levels, AkitaSetupSeed, CommitmentRingDims, FlatMatrix, OpenCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, SetupContributionGroupInputs,
-    SetupContributionPlan, SisModulusProfileId,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PreparedRelationAddress,
+    SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId,
 };
 
 type F = Fp32<251>;
@@ -60,7 +60,7 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         vec![F::one(); 4].into(),
         &witness_layout,
         &setup_groups,
-        &[F::one(), F::one()],
+        PreparedRelationAddress::new(&[F::one(), F::one()]).unwrap(),
         None,
         relation_address_geometry,
         F::one(),
@@ -181,7 +181,11 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .unwrap()
         .unwrap();
     let direct_plan = evaluator
-        .setup_contribution_plan::<MixedF>(address_point, Some(&fold_gadget), alpha)
+        .setup_contribution_plan::<MixedF>(
+            PreparedRelationAddress::new(address_point).unwrap(),
+            Some(&fold_gadget),
+            alpha,
+        )
         .unwrap();
     let setup_claim = direct_plan
         .evaluate_direct::<MixedF>(

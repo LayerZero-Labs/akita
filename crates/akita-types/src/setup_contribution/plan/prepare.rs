@@ -99,7 +99,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
         groups: &[SetupContributionGroupInputs],
-        full_vec_randomness: &[E],
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
         relation_address_geometry: RelationAddressGeometry,
         alpha: E,
@@ -114,7 +114,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             eq_tau1,
             witness_layout,
             groups,
-            full_vec_randomness,
+            relation_address,
             fold_gadget,
             relation_address_geometry,
             alpha,
@@ -129,7 +129,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
         groups: &[SetupContributionGroupInputs],
-        full_vec_randomness: &[E],
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
         relation_address_geometry: RelationAddressGeometry,
         alpha: E,
@@ -144,7 +144,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             eq_tau1,
             witness_layout,
             groups,
-            full_vec_randomness,
+            relation_address,
             fold_gadget,
             relation_address_geometry,
             alpha,
@@ -159,7 +159,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         eq_tau1: std::sync::Arc<[E]>,
         witness_layout: &WitnessLayout,
         groups: &[SetupContributionGroupInputs],
-        full_vec_randomness: &[E],
+        relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
         relation_address_geometry: RelationAddressGeometry,
         alpha: E,
@@ -170,6 +170,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         E: MulBase<F>,
     {
         let _span = tracing::info_span!("setup_prepare_plan").entered();
+        let full_vec_randomness = relation_address.point();
         let expected_address_variables = relation_address_geometry.relation_lane_variable_count();
         if full_vec_randomness.len() != expected_address_variables {
             return Err(AkitaError::InvalidSize {
@@ -228,16 +229,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             };
             (d_rows, d_physical_cols, d_weights)
         };
-        // Build the bounded equality window once and share it across every E/T/Z
-        // column weight. Each canonical column address then costs one bounded
-        // low-table lookup plus a short high evaluation instead of a full
-        // `O(col_bits+ring_bits)` equality product recomputed per column, which
-        // was the dominant verifier setup-plan cost after the digit-innermost
-        // cutover (root cause 4).
-        let eq_window = {
-            let _span = tracing::info_span!("setup_prepare_eq_window").entered();
-            akita_algebra::offset_eq::OffsetEqWindow::new(full_vec_randomness)?
-        };
+        // The caller prepares this checked point/window pair once. Stage 2
+        // shares it with quotient evaluation and the cached Stage-3 plan.
+        let eq_window = relation_address.equality_window();
         let mut dynamic_groups = groups
             .iter()
             .zip(&group_geometry)
@@ -334,14 +328,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     depth_open,
                                     d_col_range.len(),
                                     relation_address_geometry.relation_lane_capacity(),
-                                    &eq_window,
+                                    eq_window,
                                     RingRole::Opening,
                                 )?
                             } else {
                                 materialize_span_weights::<F, E>(
                                     d_col_range.len(),
                                     &d_spans,
-                                    &eq_window,
+                                    eq_window,
                                     &lanes.opening_alpha,
                                     None,
                                 )?
@@ -367,14 +361,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     columns_per_block,
                                     t_cols,
                                     relation_address_geometry.relation_lane_capacity(),
-                                    &eq_window,
+                                    eq_window,
                                     RingRole::Outer,
                                 )?
                             } else {
                                 materialize_span_weights::<F, E>(
                                     t_cols,
                                     &b_spans,
-                                    &eq_window,
+                                    eq_window,
                                     &lanes.outer_alpha,
                                     None,
                                 )?
@@ -393,14 +387,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     depth_witness,
                                     group.depth_fold,
                                     relation_address_geometry.relation_lane_capacity(),
-                                    &eq_window,
+                                    eq_window,
                                     group_fold_gadget,
                                 )?
                             } else {
                                 materialize_span_weights::<F, E>(
                                     z_cols,
                                     &a_families,
-                                    &eq_window,
+                                    eq_window,
                                     &lanes.inner_alpha,
                                     Some(group_fold_gadget),
                                 )?
@@ -509,10 +503,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             d_rows,
             d_physical_cols,
             d_weights,
-            address_point: full_vec_randomness.to_vec().into(),
+            relation_address,
             relation_address_geometry,
             projection_geometry,
-            eq_window,
         })
     }
 

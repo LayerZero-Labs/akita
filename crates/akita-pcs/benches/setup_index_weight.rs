@@ -7,8 +7,8 @@ use akita_types::{
     gadget_row_scalars, r_decomp_levels, CommitmentRingDims, CommittedGroupParams,
     InnerCommitMatrixParams, OpenCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
     PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
-    SetupContributionGroupInputs, SetupContributionPlan, SisModulusProfileId, WitnessLayout,
-    MAX_WITNESS_CHUNKS,
+    PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan,
+    SisModulusProfileId, WitnessLayout, MAX_WITNESS_CHUNKS,
 };
 use criterion::measurement::WallTime;
 use criterion::{
@@ -225,7 +225,7 @@ fn make_case_with_shape(
         eq_tau1,
         &layout,
         &groups,
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
         alpha,

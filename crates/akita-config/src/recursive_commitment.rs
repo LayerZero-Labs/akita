@@ -154,8 +154,9 @@ mod tests {
     use crate::proof_optimized::fp128;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, RelationAddressGeometry,
-        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, PolynomialGroupLayout, PreparedRelationAddress,
+        RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
+        WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
@@ -276,13 +277,15 @@ mod tests {
         let alpha = scalar(3);
         let fold_gadget =
             shared_setup_fold_gadget::<Prime128OffsetA7F7>(params, &opening_batch, &groups);
+        let relation_address =
+            PreparedRelationAddress::new(&address_point).expect("relation address");
         let full = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
             params,
             &opening_batch,
             eq_tau1.clone().into(),
             &witness_layout,
             &groups,
-            &address_point,
+            relation_address.clone(),
             fold_gadget.as_deref(),
             address_geometry,
             alpha,
@@ -294,7 +297,7 @@ mod tests {
             eq_tau1.into(),
             &witness_layout,
             &groups,
-            &address_point,
+            relation_address,
             fold_gadget.as_deref(),
             address_geometry,
             alpha,

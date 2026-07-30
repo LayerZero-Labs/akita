@@ -13,8 +13,8 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, SetupContributionPlan, SetupSumcheckProof,
-    SETUP_SUMCHECK_DEGREE,
+    AkitaVerifierSetup, CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan,
+    SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -54,7 +54,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             .map_or_else(
                 || {
                     relation_matrix_evaluator.setup_contribution_plan::<F>(
-                        x_challenges,
+                        PreparedRelationAddress::new(x_challenges)?,
                         fold_gadget.as_deref(),
                         alpha,
                     )

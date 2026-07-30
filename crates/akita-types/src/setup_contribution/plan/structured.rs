@@ -101,8 +101,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let claim = block_claim / group.num_live_blocks;
                 let block_start = block_claim % group.num_live_blocks;
                 let interval = evaluate_single_factor_row(
-                    &self.address_point,
-                    &self.eq_window,
+                    self.relation_address.point(),
+                    self.relation_address.equality_window(),
                     span.relation_lane_start,
                     block_start,
                     span,
@@ -138,8 +138,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let claim = block_claim / group.num_live_blocks;
                 let block_start = block_claim % group.num_live_blocks;
                 let interval = evaluate_single_factor_row(
-                    &self.address_point,
-                    &self.eq_window,
+                    self.relation_address.point(),
+                    self.relation_address.equality_window(),
                     span.relation_lane_start,
                     block_start,
                     span,
@@ -181,7 +181,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     && family.setup_column_stride == 1;
                 if dense {
                     acc -= evaluate_dense_a_family(
-                        &self.address_point,
+                        self.relation_address.point(),
                         family,
                         inner_lane_powers,
                         opening_a_evals,
@@ -203,7 +203,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                     AkitaError::InvalidSetup("setup A fold lane overflow".into())
                                 })?;
                             lane_equality += evaluate_lane_segment(
-                                &self.eq_window,
+                                self.relation_address.equality_window(),
                                 fold_start,
                                 inner_lane_powers,
                             )? * fold;

@@ -96,18 +96,21 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             expected: low_variable_count,
                             actual: rho_setup_idx.len(),
                         })?;
-                let relation_low_point = self.address_point.get(..low_variable_count).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: low_variable_count,
-                        actual: self.address_point.len(),
-                    },
-                )?;
-                let relation_high_point = self.address_point.get(low_variable_count..).ok_or(
-                    AkitaError::InvalidSize {
-                        expected: low_variable_count,
-                        actual: self.address_point.len(),
-                    },
-                )?;
+                let relation_point = self.relation_address.point();
+                let relation_low_point =
+                    relation_point
+                        .get(..low_variable_count)
+                        .ok_or(AkitaError::InvalidSize {
+                            expected: low_variable_count,
+                            actual: relation_point.len(),
+                        })?;
+                let relation_high_point =
+                    relation_point
+                        .get(low_variable_count..)
+                        .ok_or(AkitaError::InvalidSize {
+                            expected: low_variable_count,
+                            actual: relation_point.len(),
+                        })?;
                 let power_factor =
                     evaluate_power_sequence_mle(alpha_per_base_ring, setup_low_point)
                         * evaluate_power_sequence_mle(alpha_per_base_ring, relation_low_point);
@@ -170,7 +173,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             &group.d_spans,
                             &group.e_eq_slice,
                             d_col - group.d_col_range.start,
-                            &self.eq_window,
+                            self.relation_address.equality_window(),
                             &lane_powers[2],
                             None,
                         )?;
@@ -191,7 +194,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         &group.b_spans,
                         &group.t_eq_slice,
                         b_col,
-                        &self.eq_window,
+                        self.relation_address.equality_window(),
                         &lane_powers[1],
                         None,
                     )?;
@@ -211,7 +214,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         &group.a_families,
                         &group.z_eq_slice,
                         a_col,
-                        &self.eq_window,
+                        self.relation_address.equality_window(),
                         &lane_powers[0],
                         Some(&group.fold_gadget),
                     )?;

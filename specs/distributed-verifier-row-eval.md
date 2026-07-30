@@ -38,11 +38,11 @@ it introduces a `ChunkedWitnessCfg` parameter in `LevelParams` describing the tw
 column layouts, factors both into one **chunk-list** common denominator, and
 refactors the evaluation so a single code path serves both — the established
 layout becoming the one-chunk special case. The implementation surface is
-`RelationMatrixEvaluator::eval_at_point`
+`RelationMatrixEvaluator::eval_flat_at_point`
 (`crates/akita-verifier/src/protocol/ring_switch.rs`), the structured/setup
-evaluators in `crates/akita-verifier/src/protocol/slice_mle/`, and
+evaluators in `crates/akita-types/src/setup_contribution/plan/`, and
 `akita_types::SetupContributionPlan`
-(`crates/akita-types/src/setup_contribution.rs`).
+(`crates/akita-types/src/setup_contribution/plan/`).
 
 The cost target: the chunked layout must be **equal in its dominant cost** to the
 established layout. The chunk-partitioned components (`e_hat`, `t_hat`) and the
@@ -140,7 +140,7 @@ setup-contribution planner consume the same definitions):
   all others carry `None`. All validation (no-panic) happens here.
   here. `RingRelationSegmentLayout` is deprecated and replaced by `WitnessLayout`.
 - **`RelationMatrixEvaluator`** carries the resolved `WitnessLayout` (replacing
-  `witness_segment_layout`), and `eval_at_point` becomes a fold over
+  `witness_segment_layout`), and `eval_flat_at_point` becomes a fold over
   `chunk_layout.chunks()` zipped with `chunk_layout.chunk_lengths`.
 - **`PreparedChallengeEvals::summarize_chunk_block_carries`** (new, generalizes
   `summarize_all_block_carries` in
@@ -159,7 +159,7 @@ setup-contribution planner consume the same definitions):
 
 - **`num_chunks = 1` is byte-identical to today.** Evaluating under
   `num_chunks = 1` returns exactly the same field element as the current
-  `eval_at_point` for every fixture. Protected by a new regression test
+  `eval_flat_at_point` for every fixture. Protected by a new regression test
   `single_chunk_matches_legacy_row_eval`.
 - **`num_chunks = 1` collapses to the single-chunk layout.** `segment_layout`
   with `num_chunks = 1` yields a one-chunk `WitnessLayout` whose offsets and
@@ -221,10 +221,9 @@ scope for the peeled fast path. A dense per-chunk fallback for non-power-of-two
 from `num_positions_per_block` (the `z` in-block size): a **non-power-of-two `num_positions_per_block` is
 fully in scope** and specified below (§4 Case 2 / §5), since it already arises
 at recursive levels and the dense fallback exists today.
-- **ZK blinding interaction.** The `b_zk` / `d_zk` blinding segments
-(`crates/akita-verifier/src/protocol/slice_mle/zk_blinding.rs`) under chunked
-layout are out of scope; the spec targets the non-zk core evaluation. ZK
-chunking is a follow-up mirroring the same per-chunk offset treatment.
+- **ZK blinding interaction.** The historical slice-MLE `b_zk` / `d_zk`
+blinding path is not part of the current production relation evaluator; this
+spec targets the non-zk core evaluation.
 - **Tensor (factored) challenges under chunking.** The flat-`c_alpha` path is the
 primary target. Factored challenges require restricting the block-window to a
 chunk's contiguous range (which lands in the `left` factor of the left⊗right
@@ -239,7 +238,7 @@ Implementation Stages).
   exist in `crates/akita-types/src/witness/`, and
   `RingRelationInstance::segment_layout(lp)` yields `1` chunk for
   `num_chunks = 1` and `W` chunks for `num_chunks = W`.
-- [ ] `RelationMatrixEvaluator::eval_at_point` evaluates `e_hat`, `t_hat`,
+- [ ] `RelationMatrixEvaluator::eval_flat_at_point` evaluates `e_hat`, `t_hat`,
   `z_hat`, and the setup contribution as a fold over `chunk_layout.chunks()`,
   reusing the existing `EStructuredSlicesEvaluator` /
   `TStructuredSlicesEvaluator` / `ZStructuredPow2SlicesEvaluator` /
@@ -263,10 +262,10 @@ Implementation Stages).
 
 ### Testing Strategy
 
-New tests live next to the structured-slice tests
-(`crates/akita-verifier/src/protocol/slice_mle/structured_slice.rs`) and the
+New tests live with the setup-plan structured tests
+(`crates/akita-types/src/setup_contribution/tests/span_evaluators.rs`) and the
 ring-switch tests (`crates/akita-verifier/src/protocol/ring_switch/tests.rs`),
-reusing the existing `StructuredFixture`/`fixture()` shape
+reusing their checked fixture shapes
 (`F = Prime128OffsetA7F7`, `D = 32`, `num_live_blocks = 8`, `num_positions_per_block = 512`).
 
 1. **`chunk_grouped_matches_materialized` (ground truth).** For each
@@ -331,7 +330,7 @@ layout once into `WitnessLayout`, then keeps the verifier hot path expressed as 
 fold over resolved chunks. That is the correct boundary because today's code has
 three independent consumers of witness column geometry:
 
-- `RelationMatrixEvaluator::eval_at_point`, which owns the structured
+- `RelationMatrixEvaluator::eval_flat_at_point`, which owns the structured
 `e_hat`/`t_hat`/`z_hat` and `r` contributions.
 - `SetupContributionPlan::prepare`, which translates the same geometry into
 column-equality weights for the packed setup scan.
@@ -349,7 +348,7 @@ The main architecture requirement is that `segment_layout` must become a real
 verifier boundary, not just a convenience constructor. It should receive, or be
 followed immediately by validation against, the validated witness column capacity
 (`w_len / D`). Without that, the spec's no-panic invariant cannot be fully
-enforced at the shape boundary; `eval_at_point` would still be able to construct
+enforced at the shape boundary; `eval_flat_at_point` would still be able to construct
 offsets that are algebraically valid but outside the committed witness column
 domain. In implementation terms, either make `witness_len` part of
 `segment_layout`'s inputs, or add a non-optional
@@ -440,7 +439,7 @@ verifier hot loop on layout.
 
 #### The problem with the obvious approach
 
-`eval_at_point` today is a straight-line sequence of contribution calls, each
+`eval_flat_at_point` today is a straight-line sequence of contribution calls, each
 hard-wired to a single layout assumption: `e_hat` lives at one `offset_e` and
 spans all `num_live_blocks`; `t_hat` at one `offset_t`; `z_hat` at one `offset_z`;
 the SIS scan maps columns to those single offsets; `r` tails the lot. Adding the
@@ -539,7 +538,7 @@ layer 1:
    once per chunk with the chunk's offsets; their bodies are unchanged. Only
    their *inputs* are chunk-derived (offset, `global_block_base`, the peel window
    `B_w`).
-3. **Fold (orchestrator, shape-agnostic).** `eval_at_point` builds the
+3. **Fold (orchestrator, shape-agnostic).** `eval_flat_at_point` builds the
   chunk-independent precomputes once (the shared `eq_low` at window `B_w`, the
    shared `eq_low_z` at window `num_positions_per_block`, gadgets, `alpha_pows`), then sums
    per-chunk contributions and adds the single setup + `r` contributions.
@@ -1006,9 +1005,9 @@ Tests:
 - Tensor `num_chunks = 1` still passes existing tensor summary tests.
 - Tensor `num_chunks > 1` returns `AkitaError` until the follow-up is implemented.
 
-### Stage 4 — Structured `eval_at_point` Chunk Fold
+### Stage 4 — Structured `eval_flat_at_point` Chunk Fold
 
-Refactor `eval_at_point` so all layout-specific offsets come from
+Refactor `eval_flat_at_point` so all layout-specific offsets come from
 `chunk_layout.chunks`. The function still builds shared precomputes once, then
 folds chunk contributions.
 
@@ -1232,7 +1231,7 @@ for w in [1, 2, 4, 8] {
     let layout = relation.segment_layout(&lp_w, &inputs)?;
     let materialized = materialize_chunked_relation_row(&fixture, &layout)?;
     let expected = dense_eq_inner_product(&materialized, &fixture.full_vec_randomness);
-    let got = prepared.eval_at_point::<_, D>(...)?;
+    let got = prepared.eval_flat_at_point::<_, D>(...)?;
     assert_eq!(got, expected);
 }
 ```
@@ -1301,8 +1300,9 @@ Follow-ups after the first full landing:
 `[book/src/how/verifying/distributed-relation-verifier.md](../book/src/how/verifying/distributed-relation-verifier.md)`
 - Distributed prover:
 `[book/src/how/proving/distributed-prover.md](../book/src/how/proving/distributed-prover.md)`
-- Code: `crates/akita-verifier/src/protocol/ring_switch.rs` (`eval_at_point`),
-`crates/akita-verifier/src/protocol/slice_mle/` (structured + setup
-evaluators), `crates/akita-types/src/setup_contribution.rs`
-(`SetupContributionPlan`), `crates/akita-types/src/proof/ring_relation.rs`
+- Code: `crates/akita-verifier/src/protocol/ring_switch.rs`
+(`eval_flat_at_point`),
+`crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs`,
+`crates/akita-types/src/setup_contribution/plan/` (`SetupContributionPlan`),
+`crates/akita-types/src/proof/ring_relation.rs`
 (`RingRelationSegmentLayout`).

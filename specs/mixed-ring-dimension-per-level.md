@@ -1191,22 +1191,22 @@ block is still D.
 
 ### Recursive and setup-offloaded verifier
 
-Uniform geometry uses `SetupIndexWeightEvaluator`, which evaluates the old
-coarse D/B/A intervals directly with compact pair-equality recurrences. Mixed
-geometry evaluates the canonical plan spans. Both consume the same
-`SetupContributionPlan`.
+`SetupContributionPlan::evaluate_setup_index_weight_mle` evaluates uniform,
+mixed-D, multigroup, and multichunk geometry. The plan selects contiguous q=1
+or projected-lane q>1 kernels while preserving the same compact pair-equality
+recurrence and canonical D/B/A formula.
 
 The performance restorations at `2205555a6` and `2f0c35b66` are intentional:
 
-- keep uniform deferred structured E/T/Z evaluation on its established kernel;
+- keep q=1 deferred structured E/T/Z evaluation on its contiguous kernel;
 - keep uniform Stage-3 setup-index evaluation succinct;
 - reuse one carrier alpha-power table across uniform root groups;
 - skip alpha-power generation for a one-lane projection;
 - materialize uniform A weights into a preallocated slice;
 - dispatch the uniform group evaluator at compile-time D.
 
-Do not route uniform recursive profiles back through generalized mixed span
-contraction without new benchmark evidence.
+Do not replace shape-specific inner kernels without identical-geometry
+benchmark evidence; they remain internal implementations of the shared plan.
 
 ### Multi-group ownership
 
@@ -1745,7 +1745,7 @@ back.
 | Relation-address geometry | `crates/akita-types/src/proof/relation_address.rs` |
 | Relation RHS and row dimensions | `crates/akita-types/src/proof/relation.rs` |
 | Setup-contribution plan | `crates/akita-types/src/setup_contribution/plan/` |
-| Uniform recursive setup-index evaluator | `crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs` |
+| Recursive setup-index evaluator | `crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs` |
 | Prover ring-switch layout | `crates/akita-prover/src/protocol/ring_switch/` |
 | Verifier relation evaluation | `crates/akita-verifier/src/protocol/ring_switch.rs` and `ring_switch/` |
 | Prover Stage 3 | `crates/akita-prover/src/protocol/sumcheck/akita_stage3/` |

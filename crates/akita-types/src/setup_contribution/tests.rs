@@ -96,6 +96,47 @@ fn retarget_test_role_dims(params: &mut CommittedGroupParams, role_dims: Commitm
     );
 }
 
+fn retarget_precommitted_test_role_dims(
+    params: &mut CommittedGroupParams,
+    group_id: usize,
+    inner_ring_dimension: usize,
+    outer_ring_dimension: usize,
+) {
+    let group = &mut params.precommitted_groups[group_id];
+    group.fold_challenge_config =
+        SparseChallengeConfig::production_for_ring_dim(inner_ring_dimension)
+            .expect("test precommitted ring has a production challenge");
+    let inner = &group.inner_commit_matrix;
+    let inner_output_rank = inner.output_rank();
+    group.inner_commit_matrix = crate::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        inner.input_width(),
+        inner.coeff_linf_bound(),
+        inner_ring_dimension,
+    );
+    let outer = &group.outer_commit_matrix;
+    let projected_width = inner_output_rank
+        .checked_mul(group.num_digits_outer)
+        .and_then(|width| width.checked_mul(group.layout.num_live_blocks))
+        .and_then(|width| width.checked_mul(group.layout.group.num_polynomials()))
+        .and_then(|width| width.checked_mul(inner_ring_dimension / outer_ring_dimension))
+        .expect("test precommitted B width");
+    group.outer_commit_matrix = crate::OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        projected_width,
+        outer.coeff_linf_bound(),
+        outer_ring_dimension,
+    );
+    group.layout.inner_ring_dimension = inner_ring_dimension;
+    group.layout.outer_ring_dimension = outer_ring_dimension;
+}
+
 #[allow(clippy::too_many_arguments)]
 fn test_inputs(
     n_a: usize,
@@ -289,7 +330,7 @@ fn prepare_test_plan(
         inputs.eq_tau1.clone(),
         witness_layout,
         groups,
-        full_vec_randomness,
+        PreparedRelationAddress::new(full_vec_randomness)?,
         fold_gadget,
         relation_address_geometry,
         // All `prepare_test_plan` callers are uniform-role, so the folding
@@ -329,7 +370,7 @@ fn finalize_test_plan(
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
-        address_point: Vec::new().into(),
+        relation_address: PreparedRelationAddress::new(&[]).unwrap(),
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
             role_dims.d_a(),
@@ -337,7 +378,6 @@ fn finalize_test_plan(
         )
         .unwrap(),
         projection_geometry,
-        eq_window: akita_algebra::offset_eq::OffsetEqWindow::new(&[]).unwrap(),
     };
     for group in &mut plan.groups {
         group.role_dims = role_dims;
@@ -552,7 +592,7 @@ fn structured_weight_fixture_with_outgoing(
         inputs.eq_tau1.clone(),
         &layout,
         &groups,
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
         test_scalar(3),
@@ -599,7 +639,7 @@ fn expected_z_setup_weights(
         .collect()
 }
 #[test]
-fn relation_ordered_setup_layout_matches_direct_oracle() {
+fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
     let rows = 6;
     let quotient_depth = 2;
     let group_shapes = [
@@ -608,7 +648,7 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         (0usize, 1usize, 1usize, 1usize, 1usize),
     ];
     let tau1 = vec![test_scalar(31), test_scalar(32), test_scalar(33)];
-    let inputs = test_inputs_for_group_sizes(
+    let mut inputs = test_inputs_for_group_sizes(
         1,
         1,
         1,
@@ -621,6 +661,15 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         4,
         EqPolynomial::evals(&tau1).unwrap(),
     );
+    retarget_test_role_dims(
+        &mut inputs.level_params,
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+    );
+    retarget_precommitted_test_role_dims(&mut inputs.level_params, 0, 64, 32);
     let mut cursor = 0usize;
     let units = group_shapes
         .iter()
@@ -674,21 +723,25 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         &groups,
     )
     .unwrap();
-    let randomness_bits = crate::opening_domain_len(opening_source_len)
-        .unwrap()
-        .trailing_zeros() as usize;
+    let relation_address_geometry = inputs
+        .level_params
+        .relation_address_geometry(&inputs.opening_batch, 128, opening_source_len)
+        .unwrap();
+    let randomness_bits = relation_address_geometry.relation_lane_variable_count();
     let full_vec_randomness = (0..randomness_bits)
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(quotient_depth, 4);
-    let plan = prepare_test_plan(
-        &inputs,
+    let plan = SetupContributionPlan::prepare::<F>(
+        &inputs.level_params,
+        &inputs.opening_batch,
+        inputs.eq_tau1.clone(),
         &witness_layout,
-        opening_source_len,
         &groups,
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
-        CommitmentRingDims::uniform(TEST_D),
+        relation_address_geometry,
+        test_scalar(3),
     )
     .unwrap();
     assert_eq!(
@@ -697,7 +750,7 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
             .find(|group| group.group_id == 1)
             .unwrap()
             .d_col_range,
-        0..1
+        0..2
     );
     assert_eq!(
         plan.groups
@@ -705,46 +758,16 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
             .find(|group| group.group_id == 0)
             .unwrap()
             .d_col_range,
-        1..2
-    );
-    let setup_len = plan.required();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            gen_ring_dim: TEST_D,
-            max_setup_len: setup_len,
-            public_matrix_seed: [0u8; 32],
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|index| test_scalar(211 + index as u128))
-                .collect(),
-            TEST_D,
-        ),
+        2..3
     );
     let alpha = test_scalar(3);
-    let alpha_pows = scalar_powers(alpha, TEST_D);
-    assert_eq!(
-        plan.evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
-            .unwrap(),
-        plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
-            .unwrap(),
-    );
-
-    let relation_address_geometry = crate::RelationAddressGeometry::new(
-        CommitmentRingDims::uniform(TEST_D),
-        TEST_D,
-        opening_source_len,
-    )
-    .unwrap();
     let deferred = SetupContributionPlan::prepare_deferred::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
         &witness_layout,
         &groups,
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
         alpha,
@@ -775,6 +798,46 @@ fn relation_ordered_setup_layout_matches_direct_oracle() {
         dense_mle,
         "deferred multi-group setup-index MLE must match the full plan"
     );
+
+    for group in &plan.groups {
+        let block_challenges = (0..group.num_claims * group.num_live_blocks)
+            .map(|index| test_scalar(1501 + 17 * group.group_id as u128 + index as u128))
+            .collect::<Vec<_>>();
+        let opening_a_evals = (0..group.num_positions_per_block)
+            .map(|index| test_scalar(1601 + 19 * group.group_id as u128 + index as u128))
+            .collect::<Vec<_>>();
+        let reference = span_evaluators::structured_slice_reference(
+            group,
+            &block_challenges,
+            &opening_a_evals,
+            alpha,
+        );
+        assert_eq!(
+            plan.evaluate_structured_group::<F>(
+                group.group_id,
+                &block_challenges,
+                &opening_a_evals,
+                alpha,
+            )
+            .unwrap(),
+            reference,
+            "full structured evaluation must match group {} dense oracle",
+            group.group_id
+        );
+        assert_eq!(
+            deferred
+                .evaluate_structured_group::<F>(
+                    group.group_id,
+                    &block_challenges,
+                    &opening_a_evals,
+                    alpha,
+                )
+                .unwrap(),
+            reference,
+            "deferred structured evaluation must match group {} dense oracle",
+            group.group_id
+        );
+    }
 }
 
 #[test]

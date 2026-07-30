@@ -98,9 +98,9 @@ basis.
 - Add a production dense fallback, exact-fringe provider, runtime kernel selector,
   compatibility wrapper, or generic sum-of-products abstraction.
 
-The later recursive-offload PR gets its own spec when implemented. Its stable seam is
-recorded near the end of this document; this PR does not carry a speculative proof-wire
-plan for it.
+Recursive setup offload reuses the same checked relation-address geometry and
+`SetupContributionPlan`; Stage 3 changes the proof wire, not the Stage 2 relation
+coefficient boundary.
 
 ## Shared inputs, separate consumers
 
@@ -218,12 +218,11 @@ alpha resets, setup projection, or matrix semantics. `RelationAddressGeometry`
 checks the outgoing representation through the live flat length while deriving
 the Stage 2 coefficient/lane split solely from the current relation roles.
 
-This Stage 2 storage split does not reinterpret the already established Stage 1 tau0
-point. The protocol's digit-range equality point retains its incoming geometry: the
-historical uniform current/outgoing case uses its column-then-ring permutation, while
-mixed-role or cross-level ring transitions retain the historical flat tau0 order. A
-descriptive `digit_range_equality_low_variable_count` records that independent boundary;
-it is not inferred from the joint relation/witness variable count.
+Stage 1 and Stage 2 use the same checked coefficient boundary. Both prover and verifier
+set `digit_range_equality_low_variable_count` to
+`relation_coefficient_variable_count()`, so tau0 and the Stage 2 point agree on the
+LSB-first common coefficient block. The field is descriptive replay metadata, not an
+independent caller-selected split.
 
 `FlatBooleanDomain` checks the live prefix, padded power-of-two domain, point width, and
 LSB-first interpretation. `WitnessLayout` checks semantic group/chunk units inside that
@@ -270,10 +269,9 @@ RelationWeight(
 
 Role resets, quotient denominators, row challenges, claim coefficients, group weights,
 setup amplitudes, and overlaps are additive contributions to high-lane weights. They do
-not break the common low factor. With outgoing dimension at least 32, mixed
-`128/64/32` therefore uses a common factor of length 32, not 128 and not a full-domain
-table. If the outgoing dimension is smaller, the current factorization may use the
-smaller joint block even though the relation-only boundary remains 32.
+not break the common low factor. Mixed `128/64/32` therefore uses a common factor of
+length 32, independent of whether the outgoing witness is packaged at dimension 128,
+64, or 32.
 
 The prover's relation compiler uses one closed emitter of checked relation events:
 
@@ -421,25 +419,18 @@ The complication matrix is:
 |---|---|---|---|---|
 | multiple groups | none after flat layout | group-specific rows, gadgets, claim offsets, and exponent resets | one prepared point and claim slice per group | compile authenticated root-group order into runs |
 | multiple chunks | none after flat layout | E/T split by block ownership, Z repeated per chunk, R shared | one physical E segment per claim/unit; global block weights do not reset | retain uneven global block ranges and unit ownership |
-| mixed role dimensions | none | common factor uses the joint relation/witness count; role subcolumns map into common lanes | each claim retains its own source ring split | direct-setup singleton roots only in this PR; do not synthesize grouped/chunked schedules |
+| mixed role dimensions | none | common factor uses the current-role minimum; role subcolumns map into common lanes | each claim retains its own source ring split | direct and deferred plans select projected-lane kernels |
 | EOR | none | no change | one reduction factor scales the authenticated claim coefficients | normalize a missing reduction factor to one; never make trace optional |
 
 Only the range-image column is genuinely indifferent to these axes. Relation and trace
 arithmetic generalize cleanly once geometry is prepared, but that preparation is a
 load-bearing part of the implementation rather than incidental indexing.
 
-The supported acceptance matrix is deliberately not a full cross-product:
-
-- shipped uniform-role schedules cover singleton, multigroup, multichunk, and combined
-  multigroup/multichunk roots;
-- the direct-setup mixed-role fixture covers a singleton, single-chunk root; and
-- uniform-role folds may transition to a smaller outgoing witness dimension through the
-  checked common Stage 2 coefficient count.
-
-Mixed role dimensions combined with multigroup or multichunk roots, and mixed-role
-recursive setup offload, remain out of scope until the planner emits and authenticates
-those schedules. Tests must not retarget SIS keys or recompute proof sizes to manufacture
-such a shape.
+The evaluator and setup plan support the full singleton/multigroup,
+single-chunk/multichunk, uniform/mixed-role, and direct/deferred cross-product. Runtime
+acceptance still requires a planner-authenticated schedule and valid SIS keys; tests may
+construct checked fixtures for every evaluator shape without claiming that an
+unscheduled production key exists.
 
 ### Canonical physical layout
 
@@ -882,20 +873,29 @@ lane-factored, and mixed cell, accept only when Criterion's 95% change-interval 
 is at most +5%; a lower bound above +5% rejects the candidate, and an interval crossing the
 threshold is inconclusive and must be rerun with a longer measurement.
 
+The production-path harness is
+`crates/akita-verifier/benches/relation_evaluator.rs` and runs with:
+
+```bash
+cargo bench -p akita-verifier --features benchmark-support \
+  --bench relation_evaluator
+```
+
 The minimum comparison triplet holds A dimension, rows, claims, groups, flat witness
 length, setup coefficient footprint, and transcript inputs fixed:
 
 | Cell | Role dimensions | Outgoing dimension | Purpose |
 |---|---:|---:|---|
 | U | `128/128/128` | 128 | current uniform PR #312 floor |
-| L | `128/128/128` | 32 | isolates unavoidable lane/address work |
-| M | `128/64/32` | 32 | isolates role heterogeneity at the same lane geometry |
+| L | `128/128/128` | 32 | checks that outgoing repackaging does not alter q=1 relation geometry |
+| M | `128/64/32` | 32 | measures projected-lane role heterogeneity |
 
-Candidate/baseline time is capped at 1.05 in every cell. In addition, M/L is capped at
-1.05 so mixed roles do not demonstrably cost more than the equivalent homogeneous
-lane-factored case. L/U is reported separately and is not mislabeled as role-mixing cost.
-Complete verification remains a secondary <=5% gate because whole-verifier timing can
-hide a relation-kernel regression.
+Candidate/baseline time is capped at 1.05 in every cell. U and L are expected to have
+the same q=1 relation geometry because outgoing packaging is not part of the coefficient
+boundary. M is not compared directly to L: under the current-role minimum there is no
+homogeneous `128/128/128` cell with M's 32-coefficient lane geometry, so an M/L cap would
+conflate different algebraic work. Complete verification remains a secondary <=5% gate
+because whole-verifier timing can hide a relation-kernel regression.
 
 Kernel winners are selected by complete Stage 2 and end-to-end prover results. PR #312 is
 the verifier performance floor: no primary verifier cell may regress by more than 5%, and
@@ -911,7 +911,7 @@ measured/unmeasured duplicate, ad hoc timer, or strategy knob.
 | group/chunk layout is recomputed in several crates | `WitnessLayout` is the semantic authority; compiled runs are derived and compared once |
 | block equality resets at a chunk boundary | trace segments retain global block starts and uneven ranges |
 | per-chunk Z or shared R is counted incorrectly | closed relation events distinguish replicated Z units from one R suffix |
-| mixed-D multi-chunk silently uses the old guard/fallback | direct setup removes the guard only after dense-oracle parity; recursive setup remains an explicit rejection until Stage 3 consumes the checked joint relation/witness split rather than assuming `log2(d_a)` low coordinates |
+| mixed-D multi-chunk silently uses the old guard/fallback | direct and deferred plans share checked current-role geometry; dense and heterogeneous multigroup oracles cover q=1 and projected lanes |
 | role-specific decomposition bases imply unsupported range claims | one explicit global range-basis authority is shared with security/sizing |
 | trace is treated as optional | a nonterminal prover plan requires nonempty `EvaluationTraceWeights`, while the verifier requires nonempty `PreparedEvaluationTrace`; missing EOR scales become ones |
 | nominal fusion still reads the full witness twice | relation and range share one block reducer; trace side scan must have strictly smaller support and measured benefit |
@@ -956,9 +956,8 @@ No future proof field, transcript challenge, stage enum, or inactive branch is a
 - Every LB2-LB6 candidate is measured; one complete-stage winner remains per basis.
 - No primary Stage 2/prover benchmark cell regresses beyond measurement noise; targeted
   prover cells show material wins. No primary verifier cell exceeds 1.05x its pinned PR
-  #312 baseline under the Criterion confidence-interval gate, mixed `128/64/32` does not
-  exceed 1.05x lane-equivalent homogeneous `128/128/128`, and verifier relation/trace work
-  never scales with prover event count or physical trace-table size.
+  #312 baseline under the Criterion confidence-interval gate, and verifier relation/trace
+  work never scales with prover event count or physical trace-table size.
 - Numeric setup code touched by the PR contains only reusable final geometry.
 - Documentation guardrails and all repository-required format, lint, and test commands
   pass at the final head.

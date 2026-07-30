@@ -857,7 +857,7 @@ Files centered on this slice:
 crates/akita-types/src/proof/relation_weights.rs
 crates/akita-types/src/setup_contribution/geometry.rs
 crates/akita-types/src/setup_contribution/plan
-crates/akita-types/src/setup_contribution/setup_index_weight_evaluator.rs
+crates/akita-types/src/setup_contribution/plan/setup_index_weight.rs
 crates/akita-prover/src/protocol/ring_relation.rs
 crates/akita-verifier/src/protocol/ring_switch.rs
 ```
@@ -879,7 +879,8 @@ Files centered on this slice:
 crates/akita-algebra/src/offset_eq.rs
 crates/akita-types/src/trace_weight
 crates/akita-verifier/src/protocol/ring_switch/tensor_challenges.rs
-crates/akita-verifier/src/protocol/slice_mle
+crates/akita-verifier/src/protocol/ring_switch/relation_evaluation.rs
+crates/akita-types/src/setup_contribution/plan/structured.rs
 ```
 
 Steps:

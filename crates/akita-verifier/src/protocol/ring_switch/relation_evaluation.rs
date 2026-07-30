@@ -50,13 +50,13 @@ where
         let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
         if deferred_setup_claim.is_some() {
             evaluator.setup_contribution_plan_deferred::<F>(
-                prepared_point.address_point(),
+                prepared_point.relation_address().clone(),
                 (!fold_gadget.is_empty()).then_some(fold_gadget),
                 alpha,
             )?
         } else {
             evaluator.setup_contribution_plan::<F>(
-                prepared_point.address_point(),
+                prepared_point.relation_address().clone(),
                 (!fold_gadget.is_empty()).then_some(fold_gadget),
                 alpha,
             )?
@@ -109,7 +109,7 @@ where
 #[allow(clippy::too_many_arguments)]
 fn evaluate_quotient_tail<F, E>(
     evaluator: &RelationMatrixEvaluator<E>,
-    prepared_point: &PreparedRelationPoint<'_, E>,
+    prepared_point: &PreparedRelationPoint<E>,
 ) -> Result<E, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -156,7 +156,7 @@ where
                 0,
             )?;
             let lane_evaluation = evaluate_lane_segment(
-                prepared_point.equality_window(),
+                prepared_point.relation_address().equality_window(),
                 lane_start,
                 &role_factors.lane_powers,
             )?;

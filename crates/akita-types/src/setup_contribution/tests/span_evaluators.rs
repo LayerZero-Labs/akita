@@ -86,17 +86,15 @@ fn assert_fixture_setup_index_mle_matches_dense(
     assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
-fn structured_slice_reference(
-    plan: &SetupContributionPlan<F>,
+pub(super) fn structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
     block_challenges: &[F],
     opening_a_evals: &[F],
     alpha: F,
 ) -> F {
     let (outer_subcolumns, opening_subcolumns) =
-        SetupProjectionGeometry::a_carrier_subcolumn_counts(plan.projection_geometry.role_dims())
-            .unwrap();
-    let role_dims = plan.projection_geometry.role_dims();
+        SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims).unwrap();
+    let role_dims = group.role_dims;
     let alpha_powers = scalar_powers(alpha, role_dims.d_a());
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
     let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
@@ -186,7 +184,7 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             inputs.eq_tau1.clone(),
             &layout,
             &groups,
-            &address_point,
+            PreparedRelationAddress::new(&address_point).unwrap(),
             Some(&fold_gadget),
             relation_address_geometry,
             alpha,
@@ -231,7 +229,7 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
         let reference =
-            structured_slice_reference(&full, group, &block_challenges, &opening_a_evals, alpha);
+            structured_slice_reference(group, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
             full.evaluate_structured_group::<F>(
                 group.group_id,
