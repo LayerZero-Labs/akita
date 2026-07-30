@@ -479,6 +479,64 @@ fn fused_split_eq_quotients_one_shot_streamed<
     (d_result, b_result, a_result)
 }
 
+fn streamed_cyclic_i8_rows_chunked<
+    F: FieldCore + CanonicalField + HalvingField,
+    W: PrimeWidth,
+    const K: usize,
+    const D: usize,
+>(
+    source: &StreamedASource<'_, F, D>,
+    num_rows: usize,
+    rhs: &[[i8; D]],
+    rhs_len: usize,
+    chunk_width: usize,
+    rhs_abs_bound: u64,
+    params: &CrtNttParamSet<W, K, D>,
+) -> Vec<CyclotomicRing<F, D>> {
+    if num_rows == 0 {
+        return vec![];
+    }
+    if rhs_len == 0 {
+        return vec![CyclotomicRing::<F, D>::zero(); num_rows];
+    }
+    let row_width = rhs.len();
+    let lut = DigitMontLut::<W, K>::new_with_digit_bound(params, rhs_abs_bound);
+    let num_chunks = rhs_len.div_ceil(chunk_width);
+
+    cfg_fold_reduce!(
+        0..num_chunks,
+        || vec![CyclotomicRing::<F, D>::zero(); num_rows],
+        |mut out: Vec<CyclotomicRing<F, D>>, chunk_idx| {
+            let chunk_start = chunk_idx * chunk_width;
+            let chunk_end = (chunk_start + chunk_width).min(rhs_len);
+            let mut accs = vec![CyclotomicCrtNtt::<W, K, D>::zero(); num_rows];
+
+            for (j, rhs_row) in rhs.iter().enumerate().take(chunk_end).skip(chunk_start) {
+                if is_zero_plane(rhs_row) {
+                    continue;
+                }
+                let ntt_rhs = CyclotomicCrtNtt::from_i8_cyclic_with_lut(rhs_row, params, &lut);
+                for (i, acc) in accs.iter_mut().enumerate() {
+                    let a_ring = source.ring_at(i * row_width + j);
+                    let a_cyc = CyclotomicCrtNtt::from_ring_cyclic_with_params(&a_ring, params);
+                    accumulate_pointwise_product_into(acc, &a_cyc, &ntt_rhs, params);
+                }
+            }
+
+            for (dst, acc) in out.iter_mut().zip(accs) {
+                *dst += acc.to_ring_cyclic(params);
+            }
+            out
+        },
+        |mut a: Vec<CyclotomicRing<F, D>>, b| {
+            for (dst, src) in a.iter_mut().zip(b) {
+                *dst += src;
+            }
+            a
+        }
+    )
+}
+
 /// Streamed counterpart of [`accumulate_centered_quotient_rows`]'s chunked
 /// path: per safe-width chunk, transform each touched A element from the
 /// field form (both domains) in-loop and reduce the chunk's accumulators to
@@ -565,9 +623,10 @@ fn streamed_centered_quotient_rows_chunked<
 ///
 /// `slot` supplies only the CRT parameter set (any built extent works — the
 /// caller passes a minimal slot); entries stream from `flat`, A's field-form
-/// prefix covering every product's `rows x width` extent. Returns `Ok(None)`
-/// when the shape needs CRT chunking (the one-shot capacity check fails), in
-/// which case the caller must take the cached path.
+/// prefix covering every product's `rows x width` extent. Roles that exceed
+/// one CRT accumulator are reduced in capacity-safe chunks. Returns `Ok(None)`
+/// only when the selected CRT profile cannot represent one term, in which
+/// case the caller must take the cached path.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
     F: FieldCore + CanonicalField + HalvingField,
@@ -633,19 +692,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
             let z_safe = z_len == 0
                 || z_capacity == 0
                 || safe_crt_chunk_width::<F, _, _, D>(&params, z_len, z_capacity) == Some(z_len);
-            if !(w_safe && t_safe) {
-                // Unseen in practice (digit bounds are small); the cached
-                // path chunks these correctly.
-                tracing::info!(
-                    witness_len,
-                    w_safe,
-                    t_len,
-                    t_safe,
-                    "streamed fused quotients fell back to the cached path"
-                );
-                return Ok(None);
-            }
-            if z_safe {
+            if w_safe && t_safe && z_safe {
                 return Ok(Some(fused_split_eq_quotients_one_shot_streamed(
                     source,
                     n_d,
@@ -660,23 +707,48 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                     &params,
                 )));
             }
-            // z needs CRT chunking (root-scale widths overflow one-shot
-            // accumulation): stream D/B one-shot without the z arm, and the
-            // z quotient through the chunked streamed kernel.
-            let Some(chunk_width) = safe_crt_chunk_width::<F, _, _, D>(&params, z_len, z_capacity)
+
+            let Some(w_chunk_width) = (witness_len == 0).then_some(1).or_else(|| {
+                safe_crt_chunk_width::<F, _, _, D>(&params, witness_len, w_digit_abs_bound)
+            }) else {
+                return Ok(None);
+            };
+            let Some(t_chunk_width) = (t_len == 0)
+                .then_some(1)
+                .or_else(|| safe_crt_chunk_width::<F, _, _, D>(&params, t_len, t_digit_abs_bound))
             else {
                 return Ok(None);
             };
-            let (d_rows, b_rows, _) = fused_split_eq_quotients_one_shot_streamed(
+            let Some(z_chunk_width) = (z_len == 0 || z_capacity == 0)
+                .then_some(1)
+                .or_else(|| safe_crt_chunk_width::<F, _, _, D>(&params, z_len, z_capacity))
+            else {
+                return Ok(None);
+            };
+            tracing::info!(
+                witness_len,
+                w_chunk_width,
+                t_len,
+                t_chunk_width,
+                z_len,
+                z_chunk_width,
+                "streamed fused quotients using CRT-safe chunks"
+            );
+            let d_rows = streamed_cyclic_i8_rows_chunked(
                 source,
                 n_d,
-                n_b,
-                0,
                 e_hat,
-                t_hat,
-                &[],
-                0,
+                witness_len,
+                w_chunk_width,
                 w_digit_abs_bound,
+                &params,
+            );
+            let b_rows = streamed_cyclic_i8_rows_chunked(
+                source,
+                n_b,
+                t_hat,
+                t_len,
+                t_chunk_width,
                 t_digit_abs_bound,
                 &params,
             );
@@ -685,7 +757,7 @@ pub(crate) fn fused_split_eq_quotients_streamed_prover_bounds<
                 n_a,
                 z_folded_rings,
                 z_len,
-                chunk_width,
+                z_chunk_width,
                 actual_z_abs_bound,
                 &params,
             );

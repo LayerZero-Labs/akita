@@ -1634,6 +1634,53 @@ mod tests {
     }
 
     #[test]
+    fn streamed_chunked_t_rows_match_cached_kernel() {
+        const T_LEN: usize = 512;
+        let setup = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            D,
+            setup_envelope(T_LEN * D),
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let e_hat = vec![[1i8; D], [-1i8; D], [1i8; D]];
+        let t_hat = vec![[1i8; D]; T_LEN];
+        let z_segment = vec![[1i32; D], [-2i32; D], [3i32; D], [1i32; D]];
+        let matrix = prepared.expanded.shared_matrix().full();
+        let flat_source = StreamedASource::Flat(
+            matrix
+                .ring_view::<D>(1, T_LEN)
+                .expect("field view")
+                .as_slice(),
+        );
+        let deriver = prepared.expanded.shared_matrix().element_deriver();
+        let seed_source = StreamedASource::Seed {
+            deriver: &deriver,
+            len: T_LEN,
+        };
+        let run = |source: &StreamedASource<'_, Prime128Offset275, D>| {
+            prepared
+                .with_shared_ntt::<D, _>(1, |ntt| {
+                    fused_split_eq_quotients_streamed_prover_bounds(
+                        ntt, source, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3, 2, 8,
+                    )
+                })
+                .expect("streamed rows")
+                .expect("chunked t path streams")
+        };
+        let cached = prepared
+            .with_shared_ntt::<D, _>(T_LEN, |ntt| {
+                fused_split_eq_quotients_prover_bounds(
+                    ntt, 1, 1, 1, &e_hat, &t_hat, &z_segment, 3, 2, 8,
+                )
+            })
+            .expect("cached rows");
+        assert_eq!(run(&flat_source), cached);
+        assert_eq!(run(&seed_source), cached);
+    }
+
+    #[test]
     fn seed_derived_elements_match_materialized_matrix() {
         let prepared = prepared();
         let shared = prepared.expanded.shared_matrix();
