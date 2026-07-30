@@ -62,6 +62,32 @@ use akita_types::{
     SetupProjectionGeometry,
 };
 
+fn evaluate_setup_columns<F, E>(
+    family: &SetupRowFamily<'_, F>,
+    columns: Range<usize>,
+    row_weights: &[(usize, E)],
+    alpha_powers: &[E],
+) -> Result<Vec<E>, AkitaError>
+where
+    F: FieldCore,
+    E: FieldCore + MulBaseUnreduced<F>,
+{
+    cfg_into_iter!(columns)
+        .map(|col| {
+            row_weights
+                .iter()
+                .try_fold(E::zero(), |acc, &(row, weight)| {
+                    Ok(acc
+                        + weight
+                            * eval_flat_ring_at_pows_fast(
+                                family.ring_slice(row, col)?.as_ref(),
+                                alpha_powers,
+                            ))
+                })
+        })
+        .collect()
+}
+
 /// Whether one relation event belongs to the protocol constraint or setup matrix.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelationWeightContribution {
@@ -746,6 +772,50 @@ where
             .into_iter()
             .map(E::lift_base)
             .collect();
+        let d_setup_start = e_setup_offset;
+        let d_setup_len = total_blocks
+            .checked_mul(d_ratio)
+            .and_then(|len| len.checked_mul(depth_open))
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".to_string()))?;
+        let d_setup_end = d_setup_start
+            .checked_add(d_setup_len)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup D extent overflow".to_string()))?;
+        let d_setup_accs = if let Some(d_family) = &d_family {
+            let _span = tracing::info_span!("relation_weight_d_setup_columns").entered();
+            let row_weights = (0..n_d_active)
+                .map(|row| Ok((row, eq_tau1.eval_at(d_start + row)?)))
+                .filter_map(|result| match result {
+                    Ok((_, weight)) if weight.is_zero() => None,
+                    other => Some(other),
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            Some(evaluate_setup_columns(
+                d_family,
+                d_setup_start..d_setup_end,
+                &row_weights,
+                &alpha_pows_d,
+            )?)
+        } else {
+            None
+        };
+        let b_setup_accs = if let Some(b_family) = &b_family {
+            let _span = tracing::info_span!("relation_weight_b_setup_columns").entered();
+            let row_weights = (0..n_b)
+                .map(|row| Ok((row, eq_tau1.eval_at(b_range.start + row)?)))
+                .filter_map(|result| match result {
+                    Ok((_, weight)) if weight.is_zero() => None,
+                    other => Some(other),
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            Some(evaluate_setup_columns(
+                b_family,
+                0..b_width,
+                &row_weights,
+                &alpha_pows_b,
+            )?)
+        } else {
+            None
+        };
 
         for claim in 0..k_g {
             for global_block in 0..num_live_blocks_g {
@@ -770,19 +840,9 @@ where
                             .and_then(|local| e_setup_offset.checked_add(local))
                             .ok_or(AkitaError::InvalidProof)?;
                         let consistency_acc = consistency_weight * challenge_alpha * opening_gadget;
-                        let mut setup_acc = E::zero();
-                        if let Some(d_family) = &d_family {
-                            for di in 0..n_d_active {
-                                let eq_i = eq_tau1.eval_at(d_start + di)?;
-                                if !eq_i.is_zero() {
-                                    setup_acc += eq_i
-                                        * eval_flat_ring_at_pows_fast(
-                                            d_family.ring_slice(di, d_phys_col)?.as_ref(),
-                                            &group_alpha_pows_d,
-                                        );
-                                }
-                            }
-                        }
+                        let setup_acc = d_setup_accs
+                            .as_ref()
+                            .map_or(E::zero(), |weights| weights[d_phys_col - d_setup_start]);
                         relation_events.push_role(
                             witness_col,
                             role_subcol,
@@ -791,7 +851,7 @@ where
                             consistency_acc,
                             RelationWeightContribution::Constraint,
                         )?;
-                        if setup_matrix.is_some() {
+                        if d_setup_accs.is_some() {
                             relation_events.push_role(
                                 witness_col,
                                 role_subcol,
@@ -833,19 +893,9 @@ where
                                 .and_then(|base| base.checked_add(role_subcol))
                                 .ok_or(AkitaError::InvalidProof)?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
-                            let mut b_acc = E::zero();
-                            if let Some(b_family) = &b_family {
-                                for row_idx in 0..n_b {
-                                    let eq_i = eq_tau1.eval_at(b_range.start + row_idx)?;
-                                    if !eq_i.is_zero() {
-                                        b_acc += eq_i
-                                            * eval_flat_ring_at_pows_fast(
-                                                b_family.ring_slice(row_idx, local_col)?.as_ref(),
-                                                &group_alpha_pows_b,
-                                            );
-                                    }
-                                }
-                            }
+                            let b_acc = b_setup_accs
+                                .as_ref()
+                                .map_or(E::zero(), |weights| weights[local_col]);
                             relation_events.push_role(
                                 witness_col,
                                 role_subcol,
@@ -854,7 +904,7 @@ where
                                 a_acc,
                                 RelationWeightContribution::Constraint,
                             )?;
-                            if setup_matrix.is_some() {
+                            if b_setup_accs.is_some() {
                                 relation_events.push_role(
                                     witness_col,
                                     role_subcol,
@@ -869,6 +919,8 @@ where
                 }
             }
         }
+        drop(d_setup_accs);
+        drop(b_setup_accs);
 
         // For z_hat[blk, dc, df], the column value is:
         //
