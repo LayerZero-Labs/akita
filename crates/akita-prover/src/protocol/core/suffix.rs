@@ -267,13 +267,15 @@ where
     let params = &scheduled.witness;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    let eor_inputs = vec![ExtensionOpeningGroupInput {
-        polynomials: vec![&logical_source],
-        point: sumcheck_challenges.clone(),
-        ring_dimension: params.d_a(),
-    }];
+    let canonical_opening_point =
+        normalize_recursive_opening_point(&sumcheck_challenges, recursive_num_vars)?;
     let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
+        let eor_inputs = vec![ExtensionOpeningGroupInput {
+            polynomials: vec![&logical_source],
+            point: &canonical_opening_point,
+            ring_dimension: params.d_a(),
+        }];
         let proved = prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS>(
             stack.tensor().backend(),
             Some(stack.tensor().prepared()),
@@ -292,13 +294,7 @@ where
             Some(proved.row_coefficients),
         )
     } else {
-        if sumcheck_challenges.len() > recursive_num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: recursive_num_vars,
-                actual: sumcheck_challenges.len(),
-            });
-        }
-        (sumcheck_challenges, None, None)
+        (canonical_opening_point, None, None)
     };
     let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
     for coordinate in &protocol_point {
@@ -490,9 +486,6 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let setup_prefix_point = setup_prefix_opening
-        .as_ref()
-        .map(|(point, _)| point.clone());
     let block_claims = ProverOpeningData::new_recursive_suffix_fold(
         opening_point,
         recursive_num_vars,
@@ -515,27 +508,16 @@ where
         )
     } else {
         let opening_batch = block_claims.opening_claims().layout()?;
-        let mut eor_inputs = Vec::with_capacity(opening_batch.num_groups());
-        if let (Some(source), Some(point)) = (setup_source_storage.as_ref(), setup_prefix_point) {
-            eor_inputs.push(ExtensionOpeningGroupInput {
-                polynomials: vec![source],
-                point,
-                ring_dimension: level_params.group_role_dims(&opening_batch, 0)?.d_a(),
-            });
+        let mut eor_polynomial_groups = Vec::with_capacity(opening_batch.num_groups());
+        if let Some(source) = setup_source_storage.as_ref() {
+            eor_polynomial_groups.push(vec![source]);
         }
-        let witness_group_index = eor_inputs.len();
-        eor_inputs.push(ExtensionOpeningGroupInput {
-            polynomials: vec![&logical_witness_source],
-            point: opening_point.to_vec(),
-            ring_dimension: level_params
-                .group_role_dims(&opening_batch, witness_group_index)?
-                .d_a(),
-        });
+        eor_polynomial_groups.push(vec![&logical_witness_source]);
         prepare_extension_claim_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             block_claims,
-            eor_inputs,
+            eor_polynomial_groups,
             true,
             transcript,
             || Ok(()),

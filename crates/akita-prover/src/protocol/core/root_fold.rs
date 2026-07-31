@@ -90,12 +90,14 @@ where
             basis,
         )
     } else {
-        let eor_inputs = extension_opening_group_inputs(&claims, root_params)?;
+        let eor_polynomial_groups = (0..opening_batch.num_groups())
+            .map(|group_index| Ok(claims.group_polys(group_index)?.to_vec()))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             claims,
-            eor_inputs,
+            eor_polynomial_groups,
             false,
             transcript,
             || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),

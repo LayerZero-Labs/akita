@@ -278,13 +278,12 @@ where
     params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    if current_state.opening_point.len() > recursive_num_vars
-        || current_state.setup_prefix_opening.is_some()
-    {
+    if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let mut protocol_point = current_state.opening_point.clone();
-    protocol_point.resize(recursive_num_vars, E::zero());
+    let protocol_point =
+        normalize_recursive_opening_point(&current_state.opening_point, recursive_num_vars)
+            .map_err(|_| AkitaError::InvalidProof)?;
     let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
     let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
@@ -391,11 +390,9 @@ where
         _ => return Err(AkitaError::InvalidProof),
     }
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
-    if current_state.opening_point.len() > recursive_num_vars {
-        return Err(AkitaError::InvalidProof);
-    }
-    let mut padded_witness_point = current_state.opening_point.clone();
-    padded_witness_point.resize(recursive_num_vars, E::zero());
+    let padded_witness_point =
+        normalize_recursive_opening_point(&current_state.opening_point, recursive_num_vars)
+            .map_err(|_| AkitaError::InvalidProof)?;
 
     let block_claims = match (
         &current_state.setup_prefix_opening,

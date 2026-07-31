@@ -23,9 +23,9 @@ struct PreparedExtensionOpeningGroup<E: FieldCore> {
 /// EOR needs polynomial sources and point geometry, not claimed evaluations or
 /// commitments. Keeping those values out prevents recursive suffix proving
 /// from fabricating public claims merely to satisfy an adapter.
-pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'a, E: FieldCore, P> {
-    pub(in crate::protocol::core) polynomials: Vec<&'a P>,
-    pub(in crate::protocol::core) point: Vec<E>,
+pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'poly, 'point, E, P> {
+    pub(in crate::protocol::core) polynomials: Vec<&'poly P>,
+    pub(in crate::protocol::core) point: &'point [E],
     pub(in crate::protocol::core) ring_dimension: usize,
 }
 
@@ -84,7 +84,7 @@ where
 pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B>(
     tensor_backend: &B,
     tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
-    group_inputs: &[ExtensionOpeningGroupInput<'_, E, P>],
+    group_inputs: &[ExtensionOpeningGroupInput<'_, '_, E, P>],
     pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
@@ -120,7 +120,7 @@ where
 
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for (group_index, input) in group_inputs.iter().enumerate() {
-        let point = &input.point;
+        let point = input.point;
         if point.len() < split_bits {
             return Err(AkitaError::InvalidPointDimension {
                 expected: split_bits,
@@ -198,7 +198,7 @@ where
         let input = group_inputs
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let point = &input.point;
+        let point = input.point;
         let tail_point = &point[split_bits..];
         let extra_vars = max_tail_vars
             .checked_sub(tail_point.len())
