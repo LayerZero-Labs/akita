@@ -137,6 +137,7 @@ where
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
+    let final_group_index = opening_batch.root_final_group_index()?;
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
     let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
@@ -157,7 +158,12 @@ where
         let group_protocol_point = protocol_points
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if group_protocol_point.len() != target_len {
+        let point_width_is_valid = if pad_base_evals && group_index == final_group_index {
+            group_protocol_point.len() <= target_len
+        } else {
+            group_protocol_point.len() == target_len
+        };
+        if !point_width_is_valid {
             return Err(AkitaError::InvalidPointDimension {
                 expected: target_len,
                 actual: group_protocol_point.len(),

@@ -267,13 +267,18 @@ where
     let params = &scheduled.witness;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    let canonical_opening_point =
-        normalize_recursive_opening_point(&sumcheck_challenges, recursive_num_vars)?;
+    if sumcheck_challenges.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidPointDimension {
+            expected: recursive_num_vars,
+            actual: sumcheck_challenges.len(),
+        });
+    }
+    let opening_batch = OpeningClaimsLayout::new(sumcheck_challenges.len(), 1)?;
     let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
         let eor_inputs = vec![ExtensionOpeningGroupInput {
             polynomials: vec![&logical_source],
-            point: &canonical_opening_point,
+            point: &sumcheck_challenges,
             ring_dimension: params.d_a(),
         }];
         let proved = prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS>(
@@ -294,9 +299,8 @@ where
             Some(proved.row_coefficients),
         )
     } else {
-        (canonical_opening_point, None, None)
+        (sumcheck_challenges, None, None)
     };
-    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
     for coordinate in &protocol_point {
         append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
     }

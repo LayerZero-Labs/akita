@@ -281,10 +281,11 @@ where
     if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let protocol_point =
-        normalize_recursive_opening_point(&current_state.opening_point, recursive_num_vars)
-            .map_err(|_| AkitaError::InvalidProof)?;
-    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let protocol_point = current_state.opening_point.clone();
+    let opening_batch = OpeningClaimsLayout::new(protocol_point.len(), 1)?;
     let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
@@ -307,7 +308,14 @@ where
             params,
             transcript,
         )?;
-        (replay.prepared_points, replay.final_relation)
+        (
+            replay
+                .groups
+                .into_iter()
+                .map(|group| group.prepared)
+                .collect(),
+            replay.final_relation,
+        )
     };
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
@@ -390,9 +398,10 @@ where
         _ => return Err(AkitaError::InvalidProof),
     }
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
-    let padded_witness_point =
-        normalize_recursive_opening_point(&current_state.opening_point, recursive_num_vars)
-            .map_err(|_| AkitaError::InvalidProof)?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let witness_point = current_state.opening_point.clone();
 
     let block_claims = match (
         &current_state.setup_prefix_opening,
@@ -405,17 +414,13 @@ where
                     vec![*setup_prefix_eval],
                     (),
                 )?,
-                PolynomialGroupClaims::new(
-                    padded_witness_point.clone(),
-                    vec![current_state.opening],
-                    (),
-                )?,
+                PolynomialGroupClaims::new(witness_point.clone(), vec![current_state.opening], ())?,
             ];
             OpeningClaims::from_groups(groups)?
         }
         (None, None) => {
             let claims =
-                PolynomialGroupClaims::new(padded_witness_point, vec![current_state.opening], ())?;
+                PolynomialGroupClaims::new(witness_point, vec![current_state.opening], ())?;
             OpeningClaims::from_groups(vec![claims])?
         }
         _ => return Err(AkitaError::InvalidProof),
