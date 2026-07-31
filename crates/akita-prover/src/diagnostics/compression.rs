@@ -1,11 +1,9 @@
 //! Opt-in execution of compressed commitments without protocol effects.
 
 use crate::compute::{DigitRowsComputeBackend, OperationCtx};
+use crate::diagnostics::compression_plan::{plan_compression_diagnostic, CompressionDiagnosticMap};
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_planner::compression_diagnostic::{
-    plan_compression_diagnostic, CompressionDiagnosticMap,
-};
 use akita_types::sis::SisModulusProfileId;
 use akita_types::{dispatch_for_field, field_modulus, RingVec};
 use std::collections::BTreeMap;
@@ -29,6 +27,7 @@ pub(crate) struct CompressionDiagnosticSource<'a, F> {
 pub(crate) struct CompressionDiagnosticReport {
     pub(crate) sources: usize,
     pub(crate) maps: usize,
+    pub(crate) batch_count: usize,
     pub(crate) source_bytes: usize,
     pub(crate) terminal_bytes: usize,
     pub(crate) cache_bytes_before: Option<usize>,
@@ -163,7 +162,7 @@ fn execute_stage<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     items: &mut [WorkItem<F>],
     map_index: usize,
-) -> Result<(), AkitaError>
+) -> Result<usize, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -177,6 +176,7 @@ where
                 .push(item_index);
         }
     }
+    let batch_count = groups.len();
     for ((ring_dimension, _), item_indices) in groups {
         dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Compression,
@@ -185,7 +185,7 @@ where
             |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
         )?;
     }
-    Ok(())
+    Ok(batch_count)
 }
 
 /// Compute compressed commitments for live B/D images and retain only metrics.
@@ -231,8 +231,11 @@ where
     })?;
     let map_count = items.iter().map(|item| item.maps.len()).sum();
     let max_maps = items.iter().map(|item| item.maps.len()).max().unwrap_or(0);
+    let mut batch_count = 0usize;
     for map_index in 0..max_maps {
-        execute_stage(ctx, &mut items, map_index)?;
+        batch_count = batch_count
+            .checked_add(execute_stage(ctx, &mut items, map_index)?)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression batch count overflow".into()))?;
     }
     let terminal_bytes = items.iter().try_fold(0usize, |total, item| {
         let bytes = item
@@ -254,6 +257,7 @@ where
     Ok(CompressionDiagnosticReport {
         sources: items.len(),
         maps: map_count,
+        batch_count,
         source_bytes,
         terminal_bytes,
         cache_bytes_before,
@@ -269,7 +273,7 @@ fn duration_micros(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::linear::compression_rows;
+    use crate::kernels::linear::mat_vec_mul_ntt_digits_i8;
     use akita_algebra::CyclotomicRing;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use akita_types::layout::FlatMatrix;
@@ -366,7 +370,9 @@ mod tests {
         )
         .expect("exact-prefix compression cache");
         assert!(!slot.has_cyclic());
-        let actual = compression_rows::<F, D>(&slot, &[digits.as_slice()]).expect("kernel");
+        let actual =
+            mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, map.input_width, &[digits.as_slice()], 1)
+                .expect("kernel");
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].len(), 1);
         let expected = schoolbook_rank_one_digit_mat_vec(&matrix_row, &digits);

@@ -10,11 +10,11 @@ use crate::compute::plans::{
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
 use crate::kernels::linear::{
-    compression_rows, digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
+    digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
     mat_vec_mul_ntt_i8_dense, mat_vec_mul_ntt_i8_dense_single_row, mat_vec_mul_ntt_raw_digits_i8,
     mat_vec_mul_ntt_single_i8, mat_vec_mul_ntt_single_i8_cyclic, selected_crt_i8_capacity_profile,
-    validate_compression_rows, CrtI8CapacityProfile,
+    validate_compression_batch_shape, CrtI8CapacityProfile,
 };
 use akita_algebra::CyclotomicRing;
 use akita_field::unreduced::{HasWide, ReduceTo};
@@ -663,16 +663,15 @@ where
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; D]]],
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
-        let input_width = validate_compression_rows(digit_vectors)?;
+        let input_width = validate_compression_batch_shape(digit_vectors)?;
         let total_ring_elements = prepared
             .expanded
             .shared_matrix
             .total_ring_elements_at::<D>()?;
-        for digits in digit_vectors {
-            validate_digit_row_request(1, digits.len(), total_ring_elements)?;
-        }
-        prepared
-            .with_compression_ntt::<D, _>(input_width, |ntt| compression_rows(ntt, digit_vectors))
+        validate_digit_row_request(1, input_width, total_ring_elements)?;
+        prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
+            mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)
+        })
     }
 }
 

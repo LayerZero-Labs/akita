@@ -24,7 +24,6 @@ akita-serialization = { version = "0.1.0", path = "../akita-serialization" }
 akita-sumcheck = { version = "0.1.0", path = "../akita-sumcheck" }
 akita-transcript = { version = "0.1.0", path = "../akita-transcript" }
 akita-types = { version = "0.1.0", path = "../akita-types" }
-akita-planner = { version = "0.1.0", path = "../akita-planner", optional = true }
 aes = "0.8.4"
 ctr = "0.9.2"
 rand_core = "0.6"
@@ -40,7 +39,7 @@ akita-config = { version = "0.1.0", path = "../akita-config", features = [
 
 [features]
 default = ["schedules-default"]
-compression-diagnostics = ["dep:akita-planner"]
+compression-diagnostics = []
 schedules-default = ["akita-config/schedules-default"]
 logging-transcript = ["akita-transcript/logging-transcript"]
 parallel = [

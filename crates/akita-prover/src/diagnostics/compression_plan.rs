@@ -1,8 +1,7 @@
-//! Standalone parameter selection for shadow compressed commitments.
+//! Parameter selection for shadow compressed commitments.
 //!
-//! This module does not participate in schedule search or catalog emission.
-//! It selects only the negative-binary F/H ladder exercised by the prover's
-//! opt-in diagnostic mode.
+//! This module is private to the prover's opt-in diagnostic mode. It does not
+//! participate in schedule search, catalog emission, or protocol planning.
 
 use akita_field::AkitaError;
 use akita_types::sis::compression::{
@@ -11,35 +10,35 @@ use akita_types::sis::compression::{
 use akita_types::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
 
 /// Maximum uncompressed B/D image size handled by the diagnostic.
-pub const MAX_COMPRESSION_INPUT_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_COMPRESSION_INPUT_BYTES: usize = 16 * 1024;
 
 /// Target terminal compressed commitment size.
-pub const COMPRESSION_TARGET_BYTES: usize = 128;
+pub(crate) const COMPRESSION_TARGET_BYTES: usize = 128;
 
 /// Maximum number of F/H maps in the diagnostic ladder.
-pub const MAX_COMPRESSION_MAPS: usize = 3;
+pub(crate) const MAX_COMPRESSION_MAPS: usize = 3;
 
 /// One selected negative-binary F/H map.
 ///
 /// Compression maps are structurally rank one: the image has exactly
 /// `ring_dimension` field coefficients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompressionDiagnosticMap {
+pub(crate) struct CompressionDiagnosticMap {
     /// Ring dimension of this F/H matrix.
-    pub ring_dimension: usize,
+    pub(crate) ring_dimension: usize,
     /// Number of input ring columns after negative-binary decomposition.
-    pub input_width: usize,
+    pub(crate) input_width: usize,
     /// Number of field coefficients in this map's image (`== ring_dimension`).
-    pub output_coefficients: usize,
+    pub(crate) output_coefficients: usize,
 }
 
 /// Complete shadow-compression plan for one B or D image.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompressionDiagnosticPlan {
+pub(crate) struct CompressionDiagnosticPlan {
     /// Canonical field byte length.
-    pub field_bytes: usize,
+    pub(crate) field_bytes: usize,
     /// Selected negative-binary maps for the complete source image.
-    pub maps: Vec<CompressionDiagnosticMap>,
+    pub(crate) maps: Vec<CompressionDiagnosticMap>,
 }
 
 fn profile_geometry(profile: SisModulusProfileId) -> (usize, usize) {
@@ -117,13 +116,13 @@ fn select_maps(
     )))
 }
 
-/// Select the standalone negative-binary diagnostic plan for one B/D image.
+/// Select the negative-binary diagnostic plan for one B/D image.
 ///
 /// # Errors
 ///
 /// Returns an error for an empty or larger-than-16-KiB source, or when the
 /// narrow compression SIS table cannot price every map.
-pub fn plan_compression_diagnostic(
+pub(crate) fn plan_compression_diagnostic(
     modulus_profile: SisModulusProfileId,
     source_coefficients: usize,
 ) -> Result<CompressionDiagnosticPlan, AkitaError> {
