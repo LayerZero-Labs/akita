@@ -1,15 +1,20 @@
 # Stage 1 digit-range prover cutover
 
-| Field | Value |
-|---|---|
-| Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
-| Created | 2026-07-18 |
-| Revised | 2026-07-20; scoped to the implementation and durable contract of PR #312 |
-| Status | active |
-| PR | [#312](https://github.com/LayerZero-Labs/akita/pull/312) |
-| Base | PR #311, `quang/terminal-direct-ring-relations` at `fad006e2280e880fa16f1cd13b5ea2df599364d0` |
-| Implemented head | `11163598a6a66b5376306fa9b97d64c29515446a` |
-| Related | [`digit-innermost-layout.md`](digit-innermost-layout.md), [`packed-sumcheck.md`](packed-sumcheck.md), [`akita-sumcheck-unification.md`](akita-sumcheck-unification.md) |
+
+| Field            | Value                                                                                                                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Author(s)        | Quang Dao (protocol and implementation direction); Codex (design synthesis)                                                                                            |
+| Created          | 2026-07-18                                                                                                                                                             |
+| Revised          | 2026-07-20; scoped to PR #312. 2026-07-31: folded into the book (sumcheck-stages.md) and archived                                                                                               |
+| Status           | archived                                                                                                                                                               |
+| PR               | [#312](https://github.com/LayerZero-Labs/akita/pull/312)                                                                                                               |
+| Book-chapter     | book/src/how/proving/sumcheck-stages.md |
+| Base             | PR #311, `quang/terminal-direct-ring-relations` at `fad006e2280e880fa16f1cd13b5ea2df599364d0`                                                                          |
+| Implemented head | `11163598a6a66b5376306fa9b97d64c29515446a`                                                                                                                             |
+| Related          | `[digit-innermost-layout.md](../../digit-innermost-layout.md)`, `[packed-sumcheck.md](../../packed-sumcheck.md)`, `[akita-sumcheck-unification.md](../../akita-sumcheck-unification.md)` |
+
+
+
 
 ## Summary
 
@@ -37,9 +42,11 @@ The cutover relies on three facts:
 
 1. A balanced digit can be mapped to a much smaller unsigned range-image class.
 2. Every range-tree node depends only on a small tuple of those classes until transcript
-   challenges force field-valued state.
+  challenges force field-valued state.
 3. Product layers can be streamed one at a time from the original compact digit source;
-   the prover never needs the complete forest resident at once.
+  the prover never needs the complete forest resident at once.
+
+
 
 ## Goals
 
@@ -53,12 +60,14 @@ The cutover relies on three facts:
 - Durable differential tests, malformed-proof tests, tracing spans, and basis benchmarks.
 - Atomic deletion of the eager forest and layout-named Stage 1 implementations.
 
+
+
 ## Non-goals
 
 - Redesign or optimize the fused Stage 2 relation/range-image sum-check.
 - Introduce mixed-ring relation weights or change relation binding order.
 - Support independently selected range polynomials inside one Stage 1 witness. The
-  implemented prover receives one checked basis for the complete flat digit table.
+implemented prover receives one checked basis for the complete flat digit table.
 - Move the relation into Stage 1 or change recursive setup-offload proof shape.
 - Add compressed commitments or the fused negative-binary range check.
 - Add runtime, schedule, or proof fields selecting CPU kernels.
@@ -71,14 +80,16 @@ Stage 1 output adaptation. They are not a Stage 2 architecture claim.
 
 Production code uses mathematical names:
 
-| Object | Production name |
-|---|---|
-| balanced signed digit table | `digit_witness` |
-| `digit_witness * (digit_witness + 1)` | `range_image` |
-| vanishing polynomial over valid range-image values | `range_image_polynomial` |
-| checked topology and degree/child order | `DigitRangePlan` |
-| compact digits and range-image classes | `CompactDigitSource` |
-| final evaluation and checked point | `range_image_evaluation`, `DigitRangeEqualityPoint` |
+
+| Object                                             | Production name                                     |
+| -------------------------------------------------- | --------------------------------------------------- |
+| balanced signed digit table                        | `digit_witness`                                     |
+| `digit_witness * (digit_witness + 1)`              | `range_image`                                       |
+| vanishing polynomial over valid range-image values | `range_image_polynomial`                            |
+| checked topology and degree/child order            | `DigitRangePlan`                                    |
+| compact digits and range-image classes             | `CompactDigitSource`                                |
+| final evaluation and checked point                 | `range_image_evaluation`, `DigitRangeEqualityPoint` |
+
 
 `W` is acceptable only in short equations. Ambiguous `S`, `s_table`, and `s_claim` names
 are forbidden. There is one canonical function per concept; no `_for_level` forwarding
@@ -123,13 +134,15 @@ witness minima or maxima.
 
 `DigitRangePlan` fixes every substage, arity, child order, degree, and final leaf:
 
-| LB | Basis | Product substages | Final leaf |
-|---:|---:|---|---|
-| 2 | 4 | none | quadratic |
-| 3 | 8 | none | quartic |
-| 4 | 16 | binary root | two quartic leaves |
-| 5 | 32 | arity-4 root | four quartic leaves |
-| 6 | 64 | binary root, then arity-4 layer | eight quartic leaves |
+
+| LB  | Basis | Product substages               | Final leaf           |
+| --- | ----- | ------------------------------- | -------------------- |
+| 2   | 4     | none                            | quadratic            |
+| 3   | 8     | none                            | quartic              |
+| 4   | 16    | binary root                     | two quartic leaves   |
+| 5   | 32    | arity-4 root                    | four quartic leaves  |
+| 6   | 64    | binary root, then arity-4 layer | eight quartic leaves |
+
 
 Prover, verifier, shape validation, serialization sizing, and tests query this plan
 directly. No consumer reconstructs topology from basis thresholds, `trailing_zeros`, or
@@ -163,15 +176,17 @@ schedules invoke the same arithmetic reducers and differ only in partitioning.
 
 ## Selected high-basis kernels
 
-| Topology | Initial strategy | First field state |
-|---|---|---:|
-| LB4 two-lane product | two-round 4,096-key challenge-dependent quartet coefficients | two lanes at `N/4` |
-| LB4 scalar leaf | two-round 4,096-key challenge-dependent quartet coefficients | one lane at `N/4` |
-| LB5 four-lane product | two-round factorized folded-pair rescan | four lanes at `N/4` |
-| LB5 scalar leaf | optimized one-round ordered-pair scan | one lane at `N/2` |
-| LB6 two-lane product | two-round factorized folded-pair rescan | two lanes at `N/4` |
-| LB6 eight-lane product | two-round factorized folded-pair rescan | eight lanes at `N/4` |
-| LB6 scalar leaf | optimized one-round ordered-pair scan | one lane at `N/2` |
+
+| Topology               | Initial strategy                                             | First field state    |
+| ---------------------- | ------------------------------------------------------------ | -------------------- |
+| LB4 two-lane product   | two-round 4,096-key challenge-dependent quartet coefficients | two lanes at `N/4`   |
+| LB4 scalar leaf        | two-round 4,096-key challenge-dependent quartet coefficients | one lane at `N/4`    |
+| LB5 four-lane product  | two-round factorized folded-pair rescan                      | four lanes at `N/4`  |
+| LB5 scalar leaf        | optimized one-round ordered-pair scan                        | one lane at `N/2`    |
+| LB6 two-lane product   | two-round factorized folded-pair rescan                      | two lanes at `N/4`   |
+| LB6 eight-lane product | two-round factorized folded-pair rescan                      | eight lanes at `N/4` |
+| LB6 scalar leaf        | optimized one-round ordered-pair scan                        | one lane at `N/2`    |
+
 
 Shared mechanics include compact `u16` ordered class-pair indices, split-equality block
 accumulation, challenge-dependent folded-pair materialization, direct quadratic/quartic
@@ -195,15 +210,19 @@ send round_1; receive r_1;
 materialize N/4 state.
 ```
 
+
+
 ## Selected low-basis kernels
 
 LB2 and LB3 keep the compact source through three ordinary challenges when at least three
 variables remain:
 
-| Basis | Compact representation | Challenge-dependent cache | First field state |
-|---:|---|---|---:|
-| LB2 / 4 | 256 range-image octet classes, direct quadratic coefficients | `256 x 3` field elements | one lane at `N/8` |
+
+| Basis   | Compact representation                                            | Challenge-dependent cache                   | First field state |
+| ------- | ----------------------------------------------------------------- | ------------------------------------------- | ----------------- |
+| LB2 / 4 | 256 range-image octet classes, direct quadratic coefficients      | `256 x 3` field elements                    | one lane at `N/8` |
 | LB3 / 8 | two folded 256-class quads per octet, direct quartic coefficients | 256 folded values and `256 x 4` Taylor rows | one lane at `N/8` |
+
 
 The LB3 Taylor row is
 
@@ -256,14 +275,14 @@ one stage-shaped file.
 PR #312 is compute-only with respect to the Stage 1 protocol:
 
 - proof bytes, transcript events, challenges, child order, and degrees match the
-  post-#311 epoch;
+post-#311 epoch;
 - final point and `range_image_evaluation` are unchanged;
 - terminal #311 remains a separate sum-check-free proof and verifier path;
 - the verifier validates basis, topology, child count/order, degree, round count, point
-  width, and serialized lengths from `DigitRangePlan` before replay or allocation;
+width, and serialized lengths from `DigitRangePlan` before replay or allocation;
 - fixed small arrays or borrowed slices replace proof-sized temporary copies; and
 - malformed input returns `AkitaError` without verifier-reachable panic, assertion,
-  unwrap, unchecked indexing, or attacker-sized allocation.
+unwrap, unchecked indexing, or attacker-sized allocation.
 
 Protocol epoch fixtures are versioned evidence, not immutable forever. A later declared
 protocol change replaces its affected expected bytes/events atomically and records the
@@ -280,14 +299,14 @@ LB2 `b74220cf` and LB3 `77e7c870`.
 Material outcomes:
 
 - ordered pairs beat streaming node evaluation in all 18 LB4-LB6 cells, with a 25.78%
-  median improvement;
+median improvement;
 - the optimized one-round pipeline beat that baseline in all 18 cells, with a 30.50%
-  median improvement;
+median improvement;
 - the selected two-round policy improved all 18 high-basis point estimates;
 - LB2 three-round deferral improved the measured full/uniform and
-  three-quarter/uniform cells by about 39.8% and 30.8%; and
+three-quarter/uniform cells by about 39.8% and 30.8%; and
 - LB3 three-round deferral improved the corresponding one-thread cells by 12.8% and
-  10.9%, with stable production-thread improvements.
+10.9%, with stable production-thread improvements.
 
 Deleted losing implementations include streaming node evaluation, full LB5/LB6 quartet
 tables, high-basis scalar-leaf two-round deferral where it lost, oversized LB3 tables,
@@ -311,9 +330,9 @@ Required durable coverage includes:
 - malformed topology, child count/order, degree, point width, and serialized length;
 - exact serialized size versus sizing formulas;
 - `digit_range_protocol_epoch` for proof bytes, transcript events, point, and final
-  evaluation; and
+evaluation; and
 - `fold_protocol_epoch` to ensure direct/recursive envelopes and #311 terminals did not
-  conceal a Stage 1 delta.
+conceal a Stage 1 delta.
 
 The one-off allocation harness used during development was deliberately removed. The
 checked-in benchmark, profile CI, coarse tracing, and protocol oracles are the durable
@@ -321,14 +340,16 @@ artifacts.
 
 ## Intended diff surface
 
-| Surface | Allowed responsibility |
-|---|---|
-| `akita-prover::protocol::sumcheck` | Stage 1 range cutover and directly shared arithmetic |
-| `akita-types::proof::stage1` and sizing | topology, descriptive proof fields, validation, byte accounting |
-| `akita-verifier::stages::stage1` | checked plan replay and malformed-shape rejection |
-| Stage 2 call boundary | mechanical range-image naming/output adaptation only |
-| PCS tests/benches/profile | epochs, differential tests, durable basis benchmark, report names |
-| transcript labels/book/spec | semantic range-image naming and Stage 1 documentation |
+
+| Surface                                 | Allowed responsibility                                            |
+| --------------------------------------- | ----------------------------------------------------------------- |
+| `akita-prover::protocol::sumcheck`      | Stage 1 range cutover and directly shared arithmetic              |
+| `akita-types::proof::stage1` and sizing | topology, descriptive proof fields, validation, byte accounting   |
+| `akita-verifier::stages::stage1`        | checked plan replay and malformed-shape rejection                 |
+| Stage 2 call boundary                   | mechanical range-image naming/output adaptation only              |
+| PCS tests/benches/profile               | epochs, differential tests, durable basis benchmark, report names |
+| transcript labels/book/spec             | semantic range-image naming and Stage 1 documentation             |
+
 
 Not in the intended surface: relation provider construction, Stage 2 kernel selection,
 trace representation, mixed-dimension relation execution, setup-offload placement,
@@ -339,10 +360,11 @@ planner topology, compressed commitments, or a new proof epoch.
 - One `DigitRangePlan`, one `DigitRangeProver`, and one verifier replay path remain.
 - The selected LB2-LB6 kernels are the only production implementations.
 - No eager range forest, padded range-image table, x/y Stage 1 module, compatibility
-  wrapper, or second semantic range formula survives.
+wrapper, or second semantic range formula survives.
 - Exact-prefix behavior agrees after every challenge and fold with the padded oracle.
 - Proof bytes, transcript events, degrees, child order, final point, and
-  `range_image_evaluation` match the post-#311 epoch.
+`range_image_evaluation` match the post-#311 epoch.
 - Durable tests and benchmarks cover every basis and malformed verifier shape.
 - Documentation guardrails and the repository's required formatting, lint, and test
-  commands pass at the final head.
+commands pass at the final head.
+
