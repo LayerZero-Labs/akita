@@ -340,6 +340,86 @@ from the fold challenges, opening weights, gadget weights, and the setup
 matrices $\mathbf A$, $\mathbf B$, and $\mathbf D$. The code generates these
 contributions directly from the canonical witness layout.
 
+## Relation layouts beyond the basic setting
+
+The relation above uses one polynomial group and one witness chunk. The code
+also supports multiple groups and multiple chunks. These cases change how the
+physical rows or witness columns are arranged, while preserving the basic
+relations above.
+
+### Multiple polynomial groups
+
+At a multi-group root, each group $g$ has its own opening claims, fold
+challenges, ring dimensions, commitment parameters, and
+`consistency | A | B` row block. The final/new group is placed first, followed
+by the precommitted groups. The shared $\mathbf D$ rows remain at the end:
+
+$$
+\begin{aligned}
+{}&
+[\mathrm{consistency}_{\mathrm{final}}
+ \mid \mathbf A_{\mathrm{final}}
+ \mid \mathbf B_{\mathrm{final}}]
+\\[-2pt]
+&\quad\Vert
+\big\Vert_{g\in\mathrm{precommitted}}
+[\mathrm{consistency}_g\mid\mathbf A_g\mid\mathbf B_g]
+\quad\Vert\quad
+\mathbf D.
+\end{aligned}
+$$
+
+Each group-local block has right-hand side
+$0\Vert\mathbf 0_{\mathbf A_g}\Vert\mathbf u_g$. The final shared block has
+right-hand side $\mathbf v_D$.
+
+For a single chunk per group, the corresponding pre-switch witness layout is
+
+$$
+\mathbf w_0
+=
+\big\Vert_{g\in\mathrm{relation\ order}}
+[\hat{\mathbf z}_g\mid\hat{\mathbf e}_g\mid\hat{\mathbf t}_g].
+$$
+
+The quotient digits for all physical rows are stored once, in one shared
+$\hat{\mathbf r}$ tail after these group segments.
+
+### Multiple witness chunks
+
+The chunked or distributed layout further partitions each group's live blocks
+into disjoint ranges $I_{g,k}$. Chunk $k$ computes the partial folded response
+
+$$
+\mathbf z_{g,k}
+=
+\sum_{b\in I_{g,k}}c_{g,b}\mathbf s_{g,b},
+\qquad
+\mathbf z_g=\sum_k\mathbf z_{g,k}.
+$$
+
+The canonical layout is group-major and then chunk-minor:
+
+$$
+\boxed{
+\mathbf w
+=
+\big\Vert_g\big\Vert_k
+[\hat{\mathbf z}_{g,k}
+ \mid\hat{\mathbf e}_{g,k}
+ \mid\hat{\mathbf t}_{g,k}]
+\quad\Vert\quad
+\hat{\mathbf r}.
+}
+$$
+
+Every chunk has a full-shaped local $\hat z$ segment, while its $\hat e$ and
+$\hat t$ segments contain only the live blocks owned by that chunk. Chunking
+adds witness columns, not relation rows: the chunk matrices are stacked
+horizontally and contribute to the same group-level `consistency | A | B`
+rows. The $\mathbf D$ rows and the quotient tail $\hat{\mathbf r}$ are shared
+across all groups and chunks.
+
 ## Lift the ring relation before sumcheck
 
 Equation (20) is an equality modulo $X^D+1$. Sumcheck, however, needs a field
@@ -500,24 +580,65 @@ build_relation_weight_events
 `-- M_ext(alpha), row-batched by tau_1 ------> Stage 2
 ```
 
-The main code values are:
+### Public statement: `RingRelationInstance`
 
-| Code value | Mathematical object |
+[`RingRelationInstance`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-types/src/proof/ring_relation.rs#L82-L220)
+contains the public relation statement. It contains only values that the
+verifier can reconstruct:
+
+| Field | Mathematical meaning |
 |---|---|
-| `RingRelationGroupWitness::z_folded_rings` | folded response $\mathbf z$ before its final digit decomposition |
-| `RingRelationGroupWitness::e_folded` | position-folded rings $E_b$ |
-| `RingRelationGroupWitness::e_hat` | opening digits $\hat{\mathbf e}$ |
-| `RingRelationGroupWitness::hint` | commitment hint containing $\hat{\mathbf t}$ |
-| `RingRelationInstance::group_challenges()` | fold challenges $c_b$ |
-| `RingRelationInstance::rhs()` | physical right-hand side $\mathbf y$ |
-| `RingRelationInstance::v()` | opening-commitment rows $\mathbf v_D$ |
-| `RelationQuotientOutput` | row quotient vector $\mathbf r$ |
-| `RecursiveWitnessFlat` | flat committed witness $\hat z\Vert\hat e\Vert\hat t\Vert\hat r$ |
+| `group_challenges()` | fold challenges $c_b$ |
+| `group_opening_point()` | ordinary opening weights, including $Q_p$ and $B_b$ |
+| `group_ring_multiplier_point()` | ring multipliers used by the physical consistency row |
+| `rhs()` | $\mathbf y=[0\mid\mathbf 0_A\mid\mathbf u\mid\mathbf v_D]$ in the basic setting |
+| `v()` | $\mathbf v_D=\mathbf D\hat{\mathbf e}$ |
+| `role_dims()` | the $\mathbf A$-, $\mathbf B$-, and $\mathbf D$-row ring dimensions |
 
-With multiple groups, the implementation repeats
-`consistency | A | B` for each group and places the shared `D` rows at the
-end. With a chunked witness, it emits one
-$\hat z_i\Vert\hat e_i\Vert\hat t_i$ ownership unit per chunk followed by one
-shared $\hat r$ tail. The canonical physical layout is described in
+### Prover witness: `RingRelationWitness`
+
+[`RingRelationWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L141-L220)
+is the prover-only aggregate witness. It holds the fold-grinding nonce and one
+[`RingRelationGroupWitness`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-prover/src/protocol/ring_relation_witness.rs#L8-L140)
+per polynomial group. In the basic setting, the vector contains one group:
+
+| Field | Mathematical meaning |
+|---|---|
+| `z_folded_rings` | folded response $\mathbf z$, before decomposition into $\hat z$ |
+| `z_folded_centered_per_chunk` | chunk-local folded responses $\mathbf z_k$ |
+| `e_folded` | recomposed position-folded rings $E_b$ |
+| `e_hat` | opening digits $\hat{\mathbf e}$ |
+| `hint` | commitment hint containing $\hat{\mathbf t}$ |
+
+The quotient output $\mathbf r$ is computed after these structures are built.
+Its digits are appended when `ring_switch_build_w` emits the flat
+$\hat z\Vert\hat e\Vert\hat t\Vert\hat r$ witness.
+
+### Verifier reconstruction
+
+The verifier does not receive a serialized `RingRelationInstance`. In
+[`verify_fold`](https://github.com/LayerZero-Labs/akita/blob/eea8443841ed4a701bf84a9f6415aa9415d6250d/crates/akita-verifier/src/protocol/core/fold.rs#L646-L741),
+it reconstructs the public instance from the transcript and public proof data:
+
+```text
+public commitment rows, opening points, v_D, and transcript
+                            |
+                            v
+rederive the per-group fold challenges
+                            |
+                            v
+assemble_relation_rhs
+                            |
+                            v
+RingRelationInstance::new
+                            |
+                            v
+ring_switch_verifier --------------------------------------> Stage 2 verifier
+```
+
+Only the public instance is reconstructed on the verifier. The
+`RingRelationWitness` and its group witnesses remain prover-only.
+
+The canonical multi-group and multi-chunk physical layout is described in
 [Opening points and digit-innermost
 layout](./opening-points-layout.md#witness-order).
