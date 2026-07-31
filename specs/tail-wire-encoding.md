@@ -3,6 +3,13 @@
 > **Pre-zk-strip historical.** This umbrella spec predates the zk-strip
 > ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
 > `feature = "zk"` or `PackedDigits` describe removed code preserved on `zk-wip`.
+>
+> **Architecture revision for #338.** The cap-derived wire behavior in this
+> document remains the regression baseline. The ownership changes under
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> The terminal response shape stores the exact admission cap, Rice remainder
+> width, and payload budget. Runtime code does not derive them from an
+> intermediate honest fold cap.
 
 | Field       | Value                                                     |
 |-------------|-----------------------------------------------------------|
