@@ -843,7 +843,7 @@ where
                 d_family,
                 d_setup_start..d_setup_end,
                 &row_weights,
-                &alpha_pows_d,
+                &group_alpha_pows_d,
             )?)
         } else {
             None
@@ -861,7 +861,7 @@ where
                 b_family,
                 0..b_width,
                 &row_weights,
-                &alpha_pows_b,
+                &group_alpha_pows_b,
             )?)
         } else {
             None
