@@ -617,6 +617,10 @@ fn find_group_batch_schedule_inner(
             .best_by_payload_per_lb
             .values()
             .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => suffix
+            .best_by_payload_per_lb
+            .values()
+            .min_by_key(|candidate| (candidate.setup_field_elements, candidate.total_bytes)),
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
             .best_by_first_direct_setup_per_lb
             .values()

@@ -322,9 +322,6 @@ fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
             {
                 (key, entry)
             } else {
-                cache.retain(|key, _| {
-                    key.ring_d != requested_key.ring_d || key.domain != requested_key.domain
-                });
                 let entry = Arc::new(OnceLock::new());
                 cache.insert(requested_key, Arc::clone(&entry));
                 (requested_key, entry)
@@ -339,6 +336,20 @@ fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
         });
         match build_result {
             Ok(slot) => {
+                // Keep smaller prefixes available until the larger build has
+                // completed successfully.  A failed growth must not evict a
+                // working covering candidate; once the new slot is ready the
+                // smaller entries are redundant and can be reclaimed.
+                let mut cache = prepared
+                    .shared_ntt
+                    .lock()
+                    .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
+                cache.retain(|cached_key, _| {
+                    cached_key.ring_d != key.ring_d
+                        || cached_key.domain != key.domain
+                        || cached_key.num_ring_elements >= key.num_ring_elements
+                });
+                drop(cache);
                 record_ntt_profile_on_prepared(prepared, key, profile)?;
                 return Ok(Arc::clone(slot));
             }
@@ -1063,6 +1074,33 @@ mod tests {
         let cache = prepared.shared_ntt.lock().unwrap();
         assert_eq!(cache.len(), 1);
         assert!(cache.contains_key(&large));
+    }
+
+    #[test]
+    fn failed_growth_retains_smaller_cached_prefix() {
+        let prepared = prepared();
+        let small = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 3,
+            domain: NttTransformDomain::Negacyclic,
+        };
+        let oversized = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: D + 1,
+            domain: NttTransformDomain::Negacyclic,
+        };
+
+        CpuBackend
+            .ensure_ntt_slot(&prepared, small)
+            .expect("warm small prefix");
+        assert!(CpuBackend.ensure_ntt_slot(&prepared, oversized).is_err());
+        CpuBackend
+            .ensure_ntt_slot(&prepared, small)
+            .expect("failed growth must leave the smaller prefix usable");
+
+        let cache = prepared.shared_ntt.lock().unwrap();
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(&small));
     }
 
     #[test]

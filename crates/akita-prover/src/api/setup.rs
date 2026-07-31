@@ -5,7 +5,7 @@ use akita_serialization::{AkitaSerialize, SerializationError, Valid};
 use akita_types::{
     derive_public_matrix_prefix, sample_public_matrix_id, AkitaExpandedSetup, AkitaSetupSeed,
     AkitaVerifierSetup, SetupMatrixCapacity, SetupPrefixProverRegistry,
-    SetupPrefixVerifierRegistry,
+    SetupPrefixVerifierRegistry, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 use std::sync::Arc;
 
@@ -45,6 +45,12 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     where
         F: CanonicalField + RandomSampling + AkitaSerialize,
     {
+        if setup_capacity.num_field_elements > MAX_SETUP_MATRIX_FIELD_ELEMENTS {
+            return Err(AkitaError::InvalidSetup(format!(
+                "setup capacity {} exceeds the maximum supported {} field elements",
+                setup_capacity.num_field_elements, MAX_SETUP_MATRIX_FIELD_ELEMENTS
+            )));
+        }
         let public_matrix_id = sample_public_matrix_id();
         let seed = AkitaSetupSeed {
             max_num_vars,
@@ -169,6 +175,21 @@ mod tests {
         )
         .expect_err("zero setup length must not produce an undecodable setup");
         assert!(zero_len.to_string().contains("num_field_elements"));
+    }
+
+    #[test]
+    fn generate_with_capacity_rejects_oversized_setup_len() {
+        let oversized = AkitaProverSetup::<Prime128Offset275>::generate_with_capacity(
+            8,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: MAX_SETUP_MATRIX_FIELD_ELEMENTS + 1,
+            },
+        )
+        .expect_err("oversized setup must not allocate before validation");
+        assert!(oversized
+            .to_string()
+            .contains("exceeds the maximum supported"));
     }
 
     #[test]

@@ -176,7 +176,9 @@ impl_proof_optimized_preset!(
         "schedules-fp128-mixed-dim-onehot",
         "fp128_mixed_dim_onehot",
         fp128_mixed_dim_onehot_table
-    )
+    ),
+    selection_policy =
+        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
 );
 impl_proof_optimized_preset!(
     D512OneHot,

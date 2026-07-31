@@ -272,6 +272,11 @@ pub fn validate_schedule_ring_dims(
         validate_role_dims(group.commitment.role_dims(shared_d))?;
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
+        if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {
+            return Err(AkitaError::InvalidSetup(format!(
+                "recursive fold {index} shared D matrix disagrees with its witness params"
+            )));
+        }
         let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
             || schedule.terminal.params.witness.d_a(),
             |next| next.params.witness.d_a(),

@@ -1283,6 +1283,13 @@ pub fn setup_prefix_precommitted_params(
     n_prefix: usize,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
     let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
+    let d_outer = prefix_params.outer_commit_matrix.ring_dimension();
+    if d_outer == 0 || !d_setup.is_multiple_of(d_outer) {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix A dimension must be a multiple of its B dimension".to_string(),
+        ));
+    }
+    let outer_projection_ratio = d_setup / d_outer;
     if n_prefix == 0 || !n_prefix.is_power_of_two() || !n_prefix.is_multiple_of(d_setup) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a nonzero power-of-two multiple of d_setup".to_string(),
@@ -1298,6 +1305,7 @@ pub fn setup_prefix_precommitted_params(
         let outer_width = num_live_blocks
             .checked_mul(prefix_params.inner_commit_matrix.output_rank())
             .and_then(|n| n.checked_mul(prefix_params.num_digits_outer))
+            .and_then(|n| n.checked_mul(outer_projection_ratio))
             .ok_or_else(|| AkitaError::InvalidSetup("prefix outer width overflow".to_string()))?;
         if inner_width <= prefix_params.inner_commit_matrix.input_width()
             && outer_width <= prefix_params.outer_commit_matrix.input_width()
@@ -1418,11 +1426,13 @@ where
              active lengths are {natural_field_len}/{n_prefix}",
         )));
     }
-    let setup_eval_len = template_n_prefix
-        .checked_div(source_ring_dimension)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
-        })?;
+    if source_ring_dimension == 0 || !template_n_prefix.is_multiple_of(source_ring_dimension) {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix padded length must be divisible by the producer ring dimension"
+                .to_string(),
+        ));
+    }
+    let setup_eval_len = template_n_prefix / source_ring_dimension;
     Ok(Some((slot, setup_eval_len)))
 }
 

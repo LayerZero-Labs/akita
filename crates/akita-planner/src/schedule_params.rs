@@ -303,12 +303,17 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
 /// Returns [`AkitaError::InvalidSetup`] for an invalid [`akita_types::ChunkedWitnessCfg`], or
 /// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+    let selection_policy_allowed = if policy.recursive_setup_planning {
+        policy.selection_policy
+            == crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
     } else {
-        crate::SelectionPolicyId::MinEstimatedProofPayload
+        matches!(
+            policy.selection_policy,
+            crate::SelectionPolicyId::MinEstimatedProofPayload
+                | crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        )
     };
-    if policy.selection_policy != expected_selection_policy {
+    if !selection_policy_allowed {
         return Err(AkitaError::InvalidSetup(
             "planner selection policy disagrees with recursive setup capability".to_string(),
         ));
@@ -439,9 +444,11 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Find the optimal schedule for a root schedule lookup key and dimension domain.
 ///
-/// A singleton domain preserves the uniform proof-payload objective. An
-/// explicit mixed domain selects exact physical setup fields first and exact
-/// proof payload second.
+/// A domain containing only the policy's uniform candidate preserves the
+/// uniform proof-payload objective. Any explicit domain that differs from that
+/// candidate requires
+/// [`SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload`] and
+/// selects exact physical setup fields first and exact proof payload second.
 ///
 /// The result is a pure,
 /// deterministic function of `(policy, key, dimensions)` (plus the `ring_challenge_config` /
@@ -465,6 +472,14 @@ pub fn find_schedule(
     key.validate()?;
     validate_policy(policy)?;
     if dimensions.is_uniform_policy_domain(policy) {
+        if policy.selection_policy
+            == crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        {
+            return Err(AkitaError::InvalidSetup(
+                "setup-field mixed selection requires an explicit mixed dimension domain"
+                    .to_string(),
+            ));
+        }
         return find_schedule_inner(
             key,
             policy,
@@ -472,6 +487,13 @@ pub fn find_schedule(
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
+    }
+    if policy.selection_policy
+        != crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-D search requires MinSetupMatrixFieldElementsThenProofPayload".into(),
+        ));
     }
     if policy.recursive_setup_planning {
         return Err(AkitaError::InvalidSetup(
@@ -837,6 +859,14 @@ fn find_schedule_inner(
 mod geometry_tests {
     use super::*;
 
+    #[cfg(feature = "catalog-gen")]
+    fn mixed_policy<Cfg: akita_config::CommitmentConfig>() -> PlannerPolicy {
+        let mut policy = akita_config::policy_of::<Cfg>();
+        policy.selection_policy =
+            crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload;
+        policy
+    }
+
     #[test]
     fn tensor_low_length_is_selected_independently() {
         assert_eq!(
@@ -898,8 +928,8 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_domain_search_beats_or_ties_uniform_d64() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let policy = mixed_policy::<D256OneHot>();
         let dimensions = [
             CommitmentRingDims::uniform(64),
             CommitmentRingDims {
@@ -966,9 +996,37 @@ mod geometry_tests {
 
     #[cfg(feature = "catalog-gen")]
     #[test]
-    fn mixed_frontier_matches_exhaustive_oracle_and_is_canonical() {
+    fn mixed_domain_rejects_proof_payload_policy() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
         let policy = policy_of::<D256OneHot>();
+        let domain = RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+        ])
+        .unwrap();
+        let error = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &policy,
+            D256OneHot::root_honest_fold_policy(),
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .expect_err("mixed search must not silently change proof-first policy");
+        assert!(error
+            .to_string()
+            .contains("mixed-D search requires MinSetupMatrixFieldElementsThenProofPayload"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_frontier_matches_exhaustive_oracle_and_is_canonical() {
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let policy = mixed_policy::<D256OneHot>();
         let d64 = CommitmentRingDims::uniform(64);
         let a128 = CommitmentRingDims {
             inner: 128,
@@ -1031,11 +1089,11 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_search_parallel_generation_is_descriptor_deterministic() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
         let handles = (0..8)
             .map(|_| {
                 std::thread::spawn(|| {
-                    let policy = policy_of::<D256OneHot>();
+                    let policy = mixed_policy::<D256OneHot>();
                     let domain = RingDimensionSearchDomain::new([
                         CommitmentRingDims {
                             inner: 128,
@@ -1069,8 +1127,8 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_root_prices_eor_at_candidate_a_dimension() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let mut policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let mut policy = mixed_policy::<D256OneHot>();
         // D256 enables root projection at this width while the D64 candidate does not.
         policy.claim_ext_degree = 64;
         let candidate_dimensions = CommitmentRingDims::uniform(64);
@@ -1140,8 +1198,8 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let policy = mixed_policy::<D256OneHot>();
         let d64 = CommitmentRingDims::uniform(64);
         let d128_mixed = CommitmentRingDims {
             inner: 128,
@@ -1216,10 +1274,17 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let policy = policy_of::<D256OneHot>();
-        let missing_d64 =
-            RingDimensionSearchDomain::new([CommitmentRingDims::uniform(128)]).unwrap();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let policy = mixed_policy::<D256OneHot>();
+        let missing_d64 = RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(128),
+            CommitmentRingDims {
+                inner: 256,
+                outer: 128,
+                opening: 128,
+            },
+        ])
+        .unwrap();
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
@@ -1257,10 +1322,18 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_search_rejects_direct_multi_chunk_policy() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let mut policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let mut policy = mixed_policy::<D256OneHot>();
         policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
-        let domain = RingDimensionSearchDomain::new([CommitmentRingDims::uniform(64)]).unwrap();
+        let domain = RingDimensionSearchDomain::new([
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+        ])
+        .unwrap();
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
@@ -1278,8 +1351,8 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_search_validates_key_and_policy_at_entry() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let policy = mixed_policy::<D256OneHot>();
         let domain = RingDimensionSearchDomain::new([
             CommitmentRingDims::uniform(64),
             CommitmentRingDims::uniform(policy.uniform_ring_dimension),
@@ -1318,8 +1391,8 @@ mod geometry_tests {
     #[cfg(feature = "catalog-gen")]
     #[test]
     fn mixed_search_applies_setup_budget_in_physical_fields() {
-        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-        let mut policy = policy_of::<D256OneHot>();
+        use akita_config::{proof_optimized::fp128::D256OneHot, CommitmentConfig};
+        let mut policy = mixed_policy::<D256OneHot>();
         let domain = RingDimensionSearchDomain::new([
             CommitmentRingDims::uniform(64),
             CommitmentRingDims {

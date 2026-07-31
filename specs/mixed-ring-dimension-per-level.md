@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Direct scalar mixed-D planner search implemented offline; catalog/runtime and recursive-setup integration pending |
+| Status | Direct scalar mixed-D planner search and catalog/runtime replay implemented; recursive setup, multi-chunk, and mixed multi-group integration deferred |
 | Review snapshot | 2026-07-28, planner reviewed on `main` at `af770e129` |
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
@@ -10,7 +10,7 @@
 | Primary profile mode | `onehot_fp128_d64_root_d128` |
 | Related spec | `specs/runtime-ring-cutover.md` |
 | Current synthetic implementation | `crates/akita-pcs/src/test_support.rs` |
-| Proposed planner implementation | `crates/akita-planner/src/schedule_params/` |
+| Planner implementation | `crates/akita-planner/src/schedule_params/` |
 
 ## Purpose of this document
 
@@ -40,24 +40,24 @@ where its provenance is explicit.
 > padding, and per-domain NTT cache sizing are specified by
 > [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 
-Akita now supports both forms of mixed ring dimension needed by this
-experiment:
+Akita's protocol and direct scalar planner support both forms of mixed ring
+dimension needed by this experiment:
 
 - **Across levels:** a large-ring leading band can hand off to a smaller-ring
   recursive suffix.
 - **Within a level:** the A, B, and D commitment matrices can use distinct
   dimensions `d_a/d_b/d_d`, subject to the A-carrier constraints.
 
-The protocol, setup-contribution, quotient, direct verifier, recursive
-verifier, and multi-group paths all understand this geometry. The offline
-planner now has an opt-in direct scalar search over explicit per-matrix
-dimension tuples. Shipped catalogs, generated-row replay, multi-group root
-search, and recursive setup offload do **not** yet use that search. The
-benchmark profiles in this document remain synthetic schedules built in
-`akita-pcs` test support.
+The protocol, setup-contribution, quotient, and direct verifier paths consume
+this geometry. The offline planner has an opt-in direct scalar search over
+explicit per-matrix dimension tuples, and the fp128 nv32 one-hot family emits
+and replays a catalog using that search. Recursive setup offload, direct
+multi-chunk search, and heterogeneous mixed-D multi-group roots remain
+explicitly deferred; the current multi-group expander still uses the ordinary
+uniform-D contract. The benchmark profiles in this document remain synthetic
+schedules built in `akita-pcs` test support unless a section says otherwise.
 
-The proposed next step is to make dimension choice part of the offline planner.
-The requested selection order is:
+The implemented direct-scalar policy is:
 
 ```text
 1. smallest physical setup matrix, measured in base-field elements;
@@ -65,9 +65,11 @@ The requested selection order is:
 3. deterministic canonical tie-break only.
 ```
 
-This policy is implemented by the offline direct scalar entry point. It is not
-yet catalog-bound or available in runtime resolution; prover and verifier
-remain catalog-only and never run the planner.
+This policy is catalog-bound for the fp128 nv32 mixed-D family. Its generated
+identity uses `MinSetupMatrixFieldElementsThenProofPayload`; callers that pass
+an explicit mixed dimension domain with a proof-payload policy are rejected
+rather than silently changing objectives. Prover and verifier remain
+catalog-only and never run the planner.
 
 The currently preferred measured design remains:
 
@@ -159,7 +161,7 @@ In a multi-group level:
 The final group is not automatically the carrier owner. Reordering groups must
 not change the carrier dimension.
 
-## Planner integration proposal
+## Planner integration and scope
 
 ### Decision summary
 
@@ -176,7 +178,7 @@ depend on upstream ranks, so a geometry-only bucket is not an equivalence
 class. The correctness baseline is exhaustive L0/L1 enumeration with Pareto
 frontier retention and descriptor-byte tie-breaking.
 
-The proposed direct-schedule score is:
+The direct-schedule score is:
 
 ```text
 score(schedule) = (
@@ -291,7 +293,11 @@ The suffix memo currently retains two maps per first-fold basis:
 That is sufficient for the two current scalar-D policies. It is not sufficient
 for a setup-envelope-first mixed-D objective.
 
-### Current mixed-D gap
+### Historical pre-cutover mixed-D gap
+
+The following list records the implementation gaps that motivated this cut.
+The direct scalar path and its generated catalog now address the scalar items;
+the multi-group and recursive items remain deferred as stated above.
 
 The production planner assumes uniform D in all candidate derivation:
 
@@ -317,7 +323,7 @@ matrices, recompute the boundary, and invoke `plan_optimal_suffix` again. A
 native planner must produce the final matrices directly; it must not generate
 a uniform candidate and retarget it after selection.
 
-### Proposed ring-dimension policy
+### Future broader ring-dimension policy
 
 Replace the overloaded scalar planner dimension with a plain-value search
 policy conceptually equivalent to:
@@ -392,26 +398,16 @@ max_setup_matrix_field_elements =
     )
 ```
 
-The current `SetupMatrixEnvelope::max_setup_len` is expressed in ring elements
-at the active level's A dimension. Taking a raw maximum across levels with
-different A dimensions is not a general cross-D comparison. The planner cost
-model should instead retain `max_setup_matrix_field_elements`. Setup
-construction converts once:
+The flat setup cutover now uses `max_setup_matrix_field_elements` directly.
+There is no current `SetupMatrixEnvelope::max_setup_len` conversion and no
+setup-generation dimension. The planner score, setup-capacity check,
+generated-row replay, and flat matrix allocation all consume the same physical
+field-element quantity. The old ring-element conversion is retained only in
+the historical snapshot below.
 
-```text
-max_setup_len_at_generation_D =
-    ceil(max_setup_matrix_field_elements / setup_generation_dimension)
-```
-
-This makes the planner score, setup-capacity check, generated-row replay, and
-actual flat matrix allocation use one physical quantity. No parallel setup
-formula should be introduced; extend the canonical
-`setup_matrix_envelope_for_schedule`/accumulation primitives and use them
-everywhere.
-
-The policy's setup ceiling must use the same field-element unit. Any existing
-field named `max_setup_envelope_field_elements` must be checked for unit
-consistency rather than compared with a level-local ring-element count.
+The policy's setup ceiling uses the same field-element unit through
+`max_num_setup_field_elements`; the historical
+`max_setup_envelope_field_elements` name is removed.
 
 ### Per-level candidate derivation
 
@@ -550,7 +546,7 @@ including `d_setup`, not only its natural length.
 
 ### Selection policy and the current nv=36 data
 
-Add a new catalog-bound selection policy with semantics equivalent to:
+The catalog-bound selection policy has semantics:
 
 ```text
 MinSetupMatrixFieldElementsThenProofPayload
@@ -639,7 +635,7 @@ For each candidate final-group tuple:
 - physical setup cost includes every frozen and final A/B matrix plus shared D;
 - key identity continues to include exact frozen precommit descriptors.
 
-The planner must replace current uses of `policy.ring_dimension` in
+The planner must replace current uses of `policy.uniform_ring_dimension` in
 `d_segment_width` and carrier sizing with the selected shared D and the
 canonical maximum group carrier. Group order must not influence the result.
 
@@ -668,9 +664,8 @@ runtime expansion:
 Remove the current checks that require every stored A/terminal dimension to
 equal one scalar policy D. Do not add a second mixed-D expansion path.
 
-Catalog identity must bind:
+Catalog identity for the implemented direct scalar family binds:
 
-- setup generation dimension;
 - ordered A/B/D candidate domains;
 - new cost-model and selection-policy IDs;
 - whole SIS table digest;
@@ -683,30 +678,20 @@ Catalog identity must bind:
 Changing the search domain must invalidate the catalog even if the winning
 rows happen to remain byte-identical.
 
-### Setup/config cutover
+### Historical setup/config cutover (superseded)
 
-`CommitmentConfig::D` and `PlannerPolicy::ring_dimension` currently conflate:
+The original mixed-D proposal treated `CommitmentConfig::D` and a scalar
+`PlannerPolicy::ring_dimension` as a setup-generation dimension, a uniform
+planner candidate, and a backend policy at once. That model was removed by
+the flat setup cutover in
+[`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
 
-1. setup generation dimension;
-2. uniform planner candidate dimension;
-3. root/backend policy dimension.
-
-Planner-native mixed D requires separating these concepts. The config should
-expose one canonical setup-generation dimension and one canonical
-ring-dimension candidate policy. Scheme setup validation dispatches on the
-former; commitment and fold operations dispatch on dimensions read from the
-selected schedule.
-
-Because this repository makes no backward-compatibility guarantee, prefer a
-direct rename/cutover over compatibility accessors. Do not keep a scalar-D
-planner wrapper that constructs a singleton candidate list; uniform presets
-can express their policy with singleton A/B/D domains.
-
-Setup capacity still scans every supported catalog row under the requested
-`(max_num_vars, max_num_polys)` capacity and takes the largest physical
-field-element envelope. It then converts that envelope to generation-ring
-elements once. Cache identity must include the setup-generation dimension,
-catalog/policy digest, and effective schedule digest.
+Current code keeps `CommitmentConfig::D` only as the uniform candidate for
+presets that choose one, exposes `PlannerPolicy::uniform_ring_dimension`, and
+measures setup capacity directly in base-field elements. The public matrix has
+no generation dimension, and cache/catalog identity does not include one.
+The historical design below is retained only to explain why the separation
+was required; it is not an active implementation contract.
 
 ### Determinism and tie-breaking
 
@@ -865,7 +850,11 @@ preservation, not planner-native recursive mixed-D support.
 
 ### Acceptance criteria
 
-The planner integration is complete only when all of these hold:
+The list below is the complete heterogeneous-planner target. PR341's scoped
+implementation satisfies items 1–10 and the scalar fp128 portion of items
+11–12. Mixed multi-group replay, direct multi-chunk mixed search, and fp32/fp64
+mixed catalogs remain deferred work; they are not represented as shipped
+capabilities by this PR.
 
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
    generated/runtime descriptor bytes; the opt-in mixed entry point requires
@@ -888,9 +877,10 @@ The planner integration is complete only when all of these hold:
 9. Runtime row misses reject without planner fallback or panic.
 10. Existing uniform direct, recursive, multi-chunk, and multi-group benchmark
     paths retain their fast verifier kernels.
-11. Mixed-D E2Es cover honest verification, wrong openings, proof/commitment
-    tampering, malformed dimensions, unsupported SIS cells, and setup
-    under-capacity.
+11. The scalar fp128 mixed-D E2Es cover honest verification, wrong openings,
+    proof/commitment tampering, malformed dimensions, unsupported SIS cells,
+    and setup under-capacity. Mixed multi-group and mixed multi-chunk E2Es are
+    a later acceptance gate after their planner/catalog paths are implemented.
 12. The `nv=36` constrained search completes, obeys all transition/rank caps,
     and the complete A/A′/B/E/F/C/D benchmark matrix is rerun from one build.
 
@@ -911,6 +901,10 @@ The planner integration is complete only when all of these hold:
 | Setup parity | Planned field-element envelope equals allocated setup capacity and runtime fit checks |
 | Determinism | Repeated and parallel table generation emits byte-identical rows |
 | Benchmark policy | The constrained `nv=36` search completes and reports `256/128/128 → D64` with 67,108,864 physical setup fields |
+
+These tests describe the implemented direct scalar cut. A future mixed
+multi-group or mixed multi-chunk cut must add corresponding frozen-precommit,
+chunk-partition, and generated-replay rows before claiming those capabilities.
 
 ### Resolved search policy
 
@@ -944,14 +938,17 @@ The labels below are local to this spec.
 C and D are per-matrix-root experiments. They are not D64-tail variants and
 must not be described as alternatives that share E's suffix policy.
 
-## Current deterministic schedule snapshot
+## Historical deterministic schedule snapshot
 
-This section was regenerated from the schedule builders at `25a1e94a6` for
-`nv = 36`, `np = 1`. It contains geometry, not wall-clock measurements.
+This section was regenerated from the pre-flat schedule builders at
+`25a1e94a6` for `nv = 36`, `np = 1`. It contains historical geometry, not
+wall-clock measurements or a current setup-allocation contract.
 
-`setup length` is `SetupMatrixEnvelope::max_setup_len` in generation-ring
-elements. Multiplying by the generation dimension and 16-byte fp128 field
-elements gives the setup-vector byte footprint.
+The historical `setup length` values below are
+`SetupMatrixEnvelope::max_setup_len` in generation-ring elements. The `@ D`
+annotations and conversion to bytes are obsolete under the flat setup model;
+current capacity is reported directly as base-field elements by the flat setup
+spec.
 
 | Profile | Levels including terminal | Root `d_a/d_b/d_d` | Root ranks `n_a/n_b/n_d` | Root output field elements | Setup length | Terminal input / D |
 |---|---:|---|---|---:|---:|---|
@@ -1762,15 +1759,9 @@ back.
 
 ## Known limits and next work
 
-### P0: native per-matrix root planning
-
-Implement the planner integration proposal above through Cut 2. Remove the
-D512 D256-promotion heuristic only after the native planner reproduces or
-improves its geometry.
-
 ### P1: production heterogeneous-group admission
 
-`PlannerPolicy` still exposes one scalar `ring_dimension`. The protocol can
+`PlannerPolicy` still exposes one scalar `uniform_ring_dimension`. The protocol can
 consume group-local dimensions, but production planning and shipped catalogs
 cannot emit a heterogeneous-group root. Add explicit final/precommitted
 `CommitmentRingDims` to the planner boundary and generate an end-to-end catalog

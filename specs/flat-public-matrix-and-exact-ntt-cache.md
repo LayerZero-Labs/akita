@@ -931,6 +931,13 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 - [x] `./scripts/check-doc-guardrails.sh` and every repository preflight command
   required by touched paths pass.
 
+The checklist above records the flat setup and cache cutover. The broader
+testing matrix below is a durable target for all field widths and protocol
+compositions, not a claim that PR341 ships every combination. In this PR the
+mixed-dimension catalog coverage is the scalar fp128 nv32 one-hot family;
+mixed multi-group replay, mixed multi-chunk planning, and fp32/fp64 mixed
+catalogs remain deferred to the mixed-planner follow-up.
+
 ### Testing strategy
 
 #### Derivation tests

@@ -225,6 +225,38 @@ fn active_setup_field_len_projects_each_group_at_its_native_dimensions() {
 }
 
 #[test]
+fn setup_prefix_params_project_b_width_for_smaller_outer_dimension() {
+    let mut prefix_params = prefix_eligible_level_params();
+    retarget_group_role_dims(&mut prefix_params, 128, 64);
+    let outer = prefix_params.outer_commit_matrix;
+    prefix_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+        outer.security_policy(),
+        outer.sis_table_key().table_digest,
+        outer.sis_modulus_profile(),
+        outer.output_rank(),
+        32,
+        outer.coeff_linf_bound(),
+        outer.ring_dimension(),
+    );
+    let params = setup_prefix_precommitted_params(&prefix_params, 128)
+        .expect("mixed-dimension setup-prefix params");
+
+    params
+        .validate()
+        .expect("projected B width must satisfy the precommitted contract");
+    let ratio = params.layout.inner_commit_matrix.ring_dimension()
+        / params.layout.outer_commit_matrix.ring_dimension();
+    let expected_b_width = params.layout.num_live_blocks
+        * params.layout.inner_commit_matrix.output_rank()
+        * params.layout.num_digits_outer
+        * ratio;
+    assert_eq!(
+        params.layout.outer_commit_matrix.input_width(),
+        expected_b_width
+    );
+}
+
+#[test]
 fn select_setup_prefix_slot_uses_exact_registry_match() {
     use akita_field::Prime32Offset99 as F;
 
@@ -265,6 +297,23 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert_eq!(&selection.0.id, &id);
     assert_eq!(selection.0.id.d_setup(), 64);
     assert_eq!(selection.1, 8);
+
+    let err = select_setup_prefix_slot(
+        5,
+        |candidate| {
+            registry
+                .get(candidate)
+                .map(|slot| (slot, slot.natural_len, slot.padded_len))
+        },
+        &level_params,
+        natural_len,
+        512,
+        "slot does not cover request",
+    )
+    .expect_err("producer dimension must divide the padded prefix");
+    assert!(err
+        .to_string()
+        .contains("setup prefix padded length must be divisible"));
 
     let err = select_setup_prefix_slot(
         5,

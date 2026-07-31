@@ -386,6 +386,20 @@ fn matrix_coefficient_len(
 /// `[PROOF_OPTIMIZED_LOG_BASIS_MIN, MAX]` basis range, so those are not
 /// parameters.
 macro_rules! impl_proof_optimized_preset {
+    (@selection_policy default) => {
+        fn selection_policy() -> akita_schedules::SelectionPolicyId {
+            if Self::recursive_setup_planning() {
+                akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            } else {
+                akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
+            }
+        }
+    };
+    (@selection_policy $selection_policy:expr) => {
+        fn selection_policy() -> akita_schedules::SelectionPolicyId {
+            $selection_policy
+        }
+    };
     (@schedule_catalog none) => {};
     (@schedule_catalog ($feat:literal, $family:literal, $table:ident)) => {
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -400,12 +414,15 @@ macro_rules! impl_proof_optimized_preset {
         }
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none, default);
     };
     ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table);
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, default);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none) => {
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident), selection_policy = $selection_policy:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table, $selection_policy);
+    };
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none, $($selection_policy:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -449,6 +466,8 @@ macro_rules! impl_proof_optimized_preset {
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
                 )
             }
+
+            impl_proof_optimized_preset!(@selection_policy $($selection_policy)*);
 
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
                 let legacy_witness = $fold_norms;
@@ -480,7 +499,7 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident, $($selection_policy:tt)*) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -524,6 +543,8 @@ macro_rules! impl_proof_optimized_preset {
                     $crate::proof_optimized::PROOF_OPTIMIZED_LOG_BASIS_MAX,
                 )
             }
+
+            impl_proof_optimized_preset!(@selection_policy $($selection_policy)*);
 
             fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
                 let legacy_witness = $fold_norms;

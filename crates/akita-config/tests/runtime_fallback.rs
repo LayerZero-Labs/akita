@@ -18,7 +18,7 @@ use akita_config::{
 use akita_planner::find_group_batch_schedule;
 use akita_schedules::{
     resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, ResolvedScheduleRow, SelectionPolicyId,
+    PlannerPolicy, ResolvedScheduleRow,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -307,11 +307,7 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if Cfg::recursive_setup_planning() {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else {
-            SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: Cfg::selection_policy(),
         max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
@@ -338,6 +334,7 @@ fn policy_bridge_matches_cfg_hooks() {
     assert_policy_matches_cfg::<fp128::D64Dense>();
     assert_policy_matches_cfg::<fp128::D128Dense>();
     assert_policy_matches_cfg::<fp128::D64OneHot>();
+    assert_policy_matches_cfg::<fp128::MixedDimFp128OneHot>();
     assert_policy_matches_cfg::<fp32::D64OneHot>();
 }
 

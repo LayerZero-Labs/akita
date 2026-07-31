@@ -39,6 +39,8 @@ impl PlannerCostModelId {
 pub enum SelectionPolicyId {
     /// Pick the minimum estimated proof payload.
     MinEstimatedProofPayload,
+    /// Pick the minimum physical setup-matrix field footprint, then payload.
+    MinSetupMatrixFieldElementsThenProofPayload,
     /// Pick the first direct setup footprint, then payload, within setup support.
     MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
 }
@@ -49,6 +51,7 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
         }
     }
 
@@ -56,6 +59,9 @@ impl SelectionPolicyId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
+            Self::MinSetupMatrixFieldElementsThenProofPayload => {
+                "MinSetupMatrixFieldElementsThenProofPayload"
+            }
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
                 "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
             }
@@ -95,7 +101,10 @@ pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
     /// Direct-only counterpart used when scalar schedules are cataloged under
-    /// the non-recursive family identity.
+    /// the non-recursive family identity. It deliberately restores the
+    /// proof-payload objective: callers crossing from a grouped/recursive
+    /// adapter into the uniform scalar planner must not reuse a mixed-domain
+    /// setup-first policy.
     pub fn direct_only(self) -> Self {
         Self {
             recursive_setup_planning: false,
@@ -147,12 +156,17 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+    let selection_policy_allowed = if policy.recursive_setup_planning {
+        policy.selection_policy
+            == SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
     } else {
-        SelectionPolicyId::MinEstimatedProofPayload
+        matches!(
+            policy.selection_policy,
+            SelectionPolicyId::MinEstimatedProofPayload
+                | SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        )
     };
-    if policy.selection_policy != expected_selection_policy {
+    if !selection_policy_allowed {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with recursive setup capability".to_string(),
         ));

@@ -50,6 +50,9 @@ macro_rules! impl_multi_chunk_companion {
             ) -> akita_challenges::TensorChallengeShape {
                 <$base as $crate::CommitmentConfig>::fold_challenge_shape_at_level(inputs)
             }
+            fn selection_policy() -> akita_schedules::SelectionPolicyId {
+                <$base as $crate::CommitmentConfig>::selection_policy()
+            }
             fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
                 <$base as $crate::CommitmentConfig>::sis_modulus_profile()
             }
@@ -122,11 +125,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if recursive_setup_planning {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else {
-            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: Cfg::selection_policy(),
         max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         uniform_ring_dimension: Cfg::D,
@@ -303,6 +302,21 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// setup offloading override this and use a separate generated catalog.
     fn recursive_setup_planning() -> bool {
         false
+    }
+
+    /// Catalog-bound schedule selection objective.
+    ///
+    /// Uniform/direct presets minimize proof payload. Recursive setup presets
+    /// minimize the first remaining direct setup footprint before payload.
+    /// Mixed-dimension catalogs may opt into the physical setup-field objective
+    /// explicitly; the policy is part of catalog identity and never inferred
+    /// from a ring dimension.
+    fn selection_policy() -> akita_schedules::SelectionPolicyId {
+        if Self::recursive_setup_planning() {
+            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else {
+            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
+        }
     }
 
     /// Optional generated schedule catalog for this preset.
