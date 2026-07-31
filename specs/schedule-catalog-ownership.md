@@ -1,4 +1,13 @@
-# Spec: Schedule catalog ownership and opt-in shipped tables
+# Historical spec: Schedule catalog ownership and opt-in shipped tables
+
+> **Superseded runtime contract (2026-07-31).** The active contract is
+> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> Runtime schedule resolution now requires an approved generated catalog and
+> exact row. A missing catalog or row is rejected. Runtime prover and verifier
+> code MUST NOT fall back to planner search. Statements below describing tables
+> as optional caches, DP fallback, or table-independent runtime correctness are
+> retained only as the historical design record for PR #203 and MUST NOT be
+> implemented.
 
 > **Pre-zk-strip historical.** This spec predates the zk-strip
 > ([`akita-zk-strip-for-audit.md`](akita-zk-strip-for-audit.md)). References to
@@ -13,10 +22,10 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-06-18 |
-| Status        | proposed |
+| Status        | superseded |
 | PR            | [#203](https://github.com/LayerZero-Labs/akita/pull/203) |
 | Supersedes    | (partial) schedule-key scope in [`planner-incidence-generalization.md`](planner-incidence-generalization.md) |
-| Superseded-by | |
+| Superseded-by | [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md) |
 | Book-chapter  | how/configuration.md |
 
 ## Summary

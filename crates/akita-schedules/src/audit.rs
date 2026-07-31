@@ -308,12 +308,44 @@ fn audit_terminal(
         .groups
         .first()
         .ok_or_else(|| invalid(label, "terminal response shape is missing its group"))?;
+    let d = params.d_a();
+    let expected_z_coords = params
+        .inner_width()
+        .checked_mul(d)
+        .ok_or_else(|| invalid(label, "terminal z coordinates overflow"))?;
+    let expected_e_field_elems = params
+        .num_live_blocks
+        .checked_mul(d)
+        .ok_or_else(|| invalid(label, "terminal e coordinates overflow"))?;
+    let expected_t_field_elems = params
+        .num_live_blocks
+        .checked_mul(params.inner_commit_matrix.output_rank())
+        .and_then(|value| value.checked_mul(d))
+        .ok_or_else(|| invalid(label, "terminal t coordinates overflow"))?;
+    let expected_logical_num_elems = expected_z_coords
+        .checked_add(expected_e_field_elems)
+        .and_then(|value| value.checked_add(expected_t_field_elems))
+        .ok_or_else(|| invalid(label, "terminal response coordinates overflow"))?;
     if response_shape.layout.groups.len() != 1
+        || response_shape.layout.ring_dimension != d
+        || group.z_coords != expected_z_coords
+        || group.e_field_elems != expected_e_field_elems
+        || group.t_field_elems != expected_t_field_elems
+        || response_shape.layout.logical_num_elems != expected_logical_num_elems
+    {
+        return Err(invalid(
+            label,
+            "terminal response shape disagrees with the committed witness geometry",
+        ));
+    }
+    if group.z_admission_linf_cap == 0
+        || group.z_rice_low_bits >= 64
+        || group.z_payload_bytes == 0
         || group.z_admission_linf_cap > params.certified_response_linf_cap(sparse)?
     {
         return Err(invalid(
             label,
-            "terminal response shape exceeds the matrix-certified cap",
+            "terminal response shape has invalid wire parameters or exceeds the matrix-certified cap",
         ));
     }
     Ok(())

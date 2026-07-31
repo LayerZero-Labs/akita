@@ -11,8 +11,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -122,49 +122,50 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
             Cfg::fold_challenge_shape_at_level,
         )?;
 
+        let mut resolved = None;
         for entry in catalog.entries {
-            let Some((group_idx, _)) = entry
-                .root
-                .precommitted_groups
-                .iter()
-                .enumerate()
-                .find(|(_, group)| group.descriptor.group == *key)
-            else {
-                continue;
-            };
-            let runtime_key = entry.to_runtime_lookup_key();
-            let schedule = akita_schedules::schedule_from_entry(
-                entry,
-                &runtime_key,
-                &policy,
-                Cfg::ring_challenge_config,
-                Cfg::fold_challenge_shape_at_level,
-            )?;
-            let precommitted = schedule
-                .root
-                .params
-                .precommitted_groups
-                .get(group_idx)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup(
-                        "generated precommit row did not expand the expected group".to_string(),
-                    )
-                })?;
-            let group = &precommitted.commitment;
-            let mut params = schedule.root.params.final_group.commitment.clone();
-            params.log_basis_inner = group.layout.log_basis_inner;
-            params.log_basis_outer = group.layout.log_basis_outer;
-            params.log_basis_open = group.log_basis_open;
-            params.inner_commit_matrix = group.layout.inner_commit_matrix;
-            params.outer_commit_matrix = group.layout.outer_commit_matrix;
-            params.num_live_ring_elements_per_claim = group.layout.num_live_ring_elements_per_claim;
-            params.num_positions_per_block = group.layout.num_positions_per_block;
-            params.num_live_blocks = group.layout.num_live_blocks;
-            params.num_digits_inner = group.layout.num_digits_inner;
-            params.num_digits_outer = group.layout.num_digits_outer;
-            params.num_digits_open = group.num_digits_open;
-            params.num_digits_fold = group.num_digits_fold;
-            params.precommitted_groups.clear();
+            for (group_idx, generated_group) in entry.root.precommitted_groups.iter().enumerate() {
+                if generated_group.descriptor.group != *key {
+                    continue;
+                }
+                let runtime_key = entry.to_runtime_lookup_key();
+                let schedule = akita_schedules::schedule_from_entry(
+                    entry,
+                    &runtime_key,
+                    &policy,
+                    Cfg::ring_challenge_config,
+                    Cfg::fold_challenge_shape_at_level,
+                )?;
+                let precommitted = schedule
+                    .root
+                    .params
+                    .precommitted_groups
+                    .get(group_idx)
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "generated precommit row did not expand the expected group".to_string(),
+                        )
+                    })?;
+                let group = &precommitted.commitment;
+                let mut params = schedule.root.params.final_group.commitment.clone();
+                params.log_basis_inner = group.layout.log_basis_inner;
+                params.log_basis_outer = group.layout.log_basis_outer;
+                params.log_basis_open = group.log_basis_open;
+                params.inner_commit_matrix = group.layout.inner_commit_matrix;
+                params.outer_commit_matrix = group.layout.outer_commit_matrix;
+                params.num_live_ring_elements_per_claim =
+                    group.layout.num_live_ring_elements_per_claim;
+                params.num_positions_per_block = group.layout.num_positions_per_block;
+                params.num_live_blocks = group.layout.num_live_blocks;
+                params.num_digits_inner = group.layout.num_digits_inner;
+                params.num_digits_outer = group.layout.num_digits_outer;
+                params.num_digits_open = group.num_digits_open;
+                params.num_digits_fold = group.num_digits_fold;
+                params.precommitted_groups.clear();
+                record_unique_precommit_profile(key, &mut resolved, params)?;
+            }
+        }
+        if let Some(params) = resolved {
             return Ok(params);
         }
     }
@@ -174,4 +175,57 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
         .params
         .final_group
         .commitment)
+}
+
+fn record_unique_precommit_profile(
+    key: &PolynomialGroupLayout,
+    resolved: &mut Option<CommittedGroupParams>,
+    candidate: CommittedGroupParams,
+) -> Result<(), AkitaError> {
+    if let Some(existing) = resolved {
+        let existing_profile = CommittedGroupProfile::from_params(*key, existing);
+        let candidate_profile = CommittedGroupProfile::from_params(*key, &candidate);
+        if existing_profile != candidate_profile {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule catalog assigns multiple commitment profiles to standalone layout {key:?}"
+            )));
+        }
+    } else {
+        *resolved = Some(candidate);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proof_optimized::fp128;
+
+    #[test]
+    fn duplicate_layout_with_distinct_profiles_is_rejected() {
+        let key = PolynomialGroupLayout::singleton(14);
+        let dense = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("dense row")
+            .root
+            .params
+            .final_group
+            .commitment;
+        let one_hot = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+            .expect("one-hot row")
+            .root
+            .params
+            .final_group
+            .commitment;
+        assert_ne!(
+            CommittedGroupProfile::from_params(key, &dense),
+            CommittedGroupProfile::from_params(key, &one_hot),
+            "test rows must carry distinct valid commitment profiles"
+        );
+
+        let mut resolved = None;
+        record_unique_precommit_profile(&key, &mut resolved, dense).expect("first row");
+        let error = record_unique_precommit_profile(&key, &mut resolved, one_hot)
+            .expect_err("ambiguous layout must reject");
+        assert!(error.to_string().contains("multiple commitment profiles"));
+    }
 }

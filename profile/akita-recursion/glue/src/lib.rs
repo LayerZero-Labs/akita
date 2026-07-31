@@ -37,7 +37,7 @@ pub const BLOB_VALIDATE: Validate = Validate::Yes;
 pub const MAX_JOLT_BLOB_BYTES: u64 = 805_306_368;
 
 /// Magic header so the guest fails fast if it gets the wrong bytes.
-const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv1";
+const BLOB_MAGIC: [u8; 8] = *b"AKJOLTv2";
 const MAX_TRANSCRIPT_DOMAIN_BYTES: usize = 1024;
 const MAX_BLOB_NUM_VARS: usize = 64;
 
@@ -572,7 +572,6 @@ mod tests {
             fold_challenge_config: SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
             num_digits_fold: 1,
-            fold_witness_linf_cap: 1,
         }
     }
 
@@ -581,6 +580,15 @@ mod tests {
         let err = reject_trailing_bytes(&[0]).unwrap_err();
         assert!(err.to_string().contains("trailing bytes"));
         reject_trailing_bytes(&[]).unwrap();
+    }
+
+    #[test]
+    fn previous_blob_version_is_rejected_at_the_magic_boundary() {
+        let mut bytes = blob_prefix();
+        bytes[..BLOB_MAGIC.len()].copy_from_slice(b"AKJOLTv1");
+        let error = AkitaJoltInputs::<TestF, TEST_D>::read_from_bytes(&bytes)
+            .expect_err("v1 blob must not reach payload decoding");
+        assert!(error.to_string().contains("magic mismatch"));
     }
 
     #[test]

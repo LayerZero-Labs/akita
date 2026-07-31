@@ -247,6 +247,53 @@ fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
 }
 
 #[test]
+fn resolved_row_audit_rejects_each_noncanonical_terminal_shape_field() {
+    type Cfg = fp128::D64Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog.entries.first().expect("nonempty generated catalog");
+    let selected = select_generated_schedule_row(
+        &entry.to_runtime_lookup_key(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect("valid generated row");
+    let profiles = selected.profiles().clone();
+    let schedule = selected.schedule();
+
+    let mut mutations = Vec::new();
+    let mut mutated = schedule.clone();
+    mutated.terminal.params.response_shape.layout.ring_dimension += 1;
+    mutations.push(mutated);
+    let mut mutated = schedule.clone();
+    mutated.terminal.params.response_shape.layout.groups[0].z_coords += 1;
+    mutations.push(mutated);
+    let mut mutated = schedule.clone();
+    mutated.terminal.params.response_shape.layout.groups[0].e_field_elems += 1;
+    mutations.push(mutated);
+    let mut mutated = schedule.clone();
+    mutated.terminal.params.response_shape.layout.groups[0].t_field_elems += 1;
+    mutations.push(mutated);
+    let mut mutated = schedule.clone();
+    mutated
+        .terminal
+        .params
+        .response_shape
+        .layout
+        .logical_num_elems += 1;
+    mutations.push(mutated);
+    let mut mutated = schedule.clone();
+    mutated.terminal.params.response_shape.layout.groups[0].z_payload_bytes = 0;
+    mutations.push(mutated);
+
+    for mutated in mutations {
+        assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), mutated);
+    }
+}
+
+#[test]
 fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(18));
     let ordinary = fp128::D64OneHot::runtime_schedule(key.clone())
