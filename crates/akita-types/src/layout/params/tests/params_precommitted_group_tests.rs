@@ -156,7 +156,6 @@ fn native_group_dimensions_are_independent_of_final_group_order() {
     assert!(witness_layout
         .units_for_group(0)
         .expect("precommitted units")
-        .iter()
         .all(|unit| unit.z_range().len().is_multiple_of(128)));
 }
 

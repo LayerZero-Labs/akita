@@ -203,24 +203,27 @@ where
                 .group_role_dims(inputs.opening_batch, group_index)?;
             let group_alpha_bits = group_dims.d_a().trailing_zeros() as usize;
             let units = inputs.witness_layout.units_for_group(group_index)?;
-            let covered_blocks = units.iter().enumerate().try_fold(
-                0usize,
-                |expected_start, (expected_chunk, unit)| {
-                    if unit.chunk_index() != expected_chunk
-                        || unit.global_block_start() != expected_start
-                        || unit.num_live_blocks() == 0
-                    {
-                        return Err(AkitaError::InvalidSetup(
-                            "trace witness chunks do not form one ordered block partition".into(),
-                        ));
-                    }
-                    expected_start
-                        .checked_add(unit.num_live_blocks())
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("trace witness block coverage overflow".into())
-                        })
-                },
-            )?;
+            let covered_blocks =
+                units
+                    .enumerate()
+                    .try_fold(0usize, |expected_start, (expected_chunk, unit)| {
+                        if unit.chunk_index() != expected_chunk
+                            || unit.global_block_start() != expected_start
+                            || unit.num_live_blocks() == 0
+                        {
+                            return Err(AkitaError::InvalidSetup(
+                                "trace witness chunks do not form one ordered block partition"
+                                    .into(),
+                            ));
+                        }
+                        expected_start
+                            .checked_add(unit.num_live_blocks())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup(
+                                    "trace witness block coverage overflow".into(),
+                                )
+                            })
+                    })?;
             if covered_blocks != group_params.num_live_blocks() {
                 return Err(AkitaError::InvalidProof);
             }

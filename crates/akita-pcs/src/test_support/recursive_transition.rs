@@ -75,7 +75,7 @@ where
             let opening_layout = key.opening_layout()?;
 
             // Plan the exact multi-group root at Root::D, then rebuild B and
-            // shared D from the requested final carrier geometry.
+            // shared D from the requested final projection geometry.
             let root_policy = policy_of::<Root>().direct_only();
             let mut root = akita_planner::find_group_batch_schedule(
                 key,

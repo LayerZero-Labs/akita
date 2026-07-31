@@ -118,8 +118,8 @@ where
         let group_layout = inputs.opening_batch.group_layout(group_index)?;
         let units = inputs.witness_layout.units_for_group(group_index)?;
         for (local_claim, claim_index) in parameters.claim_range().enumerate() {
-            let mut segments = Vec::with_capacity(units.len());
-            for &unit in &units {
+            let mut segments = Vec::with_capacity(units.clone().count());
+            for unit in units.clone() {
                 let physical_coefficient_start = unit.e_coefficient_index(
                     group_dims.d_a(),
                     group_dims.d_d(),

@@ -91,7 +91,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         // Uniform-role fast path: contiguous `eq` fill (unchanged).
         let mut weights = vec![E::zero(); e_cols];
         for claim in 0..num_claims {
-            for unit in &units {
+            for unit in units.clone() {
                 let unit_width =
                     unit.num_live_blocks()
                         .checked_mul(depth_open)
@@ -163,7 +163,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
             let block_claim = t / spec.role_subcolumns;
             let global_block = block_claim % num_live_blocks;
             let claim = block_claim / num_live_blocks;
-            let Some(unit) = units.iter().copied().find(|u| {
+            let Some(unit) = units.clone().find(|u| {
                 let start = u.global_block_start();
                 global_block >= start && global_block - start < u.num_live_blocks()
             }) else {
@@ -219,7 +219,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     if spec.is_uniform() {
         let mut weights = vec![E::zero(); num_t_columns];
         for claim in 0..num_claims {
-            for unit in &units {
+            for unit in units.clone() {
                 let unit_width = unit
                     .num_live_blocks()
                     .checked_mul(n_a)
@@ -295,7 +295,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
             let s3 = s2 / n_a;
             let global_block = s3 % num_live_blocks;
             let claim = s3 / num_live_blocks;
-            let Some(unit) = units.iter().copied().find(|u| {
+            let Some(unit) = units.clone().find(|u| {
                 let start = u.global_block_start();
                 global_block >= start && global_block - start < u.num_live_blocks()
             }) else {
@@ -366,7 +366,7 @@ where
             let position = column / depth_commit;
             let commit_digit = column % depth_commit;
             let mut weight = E::zero();
-            for unit in &units {
+            for unit in units.clone() {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
                     let semantic_count = num_positions_per_block * depth_commit * depth_fold;
                     let source_ring_dimension = unit.z_range().len() / semantic_count;

@@ -112,7 +112,7 @@ impl TraceWeightLayout {
             || !self.source_ring_dim.is_multiple_of(self.opening_ring_dim)
         {
             return Err(AkitaError::InvalidSetup(
-                "trace dimensions must satisfy opening | source | carrier".into(),
+                "trace dimensions must satisfy opening | source | dispatch ring".into(),
             ));
         }
         Ok(())

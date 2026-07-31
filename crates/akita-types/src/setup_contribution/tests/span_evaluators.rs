@@ -187,7 +187,7 @@ fn canonical_tensors_match_dense_oracles_across_geometries() {
             dense
         );
         let group = &full.groups[0];
-        let expected_families = layout.units_for_group(group.group_id).unwrap().len();
+        let expected_families = layout.units_for_group(group.group_id).unwrap().count();
         assert_eq!(group.a_tensors.len(), expected_families);
         assert!(group.a_tensors.iter().all(|family| {
             family

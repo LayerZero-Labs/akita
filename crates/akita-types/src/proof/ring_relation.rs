@@ -857,10 +857,13 @@ mod tests {
             vec![(1, 0), (0, 0), (1, 1), (0, 1)]
         );
         for group_index in [1, 0] {
-            let units = layout.units_for_group(group_index).expect("group units");
-            assert_eq!(units[0].global_block_range(), 0..2);
-            assert_eq!(units[1].global_block_range(), 2..4);
-            assert!(units[0].t_range().end < units[1].z_range().start);
+            let mut units = layout.units_for_group(group_index).expect("group units");
+            let first = units.next().expect("first group unit");
+            let second = units.next().expect("second group unit");
+            assert!(units.next().is_none());
+            assert_eq!(first.global_block_range(), 0..2);
+            assert_eq!(second.global_block_range(), 2..4);
+            assert!(first.t_range().end < second.z_range().start);
         }
         assert_eq!(
             layout.units().last().expect("last unit").t_range().end,

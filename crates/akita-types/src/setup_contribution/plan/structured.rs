@@ -35,13 +35,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let witness_gadget = extension_gadget::<F, E>(group.depth_witness, group.log_basis_inner);
         let (outer_subcolumns, opening_subcolumns) =
             SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
-        let opening_scales = (opening_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
-            .transpose()?;
-        let outer_scales = (outer_subcolumns != 1)
-            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
-            .transpose()?;
-
         let e_stride = checked_product(
             opening_subcolumns,
             group.depth_open,
@@ -52,6 +45,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .checked_mul(group.depth_commit)
             .and_then(|stride| stride.checked_mul(outer_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("structured T stride overflow".into()))?;
+        let opening_scales = (opening_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
+            .transpose()?;
+        let outer_scales = (outer_subcolumns != 1)
+            .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_b(), outer_subcolumns))
+            .transpose()?;
         let mut e_weights = vec![
             E::zero();
             block_claims.checked_mul(e_stride).ok_or_else(|| {
@@ -135,6 +134,22 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             }
         }
 
+        if let Some(weights) = &group.direct_scan_weights {
+            if weights.e.len() != e_weights.len()
+                || weights.t.len() != t_weights.len()
+                || weights.z.len() != z_weights.len()
+            {
+                return Err(AkitaError::InvalidProof);
+            }
+            let dot = |left: &[E], right: &[E]| {
+                left.iter()
+                    .zip(right)
+                    .fold(E::zero(), |acc, (&lhs, &rhs)| acc + lhs * rhs)
+            };
+            return Ok(dot(&e_weights, &weights.e)
+                + dot(&t_weights, &weights.t)
+                + dot(&z_weights, &weights.z));
+        }
         Ok(
             self.contract_role_tensor_weights(group.d_ratio, &group.d_tensors, &e_weights, alpha)?
                 + self.contract_role_tensor_weights(

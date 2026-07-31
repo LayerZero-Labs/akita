@@ -84,7 +84,7 @@ fn cached_synthetic_schedule(
 }
 
 // -------------------------------------------------------------------------
-// Multi-group carrier fixture: precommitted groups use the envelope config,
+// Multi-group native-dimension fixture: precommitted groups use the envelope config,
 // while the final group and recursive suffix use a smaller native config.
 // -------------------------------------------------------------------------
 
@@ -550,7 +550,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
 ///
 /// The exact widths are the native committed digit counts multiplied by
 /// `d_a / d_b` and `d_a / d_d`. Deriving them from the final parameters is
-/// essential for promoted carriers such as the temporary D512 experiment:
+/// essential for promoted dimensions such as the temporary D512 experiment:
 /// scaling a stale D256 matrix would undercount both widths by two.
 fn retarget_commitment_matrices(
     commitment: &mut CommittedGroupParams,

@@ -115,13 +115,14 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
     num_digits_fold: usize,
 ) -> Result<(), AkitaError> {
     let units = layout.units_for_group(group_id)?;
-    if units.len() != group.z_folded_centered_per_chunk.len() {
+    let unit_count = units.clone().count();
+    if unit_count != group.z_folded_centered_per_chunk.len() {
         return Err(AkitaError::InvalidSize {
-            expected: units.len(),
+            expected: unit_count,
             actual: group.z_folded_centered_per_chunk.len(),
         });
     }
-    for (unit, z_centered) in units.into_iter().zip(&group.z_folded_centered_per_chunk) {
+    for (unit, z_centered) in units.zip(&group.z_folded_centered_per_chunk) {
         let typed: Vec<[i32; D_GROUP]> = z_centered
             .iter()
             .map(|row| {

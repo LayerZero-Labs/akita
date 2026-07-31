@@ -13,7 +13,11 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
     let lane_weight = |witness_column: usize| eq_eval_at_index(&address_point, witness_column);
     let group = &groups[0];
     let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
-    let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
+    let first_unit = witness_layout
+        .units_for_group(group.group_id)
+        .unwrap()
+        .next()
+        .unwrap();
     let first_e = first_unit
         .e_coefficient_index(
             role_dims.d_a(),
@@ -100,7 +104,11 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         };
         let group = &groups[0];
         let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
-        let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
+        let first_unit = witness_layout
+            .units_for_group(group.group_id)
+            .unwrap()
+            .next()
+            .unwrap();
         let first_e = first_unit
             .e_coefficient_index(
                 role_dims.d_a(),

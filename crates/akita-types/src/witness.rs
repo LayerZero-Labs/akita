@@ -542,16 +542,24 @@ impl WitnessLayout {
     pub fn units_for_group(
         &self,
         group_index: usize,
-    ) -> Result<Vec<&WitnessUnitLayout>, AkitaError> {
-        let units = self
-            .units
-            .iter()
-            .filter(|unit| unit.group_index == group_index)
-            .collect::<Vec<_>>();
-        if units.is_empty() {
+    ) -> Result<impl Iterator<Item = &WitnessUnitLayout> + Clone, AkitaError> {
+        let single_group = self.units.first().is_some_and(|unit| unit.group_index == 0);
+        if (single_group && group_index != 0)
+            || (!single_group
+                && !self
+                    .units
+                    .iter()
+                    .any(|unit| unit.group_index == group_index))
+        {
             return Err(AkitaError::InvalidSetup("witness group is missing".into()));
         }
-        Ok(units)
+        let empty = self.units[..0].iter();
+        let (direct, filtered) = if single_group {
+            (self.units.iter(), empty)
+        } else {
+            (empty, self.units.iter())
+        };
+        Ok(direct.chain(filtered.filter(move |unit| unit.group_index == group_index)))
     }
 
     pub fn unit_for_block(
@@ -979,12 +987,14 @@ mod tests {
     #[test]
     fn balanced_chunks_are_exact_and_contiguous() {
         let (_, _, layout) = test_layout(2);
-        let units = layout.units_for_group(0).expect("units");
-        assert_eq!(units.len(), 2);
-        assert_eq!(units[0].global_block_range(), 0..4);
-        assert_eq!(units[1].global_block_range(), 4..7);
-        assert_eq!(units[0].t_range().end, units[1].z_range().start);
-        assert_eq!(units[1].t_range().end, layout.r_range().start);
+        let mut units = layout.units_for_group(0).expect("units");
+        let first = units.next().expect("first unit");
+        let second = units.next().expect("second unit");
+        assert!(units.next().is_none());
+        assert_eq!(first.global_block_range(), 0..4);
+        assert_eq!(second.global_block_range(), 4..7);
+        assert_eq!(first.t_range().end, second.z_range().start);
+        assert_eq!(second.t_range().end, layout.r_range().start);
         assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
     }
 

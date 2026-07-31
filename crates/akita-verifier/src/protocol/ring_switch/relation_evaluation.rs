@@ -53,6 +53,11 @@ where
             (!fold_gadget.is_empty()).then_some(fold_gadget),
         )?
     };
+    if deferred_setup_claim.is_none() {
+        let _span =
+            tracing::info_span!("relation_setup_weights", required = plan.required()).entered();
+        plan.materialize_direct_scan(alpha)?;
+    }
 
     let mut structured_evaluation = E::zero();
     {
@@ -80,7 +85,6 @@ where
     } else {
         let _span =
             tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
-        plan.materialize_direct_scan(alpha)?;
         plan.evaluate_direct::<F>(
             setup,
             prepared_point.inner().powers.as_ref(),

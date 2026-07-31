@@ -160,7 +160,7 @@ or dimension-mismatched prefix slots.
 
 The following costs are inherent to this exact schedule:
 
-- the `256/128/128` root has two A-carrier lanes over the D128 relation base;
+- the `256/128/128` root has two A-native lanes over the D128 relation base;
 - its setup prefix has a 67,108,864-field padded domain;
 - committing root/precommit matrices invokes D256 and D128 kernels;
 - crossing three dimensions requires prepared setup support for each one.
@@ -290,7 +290,7 @@ Implemented:
   dimension. Uniform callers supply an explicit singleton domain and retain
   the historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
-  dimensions. B and D physical widths include `d_a / d_role` carrier
+  dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
 - The mixed search enumerates every admitted tuple and valid block split only
   at L0 and L1. Tuples are component-wise non-increasing, L2 through the

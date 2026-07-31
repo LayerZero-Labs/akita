@@ -198,7 +198,7 @@ where
         let group_dims = inputs
             .level_params
             .group_role_dims(inputs.opening_batch, parameters.group_index())?;
-        let mut prepared_units = Vec::with_capacity(units.len());
+        let mut prepared_units = Vec::with_capacity(units.clone().count());
         for unit in units {
             let first_claim_coefficient = unit.e_coefficient_index(
                 group_dims.d_a(),
@@ -421,7 +421,7 @@ mod tests {
             )
             .expect("block weights");
             for (local_claim, claim_index) in parameters.claim_range().enumerate() {
-                for unit in &units {
+                for unit in units.clone() {
                     for local_block in 0..unit.num_live_blocks() {
                         let block = unit.global_block_start() + local_block;
                         let role_subcolumns = group_dims.d_a() / group_dims.d_d();
