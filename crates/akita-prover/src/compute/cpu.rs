@@ -421,6 +421,14 @@ where
         ensure_ntt_slot_on_prepared(prepared, key)
     }
 
+    fn planned_ntt_cache_entry_bytes(
+        &self,
+        prepared: &Self::PreparedSetup,
+        key: NttCacheKey,
+    ) -> Result<usize, AkitaError> {
+        prepared.planned_shared_ntt_cache_bytes([key])
+    }
+
     fn prepared_expanded_setup<'a>(
         &self,
         prepared: &'a Self::PreparedSetup,

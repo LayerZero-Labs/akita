@@ -23,7 +23,10 @@ use akita_pcs::test_support::{
     materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly};
+use akita_prover::{
+    commit_setup_prefix, planned_ntt_cache_metrics, ComputeBackendSetup, CpuBackend,
+    NttExecutionRequirements, NttOperationCluster, OneHotIndex, OneHotPoly,
+};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
@@ -311,6 +314,22 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             BasisMode::Lagrange,
         )
         .expect("mixed recursive proof");
+        let requirements =
+            NttExecutionRequirements::from_schedule(&schedule).expect("NTT requirements");
+        assert!(requirements.entries().iter().any(|requirement| {
+            requirement.fold_level == 1
+                && requirement.cluster == NttOperationCluster::RingSwitch
+                && requirement.key.ring_d == 64
+                && requirement.key.domain == akita_types::NttTransformDomain::Cyclic
+        }));
+        let metrics =
+            planned_ntt_cache_metrics::<F, _>(&stack, &requirements).expect("planned NTT metrics");
+        assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
+        assert_eq!(
+            prepared.shared_ntt_cache_bytes(),
+            metrics[0].cache_bytes,
+            "recursive mixed-D lazy kernels diverged from the prewarm compiler"
+        );
         assert!(
             proof_has_recursive_setup_sumcheck(&proof),
             "mixed recursive proof must carry stage-3 setup sumcheck evidence"

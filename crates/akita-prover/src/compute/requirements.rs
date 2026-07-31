@@ -200,7 +200,11 @@ impl NttExecutionRequirements {
             params.outer_commit_matrix.ring_dimension(),
             params.outer_commit_matrix.output_rank(),
             params.outer_commit_matrix.input_width(),
-        )
+        )?;
+        for precommitted in &params.precommitted_groups {
+            self.add_precommitted_relation(level, precommitted)?;
+        }
+        Ok(())
     }
 
     fn add_precommitted_relation(

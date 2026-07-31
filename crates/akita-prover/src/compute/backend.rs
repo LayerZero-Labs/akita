@@ -10,6 +10,16 @@ use akita_field::{AdditiveGroup, AkitaError, CanonicalField, FieldCore, HalvingF
 use akita_types::{AkitaExpandedSetup, NttCacheKey};
 use std::sync::Arc;
 
+/// Process-local identity of one physical backend cache owner.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct NttCacheOwnerId(usize);
+
+impl NttCacheOwnerId {
+    fn from_prepared<T>(prepared: &T) -> Self {
+        Self((prepared as *const T).cast::<()>() as usize)
+    }
+}
+
 /// Shared prepared-setup contract for prover compute backends.
 ///
 /// `PreparedSetup` is keyed by exact [`NttCacheKey`] prefixes at runtime.
@@ -46,6 +56,29 @@ where
         prepared: &Self::PreparedSetup,
         key: NttCacheKey,
     ) -> Result<(), AkitaError>;
+
+    /// Process-local identity used to deduplicate physically shared cache state.
+    ///
+    /// The default treats the prepared value itself as the cache owner. A
+    /// backend whose distinct prepared values share interior cache storage must
+    /// override this method with that storage's identity.
+    fn ntt_cache_owner_id(&self, prepared: &Self::PreparedSetup) -> NttCacheOwnerId {
+        NttCacheOwnerId::from_prepared(prepared)
+    }
+
+    /// Planned resident bytes for one independently stored exact cache entry.
+    ///
+    /// The result excludes any fixed cache-container overhead so callers may
+    /// sum distinct `(D, domain)` entries after max-joining their prefixes.
+    fn planned_ntt_cache_entry_bytes(
+        &self,
+        _prepared: &Self::PreparedSetup,
+        _key: NttCacheKey,
+    ) -> Result<usize, AkitaError> {
+        Err(AkitaError::InvalidSetup(
+            "compute backend does not expose planned NTT cache bytes".into(),
+        ))
+    }
 
     /// Expanded setup used to prepare this backend context.
     fn prepared_expanded_setup<'a>(

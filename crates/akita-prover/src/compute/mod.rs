@@ -38,7 +38,7 @@ mod stack;
 pub use backend::CompressionDiagnosticBackend;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
-    DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
+    DigitRowsComputeBackend, NttCacheOwnerId, ProverComputeBackend, RingSwitchComputeBackend,
 };
 pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
@@ -74,6 +74,6 @@ pub use poly::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
-    prewarm_ntt_requirements, LevelProveStacks, OperationCtx, ProverComputeStack,
-    TieredProveStacks, UniformProverStack,
+    planned_ntt_cache_metrics, prewarm_ntt_requirements, LevelProveStacks, OperationCtx,
+    PlannedNttCacheOwnerMetric, ProverComputeStack, TieredProveStacks, UniformProverStack,
 };

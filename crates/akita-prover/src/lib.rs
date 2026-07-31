@@ -32,11 +32,12 @@ pub use backend::{
     SuffixWitnessBatchView, SuffixWitnessView,
 };
 pub use compute::{
-    prewarm_ntt_requirements, BatchDecomposeFoldOutcome, CommitBackendFor, CommitCluster,
-    CommitmentComputeBackend, ComputeBackendSetup, CpuBackend, CpuPreparedSetup,
-    CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan, DigitRowsComputeBackend,
-    FlatBlockTable, LevelProveStacks, NttExecutionRequirements, NttOperationCluster,
-    OneHotCommitBlocks, OneHotCommitRowsPlan, OpeningCluster, OpeningProveBackendFor, OperationCtx,
+    planned_ntt_cache_metrics, prewarm_ntt_requirements, BatchDecomposeFoldOutcome,
+    CommitBackendFor, CommitCluster, CommitmentComputeBackend, ComputeBackendSetup, CpuBackend,
+    CpuPreparedSetup, CyclicRowsComputeBackend, DenseCommitInput, DenseCommitRowsPlan,
+    DigitRowsComputeBackend, FlatBlockTable, LevelProveStacks, NttCacheOwnerId,
+    NttExecutionRequirements, NttOperationCluster, OneHotCommitBlocks, OneHotCommitRowsPlan,
+    OpeningCluster, OpeningProveBackendFor, OperationCtx, PlannedNttCacheOwnerMetric,
     PreparedCrtNttProfile, PreparedNttCacheMetric, ProveBackendFor, ProveFlowBackendFor,
     ProveStackFor, ProverComputeStack, RecursiveProveBackend, RecursiveWitnessCommitRowsPlan,
     RingSwitchCluster, RingSwitchComputeBackend, RingSwitchProveBackend,

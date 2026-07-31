@@ -521,20 +521,25 @@ The implementation realizes that contract as follows:
   independently invoked setup-prefix preprocessing call layout;
 - `prewarm_ntt_requirements` routes each level through its selected
   `ProverComputeStack` cluster before transcript binding; and
-- `CpuPreparedSetup::planned_shared_ntt_cache_bytes` max-joins those same keys
-  for memory reporting, with integration tests requiring the planned and
-  resident byte counts to agree after proving.
+- `planned_ntt_cache_metrics` routes the same requirements, partitions them by
+  process-local physical `NttCacheOwnerId`, and max-joins keys per owner before
+  asking the selected backend for bytes. This preserves real cache aliasing
+  when several levels or clusters share one prepared setup. Integration and
+  stack tests cover one fully shared owner, two partially shared owners, and
+  four independent owners, and require planned and resident bytes to agree.
 
-For one `(cluster, D, profile, domain)`, multiple requirements over the shared
-matrix combine by maximum:
+The execution compiler first max-joins one `(level, cluster, D, domain)` route.
+After routing, requirements that land on the same physical owner combine again
+by `(owner, D, domain)` maximum:
 
 ```text
 join(prefix_1, prefix_2, ...) = max(prefix_1, prefix_2, ...)
 ```
 
 They do not sum because every matrix is an overlapping prefix of the same
-stream. Requirements at different dimensions, domains, profiles, or clusters
-remain separate because their representations or ownership differ.
+stream. Different dimensions, domains, or physical owners remain separate.
+Levels and clusters remain separate only when routing assigns them different
+prepared owners; aliases of one prepared setup share one cache entry.
 
 The cache MUST support covering-prefix lookup: a slot of length `m` covers any
 request `n <= m` with the same keys. Growth SHOULD transform only the missing

@@ -15,7 +15,9 @@
 
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend, NttExecutionRequirements};
+use akita_prover::{
+    planned_ntt_cache_metrics, ComputeBackendSetup, CpuBackend, NttExecutionRequirements,
+};
 
 mod common;
 
@@ -170,17 +172,12 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
         .expect("resolved schedule");
         let requirements =
             NttExecutionRequirements::from_schedule(&schedule).expect("NTT requirements");
-        let planned_cache_bytes = prepared
-            .planned_shared_ntt_cache_bytes(
-                requirements
-                    .entries()
-                    .iter()
-                    .map(|requirement| requirement.key),
-            )
-            .expect("planned NTT bytes");
+        let metrics =
+            planned_ntt_cache_metrics::<F, _>(&stack, &requirements).expect("planned NTT metrics");
+        assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
         assert_eq!(
             prepared.shared_ntt_cache_bytes(),
-            planned_cache_bytes,
+            metrics[0].cache_bytes,
             "lazy kernels and prewarm requirement compiler diverged"
         );
 
