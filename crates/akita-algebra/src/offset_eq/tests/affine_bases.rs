@@ -57,6 +57,61 @@ fn weighted_bases_match_independent_oracle() {
 }
 
 #[test]
+fn weighted_bases_match_oracle_across_residues_and_parallel_buckets() {
+    let mut rng = StdRng::seed_from_u64(0xBA5E_B0C7);
+    let challenges = random_vec(&mut rng, 16);
+    let base_offsets = [0usize, 64, 128, 192, 256, 320, 384, 448, 512, 576, 1, 65];
+    let base_scales = random_vec(&mut rng, base_offsets.len());
+    let digit_weights = random_vec(&mut rng, 3);
+    let high = random_vec(&mut rng, 512);
+    let low = random_vec(&mut rng, 4);
+    let outer_stride = 5;
+    let live_len = high.len() * low.len();
+
+    let same_residue_rows = 10 * high.len();
+    assert!(same_residue_rows >= PARALLEL_HIGH_ROWS_MIN);
+    assert!(bucketed_high_rows_plan(
+        same_residue_rows,
+        outer_stride + 1,
+        challenges.len() - low.len().trailing_zeros() as usize,
+    )
+    .unwrap()
+    .is_some());
+
+    let got = eval_affine_digit_intervals(
+        &challenges,
+        &base_offsets,
+        0,
+        live_len,
+        outer_stride,
+        1,
+        &digit_weights,
+        &high,
+        &low,
+        &base_scales,
+    )
+    .unwrap();
+    let expected = base_offsets
+        .iter()
+        .zip(&base_scales)
+        .map(|(&base, &base_scale)| {
+            base_scale
+                * reference_affine_digit_interval(
+                    &challenges,
+                    base,
+                    0,
+                    live_len,
+                    outer_stride,
+                    &digit_weights,
+                    &high,
+                    &low,
+                )
+        })
+        .sum();
+    assert_eq!(got, expected);
+}
+
+#[test]
 fn many_short_families_avoid_quadratic_bucketing() {
     let mut rng = StdRng::seed_from_u64(0xA11F_1EE7);
     let challenges = random_vec(&mut rng, 13);
