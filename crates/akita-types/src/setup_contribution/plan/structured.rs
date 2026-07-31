@@ -345,69 +345,74 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
 
-        let evaluation = cfg_fold_reduce!(
-            0..unit_families.len(),
-            || Ok(E::zero()),
-            |acc: Result<E, AkitaError>, family_index| {
-                let (key, d_tensor, b_tensor) = unit_families
-                    .get(family_index)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let (claim, global_block_start, unit_blocks) = *key;
-                let claim_start = claim
-                    .checked_mul(group.num_live_blocks)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let claim_challenges = checked_slice(
-                    block_challenges,
-                    claim_start,
-                    group.num_live_blocks,
-                    "structured E block factors",
+        let fold_family = |acc: Result<E, AkitaError>, family_index: usize| {
+            let (key, d_tensor, b_tensor) = unit_families
+                .get(family_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            let (claim, global_block_start, unit_blocks) = *key;
+            let claim_start = claim
+                .checked_mul(group.num_live_blocks)
+                .ok_or(AkitaError::InvalidProof)?;
+            let claim_challenges = checked_slice(
+                block_challenges,
+                claim_start,
+                group.num_live_blocks,
+                "structured E block factors",
+            )?;
+            let e_outer_start = global_block_start
+                .checked_mul(opening_subcolumns)
+                .ok_or(AkitaError::InvalidProof)?;
+            let e_live_len = unit_blocks
+                .checked_mul(opening_subcolumns)
+                .ok_or(AkitaError::InvalidProof)?;
+            let mut contribution = group.consistency_weight
+                * eval_affine_digit_intervals(
+                    point,
+                    &[d_tensor.right_offset],
+                    e_outer_start,
+                    e_live_len,
+                    opening_digits.len(),
+                    1,
+                    opening_digits,
+                    claim_challenges,
+                    opening_low,
+                    &[],
                 )?;
-                let e_outer_start = global_block_start
-                    .checked_mul(opening_subcolumns)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let e_live_len = unit_blocks
-                    .checked_mul(opening_subcolumns)
-                    .ok_or(AkitaError::InvalidProof)?;
-                let mut contribution = group.consistency_weight
-                    * eval_affine_digit_intervals(
-                        point,
-                        &[d_tensor.right_offset],
-                        e_outer_start,
-                        e_live_len,
-                        opening_digits.len(),
-                        1,
-                        opening_digits,
-                        claim_challenges,
-                        opening_low,
-                        &[],
-                    )?;
 
-                if let Some(b_tensor) = b_tensor {
-                    let t_outer_start = global_block_start
-                        .checked_mul(group.n_a)
-                        .and_then(|start| start.checked_mul(outer_subcolumns))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let t_live_len = unit_blocks
-                        .checked_mul(group.n_a)
-                        .and_then(|len| len.checked_mul(outer_subcolumns))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    contribution += eval_affine_digit_intervals(
-                        point,
-                        &[b_tensor.right_offset],
-                        t_outer_start,
-                        t_live_len,
-                        commitment_digits.len(),
-                        1,
-                        commitment_digits,
-                        t_high_weights.get(claim).ok_or(AkitaError::InvalidProof)?,
-                        outer_low,
-                        &[],
-                    )?;
-                }
-                Ok(acc? + contribution)
-            },
-            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-        )?;
+            if let Some(b_tensor) = b_tensor {
+                let t_outer_start = global_block_start
+                    .checked_mul(group.n_a)
+                    .and_then(|start| start.checked_mul(outer_subcolumns))
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_live_len = unit_blocks
+                    .checked_mul(group.n_a)
+                    .and_then(|len| len.checked_mul(outer_subcolumns))
+                    .ok_or(AkitaError::InvalidProof)?;
+                contribution += eval_affine_digit_intervals(
+                    point,
+                    &[b_tensor.right_offset],
+                    t_outer_start,
+                    t_live_len,
+                    commitment_digits.len(),
+                    1,
+                    commitment_digits,
+                    t_high_weights.get(claim).ok_or(AkitaError::InvalidProof)?,
+                    outer_low,
+                    &[],
+                )?;
+            }
+            Ok(acc? + contribution)
+        };
+        let evaluation = if unit_families.len() == 1 {
+            fold_family(Ok(E::zero()), 0)
+        } else {
+            cfg_fold_reduce!(
+                0..unit_families.len(),
+                || Ok(E::zero()),
+                fold_family,
+                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+            )
+        }?;
 
         let projection_lanes = (group.a_ratio != 1)
             .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_ratio))
