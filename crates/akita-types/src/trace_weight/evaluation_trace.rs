@@ -178,10 +178,11 @@ where
         .checked_mul(D)
         .ok_or_else(|| AkitaError::InvalidSetup("trace witness size overflow".into()))?;
     if inputs.digit_witness_domain.live_len() != expected_live_len {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_live_len,
-            actual: inputs.digit_witness_domain.live_len(),
-        });
+        return Err(AkitaError::InvalidInput(format!(
+            "trace witness domain mismatch: layout_rings={} carrier_D={D} expected_fields={expected_live_len} actual_fields={}",
+            inputs.witness_layout.total_len(),
+            inputs.digit_witness_domain.live_len(),
+        )));
     }
     inputs
         .opening_batch
@@ -239,7 +240,7 @@ where
                 group_dims.d_a(),
                 |D_G| {
                     let packed_inner = prepared.packed_inner_trusted::<D_G>()?;
-                    let mut trace = if E::EXT_DEGREE == 1 {
+                    let trace = if E::EXT_DEGREE == 1 {
                         packed_inner
                             .coefficients()
                             .iter()
@@ -253,11 +254,10 @@ where
                             group_alpha_bits,
                         )?
                     };
-                    trace.resize(D, E::zero());
                     Ok::<Arc<[E]>, AkitaError>(trace.into())
                 }
             )?;
-            if inner_trace.len() != D {
+            if inner_trace.len() != group_dims.d_a() {
                 return Err(AkitaError::InvalidProof);
             }
             let opening_digit_weights: Arc<[E]> = gadget_row_scalars::<F>(
@@ -274,7 +274,7 @@ where
                 block_opening_point,
                 basis: inputs.basis,
                 group_block_count: group_params.num_live_blocks(),
-                source_ring_dimension: D,
+                source_ring_dimension: group_dims.d_a(),
                 opening_digit_weights,
                 inner_trace,
             })

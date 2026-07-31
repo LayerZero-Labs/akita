@@ -84,13 +84,19 @@ impl WitnessUnitLayout {
         self.t_range.clone()
     }
 
-    pub fn e_index(
+    #[allow(clippy::too_many_arguments)]
+    pub fn e_coefficient_index(
         &self,
+        carrier_ring_dim: usize,
+        source_ring_dim: usize,
+        role_ring_dim: usize,
         num_claims: usize,
         depth_open: usize,
         claim: usize,
         global_block: usize,
+        role_subcolumn: usize,
         digit: usize,
+        role_coefficient: usize,
     ) -> Result<usize, AkitaError> {
         let expected_len = checked_mul3(
             num_claims,
@@ -114,28 +120,43 @@ impl WitnessUnitLayout {
             .checked_mul(claim)
             .and_then(|base| base.checked_add(local_block))
             .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
-        let local = depth_open
-            .checked_mul(block_claim)
-            .and_then(|base| base.checked_add(digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness E index overflow".into()))?;
-        checked_range_index(&self.e_range, local, "witness E")
+        projected_coefficient_index(
+            &self.e_range,
+            "witness E",
+            carrier_ring_dim,
+            source_ring_dim,
+            role_ring_dim,
+            num_claims
+                .checked_mul(self.num_live_blocks)
+                .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?,
+            depth_open,
+            block_claim,
+            role_subcolumn,
+            digit,
+            role_coefficient,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn t_index(
+    pub fn t_coefficient_index(
         &self,
+        carrier_ring_dim: usize,
+        source_ring_dim: usize,
+        role_ring_dim: usize,
         num_claims: usize,
         n_a: usize,
-        depth_open: usize,
+        depth_outer: usize,
         claim: usize,
         global_block: usize,
         a_row: usize,
+        role_subcolumn: usize,
         digit: usize,
+        role_coefficient: usize,
     ) -> Result<usize, AkitaError> {
         let expected_len = num_claims
             .checked_mul(self.num_live_blocks)
             .and_then(|len| len.checked_mul(n_a))
-            .and_then(|len| len.checked_mul(depth_open))
+            .and_then(|len| len.checked_mul(depth_outer))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
         if self.t_range.len() != expected_len {
             return Err(AkitaError::InvalidSetup(
@@ -143,7 +164,7 @@ impl WitnessUnitLayout {
             ));
         }
         let local_block = checked_owned_block(self, global_block)?;
-        if claim >= num_claims || a_row >= n_a || digit >= depth_open {
+        if claim >= num_claims || a_row >= n_a || digit >= depth_outer {
             return Err(AkitaError::InvalidInput(
                 "witness T semantic index out of range".into(),
             ));
@@ -157,11 +178,22 @@ impl WitnessUnitLayout {
             .checked_mul(block_claim)
             .and_then(|base| base.checked_add(a_row))
             .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        let local = depth_open
-            .checked_mul(row_block_claim)
-            .and_then(|base| base.checked_add(digit))
-            .ok_or_else(|| AkitaError::InvalidSetup("witness T index overflow".into()))?;
-        checked_range_index(&self.t_range, local, "witness T")
+        projected_coefficient_index(
+            &self.t_range,
+            "witness T",
+            carrier_ring_dim,
+            source_ring_dim,
+            role_ring_dim,
+            num_claims
+                .checked_mul(self.num_live_blocks)
+                .and_then(|count| count.checked_mul(n_a))
+                .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?,
+            depth_outer,
+            row_block_claim,
+            role_subcolumn,
+            digit,
+            role_coefficient,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -465,6 +497,76 @@ fn checked_range(start: usize, len: usize, context: &str) -> Result<Range<usize>
     Ok(start..end)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn projected_coefficient_index(
+    range: &Range<usize>,
+    label: &str,
+    carrier_ring_dim: usize,
+    source_ring_dim: usize,
+    role_ring_dim: usize,
+    semantic_count: usize,
+    digit_count: usize,
+    semantic_index: usize,
+    role_subcolumn: usize,
+    digit: usize,
+    role_coefficient: usize,
+) -> Result<usize, AkitaError> {
+    if carrier_ring_dim == 0
+        || source_ring_dim == 0
+        || role_ring_dim == 0
+        || !source_ring_dim.is_multiple_of(role_ring_dim)
+        || !carrier_ring_dim.is_multiple_of(source_ring_dim)
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{label} projected ring dimensions must satisfy role | source | carrier"
+        )));
+    }
+    let expected_len = semantic_count
+        .checked_mul(digit_count)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} shape overflow")))?;
+    if range.len() != expected_len {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{label} shape disagrees with resolved range"
+        )));
+    }
+    let live_subcolumns = source_ring_dim / role_ring_dim;
+    let carrier_subcolumns = carrier_ring_dim / role_ring_dim;
+    if semantic_index >= semantic_count
+        || role_subcolumn >= live_subcolumns
+        || digit >= digit_count
+        || role_coefficient >= role_ring_dim
+    {
+        return Err(AkitaError::InvalidInput(format!(
+            "{label} projected coefficient index out of range"
+        )));
+    }
+    let local_coefficient = semantic_index
+        .checked_mul(carrier_subcolumns)
+        .and_then(|index| index.checked_add(role_subcolumn))
+        .and_then(|index| index.checked_mul(digit_count))
+        .and_then(|index| index.checked_add(digit))
+        .and_then(|index| index.checked_mul(role_ring_dim))
+        .and_then(|index| index.checked_add(role_coefficient))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} index overflow")))?;
+    let range_start = range
+        .start
+        .checked_mul(carrier_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} index overflow")))?;
+    let index = range_start
+        .checked_add(local_coefficient)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} index overflow")))?;
+    let range_end = range
+        .end
+        .checked_mul(carrier_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} index overflow")))?;
+    if index >= range_end {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{label} index exceeds resolved range"
+        )));
+    }
+    Ok(index)
+}
+
 fn checked_range_index(
     range: &Range<usize>,
     local: usize,
@@ -761,13 +863,29 @@ mod tests {
             "fixture must distinguish witness and commitment depths"
         );
         assert_eq!(unit.global_block_range(), 4..7);
+        let dims = lp.role_dims();
         assert_eq!(
-            unit.e_index(2, 2, 1, 6, 1).expect("e"),
-            unit.e_range().start + 1 + 2 * (2 + 3)
+            unit.e_coefficient_index(dims.d_a(), dims.d_a(), dims.d_d(), 2, 2, 1, 6, 0, 1, 0)
+                .expect("e"),
+            (unit.e_range().start + 1 + 2 * (2 + 3)) * dims.d_a()
         );
         assert_eq!(
-            unit.t_index(2, 1, 2, 0, 5, 0, 1).expect("t"),
-            unit.t_range().start + 1 + 2
+            unit.t_coefficient_index(
+                dims.d_a(),
+                dims.d_a(),
+                dims.d_b(),
+                2,
+                1,
+                2,
+                0,
+                5,
+                0,
+                0,
+                1,
+                0
+            )
+            .expect("t"),
+            (unit.t_range().start + 1 + 2) * dims.d_a()
         );
         assert_eq!(
             unit.z_index(4, 1, depth_fold, 1, 0, 0).expect("z"),
@@ -809,18 +927,54 @@ mod tests {
         let depth_fold = lp
             .num_digits_fold(2, lp.field_bits_for_cache())
             .expect("fold depth");
-        assert!(unit.e_index(2, 2, 2, 0, 0).is_err());
-        assert!(unit.t_index(2, 1, 2, 0, 0, 1, 0).is_err());
+        let dims = lp.role_dims();
+        assert!(unit
+            .e_coefficient_index(dims.d_a(), dims.d_a(), dims.d_d(), 2, 2, 2, 0, 0, 0, 0)
+            .is_err());
+        assert!(unit
+            .t_coefficient_index(
+                dims.d_a(),
+                dims.d_a(),
+                dims.d_b(),
+                2,
+                1,
+                2,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0
+            )
+            .is_err());
         assert!(unit.z_index(4, 1, depth_fold, 4, 0, 0).is_err());
         assert!(layout.r_index(2, 3, 0).is_err());
     }
 
     #[test]
     fn layout_rejects_mismatched_shapes() {
-        let (_, _, layout) = test_layout(2);
+        let (lp, _, layout) = test_layout(2);
         let unit = layout.unit(0, 0).expect("unit");
-        assert!(unit.e_index(1, 2, 0, 0, 0).is_err());
-        assert!(unit.t_index(2, 2, 2, 0, 0, 0, 0).is_err());
+        let dims = lp.role_dims();
+        assert!(unit
+            .e_coefficient_index(dims.d_a(), dims.d_a(), dims.d_d(), 1, 2, 0, 0, 0, 0, 0)
+            .is_err());
+        assert!(unit
+            .t_coefficient_index(
+                dims.d_a(),
+                dims.d_a(),
+                dims.d_b(),
+                2,
+                2,
+                2,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0
+            )
+            .is_err());
         assert!(unit.z_index(1, 1, 1, 0, 0, 0).is_err());
     }
 

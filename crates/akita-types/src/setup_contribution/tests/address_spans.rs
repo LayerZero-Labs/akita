@@ -15,18 +15,27 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
     let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
     let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
     let first_e = first_unit
-        .e_index(
+        .e_coefficient_index(
+            geometry.carrier_ring_dimension(),
+            role_dims.d_a(),
+            role_dims.d_d(),
             group.num_claims,
             inputs.depth_open(),
             0,
             first_unit.global_block_start(),
             0,
+            0,
+            0,
         )
-        .unwrap();
+        .unwrap()
+        / geometry.relation_coefficient_block_len();
     assert_eq!(e_eq_slice[0], lane_weight(first_e));
 
     let first_t = first_unit
-        .t_index(
+        .t_coefficient_index(
+            geometry.carrier_ring_dimension(),
+            role_dims.d_a(),
+            role_dims.d_b(),
             group.num_claims,
             inputs.n_a(),
             inputs.depth_commit(),
@@ -34,8 +43,11 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
             first_unit.global_block_start(),
             0,
             0,
+            0,
+            0,
         )
-        .unwrap();
+        .unwrap()
+        / geometry.relation_coefficient_block_len();
     assert_eq!(t_eq_slice[0], lane_weight(first_t));
 
     let mut expected_z = F::zero();
@@ -80,8 +92,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         );
 
         let lane_alpha = [F::one(), scalar_powers(alpha, 33)[32]];
-        let lane_weight = |witness_column: usize, lane_offset: usize, lane_count: usize| {
-            let lane_start = witness_column * 2 + lane_offset;
+        let lane_weight = |lane_start: usize, lane_count: usize| {
             (0..lane_count)
                 .map(|lane| eq_eval_at_index(&address_point, lane_start + lane) * lane_alpha[lane])
                 .sum::<F>()
@@ -90,19 +101,43 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         let (e_eq_slice, t_eq_slice, z_eq_slice) = plan.groups[0].column_eq_slices().unwrap();
         let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
         let first_e = first_unit
-            .e_index(
+            .e_coefficient_index(
+                geometry.carrier_ring_dimension(),
+                role_dims.d_a(),
+                role_dims.d_d(),
                 group.num_claims,
                 inputs.depth_open(),
                 0,
                 first_unit.global_block_start(),
                 0,
+                0,
+                0,
             )
-            .unwrap();
-        assert_eq!(e_eq_slice[0], lane_weight(first_e, 0, 1));
-        assert_eq!(e_eq_slice[2], lane_weight(first_e, 1, 1));
+            .unwrap()
+            / geometry.relation_coefficient_block_len();
+        let second_e = first_unit
+            .e_coefficient_index(
+                geometry.carrier_ring_dimension(),
+                role_dims.d_a(),
+                role_dims.d_d(),
+                group.num_claims,
+                inputs.depth_open(),
+                0,
+                first_unit.global_block_start(),
+                1,
+                0,
+                0,
+            )
+            .unwrap()
+            / geometry.relation_coefficient_block_len();
+        assert_eq!(e_eq_slice[0], lane_weight(first_e, 1));
+        assert_eq!(e_eq_slice[inputs.depth_open()], lane_weight(second_e, 1));
 
         let first_t = first_unit
-            .t_index(
+            .t_coefficient_index(
+                geometry.carrier_ring_dimension(),
+                role_dims.d_a(),
+                role_dims.d_b(),
                 group.num_claims,
                 inputs.n_a(),
                 inputs.depth_commit(),
@@ -110,10 +145,30 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                 first_unit.global_block_start(),
                 0,
                 0,
+                0,
+                0,
             )
-            .unwrap();
-        assert_eq!(t_eq_slice[0], lane_weight(first_t, 0, 1));
-        assert_eq!(t_eq_slice[1], lane_weight(first_t, 1, 1));
+            .unwrap()
+            / geometry.relation_coefficient_block_len();
+        let second_t = first_unit
+            .t_coefficient_index(
+                geometry.carrier_ring_dimension(),
+                role_dims.d_a(),
+                role_dims.d_b(),
+                group.num_claims,
+                inputs.n_a(),
+                inputs.depth_commit(),
+                0,
+                first_unit.global_block_start(),
+                0,
+                1,
+                0,
+                0,
+            )
+            .unwrap()
+            / geometry.relation_coefficient_block_len();
+        assert_eq!(t_eq_slice[0], lane_weight(first_t, 1));
+        assert_eq!(t_eq_slice[inputs.depth_commit()], lane_weight(second_t, 1));
 
         let mut expected_z = F::zero();
         for unit in witness_layout.units_for_group(group.group_id).unwrap() {
@@ -128,7 +183,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
                         fold_digit,
                     )
                     .unwrap();
-                expected_z -= lane_weight(z, 0, 2) * fold;
+                expected_z -= lane_weight(z * 2, 2) * fold;
             }
         }
         assert_eq!(z_eq_slice[0], expected_z);

@@ -117,14 +117,14 @@ pub(super) fn structured_slice_reference(
                 }
             }
             for row in 0..group.n_a {
-                for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                    for subcolumn in 0..outer_subcolumns {
+                for subcolumn in 0..outer_subcolumns {
+                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
                         let column = ((((claim * group.num_live_blocks + block) * group.n_a
                             + row)
-                            * group.depth_commit
-                            + digit)
-                            * outer_subcolumns)
-                            + subcolumn;
+                            * outer_subcolumns
+                            + subcolumn)
+                            * group.depth_commit)
+                            + digit;
                         evaluation += challenge
                             * group.a_row_weights[row]
                             * t_eq_slice[column]

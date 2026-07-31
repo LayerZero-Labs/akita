@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::eval_affine_digit_intervals;
+use akita_algebra::offset_eq::{eq_eval_at_index, eval_affine_digit_intervals};
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
@@ -17,8 +17,8 @@ use akita_types::{
 /// One chunk's compact E-segment geometry, shared by every claim in its group.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PreparedEvaluationTraceUnit {
-    first_claim_column: usize,
-    claim_stride: usize,
+    first_claim_coefficient: usize,
+    claim_stride_coefficients: usize,
     global_block_start: usize,
     block_count: usize,
 }
@@ -29,6 +29,8 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
     block_opening_point: Arc<[E]>,
     basis: BasisMode,
     source_ring_dimension: usize,
+    opening_ring_dimension: usize,
+    carrier_ring_dimension: usize,
     opening_digit_weights: Arc<[E]>,
     inner_trace: Arc<[E]>,
     claim_coefficients: Vec<E>,
@@ -61,11 +63,10 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                     "trace source ring dimension must be a power of two".into(),
                 ));
             }
-            let coefficient_variables = source_ring_dimension.trailing_zeros() as usize;
+            let coefficient_variables = group.carrier_ring_dimension.trailing_zeros() as usize;
             let (coefficient_point, column_point) = point
                 .split_at_checked(coefficient_variables)
                 .ok_or(AkitaError::InvalidProof)?;
-            let inner_trace_evaluation = multilinear_eval(&group.inner_trace, coefficient_point)?;
             let block_point = &group.block_opening_point;
             let low_variables = block_point.len() / 2;
             let (low_block_point, high_block_point) = block_point
@@ -75,19 +76,61 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
             let high_block_weights = basis_weights(high_block_point, group.basis)?;
             let digit_weights = &group.opening_digit_weights;
 
+            let role_subcolumns = source_ring_dimension / group.opening_ring_dimension;
+            if role_subcolumns != 1 || source_ring_dimension != group.carrier_ring_dimension {
+                let block_weights = basis_weights(block_point, group.basis)?;
+                for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
+                    for unit in &group.units {
+                        let claim_start = claim
+                            .checked_mul(unit.claim_stride_coefficients)
+                            .and_then(|offset| unit.first_claim_coefficient.checked_add(offset))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("trace claim address overflow".into())
+                            })?;
+                        for local_block in 0..unit.block_count {
+                            let global_block = unit.global_block_start + local_block;
+                            let block_start = claim_start
+                                + local_block * digit_weights.len() * group.carrier_ring_dimension;
+                            for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                                for role_subcolumn in 0..role_subcolumns {
+                                    for role_coefficient in 0..group.opening_ring_dimension {
+                                        let address = block_start
+                                            + (role_subcolumn * digit_weights.len() + digit)
+                                                * group.opening_ring_dimension
+                                            + role_coefficient;
+                                        let column = address / group.carrier_ring_dimension;
+                                        let coordinate = address % group.carrier_ring_dimension;
+                                        let source = role_subcolumn * group.opening_ring_dimension
+                                            + role_coefficient;
+                                        evaluation += claim_coefficient
+                                            * block_weights[global_block]
+                                            * digit_weight
+                                            * group.inner_trace[source]
+                                            * eq_eval_at_index(coefficient_point, coordinate)
+                                            * eq_eval_at_index(column_point, column);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                continue;
+            }
+
+            let inner_trace_evaluation = multilinear_eval(&group.inner_trace, coefficient_point)?;
             let mut group_evaluation = E::zero();
             for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
                 let mut claim_evaluation = E::zero();
                 for unit in &group.units {
                     let claim_column = claim
-                        .checked_mul(unit.claim_stride)
-                        .and_then(|offset| unit.first_claim_column.checked_add(offset))
+                        .checked_mul(unit.claim_stride_coefficients)
+                        .and_then(|offset| unit.first_claim_coefficient.checked_add(offset))
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("trace claim address overflow".into())
                         })?;
                     claim_evaluation += eval_affine_digit_intervals(
                         column_point,
-                        &[claim_column],
+                        &[claim_column / group.carrier_ring_dimension],
                         unit.global_block_start,
                         unit.block_count,
                         digit_weights.len(),
@@ -127,28 +170,41 @@ where
             .witness_layout
             .units_for_group(parameters.group_index())?;
         let digit_count = parameters.opening_digit_weights().len();
+        let group_dims = inputs
+            .level_params
+            .group_role_dims(inputs.opening_batch, parameters.group_index())?;
         let mut prepared_units = Vec::with_capacity(units.len());
         for unit in units {
-            let first_claim_column =
-                unit.e_index(num_claims, digit_count, 0, unit.global_block_start(), 0)?;
-            let claim_stride = unit
+            let first_claim_coefficient = unit.e_coefficient_index(
+                D,
+                group_dims.d_a(),
+                group_dims.d_d(),
+                num_claims,
+                digit_count,
+                0,
+                unit.global_block_start(),
+                0,
+                0,
+                0,
+            )?;
+            let claim_stride_coefficients = unit
                 .num_live_blocks()
                 .checked_mul(digit_count)
+                .and_then(|count| count.checked_mul(D))
                 .ok_or_else(|| AkitaError::InvalidSetup("trace claim stride overflow".into()))?;
             let final_claim_start = (num_claims - 1)
-                .checked_mul(claim_stride)
-                .and_then(|offset| first_claim_column.checked_add(offset))
+                .checked_mul(claim_stride_coefficients)
+                .and_then(|offset| first_claim_coefficient.checked_add(offset))
                 .ok_or_else(|| AkitaError::InvalidSetup("trace claim address overflow".into()))?;
             let physical_end = final_claim_start
-                .checked_add(claim_stride)
-                .and_then(|column_end| column_end.checked_mul(D))
+                .checked_add(claim_stride_coefficients)
                 .ok_or_else(|| AkitaError::InvalidSetup("trace segment end overflow".into()))?;
             if physical_end > inputs.digit_witness_domain.live_len() {
                 return Err(AkitaError::InvalidProof);
             }
             prepared_units.push(PreparedEvaluationTraceUnit {
-                first_claim_column,
-                claim_stride,
+                first_claim_coefficient,
+                claim_stride_coefficients,
                 global_block_start: unit.global_block_start(),
                 block_count: unit.num_live_blocks(),
             });
@@ -162,6 +218,8 @@ where
             block_opening_point: parameters.shared_block_opening_point(),
             basis: parameters.basis(),
             source_ring_dimension: parameters.source_ring_dimension(),
+            opening_ring_dimension: group_dims.d_d(),
+            carrier_ring_dimension: D,
             opening_digit_weights: parameters.shared_opening_digit_weights(),
             inner_trace: parameters.shared_inner_trace(),
             claim_coefficients,
@@ -263,6 +321,9 @@ mod tests {
             .expect("checked trace geometry");
         let mut dense = vec![E::zero(); digit_witness_domain.live_len()];
         for parameters in parameters {
+            let group_dims = level_params
+                .group_role_dims(&opening_batch, parameters.group_index())
+                .expect("group dimensions");
             let group_layout = opening_batch
                 .group_layout(parameters.group_index())
                 .expect("group layout");
@@ -280,24 +341,33 @@ mod tests {
                 for unit in &units {
                     for local_block in 0..unit.num_live_blocks() {
                         let block = unit.global_block_start() + local_block;
+                        let role_subcolumns = group_dims.d_a() / group_dims.d_d();
                         for (digit, &digit_weight) in
                             parameters.opening_digit_weights().iter().enumerate()
                         {
-                            let column = unit
-                                .e_index(
-                                    group_layout.num_polynomials(),
-                                    parameters.opening_digit_weights().len(),
-                                    local_claim,
-                                    block,
-                                    digit,
-                                )
-                                .expect("trace column");
                             let factor = claim_coefficients[claim_index]
                                 * block_weights[block]
                                 * digit_weight;
-                            for (coefficient, &inner) in parameters.inner_trace().iter().enumerate()
-                            {
-                                dense[column * D + coefficient] += factor * inner;
+                            for role_subcolumn in 0..role_subcolumns {
+                                for role_coefficient in 0..group_dims.d_d() {
+                                    let address = unit
+                                        .e_coefficient_index(
+                                            D,
+                                            group_dims.d_a(),
+                                            group_dims.d_d(),
+                                            group_layout.num_polynomials(),
+                                            parameters.opening_digit_weights().len(),
+                                            local_claim,
+                                            block,
+                                            role_subcolumn,
+                                            digit,
+                                            role_coefficient,
+                                        )
+                                        .expect("trace coefficient");
+                                    let source =
+                                        role_subcolumn * group_dims.d_d() + role_coefficient;
+                                    dense[address] += factor * parameters.inner_trace()[source];
+                                }
                             }
                         }
                     }

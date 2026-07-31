@@ -416,16 +416,6 @@ fn build_group_role_tensors<E: FieldCore>(
     let (b_subcolumns, d_subcolumns) =
         SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
     let carrier_lanes = carrier_lane_count(relation_geometry)?;
-    let d_witness_stride = divide_aligned(
-        carrier_lanes,
-        group.d_ratio,
-        "setup D carrier does not project to its role dimension",
-    )?;
-    let b_witness_stride = divide_aligned(
-        carrier_lanes,
-        group.b_ratio,
-        "setup B carrier does not project to its role dimension",
-    )?;
     let a_witness_stride = divide_aligned(
         carrier_lanes,
         group.a_ratio,
@@ -437,15 +427,19 @@ fn build_group_role_tensors<E: FieldCore>(
         group.depth_open,
         "setup D block stride overflow",
     )?;
+    let d_carrier_subcolumns = divide_aligned(
+        carrier_lanes,
+        group.d_ratio,
+        "setup D carrier does not project to its role dimension",
+    )?;
     let d_block_relation_stride = checked_mul(
         group.depth_open,
-        d_witness_stride,
+        d_carrier_subcolumns,
         "setup D relation stride overflow",
     )?;
-    let b_digit_setup_stride = b_subcolumns;
     let b_a_row_setup_stride = checked_mul(
         group.depth_commit,
-        b_digit_setup_stride,
+        b_subcolumns,
         "setup B A-row stride overflow",
     )?;
     let b_block_setup_stride = checked_mul(
@@ -453,9 +447,14 @@ fn build_group_role_tensors<E: FieldCore>(
         b_a_row_setup_stride,
         "setup B block stride overflow",
     )?;
+    let b_carrier_subcolumns = divide_aligned(
+        carrier_lanes,
+        group.b_ratio,
+        "setup B carrier does not project to its role dimension",
+    )?;
     let b_a_row_relation_stride = checked_mul(
         group.depth_commit,
-        b_witness_stride,
+        b_carrier_subcolumns,
         "setup B relation A-row stride overflow",
     )?;
     let b_block_relation_stride = checked_mul(
@@ -485,23 +484,35 @@ fn build_group_role_tensors<E: FieldCore>(
                 .and_then(|base| base.checked_add(unit.global_block_start()))
                 .and_then(|base| base.checked_mul(d_block_setup_stride))
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-            let d_witness_column = unit.e_index(
+            let d_witness_coefficient = unit.e_coefficient_index(
+                relation_geometry.carrier_ring_dimension(),
+                group.role_dims.d_a(),
+                group.role_dims.d_d(),
                 group.num_claims,
                 group.depth_open,
                 claim,
                 unit.global_block_start(),
                 0,
+                0,
+                0,
             )?;
-            let d_relation_start = d_witness_column
-                .checked_mul(d_witness_stride)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
+            let d_relation_lane_start = divide_aligned(
+                d_witness_coefficient,
+                relation_geometry.relation_coefficient_block_len(),
+                "setup D coefficient address is not relation-block aligned",
+            )?;
+            let d_relation_start = divide_aligned(
+                d_relation_lane_start,
+                group.d_ratio,
+                "setup D relation address is not role aligned",
+            )?;
             d_tensors.push(EqPairTensorFamily::new(
                 d_setup_column,
                 d_relation_start,
                 E::one(),
                 vec![
-                    EqPairTensorAxis::unit(group.depth_open, 1, d_witness_stride),
-                    EqPairTensorAxis::unit(d_subcolumns, group.depth_open, 1),
+                    EqPairTensorAxis::unit(group.depth_open, 1, 1),
+                    EqPairTensorAxis::unit(d_subcolumns, group.depth_open, group.depth_open),
                     EqPairTensorAxis::unit(
                         unit.num_live_blocks(),
                         d_block_setup_stride,
@@ -516,7 +527,10 @@ fn build_group_role_tensors<E: FieldCore>(
                     .and_then(|base| base.checked_add(unit.global_block_start()))
                     .and_then(|base| base.checked_mul(b_block_setup_stride))
                     .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
-                let b_witness_column = unit.t_index(
+                let b_witness_coefficient = unit.t_coefficient_index(
+                    relation_geometry.carrier_ring_dimension(),
+                    group.role_dims.d_a(),
+                    group.role_dims.d_b(),
                     group.num_claims,
                     group.n_a,
                     group.depth_commit,
@@ -524,20 +538,29 @@ fn build_group_role_tensors<E: FieldCore>(
                     unit.global_block_start(),
                     0,
                     0,
+                    0,
+                    0,
                 )?;
-                let b_relation_start = b_witness_column
-                    .checked_mul(b_witness_stride)
-                    .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
+                let b_relation_lane_start = divide_aligned(
+                    b_witness_coefficient,
+                    relation_geometry.relation_coefficient_block_len(),
+                    "setup B coefficient address is not relation-block aligned",
+                )?;
+                let b_relation_start = divide_aligned(
+                    b_relation_lane_start,
+                    group.b_ratio,
+                    "setup B relation address is not role aligned",
+                )?;
                 b_tensors.push(EqPairTensorFamily::new(
                     b_setup_column,
                     b_relation_start,
                     E::one(),
                     vec![
-                        EqPairTensorAxis::unit(b_subcolumns, 1, 1),
+                        EqPairTensorAxis::unit(group.depth_commit, 1, 1),
                         EqPairTensorAxis::unit(
+                            b_subcolumns,
                             group.depth_commit,
-                            b_digit_setup_stride,
-                            b_witness_stride,
+                            group.depth_commit,
                         ),
                         EqPairTensorAxis::unit(
                             group.n_a,

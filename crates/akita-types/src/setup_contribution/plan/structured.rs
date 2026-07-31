@@ -91,22 +91,30 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .checked_mul(t_stride)
                 .ok_or(AkitaError::InvalidProof)?;
             for (a_row, &row_weight) in group.a_row_weights.iter().enumerate() {
-                for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                    let base_column = a_row
-                        .checked_mul(group.depth_commit)
-                        .and_then(|offset| offset.checked_add(digit))
-                        .and_then(|offset| offset.checked_mul(outer_subcolumns))
-                        .and_then(|offset| t_start.checked_add(offset))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    if let Some(outer_scales) = &outer_scales {
-                        for (subcolumn, &scale) in outer_scales.iter().enumerate() {
-                            let column = base_column
-                                .checked_add(subcolumn)
+                let row_start = a_row
+                    .checked_mul(outer_subcolumns)
+                    .and_then(|offset| offset.checked_mul(group.depth_commit))
+                    .and_then(|offset| t_start.checked_add(offset))
+                    .ok_or(AkitaError::InvalidProof)?;
+                if let Some(outer_scales) = &outer_scales {
+                    for (subcolumn, &scale) in outer_scales.iter().enumerate() {
+                        let subcolumn_start = subcolumn
+                            .checked_mul(group.depth_commit)
+                            .and_then(|offset| row_start.checked_add(offset))
+                            .ok_or(AkitaError::InvalidProof)?;
+                        for (digit, &gadget) in commitment_gadget.iter().enumerate() {
+                            let column = subcolumn_start
+                                .checked_add(digit)
                                 .ok_or(AkitaError::InvalidProof)?;
                             t_weights[column] = block_challenge * row_weight * gadget * scale;
                         }
-                    } else {
-                        t_weights[base_column] = block_challenge * row_weight * gadget;
+                    }
+                } else {
+                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
+                        let column = row_start
+                            .checked_add(digit)
+                            .ok_or(AkitaError::InvalidProof)?;
+                        t_weights[column] = block_challenge * row_weight * gadget;
                     }
                 }
             }

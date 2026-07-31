@@ -58,6 +58,8 @@ fn trace_layout(
         col_bits: col_bits.max(required_col_bits),
         num_live_blocks: num_claims * num_live_blocks_per_claim,
         num_digits_open,
+        source_ring_dim: 1usize << ring_bits,
+        opening_ring_dim: 1usize << ring_bits,
         block_index_bits: (num_claims * num_live_blocks_per_claim)
             .next_power_of_two()
             .trailing_zeros() as usize,
@@ -262,7 +264,10 @@ fn witness_dot_matches_ring_subfield_inner_product_field_live_block_weights() {
 
         let mut witness = vec![F::zero(); layout.table_len().unwrap()];
         for (block, folded) in folded_blocks.iter().enumerate() {
-            let col = layout.opening_digit_col_index(block, 0).unwrap();
+            let col = layout
+                .opening_digit_coefficient_index(block, 0, 0, 0)
+                .unwrap()
+                / layout.ring_len();
             for ring_coord in 0..(1usize << layout.ring_bits) {
                 let idx = layout.witness_index(col, ring_coord);
                 witness[idx] = folded.coefficients()[ring_coord];
@@ -448,7 +453,10 @@ mod ring_live_block_weights {
 
             let mut witness = vec![E::zero(); layout.table_len().unwrap()];
             for (block, folded) in folded_blocks.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, 0).unwrap();
+                let col = layout
+                    .opening_digit_coefficient_index(block, 0, 0, 0)
+                    .unwrap()
+                    / layout.ring_len();
                 for ring_coord in 0..(1usize << layout.ring_bits) {
                     let idx = layout.witness_index(col, ring_coord);
                     witness[idx] = E::lift_base(folded.coefficients()[ring_coord]);
@@ -524,7 +532,10 @@ mod ring_live_block_weights {
 
             let mut witness = vec![E4::zero(); layout.table_len().unwrap()];
             for (block, folded) in folded_blocks.iter().enumerate() {
-                let col = layout.opening_digit_col_index(block, 0).unwrap();
+                let col = layout
+                    .opening_digit_coefficient_index(block, 0, 0, 0)
+                    .unwrap()
+                    / layout.ring_len();
                 for ring_coord in 0..(1usize << layout.ring_bits) {
                     let idx = layout.witness_index(col, ring_coord);
                     witness[idx] = E4::lift_base(folded.coefficients()[ring_coord]);

@@ -102,6 +102,8 @@ pub fn trace_weight_layout_from_segment(
         col_bits,
         num_live_blocks: num_trace_blocks,
         num_digits_open: lp.num_digits_open,
+        source_ring_dim: lp.role_dims().d_a(),
+        opening_ring_dim: lp.role_dims().d_d(),
         block_index_bits,
         log_basis_open: lp.log_basis_open,
         witness_layout: witness_layout.clone(),
@@ -474,6 +476,7 @@ where
     let mut claim_offset = 0usize;
     for (group_index, prepared) in prepared_points.iter().enumerate() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
         let group_claims = opening_batch.group_layout(group_index)?.num_polynomials();
         let group_id = group_index;
         let num_live_blocks = group_claims
@@ -495,6 +498,8 @@ where
             col_bits: layout.col_bits,
             num_live_blocks,
             num_digits_open: group_lp.num_digits_open(),
+            source_ring_dim: group_dims.d_a(),
+            opening_ring_dim: group_dims.d_d(),
             block_index_bits: num_live_blocks.next_power_of_two().trailing_zeros() as usize,
             log_basis_open: group_lp.log_basis_open(),
             witness_layout: layout.witness_layout.clone(),
@@ -637,6 +642,7 @@ where
             let mut claim_offset = 0usize;
             for (group_index, prepared) in prepared_points.iter().enumerate() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
+                let group_dims = lp.group_role_dims(opening_batch, group_index)?;
                 let group_layout = opening_batch.group_layout(group_index)?;
                 let group_id = group_index;
                 let inner = prepared.packed_inner_owned::<D>()?;
@@ -659,6 +665,7 @@ where
                             .copied()
                             .ok_or(AkitaError::InvalidProof)?;
                         let block_weight = E::lift_base(block_weight);
+                        let role_subcolumns = group_dims.d_a() / group_dims.d_d();
                         for (plane, gadget_scalar) in gadget.iter().enumerate() {
                             if witness_layout.group_num_live_blocks(group_id)?
                                 != group_lp.num_live_blocks()
@@ -669,36 +676,31 @@ where
                                 ));
                             }
                             let unit = witness_layout.unit_for_block(group_id, block)?;
-                            let physical_col = unit.e_index(
-                                group_layout.num_polynomials(),
-                                group_lp.num_digits_open(),
-                                local_claim,
-                                block,
-                                plane,
-                            )?;
-                            let col = crate::checked_opening_source_index(
-                                opening_source_len,
-                                physical_col,
-                            )?;
-                            if col >= live_x_cols {
-                                continue;
-                            }
-                            let dst_base = col.checked_mul(ring_len).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "multi-group trace row offset overflow".to_string(),
-                                )
-                            })?;
-                            let dst_end = dst_base.checked_add(ring_len).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "multi-group trace row overflow".to_string(),
-                                )
-                            })?;
                             let factor = coefficient * block_weight * E::lift_base(*gadget_scalar);
-                            let dst_row = table
-                                .get_mut(dst_base..dst_end)
-                                .ok_or(AkitaError::InvalidProof)?;
-                            for (dst, coeff) in dst_row.iter_mut().zip(inner_coeffs.iter()) {
-                                *dst += factor * E::lift_base(*coeff);
+                            for role_subcolumn in 0..role_subcolumns {
+                                for role_coefficient in 0..group_dims.d_d() {
+                                    let destination = unit.e_coefficient_index(
+                                        D,
+                                        group_dims.d_a(),
+                                        group_dims.d_d(),
+                                        group_layout.num_polynomials(),
+                                        group_lp.num_digits_open(),
+                                        local_claim,
+                                        block,
+                                        role_subcolumn,
+                                        plane,
+                                        role_coefficient,
+                                    )?;
+                                    if destination / ring_len >= live_x_cols {
+                                        continue;
+                                    }
+                                    let source =
+                                        role_subcolumn * group_dims.d_d() + role_coefficient;
+                                    *table
+                                        .get_mut(destination)
+                                        .ok_or(AkitaError::InvalidProof)? +=
+                                        factor * E::lift_base(inner_coeffs[source]);
+                                }
                             }
                         }
                     }

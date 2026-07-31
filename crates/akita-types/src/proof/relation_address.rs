@@ -108,10 +108,10 @@ impl RelationAddressGeometry {
         }
 
         let live_field_len = outgoing_witness_source_len
-            .checked_mul(outgoing_witness_ring_dimension)
+            .checked_mul(carrier_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation witness length overflow".into()))?;
         let padded_field_len = opening_domain_len(outgoing_witness_source_len)?
-            .checked_mul(outgoing_witness_ring_dimension)
+            .checked_mul(carrier_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation witness domain overflow".into()))?;
         if !padded_field_len.is_power_of_two()
             || !live_field_len.is_multiple_of(relation_coefficient_block_len)
@@ -244,7 +244,7 @@ mod tests {
         };
         let flat_live_len = 1024;
         let geometries = [16, 32, 64].map(|outgoing_dim| {
-            RelationAddressGeometry::new(dims, outgoing_dim, flat_live_len / outgoing_dim).unwrap()
+            RelationAddressGeometry::new(dims, outgoing_dim, flat_live_len / dims.d_a()).unwrap()
         });
         for geometry in geometries {
             assert_eq!(geometry.digit_witness_domain().live_len(), flat_live_len);
@@ -279,16 +279,16 @@ mod tests {
         assert_eq!(geometry.role_relation_lane_count(RingRole::Inner), 4);
         assert_eq!(geometry.role_relation_lane_count(RingRole::Outer), 2);
         assert_eq!(geometry.role_relation_lane_count(RingRole::Opening), 1);
-        assert_eq!(geometry.live_relation_lane_count(), 18);
-        assert_eq!(geometry.relation_lane_capacity(), 32);
+        assert_eq!(geometry.live_relation_lane_count(), 36);
+        assert_eq!(geometry.relation_lane_capacity(), 64);
         assert_eq!(geometry.relation_coefficient_variable_count(), 5);
-        assert_eq!(geometry.relation_lane_variable_count(), 5);
-        geometry.validate_relation_point_len(10).unwrap();
+        assert_eq!(geometry.relation_lane_variable_count(), 6);
+        geometry.validate_relation_point_len(11).unwrap();
         assert!(matches!(
-            geometry.validate_relation_point_len(9),
+            geometry.validate_relation_point_len(10),
             Err(AkitaError::InvalidSize {
-                expected: 10,
-                actual: 9
+                expected: 11,
+                actual: 10
             })
         ));
     }

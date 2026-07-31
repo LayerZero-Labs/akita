@@ -445,6 +445,7 @@ impl<F: FieldCore + CanonicalField> RingRelationInstance<F> {
 mod tests {
     use super::*;
     use crate::layout::PrecommittedLevelParams;
+    use crate::DigitBlocks;
     use crate::{
         emit_witness_e_planes, emit_witness_r_planes, emit_witness_t_planes, emit_witness_z_planes,
         InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
@@ -963,24 +964,36 @@ mod tests {
             let t_source = (0..num_claims * num_live_blocks * n_a * depth_commit)
                 .map(|index| marker(300 * group_index + index))
                 .collect::<Vec<_>>();
-            emit_witness_e_planes(
+            let e_digits = DigitBlocks::new(
+                e_source.as_flattened().to_vec(),
+                vec![depth_open; num_claims * num_live_blocks],
+                2,
+            )
+            .expect("E digits");
+            let t_digits = DigitBlocks::new(
+                t_source.as_flattened().to_vec(),
+                vec![n_a * depth_commit; num_claims * num_live_blocks],
+                2,
+            )
+            .expect("T digits");
+            emit_witness_e_planes::<2, 2, 2>(
                 &mut emitted,
                 &layout,
                 group_index,
                 num_claims,
                 depth_open,
-                &e_source,
+                &e_digits,
                 num_live_blocks,
             )
             .expect("emit E");
-            emit_witness_t_planes::<2, 2>(
+            emit_witness_t_planes::<2, 2, 2>(
                 &mut emitted,
                 &layout,
                 group_index,
                 num_claims,
                 n_a,
                 depth_commit,
-                &t_source,
+                &t_digits,
                 num_live_blocks,
             )
             .expect("emit T");

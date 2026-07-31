@@ -437,7 +437,12 @@ where
         NextWitnessState::OuterCommitment(commitment) => {
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
-        NextWitnessState::TerminalInnerState { t_state } => {
+        NextWitnessState::TerminalInnerState => {
+            let rows = next_commitment.hint.inner_rows();
+            let t_state = match rows {
+                [t_state] => t_state,
+                _ => return Err(AkitaError::InvalidProof),
+            };
             let bytes = akita_types::raw_field_segment_bytes(t_state)?;
             transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &bytes);
         }
@@ -503,7 +508,7 @@ where
     let evaluation_trace = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
-        ring_d,
+        rs.relation_address_geometry.carrier_ring_dimension(),
         |D| {
             let semantic_trace =
                 build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
@@ -587,9 +592,9 @@ where
             akita_types::NextWitnessBinding::OuterCommitment(commitment.clone().into_compact()),
             NextWitnessState::OuterCommitment(commitment),
         ),
-        NextWitnessState::TerminalInnerState { t_state } => (
+        NextWitnessState::TerminalInnerState => (
             akita_types::NextWitnessBinding::TerminalInnerState,
-            NextWitnessState::TerminalInnerState { t_state },
+            NextWitnessState::TerminalInnerState,
         ),
     };
     let level_proof = FoldLevelProof {

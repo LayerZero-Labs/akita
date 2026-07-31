@@ -42,30 +42,26 @@ impl<E: FieldCore> RoleLaneSpec<'_, E> {
 
 /// Canonical relation-lane weight for one physical setup column.
 ///
-/// `Σ_{l<role_lanes} eq(witness_column·a_ratio + subcolumn·role_lanes + l) ·
+/// `Σ_{l<role_lanes} eq(first_lane + l) ·
 /// role_lane_alpha[l]`.
 #[inline]
 fn canonical_lane_weight<E: FieldCore>(
     eq_window: &OffsetEqWindow<E>,
     opening_source_len: usize,
-    witness_column: usize,
+    first_lane: usize,
     spec: &RoleLaneSpec<'_, E>,
-    subcolumn: usize,
 ) -> Result<E, AkitaError> {
-    // The source index must be a valid opening-source column (same bound the
-    // uniform path enforces through `checked_opening_source_index`).
-    crate::checked_opening_source_index(opening_source_len, witness_column)?;
-    let lane0 = witness_column
+    let lane_bound = opening_source_len
         .checked_mul(spec.a_ratio)
-        .and_then(|base| {
-            subcolumn
-                .checked_mul(spec.role_lanes)
-                .and_then(|offset| base.checked_add(offset))
-        })
-        .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
+        .ok_or_else(|| AkitaError::InvalidSetup("relation lane bound overflow".into()))?;
+    if first_lane >= lane_bound {
+        return Err(AkitaError::InvalidInput(
+            "relation lane address exceeds opening source".into(),
+        ));
+    }
     let mut weight = E::zero();
     for (lane, &alpha) in spec.role_lane_alpha.iter().enumerate() {
-        let index = lane0
+        let index = first_lane
             .checked_add(lane)
             .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
         weight += eq_window.eval(index) * alpha;
@@ -167,22 +163,21 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
                 return Ok(E::zero());
             };
             let block_in_unit = global_block - unit.global_block_start();
-            let unit_width = unit
-                .num_live_blocks()
-                .checked_mul(depth_open)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness E unit width overflow".into()))?;
-            let witness_column = unit
+            let semantic = claim * unit.num_live_blocks() + block_in_unit;
+            let carrier_subcolumns = spec.a_ratio / spec.role_lanes;
+            let first_lane = unit
                 .e_range()
                 .start
-                .checked_add(claim * unit_width + block_in_unit * depth_open + digit)
+                .checked_mul(spec.a_ratio)
+                .and_then(|base| {
+                    (semantic * carrier_subcolumns + subcolumn)
+                        .checked_mul(depth_open)
+                        .and_then(|index| index.checked_add(digit))
+                        .and_then(|index| index.checked_mul(spec.role_lanes))
+                        .and_then(|offset| base.checked_add(offset))
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("setup D source overflow".into()))?;
-            canonical_lane_weight(
-                eq_window,
-                opening_source_len,
-                witness_column,
-                spec,
-                subcolumn,
-            )
+            canonical_lane_weight(eq_window, opening_source_len, first_lane, spec)
         })
         .collect()
 }
@@ -272,15 +267,13 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
         }
         return Ok(weights);
     }
-    // Per-role: parallel map over the expanded column index. Physical B column
-    // order is [claim][block][A_row][digit][subcolumn] (subcolumn innermost),
-    // matching the dense native decode.
+    // Per-role: parallel map over `[claim][block][A row][subcolumn][digit]`.
     cfg_into_iter!(0..num_t_columns)
         .map(|col| -> Result<E, AkitaError> {
-            let subcolumn = col % spec.role_subcolumns;
-            let s1 = col / spec.role_subcolumns;
-            let digit = s1 % depth_open;
-            let s2 = s1 / depth_open;
+            let digit = col % depth_open;
+            let s1 = col / depth_open;
+            let subcolumn = s1 % spec.role_subcolumns;
+            let s2 = s1 / spec.role_subcolumns;
             let a_row = s2 % n_a;
             let s3 = s2 / n_a;
             let global_block = s3 % num_live_blocks;
@@ -292,24 +285,21 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
                 return Ok(E::zero());
             };
             let block_in_unit = global_block - unit.global_block_start();
-            let unit_width = unit
-                .num_live_blocks()
-                .checked_mul(n_a)
-                .and_then(|w| w.checked_mul(depth_open))
-                .ok_or_else(|| AkitaError::InvalidSetup("witness T unit width overflow".into()))?;
-            let local = block_in_unit * n_a * depth_open + a_row * depth_open + digit;
-            let witness_column = unit
+            let semantic = a_row + n_a * (block_in_unit + unit.num_live_blocks() * claim);
+            let carrier_subcolumns = spec.a_ratio / spec.role_lanes;
+            let first_lane = unit
                 .t_range()
                 .start
-                .checked_add(claim * unit_width + local)
+                .checked_mul(spec.a_ratio)
+                .and_then(|base| {
+                    (semantic * carrier_subcolumns + subcolumn)
+                        .checked_mul(depth_open)
+                        .and_then(|index| index.checked_add(digit))
+                        .and_then(|index| index.checked_mul(spec.role_lanes))
+                        .and_then(|offset| base.checked_add(offset))
+                })
                 .ok_or_else(|| AkitaError::InvalidSetup("setup B source overflow".into()))?;
-            canonical_lane_weight(
-                eq_window,
-                opening_source_len,
-                witness_column,
-                spec,
-                subcolumn,
-            )
+            canonical_lane_weight(eq_window, opening_source_len, first_lane, spec)
         })
         .collect()
 }
@@ -376,9 +366,8 @@ where
                         let lane_weight = canonical_lane_weight(
                             eq_window,
                             opening_source_len,
-                            witness_index,
+                            witness_index * spec.a_ratio,
                             spec,
-                            0,
                         )?;
                         weight -= lane_weight.mul_base(fold);
                     }

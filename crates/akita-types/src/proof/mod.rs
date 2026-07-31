@@ -114,7 +114,6 @@ use akita_sumcheck::{
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
 

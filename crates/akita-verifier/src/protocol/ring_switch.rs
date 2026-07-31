@@ -204,10 +204,11 @@ where
         return Err(AkitaError::InvalidProof);
     }
 
+    let witness_layout = relation.segment_layout(lp, None)?;
     let relation_address_geometry = lp.relation_address_geometry(
         opening_batch,
         replay.opening_ring_dim,
-        replay.opening_source_len,
+        witness_layout.total_len(),
     )?;
     if w_len == 0
         || !w_len.is_multiple_of(D)
@@ -282,12 +283,9 @@ where
     let relation = replay.relation;
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
-    let relation_address_geometry = lp.relation_address_geometry(
-        opening_batch,
-        replay.opening_ring_dim,
-        replay.opening_source_len,
-    )?;
     let layout = relation.segment_layout(lp, witness_ring_len)?;
+    let relation_address_geometry =
+        lp.relation_address_geometry(opening_batch, replay.opening_ring_dim, layout.total_len())?;
     if layout.total_len() > replay.opening_source_len {
         return Err(AkitaError::InvalidProof);
     }

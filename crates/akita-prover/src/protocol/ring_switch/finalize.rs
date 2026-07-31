@@ -79,8 +79,11 @@ where
         // Bind the low coefficient block shared by every role first, then the
         // remaining relation lanes. The flat challenge order is unchanged: the
         // common coefficients are the low Boolean coordinates.
-        let geometry =
-            lp.relation_address_geometry(opening_batch, opening_ring_dim, opening_source_len)?;
+        let geometry = lp.relation_address_geometry(
+            opening_batch,
+            opening_ring_dim,
+            witness_layout.total_len(),
+        )?;
         let coeff_count = geometry.relation_coefficient_block_len();
         if !w.len().is_multiple_of(coeff_count) {
             return Err(AkitaError::InvalidSetup(
@@ -120,7 +123,7 @@ where
                 level_params: lp,
                 relation_row_point: &tau1,
                 claim_coefficients: gamma,
-                opening_source_len,
+                opening_source_len: witness_layout.total_len(),
                 opening_ring_dim,
             })?;
             events.factor_common_alpha()

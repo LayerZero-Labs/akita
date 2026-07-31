@@ -259,12 +259,10 @@ mod tests {
         )
         .unwrap();
         let witness_layout = test_layout(&opening_batch, chunks_per_group);
-        let live_len = witness_layout.total_len() * role_dims.d_a();
-        assert!(live_len.is_multiple_of(opening_ring_dimension));
         let geometry = RelationAddressGeometry::new(
             role_dims,
             opening_ring_dimension,
-            live_len / opening_ring_dimension,
+            witness_layout.total_len(),
         )
         .unwrap();
         RelationRangeImagePlan::new(

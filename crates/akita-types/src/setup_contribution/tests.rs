@@ -571,9 +571,7 @@ fn structured_weight_fixture_with_outgoing(
     );
     retarget_test_role_dims(&mut inputs.level_params, role_dims);
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let flat_witness_len = layout.total_len().checked_mul(role_dims.d_a()).unwrap();
-    assert!(flat_witness_len.is_multiple_of(outgoing_ring_dim));
-    let opening_source_len = flat_witness_len / outgoing_ring_dim;
+    let opening_source_len = layout.total_len();
     let relation_address_geometry =
         crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
             .unwrap();

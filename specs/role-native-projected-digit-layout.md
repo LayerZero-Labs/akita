@@ -42,9 +42,10 @@ digits, this spec takes precedence.
 E and T are semantic values in the A ring. B and D commitments consume those
 values through smaller native rings when `d_b < d_a` or `d_d < d_a`.
 
-The implementation **MUST** split an A ring into native role subrings before it
-applies the role gadget decomposition. It **MUST** store each native subring's
-digits together.
+When a B or D operation needs digits, the implementation **MUST** split an A
+ring into native role subrings before it applies the role gadget decomposition.
+It **MUST** store each native subring's digits together in that prepared digit
+stream.
 
 The canonical order is:
 
@@ -69,8 +70,10 @@ emission.
 The cutover has these goals:
 
 - One projection and decomposition rule for both E and T.
-- One coefficient order for producers, commitment kernels, hints, witnesses,
+- One coefficient order for prepared digits, commitment kernels, witnesses,
   relation evaluation, setup evaluation, and quotient computation.
+- A persistent commitment hint that stores semantic A ring values and does not
+  store their gadget decomposition.
 - Contiguous live role data followed by carrier padding within each semantic
   value.
 - No transpose between native role storage and the outgoing witness.
@@ -379,6 +382,11 @@ The term `outer digit` **MUST** refer to `num_digits_outer` and
 `log_basis_outer`. Code and documentation **MUST NOT** call a T digit an
 opening digit or call its count `depth_open`.
 
+The persistent commitment hint stores `t`, not `t_hat`. Commitment and proof
+preparation derive the B native decomposition above from the stored A rings.
+The derived digits are temporary. The B commitment, the B relation, and T
+witness emission consume them.
+
 ## B and D commitment relations
 
 Let `D_{j,k}(X)` be an entry in the batch-shared D matrix over `R_d`. Let
@@ -603,10 +611,56 @@ Group order and chunk order remain the order defined by `WitnessLayout`.
 
 ## Storage and type contracts
 
-### T commitment hints
+### Persistent T commitment hints
 
-An `AkitaCommitmentHint` T digit stream **MUST** store native B digit planes.
-Its digit stride **MUST** equal `d_b`, not `d_a`.
+`AkitaCommitmentHint<F>` **MUST** store the undecomposed inner commitment rows
+`t = A * s` as A ring elements. It **MUST NOT** store `DigitBlocks` or any other
+decomposition of those rows.
+
+One hint belongs to one commitment bundle. Its outer sequence **MUST** contain
+one `RingVec<F>` for each polynomial in claim order. Each `RingVec<F>` **MUST**
+declare ring dimension `d_a`. Its flat coefficients **MUST** use this order:
+
+```text
+[source block][A row][A coefficient]
+```
+
+For one polynomial, the `RingVec<F>` **MUST** contain exactly
+`num_live_blocks * n_A` A ring elements. The public commitment parameters own
+the block and row counts. The hint **MUST NOT** add another block layout that
+can disagree with those parameters.
+
+The hint encoding **MUST** write the polynomial count, one shared `d_a`, and
+the coefficient count and coefficients for each polynomial. It **MUST NOT**
+write a ring dimension for each polynomial or write digit block metadata. A
+decoder **MUST** reject zero `d_a`, a coefficient count that is not divisible
+by `d_a`, inconsistent polynomial lengths, and any allocation above the
+repository limits. Before proof preparation, the prover **MUST** also check the
+polynomial count and the exact per-polynomial coefficient count against the
+public commitment parameters. The encoded coefficient count only frames the
+field vectors. It does not define the block layout.
+
+The coefficients are physically one flat field vector. A B operation **MAY**
+borrow each A row as `q_B` contiguous B subrings. It **MUST NOT** treat the B
+view as the persistent semantic type because multiplication in `R_a` and
+multiplication in `R_b` use different quotient rings.
+
+A setup prefix uses the same format with one polynomial. A recursive
+commitment cache **MUST** carry this same hint type. It **MUST NOT** introduce a
+digit form of the hint.
+
+The field element representation is intentional. Current schedules use
+three-bit outer digits but store each digit in an `i8`. A full-width coefficient
+therefore takes 11 digit bytes for a 32-bit field, 22 digit bytes for a 64-bit
+field, or 43 digit bytes for a 128-bit field. The existing field formats use 8,
+8, and 16 bytes respectively. Persisting the A ring is smaller for these
+schedules. It also removes digit-to-field recomposition from proof preparation.
+
+### Temporary T digit storage
+
+Commitment and proof preparation **MUST** derive B native digits from the
+stored A rings through the same canonical projected decomposition operation.
+The resulting `DigitBlocks` is temporary prepared data.
 
 For each logical source block, its plane count **MUST** be:
 
@@ -614,14 +668,36 @@ For each logical source block, its plane count **MUST** be:
 n_A q_B\delta_B.
 \]
 
-The flat order within that block **MUST** be:
+Its digit stride **MUST** equal `d_b`. The flat order within the block
+**MUST** be:
 
 ```text
 [A row][B subcolumn][outer digit]
 ```
 
-The hint **MUST NOT** store an A-wide T digit representation as a second source
-of truth.
+The commitment path uses this stream to compute `u = B * t_hat`. Proof
+preparation computes it once and shares it between the B relation and T witness
+emission. No long-lived object **MAY** retain it as a second source of truth.
+
+The ownership flow **MUST** be:
+
+```text
+inner commitment produces t in A rings
+    -> projected decomposition borrows t as contiguous B subrings
+    -> B commitment consumes temporary t_hat
+    -> commitment hint takes ownership of t
+
+proof preparation takes t from the hint
+    -> projected decomposition borrows t as contiguous B subrings
+    -> one prepared group owns temporary t_hat
+    -> B relation and T witness borrow that same t_hat
+    -> A relation quotient borrows t directly
+```
+
+The implementation **MUST NOT** copy `t` merely to preserve both the inner
+commitment output and the hint. It **MUST** borrow `t` for decomposition and
+then move it into the hint. Proof preparation **MUST NOT** retain both the hint
+and another copy of `t` after it has taken the rows from the hint.
 
 ### E digit storage
 
@@ -657,6 +733,10 @@ operation. Dense, one-hot, sparse, recursive, and setup-prefix paths **MUST**
 call that operation. They **MUST NOT** keep backend-specific copies of the
 layout rule.
 
+The commitment boundary **MUST** move the inner A rows into the commitment
+hint. It **MAY** borrow those same rows while it derives the temporary B input.
+It **MUST NOT** decompose the rows merely to construct the hint.
+
 ### Witness addresses
 
 E and T are no longer addressable as one carrier ring index per digit in the
@@ -673,15 +753,20 @@ The implementation **MUST** meet these requirements:
 1. The projected decomposer scans each semantic A row and emits native role
    digits directly in canonical order.
 2. The B and D commitment kernels consume that output without a transpose.
-3. T recomposition rebuilds each B subring from its contiguous digit run and
-   writes it directly into the correct A coefficient range.
-4. E recomposition follows the same rule with D subrings.
-5. Witness emission copies each live native role run directly and writes zero
+3. The commitment hint stores A native `t` rows and no T digits.
+4. Proof preparation derives T digits once from the hint. The B relation and T
+   witness emission share that derived stream.
+5. The A relation remains defined by the stated B recomposition formula. The
+   prover quotient may use stored `t` as its exact cached result. It does not
+   reconstruct hint storage from digits.
+6. E recomposition follows the same rule with D subrings.
+7. Witness emission copies each live native role run directly and writes zero
    carrier padding only after the live run.
-6. Relation, setup, trace, quotient, recursive, and terminal consumers use the
+8. Relation, setup, trace, quotient, recursive, and terminal consumers use the
    same canonical address formulas.
-7. The old digit-major projected order and all conversion helpers that exist
-   only to preserve it are deleted in the same cutover.
+9. The old digit hint, hint recomposition helpers, digit-major projected order,
+   and conversion helpers that exist only to preserve them are deleted in the
+   same cutover.
 
 The implementation **MUST NOT** add a second runtime path selected by a broad
 mixed-versus-uniform dispatch boundary. It **MAY** use local compile-time
@@ -691,7 +776,7 @@ operations.
 ## Complexity and performance requirements
 
 For `n` semantic A values and role digit count `delta`, projected decomposition
-and recomposition **MUST** use:
+and relation recomposition **MUST** use:
 
 \[
 O(n a\delta)
@@ -765,7 +850,8 @@ implementation **MUST** update every protocol epoch, fixture, setup-prefix
 artifact identity, and serialized hint expectation that depends on changed
 bytes.
 
-The implementation **MUST NOT** accept old mixed-dimension hints or proof bytes.
+The implementation **MUST NOT** accept old digit hints or old mixed-dimension
+proof bytes.
 
 The schedule and instance descriptor already bind the role dimensions and
 digit bases. If the current protocol identity does not distinguish the old and
@@ -820,14 +906,19 @@ checking prover and verifier agreement.
 
 - [ ] This spec is the normative coefficient-level E and T layout contract.
 - [ ] E and T both split into native role rings before decomposition.
-- [ ] T hints store B-native digits with stride `d_b`.
+- [ ] T hints store only A native `t` rings in
+      `[polynomial][block][A row][A coefficient]` order.
+- [ ] Commitment and proof preparation use the same canonical A-to-B
+      decomposition operation.
+- [ ] Proof preparation shares one temporary B native digit stream between the
+      B relation and T witness emission.
 - [ ] E storage uses one semantic value boundary with D subcolumns inside it.
 - [ ] B and D physical columns use `[semantic][subcolumn][digit]`.
 - [ ] Outgoing E and T use `[semantic][carrier subcolumn][digit][coefficient]`.
 - [ ] Live data precedes carrier padding for every semantic value.
 - [ ] No projected digit transpose remains in production code.
 - [ ] One canonical projected decomposition operation serves every source type.
-- [ ] One canonical inverse recomposition operation serves relation code.
+- [ ] No hint recomposition helper or persistent T digit cache remains.
 - [ ] Direct and structured setup evaluation use the same projected equality
       tensors.
 - [ ] Evaluation trace coefficient partials cost `O(a_h)` per claim and do not
@@ -849,36 +940,92 @@ checking prover and verifier agreement.
 
 ## Implementation surface
 
-The cutover is expected to change these areas:
+The cutover has the following required code changes.
+
+The hint type in `crates/akita-types/src/proof/hints.rs` **MUST** replace
+`Vec<DigitBlocks>` with `Vec<RingVec<F>>`. Its methods and serialization
+**MUST** describe semantic A rows. The marker for `F`, digit accessors, digit
+flattening, and old digit serialization **MUST** be deleted.
+
+The inner commitment result in `crates/akita-prover/src/lib.rs` **MUST** expose
+one movable A ring buffer in block order. The caller collects one such buffer
+for each polynomial. Existing backend implementations **MUST** construct this
+canonical result. They **MUST NOT** add another result type or a conversion
+wrapper. Any block access **MUST** be a slice of that buffer and use the public
+row count to find its bounds.
+
+Root commitment, recursive commitment, and setup prefix commitment **MUST**
+borrow the A rows to derive the temporary B digits. They **MUST** move those A
+rows into the hint after the B commitment has consumed the digits.
+
+Ring switch proof preparation **MUST** take the A rows from the hint. It
+**MUST** derive one B digit stream and place both values in the prepared group.
+The A relation quotient **MUST** use the A rows as the exact cached value of
+`recompose_B(t_hat)`. The relation definition and verifier **MUST** continue to
+use the recomposition formula in this spec. The B relation and T witness
+emission **MUST** use the prepared B digits. The consistency relation concerns
+E and is not a consumer of the T hint.
+
+`crates/akita-prover/src/compute/hint_recompose.rs` **MUST** be deleted. A
+recursive state **MUST** carry `AkitaCommitmentHint<F>` directly. The thin
+`RecursiveCommitmentHintCache` wrapper **MUST** be deleted.
+
+The complete review surface is:
 
 ```text
 crates/akita-prover/src/kernels/linear/decompose.rs
-crates/akita-prover/src/compute/hint_recompose.rs
+crates/akita-prover/src/compute/hint_recompose.rs  # delete
+crates/akita-prover/src/lib.rs
+crates/akita-prover/src/compute/operation_plans.rs
+crates/akita-prover/src/backend/
+crates/akita-prover/src/backend/recursive/hint.rs  # delete
 crates/akita-prover/src/api/commitment.rs
 crates/akita-prover/src/api/setup_prefix.rs
 crates/akita-prover/src/protocol/ring_relation.rs
+crates/akita-prover/src/protocol/ring_relation_witness.rs
 crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs
 crates/akita-prover/src/protocol/ring_switch/commit.rs
 crates/akita-prover/src/protocol/ring_switch/coeffs.rs
 crates/akita-prover/src/protocol/ring_switch/relation_weights.rs
+crates/akita-prover/src/types/opening_data.rs
 crates/akita-types/src/proof/hints.rs
+crates/akita-types/src/proof/setup_prefix.rs
 crates/akita-types/src/proof/tail_segments.rs
 crates/akita-types/src/witness.rs
 crates/akita-types/src/setup_contribution/plan/
 crates/akita-types/src/trace_weight/
+crates/akita-setup/src/lib.rs
 crates/akita-verifier/src/protocol/ring_switch/
 ```
 
 This list is a review guide. It is not permission to add forwarding wrappers or
 parallel layout authorities.
 
+Tests **MUST** cover hint serialization, malformed dimensions and lengths, the
+exact polynomial and block order, setup prefix persistence, root and recursive
+commitment, and equality of the B commitment before and after the hint storage
+change when both sides use the new digit layout. Performance tests **MUST**
+measure the new hint byte size and confirm that proof preparation performs one
+A to B decomposition and no hint recomposition. The setup prefix artifact
+identity **MUST** change. This hint is prover data and is not part of proof
+bytes, so this storage change alone **MUST NOT** change the proof transcript.
+
 ## Alternatives considered
 
 ### Keep T digit first and change only E
 
-This preserves the current T hint and makes B commitment migration smaller. It
-leaves two projection rules and keeps carrier padding between live T digits.
-It is rejected.
+This preserves the old projected digit order and makes B commitment migration
+smaller. It leaves two projection rules and keeps carrier padding between live
+T digits. It is rejected.
+
+### Persist bit-packed T digits
+
+Three-bit packing would make the digit stream smaller than the current field
+serialization for some field profiles. It would still make the decomposition
+the persistent source of truth. Proof preparation would have to unpack the
+digits and recompose the A rings needed by the A relation quotient and other A
+ring prover work. It is rejected. Bit packing remains a possible encoding for
+proof digit segments, where the digits are the protocol data.
 
 ### Decompose A first, then transpose once
 

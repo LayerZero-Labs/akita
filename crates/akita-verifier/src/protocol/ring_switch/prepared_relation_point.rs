@@ -263,8 +263,8 @@ mod tests {
         alpha: F,
     ) {
         let flat_live_len = 1024;
-        let opening_source_len = flat_live_len / outgoing_ring_dim;
-        let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
+        let opening_source_len = flat_live_len / role_dims.d_a();
+        let field_len = opening_domain_len(opening_source_len).unwrap() * role_dims.d_a();
         let point = point_for(field_len);
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
@@ -380,13 +380,13 @@ mod tests {
         };
         let opening_source_len = 9;
         let outgoing_ring_dim = 32;
-        let field_len = opening_domain_len(opening_source_len).unwrap() * outgoing_ring_dim;
+        let field_len = opening_domain_len(opening_source_len).unwrap() * role_dims.d_a();
         let point = point_for(field_len);
         let geometry =
             RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len).unwrap();
         let prepared = PreparedRelationPoint::new(&point, F::from_u64(7), geometry, &[]).unwrap();
         assert!(matches!(
-            prepared.role_column_weight(3, RingRole::Inner, 0),
+            prepared.role_column_weight(9, RingRole::Inner, 0),
             Err(AkitaError::InvalidInput(_))
         ));
         assert!(matches!(
@@ -402,7 +402,7 @@ mod tests {
             outer: 128,
             opening: 32,
         };
-        let point = point_for(512);
+        let point = point_for(4096);
         let geometry = RelationAddressGeometry::new_for_groups(
             role_dims,
             &[CommitmentRingDims::uniform(64)],

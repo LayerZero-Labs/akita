@@ -227,7 +227,7 @@ fn group_batch_commits_independent_arity_precommitteds() {
         final_commitment.rows().count(),
         main_params.outer_commit_matrix.output_rank()
     );
-    assert_eq!(final_hint.decomposed_inner_rows.len(), FINAL_SIZE);
+    assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
     assert_eq!(
         akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
         FINAL_NV,

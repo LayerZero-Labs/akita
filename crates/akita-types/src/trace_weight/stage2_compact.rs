@@ -39,6 +39,8 @@ fn layout() -> TraceWeightLayout {
         col_bits: 4,
         num_live_blocks: 2,
         num_digits_open: 2,
+        source_ring_dim: D,
+        opening_ring_dim: D,
         block_index_bits: 1,
         log_basis_open: 3,
         witness_layout,

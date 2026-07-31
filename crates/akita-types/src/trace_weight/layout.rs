@@ -9,6 +9,8 @@ pub struct TraceWeightLayout {
     pub col_bits: usize,
     pub num_live_blocks: usize,
     pub num_digits_open: usize,
+    pub source_ring_dim: usize,
+    pub opening_ring_dim: usize,
     pub block_index_bits: usize,
     pub log_basis_open: u32,
     pub witness_layout: WitnessLayout,
@@ -18,7 +20,7 @@ pub struct TraceWeightLayout {
 
 impl TraceWeightLayout {
     pub fn opening_digit_col_count(&self) -> usize {
-        self.num_live_blocks * self.num_digits_open
+        self.num_live_blocks * (self.source_ring_dim / self.opening_ring_dim) * self.num_digits_open
     }
 
     pub fn ring_len(&self) -> usize {
@@ -33,8 +35,27 @@ impl TraceWeightLayout {
             })
     }
 
-    pub fn opening_digit_col_index(&self, block: usize, digit: usize) -> Result<usize, AkitaError> {
-        if block >= self.num_live_blocks || digit >= self.num_digits_open {
+    pub fn opening_digit_coefficient_index(
+        &self,
+        block: usize,
+        role_subcolumn: usize,
+        digit: usize,
+        role_coefficient: usize,
+    ) -> Result<usize, AkitaError> {
+        let role_subcolumns = self
+            .source_ring_dim
+            .checked_div(self.opening_ring_dim)
+            .filter(|count| {
+                *count != 0 && self.source_ring_dim.is_multiple_of(self.opening_ring_dim)
+            })
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("trace opening role does not divide source ring".into())
+            })?;
+        if block >= self.num_live_blocks
+            || role_subcolumn >= role_subcolumns
+            || digit >= self.num_digits_open
+            || role_coefficient >= self.opening_ring_dim
+        {
             return Err(AkitaError::InvalidInput(
                 "trace opening-digit index out of range".to_string(),
             ));
@@ -52,9 +73,28 @@ impl TraceWeightLayout {
         let unit = self
             .witness_layout
             .unit_for_block(self.group_id, global_block)?;
-        let physical_index =
-            unit.e_index(num_claims, self.num_digits_open, claim, global_block, digit)?;
-        crate::checked_opening_source_index(self.opening_source_len, physical_index)
+        let physical_index = unit.e_coefficient_index(
+            self.ring_len(),
+            self.source_ring_dim,
+            self.opening_ring_dim,
+            num_claims,
+            self.num_digits_open,
+            claim,
+            global_block,
+            role_subcolumn,
+            digit,
+            role_coefficient,
+        )?;
+        let source_coefficients = self
+            .opening_source_len
+            .checked_mul(self.ring_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("trace opening source overflow".into()))?;
+        if physical_index >= source_coefficients {
+            return Err(AkitaError::InvalidInput(
+                "trace opening coefficient exceeds source".into(),
+            ));
+        }
+        Ok(physical_index)
     }
 
     pub fn witness_index(&self, col: usize, ring_coord: usize) -> usize {
@@ -65,6 +105,15 @@ impl TraceWeightLayout {
         if self.ring_bits != D.trailing_zeros() as usize {
             return Err(AkitaError::InvalidInput(
                 "ring_bits does not match ring dimension".to_string(),
+            ));
+        }
+        if self.source_ring_dim == 0
+            || self.opening_ring_dim == 0
+            || !D.is_multiple_of(self.source_ring_dim)
+            || !self.source_ring_dim.is_multiple_of(self.opening_ring_dim)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "trace dimensions must satisfy opening | source | carrier".into(),
             ));
         }
         Ok(())
@@ -110,9 +159,18 @@ impl TraceWeightLayout {
                 let last_block = claim_start.checked_add(last_global).ok_or_else(|| {
                     AkitaError::InvalidSetup("trace block offset overflow".to_string())
                 })?;
-                let first = self.opening_digit_col_index(first_block, 0)?;
-                let last = self.opening_digit_col_index(last_block, self.num_digits_open - 1)?;
-                if first >= column_bound || last >= column_bound {
+                let first = self.opening_digit_coefficient_index(first_block, 0, 0, 0)?;
+                let last = self.opening_digit_coefficient_index(
+                    last_block,
+                    self.source_ring_dim / self.opening_ring_dim - 1,
+                    self.num_digits_open - 1,
+                    self.opening_ring_dim - 1,
+                )?;
+                let coefficient_bound =
+                    column_bound.checked_mul(self.ring_len()).ok_or_else(|| {
+                        AkitaError::InvalidSetup("trace column coefficient bound overflow".into())
+                    })?;
+                if first >= coefficient_bound || last >= coefficient_bound {
                     return Err(AkitaError::InvalidInput(
                         "opening-digit segment exceeds column hypercube".to_string(),
                     ));

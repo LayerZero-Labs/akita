@@ -1037,11 +1037,17 @@ fn validate_stage2_successor_capacity(
         .precommitted_group_iter()
         .map(|group| group.role_dims(shared_d))
         .collect::<Vec<_>>();
+    let carrier_ring_dimension = precommitted_role_dims
+        .iter()
+        .map(|dims| dims.d_a())
+        .chain(std::iter::once(predecessor.role_dims().d_a()))
+        .max()
+        .ok_or_else(|| AkitaError::InvalidSetup("relation carrier is empty".into()))?;
     let geometry = RelationAddressGeometry::new_for_groups(
         predecessor.role_dims(),
         &precommitted_role_dims,
         successor_ring_dimension,
-        output_witness_len / successor_ring_dimension,
+        output_witness_len / carrier_ring_dimension,
     )?;
     let stage2_num_vars = geometry.relation_point_variable_count();
     if stage2_num_vars > successor_opening_num_vars {

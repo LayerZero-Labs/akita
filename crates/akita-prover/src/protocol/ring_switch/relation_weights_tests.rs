@@ -89,10 +89,10 @@ fn outgoing_repacking_preserves_relation_factorization_and_evaluation() {
     let expected_factorization = events.factor_common_alpha().unwrap();
     let expected_evaluation = events.evaluate_at_point(&point, None).unwrap();
 
-    for (opening_ring_dim, opening_source_len) in [(16, 24), (32, 12), (64, 6), (128, 3)] {
+    for opening_ring_dim in [16, 32, 64, 128] {
         let mut repacked = events.clone();
         repacked.opening_ring_dim = opening_ring_dim;
-        repacked.opening_source_len = opening_source_len;
+        repacked.opening_source_len = 3;
         assert_eq!(repacked.materialize_dense().unwrap(), expected_dense);
         assert_eq!(
             repacked.factor_common_alpha().unwrap(),

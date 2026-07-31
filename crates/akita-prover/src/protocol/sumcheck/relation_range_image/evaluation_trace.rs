@@ -32,6 +32,8 @@ struct EvaluationTraceTerm<E: FieldCore> {
     basis: BasisMode,
     group_block_count: usize,
     source_ring_dimension: usize,
+    opening_ring_dimension: usize,
+    carrier_ring_dimension: usize,
     opening_digit_weights: Arc<[E]>,
     inner_trace: Arc<[E]>,
     segments: Vec<EvaluationTraceSegment>,
@@ -109,21 +111,26 @@ where
     let mut terms = Vec::with_capacity(inputs.claim_coefficients.len());
     for parameters in group_parameters {
         let group_index = parameters.group_index();
+        let group_dims = inputs
+            .level_params
+            .group_role_dims(inputs.opening_batch, group_index)?;
         let group_layout = inputs.opening_batch.group_layout(group_index)?;
         let units = inputs.witness_layout.units_for_group(group_index)?;
         for (local_claim, claim_index) in parameters.claim_range().enumerate() {
             let mut segments = Vec::with_capacity(units.len());
             for &unit in &units {
-                let physical_column_start = unit.e_index(
+                let physical_coefficient_start = unit.e_coefficient_index(
+                    D,
+                    group_dims.d_a(),
+                    group_dims.d_d(),
                     group_layout.num_polynomials(),
                     parameters.opening_digit_weights().len(),
                     local_claim,
                     unit.global_block_start(),
                     0,
+                    0,
+                    0,
                 )?;
-                let physical_coefficient_start = physical_column_start
-                    .checked_mul(D)
-                    .ok_or_else(|| AkitaError::InvalidSetup("trace address overflow".into()))?;
                 let coeff_count = unit
                     .num_live_blocks()
                     .checked_mul(parameters.opening_digit_weights().len())
@@ -150,6 +157,8 @@ where
                 basis: parameters.basis(),
                 group_block_count: parameters.group_block_count(),
                 source_ring_dimension: parameters.source_ring_dimension(),
+                opening_ring_dimension: group_dims.d_d(),
+                carrier_ring_dimension: D,
                 opening_digit_weights: parameters.shared_opening_digit_weights(),
                 inner_trace: parameters.shared_inner_trace(),
                 segments,
@@ -170,6 +179,8 @@ where
 /// One opening block/digit contribution over contiguous common-coordinate lanes.
 struct PreparedOpeningSupport<E: FieldCore> {
     first_lane: usize,
+    source_lane_start: usize,
+    lane_count: usize,
     factor: E,
     inner_trace_index: usize,
 }
@@ -255,6 +266,9 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                 segment
                     .block_count
                     .checked_mul(term.opening_digit_weights.len())
+                    .and_then(|count| {
+                        count.checked_mul(term.source_ring_dimension / term.opening_ring_dimension)
+                    })
                     .and_then(|segment_count| count.checked_add(segment_count))
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("evaluation-trace support count overflow".into())
@@ -273,6 +287,9 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             if source_ring_dimension == 0
                 || !source_ring_dimension.is_power_of_two()
                 || !source_ring_dimension.is_multiple_of(coeff_count)
+                || term.opening_ring_dimension == 0
+                || !source_ring_dimension.is_multiple_of(term.opening_ring_dimension)
+                || !term.opening_ring_dimension.is_multiple_of(coeff_count)
                 || term.inner_trace.len() != source_ring_dimension
             {
                 return Err(AkitaError::InvalidSetup(
@@ -287,7 +304,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             let block_stride = term
                 .opening_digit_weights
                 .len()
-                .checked_mul(source_ring_dimension)
+                .checked_mul(term.carrier_ring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("evaluation-trace block stride overflow".into())
                 })?;
@@ -320,40 +337,54 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
                                 "evaluation-trace block address overflow".into(),
                             )
                         })?;
-                    for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate() {
-                        let digit_offset =
-                            source_ring_dimension.checked_mul(digit).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "evaluation-trace digit offset overflow".into(),
-                                )
-                            })?;
-                        let coefficient_start =
-                            block_start.checked_add(digit_offset).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "evaluation-trace digit address overflow".into(),
-                                )
-                            })?;
-                        if !coefficient_start.is_multiple_of(coeff_count) {
-                            return Err(AkitaError::InvalidSetup(
-                                "evaluation-trace support is not common-coordinate aligned".into(),
-                            ));
+                    let role_subcolumns = source_ring_dimension / term.opening_ring_dimension;
+                    for role_subcolumn in 0..role_subcolumns {
+                        for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate()
+                        {
+                            let digit_offset = role_subcolumn
+                                .checked_mul(term.opening_digit_weights.len())
+                                .and_then(|offset| offset.checked_add(digit))
+                                .and_then(|offset| offset.checked_mul(term.opening_ring_dimension))
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "evaluation-trace digit offset overflow".into(),
+                                    )
+                                })?;
+                            let coefficient_start =
+                                block_start.checked_add(digit_offset).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "evaluation-trace digit address overflow".into(),
+                                    )
+                                })?;
+                            if !coefficient_start.is_multiple_of(coeff_count) {
+                                return Err(AkitaError::InvalidSetup(
+                                    "evaluation-trace support is not common-coordinate aligned"
+                                        .into(),
+                                ));
+                            }
+                            let first_lane = coefficient_start / coeff_count;
+                            let column_count = term.opening_ring_dimension / coeff_count;
+                            let support_end =
+                                first_lane.checked_add(column_count).ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "evaluation-trace support range overflow".into(),
+                                    )
+                                })?;
+                            if support_end > live_lane_count {
+                                return Err(AkitaError::InvalidProof);
+                            }
+                            opening_support.push(PreparedOpeningSupport {
+                                first_lane,
+                                source_lane_start: role_subcolumn * term.opening_ring_dimension
+                                    / coeff_count,
+                                lane_count: column_count,
+                                factor: output_scale
+                                    * term.coefficient
+                                    * block_weight
+                                    * digit_weight,
+                                inner_trace_index,
+                            });
                         }
-                        let first_lane = coefficient_start / coeff_count;
-                        let column_count = source_ring_dimension / coeff_count;
-                        let support_end =
-                            first_lane.checked_add(column_count).ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "evaluation-trace support range overflow".into(),
-                                )
-                            })?;
-                        if support_end > live_lane_count {
-                            return Err(AkitaError::InvalidProof);
-                        }
-                        opening_support.push(PreparedOpeningSupport {
-                            first_lane,
-                            factor: output_scale * term.coefficient * block_weight * digit_weight,
-                            inner_trace_index,
-                        });
                     }
                 }
             }
@@ -376,8 +407,12 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             let source = sources
                 .get(support.inner_trace_index)
                 .ok_or(AkitaError::InvalidProof)?;
-            for source_lane in 0..source.lane_count {
-                let target_lane = support.first_lane.checked_add(source_lane).ok_or_else(|| {
+            if support.source_lane_start + support.lane_count > source.lane_count {
+                return Err(AkitaError::InvalidProof);
+            }
+            for lane_offset in 0..support.lane_count {
+                let source_lane = support.source_lane_start + lane_offset;
+                let target_lane = support.first_lane.checked_add(lane_offset).ok_or_else(|| {
                     AkitaError::InvalidSetup("evaluation-trace lane overflow".into())
                 })?;
                 lane_terms

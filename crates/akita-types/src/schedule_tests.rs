@@ -139,6 +139,7 @@ fn recursive_schedule(
         successor_ring_dimension,
     ));
     let terminal_response_len = 3 * successor_ring_dimension;
+    let root_handoff_len = predecessor_ring_dimension.max(successor_ring_dimension);
 
     FoldSchedule {
         root: RootFoldStep {
@@ -156,7 +157,7 @@ fn recursive_schedule(
                 witness_partition: WitnessPartition::Single,
             },
             input_witness_len: predecessor_ring_dimension,
-            output_witness_len: successor_ring_dimension,
+            output_witness_len: root_handoff_len,
         },
         recursive_folds: vec![RecursiveFoldStep {
             params: RecursiveFoldParams {
@@ -166,7 +167,7 @@ fn recursive_schedule(
                 witness_partition: WitnessPartition::Single,
                 witness: successor,
             },
-            input_witness_len: successor_ring_dimension,
+            input_witness_len: root_handoff_len,
             output_witness_len: successor_ring_dimension,
         }],
         terminal: TerminalFoldStep {

@@ -354,7 +354,7 @@ mod tests {
     }
 
     fn empty_hint() -> AkitaCommitmentHint<F> {
-        AkitaCommitmentHint::new(Vec::new())
+        AkitaCommitmentHint::new(1, Vec::new()).expect("empty test hint")
     }
 
     fn commitment() -> Commitment<F> {

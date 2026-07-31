@@ -160,33 +160,24 @@ impl<E: FieldCore> RelationWeightEvents<E> {
         Ok(())
     }
 
-    fn push_role(
+    fn push_carrier_subring(
         &mut self,
         witness_column: usize,
-        role_subcolumn: usize,
         role_ring_dimension: usize,
-        alpha_exponent_start: usize,
         scalar: E,
         contribution: RelationWeightContribution,
     ) -> Result<(), AkitaError> {
-        let inner_ring_dimension = self.carrier_ring_dimension;
         if role_ring_dimension == 0
-            || !inner_ring_dimension.is_multiple_of(role_ring_dimension)
-            || role_subcolumn >= inner_ring_dimension / role_ring_dimension
+            || !self
+                .carrier_ring_dimension
+                .is_multiple_of(role_ring_dimension)
         {
             return Err(AkitaError::InvalidProof);
         }
         let physical_start = witness_column
-            .checked_mul(inner_ring_dimension)
-            .and_then(|base| base.checked_add(role_subcolumn * role_ring_dimension))
+            .checked_mul(self.carrier_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation event address overflow".into()))?;
-        self.push(
-            physical_start,
-            role_ring_dimension,
-            alpha_exponent_start,
-            scalar,
-            contribution,
-        )
+        self.push(physical_start, role_ring_dimension, 0, scalar, contribution)
     }
 
     /// Semantic events in emission order. Overlaps are intentionally additive.
@@ -203,7 +194,7 @@ impl<E: FieldCore> RelationWeightEvents<E> {
             ));
         }
         let opening_field_len = opening_domain_len(self.opening_source_len)?
-            .checked_mul(self.opening_ring_dim)
+            .checked_mul(self.carrier_ring_dimension)
             .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
         let mut weights = vec![E::zero(); opening_field_len];
         for event in &self.events {
@@ -451,7 +442,7 @@ where
         .checked_mul(carrier_ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("relation weight length overflow".into()))?;
     let expected_field_len = opening_source_len
-        .checked_mul(opening_ring_dim)
+        .checked_mul(carrier_ring_dimension)
         .ok_or_else(|| AkitaError::InvalidSetup("opening field length overflow".into()))?;
     if physical_field_len > expected_field_len {
         return Err(AkitaError::InvalidSize {
@@ -636,8 +627,19 @@ where
                 let challenge_alpha = challenges
                     .eval_logical_at_pows::<F, E>(challenge_index, &group_alpha_pows_a)?;
                 for (digit, &opening_gadget) in g_open.iter().enumerate() {
-                    let witness_col = unit.e_index(k_g, depth_open, claim, global_block, digit)?;
                     for role_subcol in 0..d_ratio {
+                        let physical_start = unit.e_coefficient_index(
+                            relation_events.carrier_ring_dimension,
+                            group_d_a,
+                            group_d_d,
+                            k_g,
+                            depth_open,
+                            claim,
+                            global_block,
+                            role_subcol,
+                            digit,
+                            0,
+                        )?;
                         let logical_block = claim * num_live_blocks_g + global_block;
                         let d_phys_col = logical_block
                             .checked_mul(d_ratio)
@@ -659,18 +661,16 @@ where
                                     );
                             }
                         }
-                        relation_events.push_role(
-                            witness_col,
-                            role_subcol,
+                        relation_events.push(
+                            physical_start,
                             group_d_d,
                             role_subcol * group_d_d,
                             consistency_acc,
                             RelationWeightContribution::Constraint,
                         )?;
                         if setup_matrix.is_some() {
-                            relation_events.push_role(
-                                witness_col,
-                                role_subcol,
+                            relation_events.push(
+                                physical_start,
                                 group_d_d,
                                 0,
                                 setup_acc,
@@ -690,24 +690,27 @@ where
                             .checked_mul(block_claim)
                             .and_then(|base| base.checked_add(a_idx))
                             .ok_or(AkitaError::InvalidProof)?;
-                        let semantic_col = depth_commit
-                            .checked_mul(row_block_claim)
-                            .and_then(|base| base.checked_add(digit))
-                            .ok_or(AkitaError::InvalidProof)?;
-                        let witness_col = unit.t_index(
-                            k_g,
-                            n_a,
-                            depth_commit,
-                            claim,
-                            global_block,
-                            a_idx,
-                            digit,
-                        )?;
                         for role_subcol in 0..b_ratio {
-                            let local_col = semantic_col
+                            let local_col = row_block_claim
                                 .checked_mul(b_ratio)
                                 .and_then(|base| base.checked_add(role_subcol))
+                                .and_then(|base| base.checked_mul(depth_commit))
+                                .and_then(|base| base.checked_add(digit))
                                 .ok_or(AkitaError::InvalidProof)?;
+                            let physical_start = unit.t_coefficient_index(
+                                relation_events.carrier_ring_dimension,
+                                group_d_a,
+                                group_d_b,
+                                k_g,
+                                n_a,
+                                depth_commit,
+                                claim,
+                                global_block,
+                                a_idx,
+                                role_subcol,
+                                digit,
+                                0,
+                            )?;
                             let a_acc = a_row_weight * challenge_alpha * opening_gadget;
                             let mut b_acc = E::zero();
                             for (row_idx, b_row) in b_rows.iter().take(n_b).enumerate() {
@@ -721,18 +724,16 @@ where
                                         );
                                 }
                             }
-                            relation_events.push_role(
-                                witness_col,
-                                role_subcol,
+                            relation_events.push(
+                                physical_start,
                                 group_d_b,
                                 role_subcol * group_d_b,
                                 a_acc,
                                 RelationWeightContribution::Constraint,
                             )?;
                             if setup_matrix.is_some() {
-                                relation_events.push_role(
-                                    witness_col,
-                                    role_subcol,
+                                relation_events.push(
+                                    physical_start,
                                     group_d_b,
                                     0,
                                     b_acc,
@@ -789,20 +790,16 @@ where
                             commit_digit,
                             fold_digit,
                         )?;
-                        relation_events.push_role(
+                        relation_events.push_carrier_subring(
                             witness_col,
-                            0,
                             group_d_a,
-                            0,
                             -(z_bases[phys_k].0 * fold),
                             RelationWeightContribution::Constraint,
                         )?;
                         if setup_matrix.is_some() {
-                            relation_events.push_role(
+                            relation_events.push_carrier_subring(
                                 witness_col,
-                                0,
                                 group_d_a,
-                                0,
                                 -(z_bases[phys_k].1 * fold),
                                 RelationWeightContribution::SetupMatrix,
                             )?;
@@ -835,11 +832,9 @@ where
         let row_denom = row_alpha_pows[row_dim - 1] * alpha + E::one();
         for (digit, gadget) in r_gadget.iter().enumerate() {
             let witness_col = witness_layout.r_index(levels, row, digit)?;
-            relation_events.push_role(
+            relation_events.push_carrier_subring(
                 witness_col,
-                0,
                 row_dim,
-                0,
                 -(eq_weight * row_denom * *gadget),
                 RelationWeightContribution::Constraint,
             )?;

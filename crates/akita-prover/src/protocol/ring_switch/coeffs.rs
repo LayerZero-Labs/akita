@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
+use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::protocol::ring_relation::RelationQuotientOutput;
 use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
@@ -7,8 +8,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, emit_witness_t_planes, emit_witness_z_planes, CommitmentRingDims,
-    LevelParamsLike, RingRole, RingVec, WitnessLayout,
+    dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
+    CommitmentRingDims, LevelParamsLike, RingRole, RingVec, WitnessLayout,
 };
 
 pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
@@ -79,15 +80,28 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
             )
         }
     )?;
-    emit_group_e_planes_padded::<D>(
-        out,
-        layout,
-        group_id,
-        num_claims,
-        group.params.num_digits_open(),
-        &group.e_hat,
-        group.params.num_live_blocks(),
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
         group.role_dims.d_a(),
+        |D_A| {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Opening),
+                F,
+                group.role_dims.d_d(),
+                |D_D| {
+                    emit_witness_e_planes::<D, D_A, D_D>(
+                        out,
+                        layout,
+                        group_id,
+                        num_claims,
+                        group.params.num_digits_open(),
+                        &group.e_hat,
+                        group.params.num_live_blocks(),
+                    )
+                }
+            )
+        }
     )
 }
 
@@ -136,106 +150,23 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_CARRIER: usize, const
             &z_planes,
         )?;
     }
-    emit_witness_t_planes::<D_CARRIER, D_GROUP>(
-        out,
-        layout,
-        group_id,
-        num_claims,
-        group.params.a_rows_len(),
-        group.params.num_digits_outer(),
-        group.t_hat.typed_planes::<D_GROUP>()?,
-        group.params.num_live_blocks(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_group_e_planes_padded<const D_A: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
-    num_claims: usize,
-    depth_open: usize,
-    e_hat: &DigitBlocks,
-    source_num_live_blocks: usize,
-    source_ring_dim: usize,
-) -> Result<(), AkitaError> {
-    if source_ring_dim > D_A
-        || !D_A.is_multiple_of(source_ring_dim)
-        || e_hat.digit_stride() > source_ring_dim
-        || !source_ring_dim.is_multiple_of(e_hat.digit_stride())
-    {
-        return Err(AkitaError::InvalidSize {
-            expected: D_A,
-            actual: source_ring_dim,
-        });
-    }
-    let expected = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(depth_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
-    let expected_digits = expected
-        .checked_mul(source_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E digit length overflow".into()))?;
-    if e_hat.digits().len() != expected_digits {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_digits,
-            actual: e_hat.digits().len(),
-        });
-    }
-    let role_ratio = source_ring_dim / e_hat.digit_stride();
-    let expected_blocks = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(role_ratio))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E block count overflow".into()))?;
-    if e_hat.block_count() != expected_blocks {
-        return Err(AkitaError::InvalidProof);
-    }
-    for unit in layout.units_for_group(group_id)? {
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                for digit in 0..depth_open {
-                    let logical_block = claim * source_num_live_blocks + global_block;
-                    let mut plane = [0i8; D_A];
-                    for role_subcol in 0..role_ratio {
-                        let source_block = logical_block * role_ratio + role_subcol;
-                        let source = source_block * depth_open + digit;
-                        let source_plane = e_hat.plane(source).ok_or(AkitaError::InvalidProof)?;
-                        let start = role_subcol * e_hat.digit_stride();
-                        plane[start..start + e_hat.digit_stride()].copy_from_slice(source_plane);
-                    }
-                    write_padded_plane::<D_A>(
-                        out,
-                        unit.e_index(num_claims, depth_open, claim, global_block, digit)?,
-                        &plane,
-                    )?;
-                }
-            }
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        group.role_dims.d_b(),
+        |D_B| {
+            emit_witness_t_planes::<D_CARRIER, D_GROUP, D_B>(
+                out,
+                layout,
+                group_id,
+                num_claims,
+                group.params.a_rows_len(),
+                group.params.num_digits_outer(),
+                &group.t_hat,
+                group.params.num_live_blocks(),
+            )
         }
-    }
-    Ok(())
-}
-
-fn write_padded_plane<const D_A: usize>(
-    out: &mut [i8],
-    ring_index: usize,
-    plane: &[i8],
-) -> Result<(), AkitaError> {
-    if plane.len() > D_A {
-        return Err(AkitaError::InvalidSize {
-            expected: D_A,
-            actual: plane.len(),
-        });
-    }
-    let start = ring_index
-        .checked_mul(D_A)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness plane offset overflow".into()))?;
-    let end = start
-        .checked_add(D_A)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness plane end overflow".into()))?;
-    let dst = out.get_mut(start..end).ok_or(AkitaError::InvalidProof)?;
-    dst.fill(0);
-    dst[..plane.len()].copy_from_slice(plane);
-    Ok(())
+    )
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -313,43 +244,77 @@ where
                     hint,
                     ..
                 } = group;
-                let t_hat = hint.into_flat_parts()?;
-                if t_hat.digit_stride() != group_dims.d_a() {
+                if hint.ring_dim() != group_dims.d_a() {
                     return Err(AkitaError::InvalidSize {
                         expected: group_dims.d_a(),
-                        actual: t_hat.digit_stride(),
+                        actual: hint.ring_dim(),
                     });
                 }
-                let recomposed_inner_rows = dispatch_for_field!(
+                let inner_rows_by_polynomial = hint.into_rows();
+                let polynomial_count = opening_batch.group_layout(group_index)?.num_polynomials();
+                if inner_rows_by_polynomial.len() != polynomial_count {
+                    return Err(AkitaError::InvalidSize {
+                        expected: polynomial_count,
+                        actual: inner_rows_by_polynomial.len(),
+                    });
+                }
+                let expected_rings_per_polynomial = group_lp
+                    .num_live_blocks()
+                    .checked_mul(group_lp.a_rows_len())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("commitment hint row count overflow".into())
+                    })?;
+                let t_hat = dispatch_for_field!(
                     ProtocolDispatchSlot::Role(RingRole::Inner),
                     F,
                     group_dims.d_a(),
                     |D_G| {
-                        crate::compute::recompose_inner_rows::<F, D_G>(
-                            &t_hat,
-                            group_lp.num_digits_outer(),
-                            group_lp.log_basis_outer(),
-                        )
-                        .and_then(|blocks| {
-                            let coeff_capacity = blocks
-                                .len()
-                                .checked_mul(group_lp.a_rows_len())
-                                .and_then(|count| count.checked_mul(D_G))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidInput(
-                                        "recomposed inner-row length overflow".to_string(),
-                                    )
-                                })?;
-                            let mut coeffs = Vec::with_capacity(coeff_capacity);
-                            for rows in blocks {
-                                for row in rows {
-                                    coeffs.extend_from_slice(row.coefficients());
+                        dispatch_for_field!(
+                            ProtocolDispatchSlot::Role(RingRole::Outer),
+                            F,
+                            group_dims.d_b(),
+                            |D_B| {
+                                let mut blocks = Vec::with_capacity(
+                                    polynomial_count * group_lp.num_live_blocks(),
+                                );
+                                for rows in &inner_rows_by_polynomial {
+                                    let typed_rows = rows.as_ring_slice::<D_G>()?;
+                                    if typed_rows.len() != expected_rings_per_polynomial {
+                                        return Err(AkitaError::InvalidSize {
+                                            expected: expected_rings_per_polynomial,
+                                            actual: typed_rows.len(),
+                                        });
+                                    }
+                                    blocks.extend(typed_rows.chunks_exact(group_lp.a_rows_len()));
                                 }
+                                decompose_commit_blocks_into::<F, D_G, D_B>(
+                                    &blocks,
+                                    group_lp.num_digits_outer(),
+                                    group_lp.log_basis_outer(),
+                                )
                             }
-                            Ok(RingVec::from_coeffs(coeffs))
-                        })
+                        )
                     }
                 )?;
+                let expected_coefficients = polynomial_count
+                    .checked_mul(expected_rings_per_polynomial)
+                    .and_then(|count| count.checked_mul(group_dims.d_a()))
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "commitment hint coefficient count overflow".into(),
+                        )
+                    })?;
+                let mut inner_rows = inner_rows_by_polynomial.into_iter();
+                let mut inner_coefficients = inner_rows
+                    .next()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .into_coeffs();
+                inner_coefficients.reserve(expected_coefficients - inner_coefficients.len());
+                for rows in inner_rows {
+                    inner_coefficients.extend(rows.into_coeffs());
+                }
+                let recomposed_inner_rows =
+                    RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;
                 owned.push(PreparedRingSwitchGroup {
                     params: group_lp,
                     role_dims: group_dims,
@@ -544,11 +509,18 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
         for digit in 0..levels {
             let start = digit * row.ring_dim();
             let end = start + row.ring_dim();
-            write_padded_plane::<D_A>(
-                out,
-                layout.r_index(levels, row_index, digit)?,
-                &digits[start..end],
-            )?;
+            let destination = layout
+                .r_index(levels, row_index, digit)?
+                .checked_mul(D_A)
+                .ok_or_else(|| AkitaError::InvalidSetup("R witness offset overflow".into()))?;
+            let destination_end = destination
+                .checked_add(D_A)
+                .ok_or_else(|| AkitaError::InvalidSetup("R witness end overflow".into()))?;
+            let plane = out
+                .get_mut(destination..destination_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            plane.fill(0);
+            plane[..row.ring_dim()].copy_from_slice(&digits[start..end]);
         }
     }
     Ok(())

@@ -118,11 +118,10 @@ where
             )?
         };
         let relation_oracle = w_eval * relation_weight;
+        let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
-            self.evaluation_trace_row_weight
-                * w_eval
-                * self.evaluation_trace.evaluate_at_point(challenges)?
+            self.evaluation_trace_row_weight * w_eval * trace_weight
         };
 
         // A zero batching challenge removes the virtual term. Avoid the

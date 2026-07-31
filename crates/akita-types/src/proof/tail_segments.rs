@@ -7,7 +7,7 @@ use akita_serialization::{
     AkitaDeserialize, AkitaSerialize, Compress, SerializationError, Valid, Validate,
 };
 
-use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len};
+use super::{checked_shape_len, checked_shape_sequence_len, reserve_shape_len, DigitBlocks};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::golomb_rice::{
     analyze_z_fold_golomb_encoding, golomb_rice_decode_vec, golomb_rice_encode_vec,
@@ -1141,37 +1141,58 @@ pub fn validate_terminal_response_z_payload<F: FieldCore>(
     })
 }
 
-/// Emit one group's E planes at canonical witness addresses.
-pub fn emit_witness_e_planes<const D: usize>(
+/// Emit one group's role-native E planes at canonical witness addresses.
+#[allow(clippy::too_many_arguments)]
+pub fn emit_witness_e_planes<const D_CARRIER: usize, const D_A: usize, const D_ROLE: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
     num_claims: usize,
     depth_open: usize,
-    flat: &[[i8; D]],
+    digits: &DigitBlocks,
     source_num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
+    if !D_A.is_multiple_of(D_ROLE) || !D_CARRIER.is_multiple_of(D_A) {
+        return Err(AkitaError::InvalidSetup(
+            "witness E dimensions must satisfy D_ROLE | D_A | D_CARRIER".into(),
+        ));
+    }
+    digits.ensure_stride::<D_ROLE>()?;
+    let role_subcolumns = D_A / D_ROLE;
     let expected = num_claims
         .checked_mul(source_num_live_blocks)
+        .and_then(|n| n.checked_mul(role_subcolumns))
         .and_then(|n| n.checked_mul(depth_open))
         .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
-    if flat.len() != expected {
+    if digits.total_planes() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
-            actual: flat.len(),
+            actual: digits.total_planes(),
         });
     }
+    let flat = digits.typed_planes::<D_ROLE>()?;
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
             for global_block in unit.global_block_range() {
-                for digit in 0..depth_open {
-                    let source =
-                        (claim * source_num_live_blocks + global_block) * depth_open + digit;
-                    write_witness_plane(
-                        out,
-                        unit.e_index(num_claims, depth_open, claim, global_block, digit)?,
-                        &flat[source],
-                    )?;
+                let semantic = claim * source_num_live_blocks + global_block;
+                for role_subcolumn in 0..role_subcolumns {
+                    for digit in 0..depth_open {
+                        let source =
+                            (semantic * role_subcolumns + role_subcolumn) * depth_open + digit;
+                        let destination = unit.e_coefficient_index(
+                            D_CARRIER,
+                            D_A,
+                            D_ROLE,
+                            num_claims,
+                            depth_open,
+                            claim,
+                            global_block,
+                            role_subcolumn,
+                            digit,
+                            0,
+                        )?;
+                        write_witness_coefficients(out, destination, &flat[source])?;
+                    }
                 }
             }
         }
@@ -1179,59 +1200,87 @@ pub fn emit_witness_e_planes<const D: usize>(
     Ok(())
 }
 
-/// Emit one group's T planes at canonical witness addresses.
+/// Emit one group's role-native T planes at canonical witness addresses.
 #[allow(clippy::too_many_arguments)]
-pub fn emit_witness_t_planes<const D_CARRIER: usize, const D_SOURCE: usize>(
+pub fn emit_witness_t_planes<const D_CARRIER: usize, const D_A: usize, const D_ROLE: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
     num_claims: usize,
     n_a: usize,
-    depth_open: usize,
-    flat: &[[i8; D_SOURCE]],
+    depth_outer: usize,
+    digits: &DigitBlocks,
     source_num_live_blocks: usize,
 ) -> Result<(), AkitaError> {
+    if !D_A.is_multiple_of(D_ROLE) || !D_CARRIER.is_multiple_of(D_A) {
+        return Err(AkitaError::InvalidSetup(
+            "witness T dimensions must satisfy D_ROLE | D_A | D_CARRIER".into(),
+        ));
+    }
+    digits.ensure_stride::<D_ROLE>()?;
+    let role_subcolumns = D_A / D_ROLE;
     let expected = num_claims
         .checked_mul(source_num_live_blocks)
         .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(depth_open))
+        .and_then(|n| n.checked_mul(role_subcolumns))
+        .and_then(|n| n.checked_mul(depth_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T source length overflow".into()))?;
-    if flat.len() != expected {
+    if digits.total_planes() != expected {
         return Err(AkitaError::InvalidSize {
             expected,
-            actual: flat.len(),
+            actual: digits.total_planes(),
         });
     }
+    let flat = digits.typed_planes::<D_ROLE>()?;
     let planes_per_block = n_a
-        .checked_mul(depth_open)
+        .checked_mul(role_subcolumns)
+        .and_then(|n| n.checked_mul(depth_outer))
         .ok_or_else(|| AkitaError::InvalidSetup("witness T source stride overflow".into()))?;
     for unit in layout.units_for_group(group_id)? {
         for claim in 0..num_claims {
             for global_block in unit.global_block_range() {
                 for a_row in 0..n_a {
-                    for digit in 0..depth_open {
-                        let source = (claim * source_num_live_blocks + global_block)
-                            * planes_per_block
-                            + a_row * depth_open
-                            + digit;
-                        write_witness_plane_padded::<D_CARRIER>(
-                            out,
-                            unit.t_index(
+                    for role_subcolumn in 0..role_subcolumns {
+                        for digit in 0..depth_outer {
+                            let source = (claim * source_num_live_blocks + global_block)
+                                * planes_per_block
+                                + (a_row * role_subcolumns + role_subcolumn) * depth_outer
+                                + digit;
+                            let destination = unit.t_coefficient_index(
+                                D_CARRIER,
+                                D_A,
+                                D_ROLE,
                                 num_claims,
                                 n_a,
-                                depth_open,
+                                depth_outer,
                                 claim,
                                 global_block,
                                 a_row,
+                                role_subcolumn,
                                 digit,
-                            )?,
-                            &flat[source],
-                        )?;
+                                0,
+                            )?;
+                            write_witness_coefficients(out, destination, &flat[source])?;
+                        }
                     }
                 }
             }
         }
     }
+    Ok(())
+}
+
+fn write_witness_coefficients(
+    out: &mut [i8],
+    start: usize,
+    coefficients: &[i8],
+) -> Result<(), AkitaError> {
+    let end = start
+        .checked_add(coefficients.len())
+        .ok_or_else(|| AkitaError::InvalidSetup("witness coefficient end overflow".into()))?;
+    out.get_mut(start..end)
+        .ok_or(AkitaError::InvalidProof)?
+        .copy_from_slice(coefficients);
     Ok(())
 }
 
