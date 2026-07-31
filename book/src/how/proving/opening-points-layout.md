@@ -49,9 +49,24 @@ and one shared `r_hat` quotient tail follows every unit. The logical orders are
 ```text
 z_hat[position][commit_digit][fold_digit]
 e_hat[claim][block_idx][opening_digit]
-t_hat[claim][block_idx][A_row][opening_digit]
+t_hat[claim][block_idx][A_row][outer_digit]
 r_hat[relation_row][quotient_digit]
 ```
+
+The T digit is the outer commitment digit. The active
+[`role-native-projected-digit-layout`](../../../../specs/role-native-projected-digit-layout.md)
+spec defines the mixed-dimension cutover. Under that contract, E and T split
+each A-ring value into native D or B subrings before decomposition. Their target
+coefficient orders are:
+
+```text
+e_hat[claim][block_idx][D_subcolumn][opening_digit][D_coefficient]
+t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
+```
+
+All live subcolumns precede carrier padding. When every role dimension equals
+the carrier dimension, the subcolumn axis has length one and the byte order is
+the same as the uniform layout.
 
 `WitnessLayout` is the range authority shared by planning, proving, setup,
 relation evaluation, recursive handoff, and verification. Units are ordered by

@@ -9,7 +9,7 @@
 | Branch | `quang/unify-verifier-setup-weights` |
 | Base | `feat/planner-per-matrix-d` |
 | Integration dependencies | PR #309 at `b0c2d4683539b0c2a465b996f48adfc465a20198`; PR #310 at `4cb4113b02a58889230f3dbaa81deb56895bb4ca` as cross-feature evidence |
-| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
+| Related | [`digit-range-pipeline-refactor.md`](digit-range-pipeline-refactor.md), [`digit-innermost-layout.md`](digit-innermost-layout.md), [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md), [`runtime-ring-cutover.md`](runtime-ring-cutover.md), [`packed-sumcheck.md`](packed-sumcheck.md) |
 
 ## Summary
 
@@ -419,14 +419,16 @@ The prover's normalized trace input is a nonempty `EvaluationTraceWeights` conta
 `EvaluationTraceTerm` per opening claim. There are no prover-side `Field`, `Ring`, `Root`,
 `Recursive`, `Absent`, sparse-table, or dense-table semantic variants.
 
-The landed term representation owns exactly:
+The role native projected digit cutover extends the term representation to own
+exactly:
 
 - one normalized claim coefficient;
 - the block-opening point and basis;
 - the group's exact live-block count and source ring dimension;
 - opening-digit gadget weights and one precomputed inner-trace row; and
-- one `EvaluationTraceSegment` per witness chunk, recording the flat physical coefficient
-  start, group-global block start, and exact live-block count.
+- one `EvaluationTraceSegment` per witness chunk, recording the flat physical
+  coefficient start, group-global block start, exact live-block count, and the
+  checked D projection geometry needed to skip carrier padding.
 
 The verifier receives its own minimal prepared group descriptors from the same checked
 claim coefficients, opening points, group/chunk ownership, basis, and source dimensions.
@@ -484,6 +486,9 @@ physical ranges. The block partition may be uneven; chunks before the remainder 
 own one extra block. Kernels iterate prepared units and runs. They do not assume equal
 chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
 
+The coefficient order inside projected E and T ranges is defined by
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+
 ### What generalizes without special arithmetic
 
 - Stage 1's result and the Stage 2 range-image term see one flat digit witness. Group and
@@ -495,8 +500,9 @@ chunk widths, `groups * chunks` rectangularity, or reconstruct offsets.
   sum-check challenges.
 - The shared quotient-R suffix is one ordinary relation segment; it is not replicated by
   the number of groups or chunks.
-- Padding remains one zero suffix after the live physical layout, not padding between
-  units.
+- Boolean-domain padding remains one zero suffix after the physical witness.
+  Role carrier padding remains inside each projected E or T semantic value as
+  defined by the role native projection spec. It is not setup-backed data.
 
 ### Group-specific inputs that require preparation
 
@@ -516,17 +522,23 @@ while retaining `WitnessLayout` as the semantic source of truth.
 
 ### Chunk-specific semantics
 
-Chunks partition a group's **global** block axis. They do not create claims. For a unit
-with global block start `B`, local block `j`, claim `c`, and opening digit `d`, the E
-column is conceptually
+Chunks partition a group's **global** block axis. They do not create claims. For
+a unit with global block start `B`, `F` local blocks, local block `j`, claim
+`c`, D subcolumn `s`, opening digit `o`, and D coefficient `kappa`, define:
 
 ```text
-unit.e_start
-  + depth_open * (c * unit.num_blocks + j)
-  + d,
+q_D = d_a / d_d
+Q_D = carrier_dimension / d_d
+
+unit.e_coefficient_start
+  + ((((c * F + j) * Q_D + s) * depth_open + o) * d_d + kappa),
 
 global_block = B + j.
 ```
+
+Only `0 <= s < q_D` is live. The subcolumns `q_D <= s < Q_D` are zero
+carrier padding. The role native projection spec defines the exact trace
+contraction formula.
 
 The evaluation trace uses `block_opening_weight(global_block)`. It must not reset the
 block index to zero at each chunk. E and T supports are split across units; Z is a separate
@@ -535,12 +547,14 @@ attribution must preserve those distinctions.
 
 ### Evaluation trace over the cross-product
 
-Each `EvaluationTraceTerm` owns its normalized group/claim coefficient, source ring
-dimension, digit gadget and inner trace vectors, and a list of physical E segments—one per
-relevant witness unit. A segment records its flat physical coefficient start and global
-block start/count; digit depth is term-owned and claim placement was already resolved into
-the physical start. This expresses multigroup and multichunk support without
-`TraceTermBatch`, `dense_evals`, or a remapped table.
+Each `EvaluationTraceTerm` owns its normalized group and claim coefficient,
+source ring dimension, D ring dimension, live and carrier subcolumn counts,
+digit gadget, inner trace vectors, and one physical E segment per relevant
+witness unit. A segment records its flat physical coefficient start and global
+block start and count. The prepared trace walks the native D runs in the order
+`[block][D subcolumn][opening digit][D coefficient]` and skips carrier padding.
+This expresses multiple groups and chunks without `TraceTermBatch`,
+`dense_evals`, a transpose, or a remapped table.
 
 The prover measures three exact strategies:
 

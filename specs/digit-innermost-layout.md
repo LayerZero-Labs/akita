@@ -4,7 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao; Codex assistant |
 | Created | 2026-07-10 |
-| Revised | 2026-07-16 |
+| Revised | 2026-07-31 |
 | Status | active |
 | PR | #294 |
 | Supersedes | Root and recursive layout decisions in `setup-layout-repack.md`, `protocol-core-eor-consolidation.md`, and `distributed-verifier-row-eval.md` |
@@ -12,6 +12,11 @@
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
 This spec follows the lifecycle in [`PRUNING.md`](PRUNING.md). It replaces the first version of this file. That version used a power of two block count, a compact position count, and a second virtual opening address. This version reverses those choices.
+
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md)
+is authoritative for the coefficient order inside projected E and T segments.
+This spec remains authoritative for source order, group and chunk ownership,
+segment order, and exact segment ranges.
 
 ## Summary
 
@@ -31,7 +36,7 @@ The decomposed witness keeps each digit next to the value it decomposes.
 ```text
 z_hat[position][commit digit][fold digit]
 e_hat[claim][live block index][opening digit]
-t_hat[claim][live block index][A row][opening digit]
+t_hat[claim][live block index][A row][outer digit]
 r_hat[relation row][quotient digit]
 ```
 
@@ -100,7 +105,8 @@ This cutover does not require unequal chunk sumcheck work to be communication fr
 
 This cutover does not require flat random challenges to have a sublinear evaluator. A flat challenge has one independent value per live block.
 
-This cutover does not redesign the mixed ring projection algebra. It keeps the projection work from PR #294 and makes it consume the final witness geometry.
+This cutover does not define the coefficient order of mixed ring projection.
+The role native projection spec defines that order and its relation formulas.
 
 ## Terminology and geometry
 
@@ -308,7 +314,7 @@ Its exact segment lengths are:
 ```text
 Z_g  = M_g * delta_c_g * delta_f_g
 E_gj = C_g * F_j * delta_o_g
-T_gj = C_g * F_j * n_A_g * delta_o_g
+T_gj = C_g * F_j * n_A_g * delta_c_g
 ```
 
 Resolve each unit from one checked cursor.
@@ -362,21 +368,31 @@ e_index(c, u, d_o)
     = e_start + d_o + delta_o * (u + F_j * c)
 ```
 
+For mixed D dimensions, this ring index does not define the coefficient order
+inside the E range. The coefficient order is
+`[D subcolumn][opening digit][D coefficient]` as required by the role native
+projection spec.
+
 ### `t_hat`
 
 `t_hat` has axes:
 
 ```text
-[claim][local live block index][A row][opening digit]
+[claim][local live block index][A row][outer digit]
 ```
 
-The opening digit is innermost.
+The outer digit is innermost in this logical carrier-ring view.
 
 ```text
-t_index(c, u, a, d_o)
-    = t_start + d_o
-      + delta_o * (a + n_A * (u + F_j * c))
+t_index(c, u, a, d_c)
+    = t_start + d_c
+      + delta_c * (a + n_A * (u + F_j * c))
 ```
+
+For mixed B dimensions, this ring index does not define the coefficient order
+inside the T range. The coefficient order is
+`[A row][B subcolumn][outer digit][B coefficient]` as required by the role
+native projection spec.
 
 ### `r_hat`
 
@@ -592,7 +608,7 @@ D role e column:
   [claim][global block index][opening digit]
 
 B role t column:
-  [claim][global block index][A row][opening digit]
+  [claim][global block index][A row][outer digit]
 
 A role z column:
   [position][commit digit]
@@ -604,7 +620,11 @@ The semantic setup matrices do not contain chunk copies. A physical relation uni
 
 For multi group roots, D columns concatenate group `e_hat` columns in relation order. Derive each group start by a checked prefix sum. Do not store a mutable `e_setup_col_offset` in a copied group descriptor.
 
-`SetupProjectionGeometry` computes mixed role projection after these semantic columns are known. The prover and verifier use the same checked object for required footprint, round count, alpha powers, and work limits.
+These are semantic columns only. The physical B and D columns insert the role
+subcolumn before the role digit. The exact formulas are in
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+`SetupProjectionGeometry` computes the checked ratios, footprint, round count,
+alpha powers, and work limits from that order.
 
 ## Multi group roots
 

@@ -9,6 +9,7 @@
 | Primary workload | fp128 one-hot, `nv = 36`, `np = 1` |
 | Primary profile mode | `onehot_fp128_d64_root_d128` |
 | Related spec | `specs/runtime-ring-cutover.md` |
+| Projected digit layout | `specs/role-native-projected-digit-layout.md` |
 | Current synthetic implementation | `crates/akita-pcs/src/test_support.rs` |
 | Proposed planner implementation | `crates/akita-planner/src/schedule_params/` |
 
@@ -134,6 +135,12 @@ D physical width = native D width * (d_a / d_d)
 ```
 
 This is an exact subcolumn expansion, not padding and not a ring embedding.
+
+The coefficient-level order of this expansion is defined by
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+B and D **MUST** split an A value into native role subrings before gadget
+decomposition. Their physical columns use
+`[semantic value][role subcolumn][role digit]`.
 
 ### Across-level setup rule
 
@@ -1169,36 +1176,35 @@ lane alpha weight = alpha^(common base * lane)
 The A matrix lane-sums into one physical A column. Smaller B/D matrices spread
 their lanes across physical subcolumns.
 
+The subcolumn axis precedes the digit axis. Projection powers
+`alpha^(role subcolumn * role dimension)` are part of the projected equality
+tensor. Using the notation from the role native projected digit layout spec,
+`q_R = 1` omits that tensor factor and every multiplication by one. `Q_R = 1`
+also gives one contiguous equality window. When `q_R = 1 < Q_R`, the plan
+addresses the live carrier spans directly without restoring the unit factor.
+
 ### Direct verifier
 
-The direct verifier uses two paths:
+The direct verifier uses one canonical projected digit plan. The plan may use
+local compile-time specialization when `q_R = 1` or `Q_R = 1`. It **MUST NOT**
+select a second relation implementation at a broad uniform-versus-mixed
+dispatch boundary.
 
-- **Uniform fast path:** monomorphized carrier-D relation evaluation and
-  contiguous setup-weight kernels.
-- **General mixed path:** checked span/lane evaluation through the canonical
-  setup plan.
-
-The uniform gate requires both:
-
-```text
-role_dims == CommitmentRingDims::uniform(D)
-common_relation_witness_coeff_count == D
-```
-
-This permits a uniform current level to use the succinct evaluator even when
-the outgoing ring is smaller, provided the canonical relation coefficient
-block is still D.
+For `Q_R = 1`, the plan uses the existing contiguous equality and setup
+kernels. For `q_R = 1`, it does not allocate projection powers, evaluate a
+projection power MLE, or multiply by one. Other shapes use the same plan with
+explicit compact subcolumn tensor axes.
 
 ### Recursive and setup-offloaded verifier
 
 `SetupContributionPlan::evaluate_setup_index_weight_mle` evaluates uniform,
-mixed-D, multigroup, and multichunk geometry. The plan selects contiguous q=1
-or projected-lane q>1 kernels while preserving the same compact pair-equality
-recurrence and canonical D/B/A formula.
+mixed-D, multigroup, and multichunk geometry. The plan selects a contiguous
+one-lane inner kernel or a projected multi-lane inner kernel while preserving
+the same compact pair-equality recurrence and canonical D/B/A formula.
 
 The performance restorations at `2205555a6` and `2f0c35b66` are intentional:
 
-- keep q=1 deferred structured E/T/Z evaluation on its contiguous kernel;
+- keep one-lane deferred structured E/T/Z evaluation on its contiguous kernel;
 - keep uniform Stage-3 setup-index evaluation succinct;
 - reuse one carrier alpha-power table across uniform root groups;
 - skip alpha-power generation for a one-lane projection;
@@ -1803,8 +1809,8 @@ Before changing this area:
    - multi-group ownership.
 4. Use `RelationAddressGeometry`, `group_role_dims`, and
    `SetupContributionPlan`; do not create parallel geometry helpers.
-5. Preserve the uniform fast paths unless benchmark evidence justifies a
-   change.
+5. Preserve the one-lane inner kernels inside the canonical projected plan
+   unless identical-geometry benchmark evidence justifies a change.
 6. Run the focused schedule/E2E tests before expensive repository-wide gates.
 7. If benchmark geometry changes, invalidate old numbers explicitly before
    adding new ones.

@@ -34,6 +34,11 @@ root and recursive order recorded by the first version of this spec. Every fold
 level now uses the same digit-innermost order. This document retains authority
 over the packed overlapping setup prefix, not a separate role order.
 
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md)
+is authoritative for the coefficient-level E and T projection order and the
+physical B and D column formulas. This document keeps authority over the shared
+packed setup object and its overlapping role views.
+
 ## Original layout-branch scope (archival)
 
 PR #112 was a spec-only cleanup PR. It recorded the target packed setup layout
@@ -283,7 +288,7 @@ verifier callers stop spelling `setup.seed.max_stride`.
 The setup role column order is a view used by the current folding step. It is
 not a separate committed setup object.
 
-Root and recursive folds use the same digit-innermost semantic order. Let
+Root and recursive folds use the same semantic order. Let
 `B = num_live_blocks`, `delta_o = depth_open`,
 `delta_c = depth_commit`, `delta_w = depth_witness`,
 `M = num_positions_per_block`, and `C = num_claims`. Setup role widths use
@@ -302,9 +307,11 @@ j_B(c, b, a, d_c)
 j_A(p, d_w) = d_w + delta_w * p
 ```
 
-`SetupProjectionGeometry` inserts any mixed-ring physical subcolumn axis. That
-axis does not change the semantic digit order. `WitnessLayout` remains the
-authority for group and chunk ranges.
+These formulas omit the physical role subcolumn and therefore are not physical
+matrix indexes when `d_b < d_a` or `d_d < d_a`. The physical order **MUST** be
+`[semantic column][role subcolumn][role digit]`. The exact formulas are in the
+role native projection spec. `WitnessLayout` remains the authority for group
+and chunk ranges.
 
 ## NTT Cache and Kernels
 
