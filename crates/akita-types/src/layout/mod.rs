@@ -20,7 +20,7 @@ pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     lagrange_weights, monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, BasisMode, RingOpeningPoint,
+    ring_opening_point_from_field, witness_commitment_domain_len, BasisMode, RingOpeningPoint,
 };
 pub use params::{
     shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,
@@ -28,8 +28,8 @@ pub use params::{
 };
 pub use proof_size::{
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
-    packed_digits_bytes, padded_boolean_opening_vars, planned_output_witness_len,
-    planned_w_ring_element_count, proof_ring_vec_bytes, sumcheck_rounds, terminal_response_bytes,
+    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes, sumcheck_rounds,
+    terminal_response_bytes,
 };
 pub use ring_dims::{
     validate_role_dims, validate_schedule_ring_dims, CommitmentRingDims, RingRole, MAX_FOLD_LEVELS,

@@ -52,7 +52,7 @@ mod onehot;
 mod single;
 
 fn batched_shape_rounds(level_d: usize, output_witness_len: usize) -> usize {
-    let num_ring_elems = output_witness_len / level_d;
+    let num_ring_elems = output_witness_len.div_ceil(level_d);
     num_ring_elems.next_power_of_two().trailing_zeros() as usize + level_d.trailing_zeros() as usize
 }
 

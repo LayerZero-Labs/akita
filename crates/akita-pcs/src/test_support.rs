@@ -632,25 +632,19 @@ fn retarget_commitment_matrices(
     Ok(())
 }
 
-/// Field-element length of the outgoing witness produced in the current
-/// level's A-carrier ring.
+/// Exact coefficient length of the outgoing compact witness.
 fn outgoing_witness_field_len(
     field_bits: u32,
     commitment: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let relation_rows = commitment.relation_matrix_row_count(opening_layout.num_groups())?;
     let layout = WitnessLayout::new(
         commitment,
         opening_layout,
         commitment.witness_chunk.num_chunks,
-        relation_rows,
         compute_num_digits_field_width(field_bits, commitment.log_basis_open),
     )?;
-    layout
-        .total_len()
-        .checked_mul(commitment.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("outgoing witness length overflow".into()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Config adapter for a three-level ring-dimension transition: L0

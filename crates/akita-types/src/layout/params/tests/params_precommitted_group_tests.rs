@@ -141,22 +141,21 @@ fn relation_witness_carrier_is_independent_of_final_group_order() {
             .d_a(),
         128
     );
-    assert_eq!(lp.relation_witness_carrier_ring_dimension(), 128);
-
-    let relation_rows = lp
-        .relation_matrix_row_count(batch.num_groups())
-        .expect("relation rows");
     let witness_layout = WitnessLayout::new(
         &lp,
         &batch,
         lp.witness_chunk.num_chunks,
-        relation_rows,
         crate::r_decomp_levels::<Prime128OffsetA7F7>(lp.log_basis_open),
     )
     .expect("witness layout");
     assert_eq!(
         lp.output_witness_len::<Prime128OffsetA7F7>(&batch)
             .expect("output witness length"),
-        witness_layout.total_len() * 128
+        witness_layout.live_coeff_len()
     );
+    assert!(witness_layout
+        .units_for_group(0)
+        .expect("precommitted units")
+        .iter()
+        .all(|unit| unit.z_range().len().is_multiple_of(128)));
 }

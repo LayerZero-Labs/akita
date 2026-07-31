@@ -51,7 +51,7 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     witness_chunks: usize,
 ) -> Result<RelationEvaluatorBenchmarkCase, AkitaError> {
     type F = Prime128OffsetA7F7;
-    const CARRIER_D: usize = 128;
+    const A_D: usize = 128;
     const NUM_CLAIMS: usize = 2;
     const NUM_LIVE_BLOCKS: usize = 64;
     const NUM_POSITIONS_PER_BLOCK: usize = 8;
@@ -62,19 +62,19 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     const DEPTH_OPEN: usize = 2;
     const LOG_BASIS: u32 = 4;
 
-    if role_dims.d_a() != CARRIER_D {
+    if role_dims.d_a() != A_D {
         return Err(AkitaError::InvalidSetup(
-            "relation benchmark requires A carrier dimension 128".into(),
+            "relation benchmark requires A dimension 128".into(),
         ));
     }
     let mut level_params = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
-        CARRIER_D,
+        A_D,
         LOG_BASIS,
         N_A,
         N_B,
         N_D,
-        SparseChallengeConfig::production_for_ring_dim(CARRIER_D)
+        SparseChallengeConfig::production_for_ring_dim(A_D)
             .ok_or_else(|| AkitaError::InvalidSetup("missing benchmark fold challenge".into()))?,
     )
     .with_decomp(
@@ -122,21 +122,13 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
         &level_params,
         &opening_batch,
         witness_chunks,
-        rows,
         quotient_depth,
     )?;
-    let carrier_flat_len = witness_layout
-        .total_len()
-        .checked_mul(CARRIER_D)
-        .ok_or_else(|| AkitaError::InvalidSetup("benchmark witness length overflow".into()))?;
-    if !carrier_flat_len.is_multiple_of(outgoing_ring_dimension) {
-        return Err(AkitaError::InvalidSetup(
-            "benchmark outgoing dimension does not divide witness carrier".into(),
-        ));
-    }
-    let opening_source_len = carrier_flat_len / outgoing_ring_dimension;
-    let relation_address_geometry =
-        RelationAddressGeometry::new(role_dims, outgoing_ring_dimension, opening_source_len)?;
+    let relation_address_geometry = RelationAddressGeometry::new(
+        role_dims,
+        outgoing_ring_dimension,
+        witness_layout.live_coeff_len(),
+    )?;
     let alpha = scalar(3);
     let point = (0..relation_address_geometry.relation_point_variable_count())
         .map(|index| scalar(101 + index as u128))
@@ -185,24 +177,24 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
     let mut plan: SetupContributionPlan<F> =
         evaluator.setup_contribution_plan::<F>(relation_address, Some(&fold_gadget))?;
     plan.materialize_direct_scan(alpha)?;
-    let carrier_ratio = CARRIER_D
+    let a_ratio = A_D
         .checked_div(plan.projection_geometry().base_ring_dim())
         .filter(|ratio| *ratio != 0)
-        .ok_or_else(|| AkitaError::InvalidSetup("benchmark setup carrier ratio is zero".into()))?;
-    let setup_ring_elements = plan.required().div_ceil(carrier_ratio);
+        .ok_or_else(|| AkitaError::InvalidSetup("benchmark setup A ratio is zero".into()))?;
+    let setup_ring_elements = plan.required().div_ceil(a_ratio);
     let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
         AkitaSetupSeed {
             max_num_vars: 0,
             max_num_batched_polys: NUM_CLAIMS,
-            gen_ring_dim: CARRIER_D,
+            gen_ring_dim: A_D,
             max_setup_len: setup_ring_elements,
             public_matrix_seed: [7; 32],
         },
         FlatMatrix::from_flat_data(
-            (0..setup_ring_elements * CARRIER_D)
+            (0..setup_ring_elements * A_D)
                 .map(|index| scalar(503 + index as u128))
                 .collect(),
-            CARRIER_D,
+            A_D,
         ),
     );
 

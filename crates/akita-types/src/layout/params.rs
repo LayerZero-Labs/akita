@@ -899,6 +899,18 @@ impl CommittedGroupParams {
         self.precommitted_group_count() + 1
     }
 
+    /// Build the canonical root opening layout around one final group.
+    pub fn opening_layout_for_final_group(
+        &self,
+        final_group: crate::PolynomialGroupLayout,
+    ) -> Result<OpeningClaimsLayout, AkitaError> {
+        let precommitted = self
+            .precommitted_group_iter()
+            .map(|group| group.layout.group)
+            .collect::<Vec<_>>();
+        OpeningClaimsLayout::from_root_groups(&precommitted, final_group)
+    }
+
     pub fn validate_opening_batch(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -956,25 +968,13 @@ impl CommittedGroupParams {
         Ok(dims)
     }
 
-    /// Ring dimension of the batch-owned recursive-witness carrier.
-    ///
-    /// Every group keeps its native A dimension for fold and relation
-    /// arithmetic. The physical witness carrier uses the largest group A
-    /// dimension so support is independent of caller group order.
-    #[must_use]
-    pub fn relation_witness_carrier_ring_dimension(&self) -> usize {
-        self.precommitted_group_iter()
-            .map(|group| group.inner_commit_matrix.ring_dimension())
-            .fold(self.d_a(), usize::max)
-    }
-
     /// Resolve flat relation-address geometry across every opening group's
     /// native A/B dimensions and this level's shared D dimension.
     pub fn relation_address_geometry(
         &self,
         opening_batch: &OpeningClaimsLayout,
         outgoing_witness_ring_dimension: usize,
-        outgoing_witness_source_len: usize,
+        live_witness_coeff_len: usize,
     ) -> Result<RelationAddressGeometry, AkitaError> {
         self.validate_opening_batch(opening_batch)?;
         let group_role_dims = (0..opening_batch.num_groups())
@@ -984,7 +984,7 @@ impl CommittedGroupParams {
             self.role_dims(),
             &group_role_dims,
             outgoing_witness_ring_dimension,
-            outgoing_witness_source_len,
+            live_witness_coeff_len,
         )
     }
 
@@ -1168,7 +1168,8 @@ impl CommittedGroupParams {
         Ok(start..end)
     }
 
-    /// Next-witness length in field elements for scalar or multi-group folds.
+    /// Exact live next-witness length in field elements for scalar or
+    /// multi-group folds.
     pub fn output_witness_len<F: CanonicalField>(
         &self,
         opening_batch: &OpeningClaimsLayout,
@@ -1176,19 +1177,13 @@ impl CommittedGroupParams {
         opening_batch.check()?;
         self.witness_chunk.validate()?;
         self.validate_opening_batch(opening_batch)?;
-        let relation_rows = self.relation_matrix_row_count(opening_batch.num_groups())?;
         let witness_layout = crate::WitnessLayout::new(
             self,
             opening_batch,
             self.witness_chunk.num_chunks,
-            relation_rows,
             crate::r_decomp_levels::<F>(self.log_basis_open),
         )?;
-        let carrier_ring_dimension = self.relation_witness_carrier_ring_dimension();
-        witness_layout
-            .total_len()
-            .checked_mul(carrier_ring_dimension)
-            .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".to_string()))
+        Ok(witness_layout.live_coeff_len())
     }
 
     /// Row count for an explicit relation-matrix row layout.

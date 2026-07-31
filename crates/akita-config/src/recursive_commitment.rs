@@ -224,17 +224,14 @@ mod tests {
     fn profiling_schedule_tensor_setup_weights_match_dense_materialization() {
         let (schedule, opening_batch) = profiling_schedule();
         let params = &schedule.root.params.final_group.commitment;
-        let rows = params
-            .relation_matrix_row_count(opening_batch.num_groups())
-            .expect("relation rows");
         let witness_layout = WitnessLayout::new(
             params,
             &opening_batch,
             params.witness_chunk.num_chunks,
-            rows,
             r_decomp_levels::<Prime128OffsetA7F7>(params.log_basis_open),
         )
         .expect("root witness layout");
+        let rows = witness_layout.r_rows().len();
         let order = opening_batch.root_group_order().expect("relation order");
         let groups = order
             .iter()
@@ -265,9 +262,12 @@ mod tests {
             })
             .collect::<Vec<_>>();
         let next_d = schedule.recursive_folds[0].params.witness.d_a();
-        let address_geometry =
-            RelationAddressGeometry::new(params.role_dims(), next_d, witness_layout.total_len())
-                .expect("relation address geometry");
+        let address_geometry = RelationAddressGeometry::new(
+            params.role_dims(),
+            next_d,
+            witness_layout.live_coeff_len(),
+        )
+        .expect("relation address geometry");
         let address_point = (0..address_geometry.relation_lane_variable_count())
             .map(|index| scalar(101 + index as u128))
             .collect::<Vec<_>>();

@@ -32,8 +32,8 @@ fn layout() -> TraceWeightLayout {
     .with_decomp(1, 2, 1, 2, 2)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1, 1).unwrap();
-    let opening_source_len = witness_layout.total_len();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 1).unwrap();
+    let opening_source_len = witness_layout.live_coeff_len() / D;
     TraceWeightLayout {
         ring_bits: 3,
         col_bits: 4,

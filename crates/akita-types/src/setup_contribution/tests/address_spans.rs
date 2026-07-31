@@ -16,7 +16,6 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
     let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
     let first_e = first_unit
         .e_coefficient_index(
-            geometry.carrier_ring_dimension(),
             role_dims.d_a(),
             role_dims.d_d(),
             group.num_claims,
@@ -33,7 +32,6 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
 
     let first_t = first_unit
         .t_coefficient_index(
-            geometry.carrier_ring_dimension(),
             role_dims.d_a(),
             role_dims.d_b(),
             group.num_claims,
@@ -54,15 +52,18 @@ fn uniform_current_roles_do_not_split_at_the_outgoing_dimension() {
     for unit in witness_layout.units_for_group(group.group_id).unwrap() {
         for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
             let z = unit
-                .z_index(
+                .z_coefficient_index(
+                    role_dims.d_a(),
                     inputs.num_positions_per_block(),
                     inputs.depth_commit(),
                     group.depth_fold,
                     0,
                     0,
                     fold_digit,
+                    0,
                 )
-                .unwrap();
+                .unwrap()
+                / geometry.relation_coefficient_block_len();
             expected_z -= lane_weight(z) * fold;
         }
     }
@@ -88,7 +89,7 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         assert_eq!(geometry.role_relation_lane_count(RingRole::Opening), 1);
         assert_eq!(
             geometry.digit_witness_domain().live_len(),
-            witness_layout.total_len() * role_dims.d_a()
+            witness_layout.live_coeff_len()
         );
 
         let lane_alpha = [F::one(), scalar_powers(alpha, 33)[32]];
@@ -102,7 +103,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         let first_unit = witness_layout.units_for_group(group.group_id).unwrap()[0];
         let first_e = first_unit
             .e_coefficient_index(
-                geometry.carrier_ring_dimension(),
                 role_dims.d_a(),
                 role_dims.d_d(),
                 group.num_claims,
@@ -117,7 +117,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             / geometry.relation_coefficient_block_len();
         let second_e = first_unit
             .e_coefficient_index(
-                geometry.carrier_ring_dimension(),
                 role_dims.d_a(),
                 role_dims.d_d(),
                 group.num_claims,
@@ -135,7 +134,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
 
         let first_t = first_unit
             .t_coefficient_index(
-                geometry.carrier_ring_dimension(),
                 role_dims.d_a(),
                 role_dims.d_b(),
                 group.num_claims,
@@ -152,7 +150,6 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
             / geometry.relation_coefficient_block_len();
         let second_t = first_unit
             .t_coefficient_index(
-                geometry.carrier_ring_dimension(),
                 role_dims.d_a(),
                 role_dims.d_b(),
                 group.num_claims,
@@ -174,16 +171,19 @@ fn mixed_current_roles_ignore_outgoing_repacking() {
         for unit in witness_layout.units_for_group(group.group_id).unwrap() {
             for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                 let z = unit
-                    .z_index(
+                    .z_coefficient_index(
+                        role_dims.d_a(),
                         inputs.num_positions_per_block(),
                         inputs.depth_commit(),
                         group.depth_fold,
                         0,
                         0,
                         fold_digit,
+                        0,
                     )
-                    .unwrap();
-                expected_z -= lane_weight(z * 2, 2) * fold;
+                    .unwrap()
+                    / geometry.relation_coefficient_block_len();
+                expected_z -= lane_weight(z, 2) * fold;
             }
         }
         assert_eq!(z_eq_slice[0], expected_z);

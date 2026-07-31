@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use akita_algebra::offset_eq::{eq_eval_at_index, eval_affine_digit_intervals};
+use akita_algebra::offset_eq::eval_affine_digit_intervals;
 use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt, Invertible};
 use akita_types::{
@@ -30,7 +30,7 @@ struct PreparedEvaluationTraceGroup<E: FieldCore> {
     basis: BasisMode,
     source_ring_dimension: usize,
     opening_ring_dimension: usize,
-    carrier_ring_dimension: usize,
+    coefficient_block_len: usize,
     opening_digit_weights: Arc<[E]>,
     inner_trace: Arc<[E]>,
     claim_coefficients: Vec<E>,
@@ -63,7 +63,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                     "trace source ring dimension must be a power of two".into(),
                 ));
             }
-            let coefficient_variables = group.carrier_ring_dimension.trailing_zeros() as usize;
+            let coefficient_variables = group.coefficient_block_len.trailing_zeros() as usize;
             let (coefficient_point, column_point) = point
                 .split_at_checked(coefficient_variables)
                 .ok_or(AkitaError::InvalidProof)?;
@@ -77,8 +77,36 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
             let digit_weights = &group.opening_digit_weights;
 
             let role_subcolumns = source_ring_dimension / group.opening_ring_dimension;
-            if role_subcolumns != 1 || source_ring_dimension != group.carrier_ring_dimension {
-                let block_weights = basis_weights(block_point, group.basis)?;
+            if role_subcolumns != 1 || source_ring_dimension != group.coefficient_block_len {
+                let mut role_digit_weights = Vec::with_capacity(role_subcolumns);
+                for role_subcolumn in 0..role_subcolumns {
+                    let role_start = role_subcolumn
+                        .checked_mul(group.opening_ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("trace role offset overflow".into())
+                        })?;
+                    let role_end = role_start
+                        .checked_add(group.opening_ring_dimension)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("trace role end overflow".into())
+                        })?;
+                    let inner_trace = group
+                        .inner_trace
+                        .get(role_start..role_end)
+                        .ok_or(AkitaError::InvalidProof)?;
+                    let mut weights = Vec::with_capacity(
+                        digit_weights
+                            .len()
+                            .checked_mul(inner_trace.len())
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("trace tensor size overflow".into())
+                            })?,
+                    );
+                    for &digit_weight in digit_weights.iter() {
+                        weights.extend(inner_trace.iter().map(|&inner| digit_weight * inner));
+                    }
+                    role_digit_weights.push(weights);
+                }
                 for (claim, &claim_coefficient) in group.claim_coefficients.iter().enumerate() {
                     for unit in &group.units {
                         let claim_start = claim
@@ -87,30 +115,42 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup("trace claim address overflow".into())
                             })?;
-                        for local_block in 0..unit.block_count {
-                            let global_block = unit.global_block_start + local_block;
-                            let block_start = claim_start
-                                + local_block * digit_weights.len() * group.carrier_ring_dimension;
-                            for (digit, &digit_weight) in digit_weights.iter().enumerate() {
-                                for role_subcolumn in 0..role_subcolumns {
-                                    for role_coefficient in 0..group.opening_ring_dimension {
-                                        let address = block_start
-                                            + (role_subcolumn * digit_weights.len() + digit)
-                                                * group.opening_ring_dimension
-                                            + role_coefficient;
-                                        let column = address / group.carrier_ring_dimension;
-                                        let coordinate = address % group.carrier_ring_dimension;
-                                        let source = role_subcolumn * group.opening_ring_dimension
-                                            + role_coefficient;
-                                        evaluation += claim_coefficient
-                                            * block_weights[global_block]
-                                            * digit_weight
-                                            * group.inner_trace[source]
-                                            * eq_eval_at_index(coefficient_point, coordinate)
-                                            * eq_eval_at_index(column_point, column);
-                                    }
-                                }
-                            }
+                        let block_stride = digit_weights
+                            .len()
+                            .checked_mul(source_ring_dimension)
+                            .ok_or_else(|| {
+                            AkitaError::InvalidSetup("trace block stride overflow".into())
+                        })?;
+                        for (role_subcolumn, projected_weights) in
+                            role_digit_weights.iter().enumerate()
+                        {
+                            let subcolumn_base = claim_start
+                                .checked_add(
+                                    role_subcolumn
+                                        .checked_mul(digit_weights.len())
+                                        .and_then(|offset| {
+                                            offset.checked_mul(group.opening_ring_dimension)
+                                        })
+                                        .ok_or_else(|| {
+                                            AkitaError::InvalidSetup(
+                                                "trace subcolumn offset overflow".into(),
+                                            )
+                                        })?,
+                                )
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup("trace base address overflow".into())
+                                })?;
+                            evaluation += claim_coefficient
+                                * eval_affine_digit_intervals(
+                                    point,
+                                    &[subcolumn_base],
+                                    unit.global_block_start,
+                                    unit.block_count,
+                                    block_stride,
+                                    projected_weights,
+                                    &high_block_weights,
+                                    &low_block_weights,
+                                )?;
                         }
                     }
                 }
@@ -130,7 +170,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                         })?;
                     claim_evaluation += eval_affine_digit_intervals(
                         column_point,
-                        &[claim_column / group.carrier_ring_dimension],
+                        &[claim_column / group.coefficient_block_len],
                         unit.global_block_start,
                         unit.block_count,
                         digit_weights.len(),
@@ -149,14 +189,14 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
 
 /// Prepare the verifier's compact group/chunk descriptors from checked common
 /// trace parameters.
-pub(crate) fn prepare_evaluation_trace<F, E, const D: usize>(
+pub(crate) fn prepare_evaluation_trace<F, E>(
     inputs: &EvaluationTraceInputs<'_, F, E>,
 ) -> Result<PreparedEvaluationTrace<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let group_parameters = prepare_evaluation_trace_group_parameters::<F, E, D>(inputs)?;
+    let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(inputs)?;
     let mut groups = Vec::with_capacity(group_parameters.len());
     for parameters in group_parameters {
         let group_layout = inputs
@@ -176,7 +216,6 @@ where
         let mut prepared_units = Vec::with_capacity(units.len());
         for unit in units {
             let first_claim_coefficient = unit.e_coefficient_index(
-                D,
                 group_dims.d_a(),
                 group_dims.d_d(),
                 num_claims,
@@ -190,7 +229,7 @@ where
             let claim_stride_coefficients = unit
                 .num_live_blocks()
                 .checked_mul(digit_count)
-                .and_then(|count| count.checked_mul(D))
+                .and_then(|count| count.checked_mul(group_dims.d_a()))
                 .ok_or_else(|| AkitaError::InvalidSetup("trace claim stride overflow".into()))?;
             let final_claim_start = (num_claims - 1)
                 .checked_mul(claim_stride_coefficients)
@@ -219,7 +258,7 @@ where
             basis: parameters.basis(),
             source_ring_dimension: parameters.source_ring_dimension(),
             opening_ring_dimension: group_dims.d_d(),
-            carrier_ring_dimension: D,
+            coefficient_block_len: inputs.relation_coefficient_block_len,
             opening_digit_weights: parameters.shared_opening_digit_weights(),
             inner_trace: parameters.shared_inner_trace(),
             claim_coefficients,
@@ -242,14 +281,74 @@ mod tests {
     use akita_config::proof_optimized::fp128;
     use akita_config::CommitmentConfig;
     use akita_types::{
-        basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
-        ring_opening_point_from_field, BasisMode, DigitRangePlan, OpeningClaimsLayout,
-        PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
-        RingMultiplierOpeningPoint, WitnessLayout,
+        basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
+        DigitRangePlan, OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry,
+        RelationRangeImagePlan, RingMultiplierOpeningPoint, WitnessLayout,
     };
 
     #[test]
-    fn compact_trace_matches_dense_definition() {
+    fn projected_subcolumn_trace_matches_dense_definition() {
+        type F = fp128::Field;
+        let block_point = Arc::<[F]>::from(vec![F::from_u64(3), F::from_u64(5)]);
+        let digit_weights = Arc::<[F]>::from(vec![F::from_u64(7), F::from_u64(11)]);
+        let inner_trace = Arc::<[F]>::from(
+            (0..8)
+                .map(|index| F::from_u64(13 + index as u64))
+                .collect::<Vec<_>>(),
+        );
+        let claim_coefficient = F::from_u64(23);
+        let unit = PreparedEvaluationTraceUnit {
+            first_claim_coefficient: 3,
+            claim_stride_coefficients: 48,
+            global_block_start: 1,
+            block_count: 2,
+        };
+        let trace = PreparedEvaluationTrace {
+            groups: vec![PreparedEvaluationTraceGroup {
+                block_opening_point: Arc::clone(&block_point),
+                basis: BasisMode::Lagrange,
+                source_ring_dimension: 8,
+                opening_ring_dimension: 4,
+                coefficient_block_len: 2,
+                opening_digit_weights: Arc::clone(&digit_weights),
+                inner_trace: Arc::clone(&inner_trace),
+                claim_coefficients: vec![claim_coefficient],
+                units: vec![unit.clone()],
+            }],
+            num_variables: 6,
+        };
+        let block_weights = basis_weights(&block_point, BasisMode::Lagrange).unwrap();
+        let mut dense = vec![F::zero(); 1 << trace.num_variables];
+        for local_block in 0..unit.block_count {
+            let global_block = unit.global_block_start + local_block;
+            for role_subcolumn in 0..2 {
+                for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                    for role_coefficient in 0..4 {
+                        let address = unit.first_claim_coefficient
+                            + local_block * digit_weights.len() * 8
+                            + role_subcolumn * digit_weights.len() * 4
+                            + digit * 4
+                            + role_coefficient;
+                        dense[address] += claim_coefficient
+                            * block_weights[global_block]
+                            * digit_weight
+                            * inner_trace[role_subcolumn * 4 + role_coefficient];
+                    }
+                }
+            }
+        }
+        let point = (0..trace.num_variables)
+            .map(|index| F::from_u64(29 + index as u64))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            trace.evaluate_at_point(&point).unwrap(),
+            multilinear_eval(&dense, &point).unwrap()
+        );
+    }
+
+    #[test]
+    fn compact_trace_matches_dense_definition_across_coefficient_blocks() {
         type Cfg = fp128::D128Dense;
         type F = fp128::Field;
         type E = F;
@@ -260,19 +359,16 @@ mod tests {
             OpeningClaimsLayout::new(NUM_VARIABLES, 2).expect("two-claim opening group");
         let level_params =
             Cfg::get_params_for_batched_commitment(&opening_batch).expect("level parameters");
-        let rhs_layout =
-            relation_rhs_layout_for(&level_params, &opening_batch).expect("relation RHS layout");
         let witness_layout = WitnessLayout::new(
             &level_params,
             &opening_batch,
             2,
-            relation_rhs_row_count(&rhs_layout),
             r_decomp_levels::<F>(level_params.log_basis_open),
         )
         .expect("two-chunk witness layout");
-        let live_len = witness_layout.total_len() * D;
+        let live_len = witness_layout.live_coeff_len();
         let relation_address_geometry =
-            RelationAddressGeometry::new(level_params.role_dims(), D, live_len / D)
+            RelationAddressGeometry::new(level_params.role_dims(), D / 2, live_len)
                 .expect("flat trace domain");
         let plan = RelationRangeImagePlan::new(
             relation_address_geometry,
@@ -308,7 +404,9 @@ mod tests {
         let inputs = || EvaluationTraceInputs {
             digit_witness_domain: plan.digit_witness_domain(),
             witness_layout: plan.witness_layout(),
-            carrier_ring_dimension: plan.relation_address_geometry().carrier_ring_dimension(),
+            relation_coefficient_block_len: plan
+                .relation_address_geometry()
+                .relation_coefficient_block_len(),
             level_params: &level_params,
             opening_batch: &opening_batch,
             prepared_points: &prepared_points,
@@ -316,8 +414,8 @@ mod tests {
             basis: BasisMode::Lagrange,
         };
         let verifier_trace =
-            prepare_evaluation_trace::<F, E, D>(&inputs()).expect("compact verifier trace");
-        let parameters = prepare_evaluation_trace_group_parameters::<F, E, D>(&inputs())
+            prepare_evaluation_trace::<F, E>(&inputs()).expect("compact verifier trace");
+        let parameters = prepare_evaluation_trace_group_parameters::<F, E>(&inputs())
             .expect("checked trace geometry");
         let mut dense = vec![E::zero(); digit_witness_domain.live_len()];
         for parameters in parameters {
@@ -352,7 +450,6 @@ mod tests {
                                 for role_coefficient in 0..group_dims.d_d() {
                                     let address = unit
                                         .e_coefficient_index(
-                                            D,
                                             group_dims.d_a(),
                                             group_dims.d_d(),
                                             group_layout.num_polynomials(),

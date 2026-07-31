@@ -198,16 +198,16 @@ pub fn validate_schedule_ring_dims(
                 )));
             }
         }
-        if !input_witness_len.is_multiple_of(dims.inner) {
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(format!(
-                "witness length {} is not divisible by fold ring d_a={}",
+                "witness length {} is invalid for fold ring d_a={}",
                 input_witness_len, dims.inner
             )));
         }
         if let (Some(output_witness_len), Some(next_ring_d)) = (output_witness_len, next_ring_d) {
-            if next_ring_d == 0 || !output_witness_len.is_multiple_of(next_ring_d) {
+            if next_ring_d == 0 || output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "next witness length {} is not divisible by next fold ring d_a={next_ring_d}",
+                    "next witness length {} is invalid for next fold ring d_a={next_ring_d}",
                     output_witness_len,
                 )));
             }

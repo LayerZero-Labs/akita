@@ -33,7 +33,7 @@ struct EvaluationTraceTerm<E: FieldCore> {
     group_block_count: usize,
     source_ring_dimension: usize,
     opening_ring_dimension: usize,
-    carrier_ring_dimension: usize,
+    coefficient_block_len: usize,
     opening_digit_weights: Arc<[E]>,
     inner_trace: Arc<[E]>,
     segments: Vec<EvaluationTraceSegment>,
@@ -100,14 +100,14 @@ impl<E: FieldCore> EvaluationTraceWeights<E> {
 }
 
 /// Build one canonical prover term per opening claim and witness chunk.
-pub(crate) fn build_evaluation_trace_weights<F, E, const D: usize>(
+pub(crate) fn build_evaluation_trace_weights<F, E>(
     inputs: EvaluationTraceInputs<'_, F, E>,
 ) -> Result<EvaluationTraceWeights<E>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + Invertible,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt,
 {
-    let group_parameters = prepare_evaluation_trace_group_parameters::<F, E, D>(&inputs)?;
+    let group_parameters = prepare_evaluation_trace_group_parameters::<F, E>(&inputs)?;
     let mut terms = Vec::with_capacity(inputs.claim_coefficients.len());
     for parameters in group_parameters {
         let group_index = parameters.group_index();
@@ -120,7 +120,6 @@ where
             let mut segments = Vec::with_capacity(units.len());
             for &unit in &units {
                 let physical_coefficient_start = unit.e_coefficient_index(
-                    D,
                     group_dims.d_a(),
                     group_dims.d_d(),
                     group_layout.num_polynomials(),
@@ -134,7 +133,7 @@ where
                 let coeff_count = unit
                     .num_live_blocks()
                     .checked_mul(parameters.opening_digit_weights().len())
-                    .and_then(|count| count.checked_mul(D))
+                    .and_then(|count| count.checked_mul(group_dims.d_a()))
                     .ok_or_else(|| AkitaError::InvalidSetup("trace segment overflow".into()))?;
                 let end = physical_coefficient_start
                     .checked_add(coeff_count)
@@ -158,7 +157,7 @@ where
                 group_block_count: parameters.group_block_count(),
                 source_ring_dimension: parameters.source_ring_dimension(),
                 opening_ring_dimension: group_dims.d_d(),
-                carrier_ring_dimension: D,
+                coefficient_block_len: inputs.relation_coefficient_block_len,
                 opening_digit_weights: parameters.shared_opening_digit_weights(),
                 inner_trace: parameters.shared_inner_trace(),
                 segments,
@@ -304,7 +303,7 @@ impl<E: FieldCore> PreparedProverEvaluationTrace<E> {
             let block_stride = term
                 .opening_digit_weights
                 .len()
-                .checked_mul(term.carrier_ring_dimension)
+                .checked_mul(term.source_ring_dimension)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup("evaluation-trace block stride overflow".into())
                 })?;

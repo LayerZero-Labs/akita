@@ -67,14 +67,15 @@ where
                 >(logical_w)?)
             };
             let w = packed_witness.as_ref().unwrap_or(logical_w);
-            if !w.len().is_multiple_of(D_A) {
+            let committed_coeff_len = w.committed_coeff_len()?;
+            if !committed_coeff_len.is_multiple_of(D_A) {
                 return Err(AkitaError::InvalidSize {
                     expected: D_A,
-                    actual: w.len(),
+                    actual: committed_coeff_len,
                 });
             }
 
-            let num_ring_elems = w.len() / D_A;
+            let num_ring_elems = committed_coeff_len / D_A;
             tracing::debug!(
                 num_ring_elems,
                 num_live_blocks = commit_params.num_live_blocks,

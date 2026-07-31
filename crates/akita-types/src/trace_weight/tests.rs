@@ -47,10 +47,11 @@ fn trace_layout(
     )
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
-    let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();
-    let opening_source_len = witness_layout.total_len();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1).unwrap();
+    let opening_source_len = witness_layout.live_coeff_len() / (1usize << ring_bits);
     let required_col_bits = witness_layout
-        .total_len()
+        .live_coeff_len()
+        .div_ceil(1usize << ring_bits)
         .next_power_of_two()
         .trailing_zeros() as usize;
     TraceWeightLayout {

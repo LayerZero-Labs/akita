@@ -134,10 +134,11 @@ where
                 )
             },
         );
-        if current_state.w.len() != input_witness_len {
+        let current_witness_len = current_state.w.live_coeff_len();
+        if current_witness_len != input_witness_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "scheduled fold level {level} did not match runtime state: expected_witness_len={input_witness_len}, actual_witness_len={}",
-                current_state.w.len()
+                current_witness_len
             )));
         }
         let role_dims = level_params.role_dims();
@@ -181,11 +182,12 @@ where
         current_state = out.next_state;
         level += 1;
     }
-    if current_state.w.len() != schedule.terminal.input_witness_len {
+    let current_witness_len = current_state.w.live_coeff_len();
+    if current_witness_len != schedule.terminal.input_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled terminal fold did not match runtime state: expected_witness_len={}, actual_witness_len={}",
             schedule.terminal.input_witness_len,
-            current_state.w.len(),
+            current_witness_len,
         )));
     }
     let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(

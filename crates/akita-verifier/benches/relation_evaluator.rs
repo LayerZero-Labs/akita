@@ -40,7 +40,7 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                     black_box(
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F, D>(
+                            .eval_flat_at_point::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
@@ -59,7 +59,7 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                     black_box(
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F, D>(
+                            .eval_flat_at_point::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),
@@ -84,7 +84,7 @@ fn bench_relation_evaluator(c: &mut Criterion) {
                     black_box(
                         benchmark_case
                             .evaluator
-                            .eval_flat_at_point::<F, D>(
+                            .eval_flat_at_point::<F>(
                                 black_box(&benchmark_case.point),
                                 black_box(&benchmark_case.setup),
                                 black_box(benchmark_case.alpha),

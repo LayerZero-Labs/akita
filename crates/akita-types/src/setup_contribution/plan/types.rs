@@ -27,24 +27,18 @@ pub(crate) fn validate_setup_inputs(
             "setup groups disagree with witness layout".into(),
         ));
     }
-    let witness_group_order = witness_layout
+    let group_count = groups.len();
+    if witness_layout
         .units()
         .iter()
-        .map(|unit| unit.group_index())
-        .fold(Vec::new(), |mut order, group_id| {
-            if order.last() != Some(&group_id) {
-                order.push(group_id);
-            }
-            order
-        });
-    if witness_group_order
-        != groups
-            .iter()
-            .map(|group| group.group_id)
-            .collect::<Vec<_>>()
+        .enumerate()
+        .any(|(index, unit)| {
+            let expected_group = groups[index % group_count].group_id;
+            unit.group_index() != expected_group || unit.chunk_index() != index / group_count
+        })
     {
         return Err(AkitaError::InvalidSetup(
-            "setup groups do not follow witness relation order".into(),
+            "setup witness units do not follow chunk-major relation order".into(),
         ));
     }
     for group in groups {

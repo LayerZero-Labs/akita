@@ -59,8 +59,9 @@ pub struct TraceClaim<F: FieldCore, E: FieldCore, const D: usize> {
     /// When present the stage-2 verifier evaluates its multilinear extension at
     /// the witness point instead of the closed-form [`Self::trace_terms`]. This
     /// is the multi-group-root counterpart of the succinct per-claim terms: multi-group
-    /// roots decompose each group with per-group `num_live_blocks`/`num_digits_open`
-    /// and a group-major e-hat offset, which the closed form cannot express.
+    /// roots decompose each group with per-group `num_live_blocks` and
+    /// `num_digits_open` over chunk-major physical E ranges, which the
+    /// single-layout closed form cannot express.
     pub dense_evals: Option<Vec<E>>,
     /// Optional closed-form batches with independent layouts.
     pub trace_term_batches: Vec<TraceTermBatch<F, E, D>>,
@@ -613,8 +614,11 @@ where
             "multi-group root trace table currently requires degree-one openings".to_string(),
         ));
     }
+    let live_coeff_capacity = live_x_cols
+        .checked_mul(ring_d)
+        .ok_or_else(|| AkitaError::InvalidSetup("trace witness capacity overflow".into()))?;
     if live_x_cols > crate::opening_domain_len(opening_source_len)?
-        || witness_layout.total_len() > live_x_cols
+        || witness_layout.live_coeff_len() > live_coeff_capacity
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -680,7 +684,6 @@ where
                             for role_subcolumn in 0..role_subcolumns {
                                 for role_coefficient in 0..group_dims.d_d() {
                                     let destination = unit.e_coefficient_index(
-                                        D,
                                         group_dims.d_a(),
                                         group_dims.d_d(),
                                         group_layout.num_polynomials(),

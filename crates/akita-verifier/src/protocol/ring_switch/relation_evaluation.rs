@@ -141,11 +141,10 @@ where
             .copied()
             .ok_or(AkitaError::InvalidProof)?;
         for (digit, &gadget) in quotient_gadget.iter().enumerate() {
-            let witness_column = context.witness_layout.r_index(levels, row, digit)?;
+            let physical_coefficient = context.witness_layout.r_coefficient_index(row, digit, 0)?;
             let lane_start = canonical_relation_lane_index(
                 evaluator.relation_address_geometry,
-                witness_column,
-                0,
+                physical_coefficient,
             )?;
             let lane_evaluation = evaluate_lane_segment(
                 prepared_point.relation_address().equality_window(),
@@ -176,26 +175,9 @@ fn evaluate_lane_segment<E: FieldCore>(
 
 fn canonical_relation_lane_index(
     geometry: RelationAddressGeometry,
-    witness_column: usize,
-    inner_lane: usize,
+    physical_coefficient: usize,
 ) -> Result<usize, AkitaError> {
-    let inner_ring_dimension = geometry.carrier_ring_dimension();
     let coeff_count = geometry.relation_coefficient_block_len();
-    let lanes_per_inner_column = inner_ring_dimension
-        .checked_div(coeff_count)
-        .filter(|count| *count != 0)
-        .ok_or_else(|| AkitaError::InvalidSetup("invalid common relation lane width".into()))?;
-    if inner_lane >= lanes_per_inner_column {
-        return Err(AkitaError::InvalidProof);
-    }
-    let physical_coefficient = witness_column
-        .checked_mul(inner_ring_dimension)
-        .and_then(|base| {
-            inner_lane
-                .checked_mul(coeff_count)
-                .and_then(|offset| base.checked_add(offset))
-        })
-        .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
     if physical_coefficient >= geometry.digit_witness_domain().live_len()
         || !physical_coefficient.is_multiple_of(coeff_count)
     {

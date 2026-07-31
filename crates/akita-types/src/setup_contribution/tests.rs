@@ -4,7 +4,7 @@ use super::*;
 use crate::{
     gadget_row_scalars, AkitaExpandedSetup, AkitaSetupSeed, CommitmentRingDims,
     CommittedGroupParams, FlatMatrix, OpeningClaimsLayout, RingRole, WitnessLayout,
-    WitnessUnitLayout,
+    WitnessQuotientRowLayout, WitnessUnitLayout,
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
@@ -294,11 +294,12 @@ fn test_witness_layout(
     let mut units = Vec::with_capacity(num_chunks);
     for chunk_index in 0..num_chunks {
         let chunk_num_live_blocks = base + usize::from(chunk_index < extra);
-        let z_len = num_positions_per_block * depth_commit * depth_fold;
+        let z_len = num_positions_per_block * depth_commit * depth_fold * TEST_D;
         let z_range = cursor..cursor + z_len;
-        let e_range = z_range.end..z_range.end + num_claims * chunk_num_live_blocks * depth_open;
-        let t_range =
-            e_range.end..e_range.end + num_claims * chunk_num_live_blocks * n_a * depth_open;
+        let e_range =
+            z_range.end..z_range.end + num_claims * chunk_num_live_blocks * depth_open * TEST_D;
+        let t_range = e_range.end
+            ..e_range.end + num_claims * chunk_num_live_blocks * n_a * depth_commit * TEST_D;
         cursor = t_range.end;
         units.push(WitnessUnitLayout::new_for_test(
             0,
@@ -311,7 +312,14 @@ fn test_witness_layout(
         ));
         global_block_start += chunk_num_live_blocks;
     }
-    WitnessLayout::new_for_test(units, cursor..cursor + relation_rows * quotient_depth)
+    let r_rows = (0..relation_rows)
+        .map(|_| {
+            let range = cursor..cursor + quotient_depth * TEST_D;
+            cursor = range.end;
+            WitnessQuotientRowLayout::new_for_test(TEST_D, range)
+        })
+        .collect();
+    WitnessLayout::new_for_test(units, r_rows, quotient_depth)
 }
 fn prepare_test_plan(
     inputs: &TestSetupInputs,
@@ -374,7 +382,7 @@ fn finalize_test_plan(
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
             role_dims.d_a(),
-            1,
+            role_dims.common_relation_coeff_count(),
         )
         .unwrap(),
         projection_geometry,
@@ -457,7 +465,7 @@ fn prepare_single_group_plan(
     prepare_test_plan(
         inputs,
         layout,
-        layout.total_len(),
+        layout.live_coeff_len(),
         &[group],
         full_vec_randomness,
         Some(fold_gadget),
@@ -525,7 +533,7 @@ fn structured_weight_fixture_with_outgoing(
     let n_d = 2;
     let log_basis = 4;
     assert_eq!(ownership_widths.iter().sum::<usize>(), num_live_blocks);
-    let z_len = num_positions_per_block * depth_commit * depth_fold;
+    let z_len = num_positions_per_block * depth_commit * depth_fold * role_dims.d_a();
     let mut cursor = 0usize;
     let mut global_block_base = 0usize;
     let ownership_units = ownership_widths
@@ -534,9 +542,9 @@ fn structured_weight_fixture_with_outgoing(
         .enumerate()
         .map(|(chunk, blocks)| {
             let z_range = cursor..cursor + z_len;
-            let e_len = num_claims * depth_open * blocks;
+            let e_len = num_claims * depth_open * blocks * role_dims.d_a();
             let e_range = z_range.end..z_range.end + e_len;
-            let t_len = n_a * num_claims * depth_open * blocks;
+            let t_len = n_a * num_claims * depth_commit * blocks * role_dims.d_a();
             let t_range = e_range.end..e_range.end + t_len;
             cursor = t_range.end;
             let unit = WitnessUnitLayout::new_for_test(
@@ -552,7 +560,14 @@ fn structured_weight_fixture_with_outgoing(
             unit
         })
         .collect::<Vec<_>>();
-    let layout = WitnessLayout::new_for_test(ownership_units, cursor..cursor + n_d * depth_fold);
+    let r_rows = (0..n_d)
+        .map(|_| {
+            let range = cursor..cursor + depth_fold * role_dims.d_d();
+            cursor = range.end;
+            WitnessQuotientRowLayout::new_for_test(role_dims.d_d(), range)
+        })
+        .collect();
+    let layout = WitnessLayout::new_for_test(ownership_units, r_rows, depth_fold);
     let tau1 = (0..3)
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
@@ -571,7 +586,7 @@ fn structured_weight_fixture_with_outgoing(
     );
     retarget_test_role_dims(&mut inputs.level_params, role_dims);
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
-    let opening_source_len = layout.total_len();
+    let opening_source_len = layout.live_coeff_len();
     let relation_address_geometry =
         crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
             .unwrap();
@@ -627,10 +642,11 @@ fn expected_z_setup_weights(
             for unit in layout.units_for_group(group_id).unwrap() {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
                     let physical = unit.z_range().start
-                        + fold_digit
-                        + depth_fold * (commit_digit + depth_commit * position);
+                        + TEST_D
+                            * (fold_digit + depth_fold * (commit_digit + depth_commit * position));
                     let opening_address =
-                        crate::checked_opening_source_index(opening_source_len, physical).unwrap();
+                        crate::checked_opening_source_index(opening_source_len, physical / TEST_D)
+                            .unwrap();
                     weight -= eq_eval_at_index(full_vec_randomness, opening_address) * fold;
                 }
             }
@@ -640,7 +656,6 @@ fn expected_z_setup_weights(
 }
 #[test]
 fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
-    let rows = 6;
     let quotient_depth = 2;
     let group_shapes = [
         // Relation order deliberately differs from numeric group order.
@@ -675,10 +690,19 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         .iter()
         .map(
             |&(group_id, num_claims, num_live_blocks, depth_open, depth_commit)| {
-                let z_len = 2 * depth_commit * quotient_depth;
+                let source_ring_dimension = inputs
+                    .level_params
+                    .group_role_dims(&inputs.opening_batch, group_id)
+                    .unwrap()
+                    .d_a();
+                let z_len = 2 * depth_commit * quotient_depth * source_ring_dimension;
                 let z_range = cursor..cursor + z_len;
-                let e_range = z_range.end..z_range.end + num_claims * num_live_blocks * depth_open;
-                let t_range = e_range.end..e_range.end + num_claims * num_live_blocks * depth_open;
+                let e_range = z_range.end
+                    ..z_range.end
+                        + num_claims * num_live_blocks * depth_open * source_ring_dimension;
+                let t_range = e_range.end
+                    ..e_range.end
+                        + num_claims * num_live_blocks * depth_commit * source_ring_dimension;
                 cursor = t_range.end;
                 WitnessUnitLayout::new_for_test(
                     group_id,
@@ -692,8 +716,20 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             },
         )
         .collect();
-    let witness_layout = WitnessLayout::new_for_test(units, cursor..cursor + rows * quotient_depth);
-    let opening_source_len = witness_layout.total_len();
+    let row_ring_dims = crate::relation_rhs_layout_for(&inputs.level_params, &inputs.opening_batch)
+        .unwrap()
+        .row_ring_dims()
+        .unwrap();
+    let r_rows = row_ring_dims
+        .into_iter()
+        .map(|ring_dim| {
+            let range = cursor..cursor + quotient_depth * ring_dim;
+            cursor = range.end;
+            WitnessQuotientRowLayout::new_for_test(ring_dim, range)
+        })
+        .collect();
+    let witness_layout = WitnessLayout::new_for_test(units, r_rows, quotient_depth);
+    let opening_source_len = witness_layout.live_coeff_len();
     let groups: Vec<_> = group_shapes
         .iter()
         .map(
@@ -813,9 +849,6 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
     let depth_commit = 3;
     let depth_fold = 2;
     let log_basis = 4;
-    let full_vec_randomness = (0..8)
-        .map(|idx| test_scalar(701 + idx as u128))
-        .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, log_basis);
     let commit_gadget = gadget_row_scalars::<F>(depth_commit, log_basis);
     let inputs = test_inputs(
@@ -843,11 +876,20 @@ fn setup_a_z_weights_do_not_include_commit_gadget() {
         1,
         inputs.depth_fold().unwrap(),
     );
+    let relation_geometry = crate::RelationAddressGeometry::new(
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+        layout.live_coeff_len(),
+    )
+    .unwrap();
+    let full_vec_randomness = (0..relation_geometry.relation_lane_variable_count())
+        .map(|idx| test_scalar(701 + idx as u128))
+        .collect::<Vec<_>>();
     let plan =
         prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
     let expected = expected_z_setup_weights(
         &layout,
-        layout.total_len(),
+        layout.live_coeff_len(),
         0,
         num_positions_per_block,
         depth_commit,
@@ -884,7 +926,7 @@ fn z_setup_weight_oracle_uses_physical_addresses() {
         1,
         1,
     );
-    let opening_source_len = layout.total_len();
+    let opening_source_len = layout.live_coeff_len();
     let point = (0..crate::opening_domain_len(opening_source_len)
         .unwrap()
         .trailing_zeros() as usize)
@@ -954,7 +996,7 @@ fn single_group_plan_supports_multi_chunk_weights() {
         n_d,
         depth_fold,
     );
-    let opening_source_len = layout.total_len();
+    let opening_source_len = layout.live_coeff_len();
     let group = SetupContributionGroupInputs {
         group_id: 0,
         num_claims,

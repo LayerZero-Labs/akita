@@ -4,9 +4,9 @@ use akita_algebra::CyclotomicRing;
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
-    basis_weights_prefix, r_decomp_levels, relation_rhs_layout_for, relation_rhs_row_count,
-    ring_opening_point_from_field, BasisMode, DigitRangePlan, EvaluationTraceInputs, FpExtEncoding,
-    OpeningClaimsLayout, PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
+    basis_weights_prefix, r_decomp_levels, ring_opening_point_from_field, BasisMode,
+    DigitRangePlan, EvaluationTraceInputs, FpExtEncoding, OpeningClaimsLayout,
+    PreparedOpeningPoint, RelationAddressGeometry, RelationRangeImagePlan,
     RingMultiplierOpeningPoint, WitnessLayout,
 };
 
@@ -73,18 +73,16 @@ where
 {
     let opening_batch = OpeningClaimsLayout::new(NUM_VARIABLES, 2).unwrap();
     let level_params = Cfg::get_params_for_batched_commitment(&opening_batch).unwrap();
-    let rhs_layout = relation_rhs_layout_for(&level_params, &opening_batch).unwrap();
     let witness_layout = WitnessLayout::new(
         &level_params,
         &opening_batch,
         2,
-        relation_rhs_row_count(&rhs_layout),
         r_decomp_levels::<F>(level_params.log_basis_open),
     )
     .unwrap();
-    let live_len = witness_layout.total_len() * D;
+    let live_len = witness_layout.live_coeff_len();
     let relation_address_geometry =
-        RelationAddressGeometry::new(level_params.role_dims(), D, live_len / D).unwrap();
+        RelationAddressGeometry::new(level_params.role_dims(), D, live_len).unwrap();
     let plan = RelationRangeImagePlan::new(
         relation_address_geometry,
         DigitRangePlan::new(1usize << level_params.log_basis_open).unwrap(),
@@ -112,10 +110,12 @@ where
         CyclotomicRing::<F, D>::one(),
     )];
     let claim_coefficients = vec![E::from_u64(41), E::from_u64(43)];
-    let semantic_trace = build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
+    let semantic_trace = build_evaluation_trace_weights::<F, E>(EvaluationTraceInputs {
         digit_witness_domain: plan.digit_witness_domain(),
+        relation_coefficient_block_len: plan
+            .relation_address_geometry()
+            .relation_coefficient_block_len(),
         witness_layout: plan.witness_layout(),
-        carrier_ring_dimension: plan.relation_address_geometry().carrier_ring_dimension(),
         level_params: &level_params,
         opening_batch: &opening_batch,
         prepared_points: &prepared_points,

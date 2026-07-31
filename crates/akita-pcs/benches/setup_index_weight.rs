@@ -169,7 +169,6 @@ fn make_case_with_shape(
         &level_params,
         &opening_batch,
         num_live_blocks / blocks_per_chunk,
-        1 + n_a + n_b + n_d,
         r_decomp_levels::<F>(log_basis),
     )
     .unwrap();
@@ -182,7 +181,7 @@ fn make_case_with_shape(
         .map(|idx| test_scalar(31 + idx as u128))
         .collect::<Vec<_>>();
     let eq_tau1: std::sync::Arc<[F]> = EqPolynomial::evals(&tau1).unwrap().into();
-    let opening_source_len = layout.total_len() * role_dims.d_a() / outgoing_ring_dim;
+    let opening_source_len = layout.live_coeff_len();
     let groups = opening_batch
         .root_group_order()
         .unwrap()

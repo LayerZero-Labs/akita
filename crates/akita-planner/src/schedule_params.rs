@@ -18,13 +18,13 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
-    level_proof_bytes, padded_setup_prefix_len, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
-    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    extension_opening_reduction_level_bytes, level_proof_bytes, padded_setup_prefix_len,
+    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
+    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
+    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -41,7 +41,7 @@ pub(crate) mod test_support;
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
-    scalar_root_fold_level_params_candidate,
+    planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
@@ -746,16 +746,12 @@ fn find_schedule_inner(
                     continue;
                 };
 
-                let output_witness_len = intermediate_w_ring_element_count_for_chunks(
+                let output_witness_len = candidate::planned_next_witness_len(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?
-                .checked_mul(candidate_dimensions.d_a())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness length overflow".into())
-                })?;
+                )?;
                 let initial_witness_len_bits = witness_len
                     .checked_mul(field_bits as usize)
                     .ok_or_else(|| {

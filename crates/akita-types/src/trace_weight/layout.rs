@@ -74,7 +74,6 @@ impl TraceWeightLayout {
             .witness_layout
             .unit_for_block(self.group_id, global_block)?;
         let physical_index = unit.e_coefficient_index(
-            self.ring_len(),
             self.source_ring_dim,
             self.opening_ring_dim,
             num_claims,

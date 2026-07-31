@@ -294,14 +294,12 @@ pub(super) fn find_schedule(
                 else {
                     continue;
                 };
-                let output_witness_len = intermediate_w_ring_element_count_for_chunks(
+                let output_witness_len = planned_next_witness_len(
                     field_bits,
                     &root_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?
-                .checked_mul(root_dimensions.d_a())
-                .ok_or_else(|| AkitaError::InvalidSetup("mixed root witness overflow".into()))?;
+                )?;
                 if output_witness_len
                     .checked_mul(log_basis as usize)
                     .ok_or_else(|| AkitaError::InvalidSetup("mixed bit length overflow".into()))?

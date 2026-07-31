@@ -3,13 +3,12 @@
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
-    intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, RootSource, SisModulusProfileId, SisSecurityPolicyId,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessPartition,
-    DEFAULT_SIS_SECURITY_POLICY,
+    padded_setup_prefix_len, ChunkedWitnessCfg, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule,
+    PolynomialGroupLayout, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
+    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, RootSource,
+    SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams, TerminalFoldStep,
+    TerminalResponseShape, WitnessLayout, WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
 };
 
 /// Quantities materialized and checked by the current bounded planner cost model.
@@ -417,113 +416,21 @@ pub fn suffix_opening_layout(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
-    num_polys: usize,
-    num_live_blocks: usize,
-    num_chunks: usize,
-    num_positions_per_block: usize,
-    n_a: usize,
-    num_digits_inner: usize,
-    num_digits_outer: usize,
-    num_digits_open: usize,
-    num_digits_fold: usize,
-) -> Result<usize, AkitaError> {
-    let e_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(num_digits_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("group e-hat witness overflow".to_string()))?;
-    let t_hat = num_polys
-        .checked_mul(num_live_blocks)
-        .and_then(|n| n.checked_mul(n_a))
-        .and_then(|n| n.checked_mul(num_digits_outer))
-        .ok_or_else(|| AkitaError::InvalidSetup("group t-hat witness overflow".to_string()))?;
-    let z_hat = num_positions_per_block
-        .checked_mul(num_digits_inner)
-        .and_then(|n| n.checked_mul(num_digits_fold))
-        .and_then(|n| n.checked_mul(num_chunks))
-        .ok_or_else(|| AkitaError::InvalidSetup("group z-hat witness overflow".to_string()))?;
-
-    e_hat
-        .checked_add(t_hat)
-        .and_then(|n| n.checked_add(z_hat))
-        .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
-}
-
 pub(crate) fn planned_next_witness_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if params.setup_prefix.is_some() {
-        return grouped_setup_prefix_next_witness_len(
-            field_bits,
-            params,
-            final_num_polys,
-            num_chunks,
-        );
-    }
-
-    intermediate_w_ring_element_count_for_chunks(field_bits, params, final_num_polys, num_chunks)?
-        .checked_mul(params.d_a())
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
-}
-
-fn grouped_setup_prefix_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    let mut total = grouped_segment_rings(
-        final_num_polys,
-        params.num_live_blocks,
+    let opening_batch =
+        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
+    let layout = WitnessLayout::new(
+        params,
+        &opening_batch,
         num_chunks,
-        params.num_positions_per_block,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_inner,
-        params.num_digits_outer,
-        params.num_digits_open,
-        params.num_digits_fold(final_num_polys, field_bits)?,
+        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    for group in params.precommitted_group_iter() {
-        let group_rings = grouped_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.layout.num_live_blocks,
-            num_chunks,
-            group.layout.num_positions_per_block,
-            group.inner_commit_matrix.output_rank(),
-            group.num_digits_inner,
-            group.num_digits_outer,
-            group.num_digits_open,
-            group.num_digits_fold_one,
-        )?;
-        total = total
-            .checked_add(group_rings)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-    }
-
-    let r_rows = params.relation_matrix_row_count(params.precommitted_group_count() + 1)?;
-    let r_count = r_rows
-        .checked_mul(akita_types::sis::compute_num_digits_field_width(
-            field_bits,
-            params.log_basis_open,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped r-tail witness overflow".to_string()))?;
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-
-    rings
-        .checked_mul(params.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Convenience policy used by config adapters.

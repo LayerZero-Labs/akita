@@ -18,7 +18,6 @@ use akita_types::{
 use std::sync::{Arc, Mutex};
 
 use super::validate_log_basis;
-use akita_types::validate_ring_dispatch;
 pub(crate) use tensor_challenges::PreparedChallengeEvals;
 
 #[cfg(feature = "benchmark-support")]
@@ -160,7 +159,7 @@ pub struct RingSwitchReplay<'a, F: FieldCore, E> {
 /// the schedule-selected outgoing witness binding.
 #[tracing::instrument(skip_all, name = "ring_switch_verifier")]
 #[inline(never)]
-pub(crate) fn ring_switch_verifier<F, E, T, const D: usize>(
+pub(crate) fn ring_switch_verifier<F, E, T>(
     replay: &RingSwitchReplay<'_, F, E>,
     w_len: usize,
     transcript: &mut T,
@@ -208,15 +207,11 @@ where
     let relation_address_geometry = lp.relation_address_geometry(
         opening_batch,
         replay.opening_ring_dim,
-        witness_layout.total_len(),
+        witness_layout.live_coeff_len(),
     )?;
-    if w_len == 0
-        || !w_len.is_multiple_of(D)
-        || w_len != relation_address_geometry.digit_witness_domain().live_len()
-    {
+    if w_len == 0 || w_len != relation_address_geometry.digit_witness_domain().live_len() {
         return Err(AkitaError::InvalidProof);
     }
-    let num_ring_elems = w_len / D;
     // Bind the current roles' shared low coefficient block as the digit-range
     // check's ring phase. Outgoing witness packaging determines the checked
     // flat live length but never this point split.
@@ -246,7 +241,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let relation_matrix_evaluator =
-        prepare_relation_matrix_evaluator::<F, E, D>(replay, alpha, &tau1, Some(num_ring_elems))?;
+        prepare_relation_matrix_evaluator::<F, E>(replay, alpha, &tau1, Some(w_len))?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
         relation_address_geometry,
@@ -270,7 +265,7 @@ where
 /// the expanded tau1 table is too short for the level layout, or sparse
 /// challenge evaluation fails.
 #[tracing::instrument(skip_all, name = "prepare_relation_matrix_evaluator")]
-pub fn prepare_relation_matrix_evaluator<F, E, const D: usize>(
+pub fn prepare_relation_matrix_evaluator<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
@@ -284,14 +279,21 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     let layout = relation.segment_layout(lp, witness_ring_len)?;
-    let relation_address_geometry =
-        lp.relation_address_geometry(opening_batch, replay.opening_ring_dim, layout.total_len())?;
-    if layout.total_len() > replay.opening_source_len {
+    let relation_address_geometry = lp.relation_address_geometry(
+        opening_batch,
+        replay.opening_ring_dim,
+        layout.live_coeff_len(),
+    )?;
+    let opening_capacity = replay
+        .opening_source_len
+        .checked_mul(replay.opening_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
+    if layout.live_coeff_len() > opening_capacity {
         return Err(AkitaError::InvalidProof);
     }
     let rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
     if lp.has_precommitted_groups() {
-        return prepare_relation_matrix_evaluator_multi_group::<F, E, D>(
+        return prepare_relation_matrix_evaluator_multi_group::<F, E>(
             replay,
             alpha,
             tau1,
@@ -305,22 +307,29 @@ where
         .first()
         .ok_or(AkitaError::InvalidProof)?;
     let ring_multiplier_point = relation.group_ring_multiplier_point(0)?;
-    prepare_relation_matrix_evaluator_inner::<F, E, D>(
-        challenges,
-        ring_multiplier_point,
-        alpha,
-        lp,
-        tau1,
-        opening_batch,
-        replay.row_coefficients,
-        layout,
-        rows,
-        relation_address_geometry,
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
+        lp.role_dims().d_a(),
+        |D_A| {
+            prepare_relation_matrix_evaluator_inner::<F, E, D_A>(
+                challenges,
+                ring_multiplier_point,
+                alpha,
+                lp,
+                tau1,
+                opening_batch,
+                replay.row_coefficients,
+                layout,
+                rows,
+                relation_address_geometry,
+            )
+        }
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn prepare_relation_matrix_evaluator_multi_group<F, E, const D: usize>(
+fn prepare_relation_matrix_evaluator_multi_group<F, E>(
     replay: &RingSwitchReplay<'_, F, E>,
     alpha: E,
     tau1: &[E],
@@ -336,12 +345,6 @@ where
     let lp = replay.lp;
     let opening_batch = relation.opening_batch();
     lp.validate_opening_batch(opening_batch)?;
-    validate_ring_dispatch::<D>()?;
-    if relation_address_geometry.carrier_ring_dimension() != D {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group relation carrier does not match verifier dispatch".into(),
-        ));
-    }
     if replay.row_coefficients.len() != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidProof);
     }
@@ -358,9 +361,6 @@ where
         ));
     }
 
-    // Reuse the carrier powers across every uniform group. Mixed-d groups
-    // derive their native powers in the dispatch below.
-    let carrier_alpha_pows = scalar_powers(alpha, D);
     let mut groups = Vec::with_capacity(order.len());
     for &group_index in &order {
         let group_lp = lp.group_params(opening_batch, group_index)?;
@@ -417,43 +417,26 @@ where
                 actual: challenges.logical_len(),
             });
         }
-        let (c_alphas, opening_a_evals) = if group_role_dims.d_a() == D {
-            // The overwhelmingly common recursive path keeps every group at
-            // the carrier dimension. Preserve its monomorphized evaluator:
-            // routing it through the mixed-d runtime dispatch measurably
-            // increases verifier preparation at every recursive fold.
-            let c_alphas = prepare_challenge_evals::<F, E, D>(
-                challenges,
-                &carrier_alpha_pows,
-                k_g,
-                num_live_blocks,
-            )?;
-            let opening_a_evals = (0..num_positions_per_block)
-                .map(|idx| ring_multiplier_point.eval_position_at::<D, E>(idx, &carrier_alpha_pows))
-                .collect::<Result<Vec<_>, _>>()?;
-            (c_alphas, opening_a_evals)
-        } else {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                group_role_dims.d_a(),
-                |D_GROUP| {
-                    let alpha_pows = scalar_powers(alpha, D_GROUP);
-                    let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
-                        challenges,
-                        &alpha_pows,
-                        k_g,
-                        num_live_blocks,
-                    )?;
-                    let opening_a_evals = (0..num_positions_per_block)
-                        .map(|idx| {
-                            ring_multiplier_point.eval_position_at_dyn::<E>(idx, &alpha_pows)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok::<_, AkitaError>((c_alphas, opening_a_evals))
-                }
-            )?
-        };
+        let (c_alphas, opening_a_evals) = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_role_dims.d_a(),
+            |D_GROUP| {
+                let alpha_pows = scalar_powers(alpha, D_GROUP);
+                let c_alphas = prepare_challenge_evals::<F, E, D_GROUP>(
+                    challenges,
+                    &alpha_pows,
+                    k_g,
+                    num_live_blocks,
+                )?;
+                let opening_a_evals = (0..num_positions_per_block)
+                    .map(|idx| {
+                        ring_multiplier_point.eval_position_at::<D_GROUP, E>(idx, &alpha_pows)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok::<_, AkitaError>((c_alphas, opening_a_evals))
+            }
+        )?;
 
         let a_range = lp.a_row_range(opening_batch, group_index)?;
         let b_range = lp.commitment_row_range(opening_batch, group_index)?;
@@ -639,7 +622,7 @@ pub(crate) fn setup_contribution_group_inputs<F: FieldCore>(
 impl<E: FieldCore> RelationMatrixEvaluator<E> {
     /// Evaluate the canonical relation weights directly in the flattened
     /// opening domain, without materializing its padded Boolean suffix.
-    pub fn eval_flat_at_point<F, const D: usize>(
+    pub fn eval_flat_at_point<F>(
         &self,
         point: &[E],
         setup: &AkitaExpandedSetup<F>,
@@ -650,7 +633,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         F: FieldCore + CanonicalField,
         E: FpExtEncoding<F> + FromPrimitiveInt + MulBase<F> + MulBaseUnreduced<F>,
     {
-        validate_ring_dispatch::<D>()?;
         relation_evaluation::evaluate_relation_at_point::<F, E>(
             self,
             point,
