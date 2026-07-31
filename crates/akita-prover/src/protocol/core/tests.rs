@@ -3,7 +3,7 @@ use crate::RecursiveWitnessFlat;
 use akita_config::{
     proof_optimized::fp128::D64OneHot, CommitmentConfig, PrecommittedCommitmentConfig,
 };
-use akita_field::{Fp32, FpExt2, NegOneNr};
+use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaims, OpeningClaimsLayout,
@@ -11,7 +11,7 @@ use akita_types::{
 };
 
 type F = Fp32<251>;
-type E = FpExt2<F, NegOneNr>;
+type E = FpExt2<F, TwoNr>;
 
 #[test]
 fn recursive_extension_opening_reduction_pads_to_opening_cube() {
@@ -29,6 +29,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         E::new(F::from_u64(47), F::from_u64(53)),
     ];
     let logical_polys = [&logical_w];
+    let logical_group = PreparedProverGroup::from_refs(&logical_polys).expect("logical group");
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
@@ -39,10 +40,11 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
     )
     .expect("group claims")])
     .expect("opening batch");
-    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
+    let logical_groups = [&logical_group];
+    let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend,
         None,
-        &logical_polys,
+        &logical_groups,
         &opening_batch,
         &[64],
         true,
@@ -76,12 +78,17 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     ])
     .expect("opening batch");
     let polys = [&short_witness, &long_witness];
+    let groups = [
+        PreparedProverGroup::from_ref_vec(vec![polys[0]]).expect("short group"),
+        PreparedProverGroup::from_ref_vec(vec![polys[1]]).expect("long group"),
+    ];
+    let group_refs = groups.iter().collect::<Vec<_>>();
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
-    let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
+    let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend,
         None,
-        &polys,
+        &group_refs,
         &opening_batch,
         &[64, 64],
         true,

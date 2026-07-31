@@ -1,7 +1,7 @@
 use super::*;
 use crate::compute::{
-    ComputeBackendSetup, RootTensorSource, RuntimeRootProvePoly, RuntimeTensorBackendFor,
-    TensorPackedWitness, TensorProjectionBatchKernel, TensorProjectionKernel,
+    ComputeBackendSetup, RootTensorSource, TensorPackedWitness, TensorProjectionBatchKernel,
+    TensorProjectionKernel,
 };
 use akita_field::unreduced::ReduceTo;
 use std::ops::Range;
@@ -12,10 +12,10 @@ pub(in crate::protocol::core) struct ProvedExtensionOpeningReduction<E: FieldCor
     pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
 }
 
-struct PreparedExtensionOpeningGroup<E: FieldCore> {
-    proof_partials: Vec<E>,
-    row_partials_by_claim: Vec<Vec<E>>,
-    openings: Vec<E>,
+pub(crate) struct PreparedExtensionOpeningGroup<E: FieldCore> {
+    pub(crate) proof_partials: Vec<E>,
+    pub(crate) row_partials_by_claim: Vec<Vec<E>>,
+    pub(crate) openings: Vec<E>,
 }
 
 pub(in crate::protocol::core) trait ExtensionOpeningClaimGeometry<E: FieldCore> {
@@ -33,7 +33,7 @@ impl<E: FieldCore, C> ExtensionOpeningClaimGeometry<E> for OpeningClaims<'_, E, 
     }
 }
 
-fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
+pub(in crate::protocol::core) fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
     polys: &[&P],
@@ -85,10 +85,10 @@ where
 /// so every group participates in one sumcheck challenge sequence without
 /// materializing repeated witness tables.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B>(
+pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, G, B>(
     tensor_backend: &B,
-    tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
-    polys: &[&P],
+    tensor_prepared: Option<&B::PreparedSetup>,
+    groups: &[&G],
     opening_claims: &dyn ExtensionOpeningClaimGeometry<E>,
     group_ring_dimensions: &[usize],
     pad_base_evals: bool,
@@ -100,8 +100,8 @@ where
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
     E: ExtField<F> + HasUnreducedOps + HasOptimizedFold + MulBaseUnreduced<F> + AkitaSerialize,
     T: Transcript<F>,
-    P: RuntimeRootProvePoly<F>,
-    B: RuntimeTensorBackendFor<F, P, E>,
+    G: RootProverGroupTensor<F, E, B>,
+    B: ComputeBackendSetup<F>,
 {
     let opening_batch = opening_claims.layout()?;
     let _span = tracing::info_span!(
@@ -111,10 +111,14 @@ where
         num_groups = opening_batch.num_groups(),
     )
     .entered();
-    if polys.len() != opening_batch.num_total_polynomials() {
+    let actual_polynomials = groups
+        .iter()
+        .map(|group| group.num_polynomials())
+        .sum::<usize>();
+    if actual_polynomials != opening_batch.num_total_polynomials() {
         return Err(AkitaError::InvalidSize {
             expected: opening_batch.num_total_polynomials(),
-            actual: polys.len(),
+            actual: actual_polynomials,
         });
     }
     if group_ring_dimensions.len() != opening_batch.num_groups() {
@@ -131,7 +135,7 @@ where
         },
     )?;
 
-    let mut groups = Vec::with_capacity(opening_batch.num_groups());
+    let mut prepared_groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let point = opening_claims.group_point(group_index)?;
         if point.len() < split_bits {
@@ -140,31 +144,22 @@ where
                 actual: point.len(),
             });
         }
-        let claim_range = opening_batch.root_group_claim_range(group_index)?;
-        let group_polys = polys.get(claim_range).ok_or(AkitaError::InvalidProof)?;
         let ring_dimension = *group_ring_dimensions
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let group = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_dimension,
-            |D| prepare_extension_opening_group::<F, E, P, B, D>(
-                tensor_backend,
-                tensor_prepared,
-                group_polys,
-                point,
-            )
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "extension-opening group {group_index} partials failed: {error:?}"
-            ))
-        })?;
-        groups.push(group);
+        let group = groups
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?
+            .prepare_extension_opening(tensor_backend, tensor_prepared, ring_dimension, point)
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!(
+                    "extension-opening group {group_index} partials failed: {error:?}"
+                ))
+            })?;
+        prepared_groups.push(group);
     }
 
-    let openings = groups
+    let openings = prepared_groups
         .iter()
         .flat_map(|group| group.openings.iter().copied())
         .collect::<Vec<_>>();
@@ -181,7 +176,7 @@ where
         append_claim_values_to_transcript::<F, E, T>(&openings, transcript);
         sample_public_row_coefficients::<F, E, T>(&opening_batch, transcript)?
     };
-    let proof_partials = groups
+    let proof_partials = prepared_groups
         .iter()
         .flat_map(|group| group.proof_partials.iter().copied())
         .collect::<Vec<_>>();
@@ -200,7 +195,7 @@ where
     let eta = (0..split_bits)
         .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH))
         .collect::<Vec<_>>();
-    let true_input_claim = groups
+    let true_input_claim = prepared_groups
         .iter()
         .flat_map(|group| group.row_partials_by_claim.iter())
         .zip(row_coefficients.iter().copied())
@@ -213,9 +208,7 @@ where
     let mut term_ranges = Vec::<Range<usize>>::with_capacity(groups.len());
     for group_index in 0..groups.len() {
         let claim_range = opening_batch.root_group_claim_range(group_index)?;
-        let group_polys = polys
-            .get(claim_range.clone())
-            .ok_or(AkitaError::InvalidProof)?;
+        let group = groups.get(group_index).ok_or(AkitaError::InvalidProof)?;
         let point = opening_claims.group_point(group_index)?;
         let tail_point = &point[split_bits..];
         let extra_vars = max_tail_vars
@@ -224,26 +217,22 @@ where
         let ring_dimension = *group_ring_dimensions
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let group_terms = dispatch_for_field!(
-            ProtocolDispatchSlot::Role(RingRole::Inner),
-            F,
-            ring_dimension,
-            |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
+        let group_terms = group
+            .extension_opening_terms(
                 tensor_backend,
                 tensor_prepared,
-                group_polys,
+                ring_dimension,
                 row_coefficients
                     .get(claim_range.clone())
                     .ok_or(AkitaError::InvalidProof)?,
                 tail_point,
                 &eta,
             )
-        )
-        .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "extension-opening group {group_index} terms failed: {error:?}"
-            ))
-        })?;
+            .map_err(|error| {
+                AkitaError::InvalidInput(format!(
+                    "extension-opening group {group_index} terms failed: {error:?}"
+                ))
+            })?;
         let start = terms.len();
         let expected_domain_len = checked_table_len(max_tail_vars)?;
         for term in group_terms {

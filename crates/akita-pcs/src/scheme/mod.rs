@@ -7,12 +7,14 @@ use akita_field::{
     HalvingField, PseudoMersenneField, RandomSampling,
 };
 use akita_prover::compute::{
-    ComputeBackendSetup, LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend,
-    RuntimeRootCommitPoly, RuntimeRootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, UniformProverStack,
 };
-use akita_prover::ProverOpeningData;
 use akita_prover::ProverTranscriptGrind;
 use akita_prover::{AkitaProverSetup, CommittedGroupWithHint, WholeGroupSourceProvider};
+use akita_prover::{PreparedGroupProveOps, ProverOpeningData, RecursiveFoldSource};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_transcript::Transcript;
 use akita_types::AkitaVerifierSetup;
@@ -236,9 +238,22 @@ where
         T: Transcript<Cfg::Field> + ProverTranscriptGrind<Cfg::Field>,
         Cfg::Field: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <Cfg::Field as HasWide>::Wide: From<Cfg::Field> + ReduceTo<Cfg::Field> + AdditiveGroup,
-        P: RuntimeRootProvePoly<Cfg::Field>,
-        B: RecursiveProveBackend<Cfg::Field, P, Cfg::ExtField>
-            + ComputeBackendSetup<Cfg::Field>
+        P: PreparedGroupProveOps<Cfg::Field, Cfg::ExtField, B, B>,
+        B: ComputeBackendSetup<Cfg::Field>
+            + CommitmentComputeBackend<Cfg::Field>
+            + RuntimeOpeningProveBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>>
+            + RuntimeOpeningProveBackendFor<
+                Cfg::Field,
+                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+            > + SuffixOpeningProveBackend<Cfg::Field>
+            + DigitRowsComputeBackend<Cfg::Field>
+            + RuntimeTensorBackendFor<Cfg::Field, RecursiveFoldSource<Cfg::Field>, Cfg::ExtField>
+            + RuntimeTensorBackendFor<
+                Cfg::Field,
+                akita_prover::RootTensorProjectionPoly<Cfg::Field>,
+                Cfg::ExtField,
+            > + SuffixTensorProveBackend<Cfg::Field, Cfg::ExtField>
+            + RuntimeRingSwitchProveBackend<Cfg::Field>
             + 'a,
         <B as ComputeBackendSetup<Cfg::Field>>::PreparedSetup: 'a,
     {

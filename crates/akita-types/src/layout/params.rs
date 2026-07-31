@@ -7,7 +7,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, CanonicalField};
 
-use crate::descriptor_bytes::{push_u128, push_u32, push_usize};
+use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
 use crate::proof::{RelationAddressGeometry, SetupPrefixSlotId};
@@ -44,10 +44,9 @@ pub(crate) fn recursive_opening_num_vars_for_geometry(
 
 mod descriptor;
 mod precommitted;
+pub(crate) use descriptor::append_fold_linf_cap_config_descriptor_bytes;
 pub(crate) use descriptor::append_sparse_challenge_descriptor_bytes as append_schedule_sparse_challenge_descriptor_bytes;
-use descriptor::{
-    append_fold_linf_policy_descriptor_bytes, append_tensor_challenge_shape_descriptor_bytes,
-};
+use descriptor::append_tensor_challenge_shape_descriptor_bytes;
 pub use precommitted::{LevelParamsLike, PrecommittedLevelParams};
 
 /// Gadget basis used by opening-digit segments in the shared D product.
@@ -770,8 +769,7 @@ impl CommittedGroupParams {
         push_usize(bytes, self.num_live_blocks);
         append_schedule_sparse_challenge_descriptor_bytes(bytes, &self.fold_challenge_config);
         append_tensor_challenge_shape_descriptor_bytes(bytes, self.fold_challenge_shape);
-        append_fold_linf_policy_descriptor_bytes(bytes, self.fold_witness_linf_cap_policy());
-        push_u128(bytes, self.challenge_l2_sq_max());
+        append_fold_linf_cap_config_descriptor_bytes(bytes, &self.fold_linf_cap_config);
         push_usize(bytes, self.num_digits_inner);
         push_usize(bytes, self.num_digits_outer);
         push_usize(bytes, self.num_digits_open);

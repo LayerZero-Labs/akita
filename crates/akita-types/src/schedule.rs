@@ -1,7 +1,9 @@
 //! Runtime schedule shapes shared by configs, prover, verifier, and planner.
 
 use crate::descriptor_bytes::{push_u32, push_usize};
-use crate::layout::params::append_schedule_sparse_challenge_descriptor_bytes;
+use crate::layout::params::{
+    append_fold_linf_cap_config_descriptor_bytes, append_schedule_sparse_challenge_descriptor_bytes,
+};
 use crate::sis::FoldWitnessLinfCapConfig;
 use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
@@ -974,6 +976,7 @@ impl TerminalCommittedGroupParams {
         push_usize(bytes, self.num_positions_per_block);
         push_usize(bytes, self.num_live_blocks);
         push_usize(bytes, self.num_digits_inner);
+        append_fold_linf_cap_config_descriptor_bytes(bytes, &self.fold_linf_cap_config);
     }
 }
 

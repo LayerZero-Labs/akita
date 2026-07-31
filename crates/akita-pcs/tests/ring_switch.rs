@@ -127,7 +127,8 @@ mod tests {
         polynomials: &'a [&'a P],
         commitment: &'a CommittedGroup<Cfg::Field>,
         hint: AkitaCommitmentHint<Cfg::Field>,
-    ) -> ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field> {
+    ) -> ProverOpeningData<'a, Cfg::ExtField, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
+    {
         let group = PolynomialGroupClaims::new(
             point.to_vec(),
             vec![Cfg::ExtField::zero(); polynomials.len()],

@@ -2,7 +2,7 @@ use super::*;
 use crate::compute::{
     CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
     ProverComputeStack, RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend,
-    RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    RuntimeTensorBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
@@ -63,15 +63,13 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
-    TS: RuntimeTensorBackendFor<F, P, E>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
+    TS: ComputeBackendSetup<F>,
+    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     C: ComputeBackendSetup<F>,
     R: DigitRowsComputeBackend<F>,
 {
-    let opening_batch = claims.opening_layout::<F>()?;
+    let opening_batch = claims.opening_layout()?;
     let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
@@ -153,15 +151,13 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     C: CommitmentComputeBackend<F> + ComputeBackendSetup<F> + 'stack,
-    O: RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+    O: RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
         + DigitRowsComputeBackend<F>
         + ComputeBackendSetup<F>
         + 'stack,
-    TS: RuntimeTensorBackendFor<F, P, E>
-        + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
+    TS: RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, E>
         + ComputeBackendSetup<F>
         + 'stack,
     R: RuntimeRingSwitchProveBackend<F> + ComputeBackendSetup<F> + 'stack,

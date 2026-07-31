@@ -12,7 +12,8 @@ pub use commitment::{
     CommittedGroupWithHint,
 };
 pub use group_provider::{
-    DenseGroupProvider, OneHotGroupProvider, PreparedGroup, WholeGroupSourceProvider,
+    DenseGroupProvider, EitherPreparedGroup, OneHotGroupProvider, PreparedGroup,
+    PreparedGroupProveOps, PreparedProverGroup, WholeGroupSourceProvider,
 };
 pub use scheme::CommitmentProver;
 pub use setup::AkitaProverSetup;

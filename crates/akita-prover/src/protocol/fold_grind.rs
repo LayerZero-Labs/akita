@@ -10,8 +10,10 @@ use akita_challenges::{
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_transcript::{AkitaTranscript, FoldChallengeSeedPreview, Transcript, TranscriptSponge};
+#[cfg(test)]
+use akita_types::golomb_rice_rows_admit_terminal_wire;
 use akita_types::{
-    golomb_rice_flat_admit_terminal_wire, golomb_rice_rows_admit_terminal_wire,
+    golomb_rice_flat_admit_terminal_wire,
     sis::{FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FoldWitnessLinfCapPolicy},
     CommittedGroupParams, FoldLinfProtocolBinding, LevelParamsLike, OpeningClaimsLayout,
     TerminalCommittedGroupParams, TerminalResponseShape, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
@@ -80,6 +82,7 @@ fn coeff_within_digit_bounds(coeff: i32, ctx: &FoldGrindAcceptanceCtx) -> bool {
     }
 }
 
+#[cfg(test)]
 fn accepts_fold_witness<F: CanonicalField, const D: usize>(
     ctx: &FoldGrindAcceptanceCtx,
     witness: &DecomposeFoldWitness<F>,
@@ -115,6 +118,50 @@ fn accepts_fold_witness<F: CanonicalField, const D: usize>(
             .any(|chunk| golomb_rice_rows_admit_terminal_wire(chunk, ctx.witness_linf_cap).is_err())
     {
         return false;
+    }
+    true
+}
+
+fn accepts_fold_witness_flat<F: CanonicalField>(
+    ctx: &FoldGrindAcceptanceCtx,
+    witness: &DecomposeFoldWitness<F>,
+    centered_per_chunk: &[Vec<Vec<i32>>],
+) -> bool {
+    let coefficients = centered_per_chunk
+        .iter()
+        .flat_map(|chunk| chunk.iter())
+        .flat_map(|row| row.iter());
+    for &coefficient in coefficients {
+        if !coeff_within_digit_bounds(coefficient, ctx)
+            || (ctx.check_grind_cap
+                && u128::from(coefficient.unsigned_abs()) > ctx.witness_linf_cap)
+        {
+            return false;
+        }
+    }
+    if ctx.check_grind_cap && u128::from(witness.centered_inf_norm) > ctx.witness_linf_cap {
+        return false;
+    }
+    if ctx.check_golomb {
+        let witness_coefficients = witness
+            .centered_coeffs_flat()
+            .iter()
+            .map(|&value| i64::from(value))
+            .collect::<Vec<_>>();
+        if golomb_rice_flat_admit_terminal_wire(&witness_coefficients, ctx.witness_linf_cap)
+            .is_err()
+        {
+            return false;
+        }
+        for chunk in centered_per_chunk {
+            let coefficients = chunk
+                .iter()
+                .flat_map(|row| row.iter().map(|&value| i64::from(value)))
+                .collect::<Vec<_>>();
+            if golomb_rice_flat_admit_terminal_wire(&coefficients, ctx.witness_linf_cap).is_err() {
+                return false;
+            }
+        }
     }
     true
 }
@@ -190,15 +237,15 @@ fn fold_grind_probe_order_absorb_buf(
     Ok(buf)
 }
 
-pub(crate) struct FoldGrindGroup<'params, 'poly, P> {
+pub(crate) struct FoldGrindGroup<'params, 'group, G> {
     pub(crate) group_index: usize,
-    pub(crate) polys: &'poly [&'poly P],
+    pub(crate) group: &'group G,
     pub(crate) params: &'params dyn LevelParamsLike,
 }
 
-impl<P> Copy for FoldGrindGroup<'_, '_, P> {}
+impl<G> Copy for FoldGrindGroup<'_, '_, G> {}
 
-impl<P> Clone for FoldGrindGroup<'_, '_, P> {
+impl<G> Clone for FoldGrindGroup<'_, '_, G> {
     fn clone(&self) -> Self {
         *self
     }
@@ -347,10 +394,9 @@ where
     Ok(TerminalFoldGrindOutput { witness, nonce })
 }
 
-struct PreparedFoldGrindGroup<'params, 'poly, P> {
-    input: FoldGrindGroup<'params, 'poly, P>,
+struct PreparedFoldGrindGroup<'params, 'group, G> {
+    input: FoldGrindGroup<'params, 'group, G>,
     acceptance: FoldGrindAcceptanceCtx,
-    point_indices: Vec<usize>,
 }
 
 /// One fold probe: returns the global folded witness and the per-window centered
@@ -363,7 +409,7 @@ struct PreparedFoldGrindGroup<'params, 'poly, P> {
 /// coefficient-wise sum of the windows (`Σ_i z_i = z`), so grind acceptance on
 /// the global L∞ is identical to a standalone global fold over all blocks.
 #[allow(clippy::type_complexity)]
-fn fold_probe_witness_kernel<F, P, B, const D: usize>(
+pub(in crate::protocol) fn fold_probe_witness_kernel<F, P, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     challenges: &Challenges,
@@ -441,23 +487,21 @@ fn first_jointly_accepted_nonce<T>(
 /// Probe every group at its native A dimension as one transcript transaction
 /// for each candidate nonce.
 #[allow(clippy::too_many_arguments)]
-fn sample_multi_group_fold_decompose_witnesses_native<F, P, B, T>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
+fn sample_multi_group_fold_decompose_witnesses_native<F, E, G, B, T>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
-    groups: &[PreparedFoldGrindGroup<'_, '_, P>],
+    groups: &[PreparedFoldGrindGroup<'_, '_, G>],
     probe_nonces: &[u32],
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootOpeningSource<F, 32>
-        + RootOpeningSource<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootOpeningSource<F, 512>,
-    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+    E: akita_types::FpExtEncoding<F>
+        + akita_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     if groups.is_empty() {
@@ -473,49 +517,26 @@ where
             for prepared_group in groups {
                 let group = &prepared_group.input;
                 let ring_d = group.params.inner_commit_matrix_params().ring_dimension();
-                let candidate = dispatch_for_field!(
-                    akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
-                    F,
+                let challenges = preview.draw_folding_challenges(
                     ring_d,
-                    |D| {
-                        let challenges = preview.draw_folding_challenges(
-                            D,
-                            group.group_index,
-                            group.params.num_live_blocks(),
-                            group.polys.len(),
-                            &group.params.fold_challenge_config(),
-                            &group.params.fold_challenge_shape(),
-                            labels,
-                            nonce,
-                        )?;
-                        let (witness, z_per_chunk) = fold_probe_witness_kernel::<F, P, B, D>(
-                            backend,
-                            prepared,
-                            &challenges,
-                            group.polys,
-                            &prepared_group.point_indices,
-                            root_lp,
-                            group.params,
-                        )?;
-                        if accepts_fold_witness::<F, D>(
-                            &prepared_group.acceptance,
-                            &witness,
-                            &z_per_chunk,
-                        ) {
-                            let centered_per_chunk = z_per_chunk
-                                .into_iter()
-                                .map(|chunk| chunk.into_iter().map(|row| row.to_vec()).collect())
-                                .collect();
-                            Ok::<_, AkitaError>(Some(FoldGrindGroupOutput {
-                                witness,
-                                centered_per_chunk,
-                                challenges,
-                            }))
-                        } else {
-                            Ok::<_, AkitaError>(None)
-                        }
-                    }
+                    group.group_index,
+                    group.params.num_live_blocks(),
+                    group.group.num_polynomials(),
+                    &group.params.fold_challenge_config(),
+                    &group.params.fold_challenge_shape(),
+                    labels,
+                    nonce,
                 )?;
+                let output =
+                    group
+                        .group
+                        .probe_fold(opening_ctx, &challenges, root_lp, group.params)?;
+                let candidate = accepts_fold_witness_flat(
+                    &prepared_group.acceptance,
+                    &output.witness,
+                    &output.centered_per_chunk,
+                )
+                .then_some(output);
                 let Some(candidate) = candidate else {
                     return Ok(None);
                 };
@@ -533,7 +554,7 @@ where
             ring_d,
             group.group_index,
             group.params.num_live_blocks(),
-            group.polys.len(),
+            group.group.num_polynomials(),
             &group.params.fold_challenge_config(),
             &group.params.fold_challenge_shape(),
             labels,
@@ -558,24 +579,22 @@ where
 /// fit the terminal Golomb planner budget at wire low bits (including `WorstCaseBetaOnly`
 /// presets that do not reroll on linf cap).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, P, B, T>(
-    backend: &B,
-    prepared: Option<&B::PreparedSetup>,
+pub(crate) fn sample_multi_group_fold_decompose_witnesses<F, E, G, B, T>(
+    opening_ctx: &crate::compute::OperationCtx<'_, F, B>,
     transcript: &mut T,
     root_lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-    groups: &[FoldGrindGroup<'_, '_, P>],
+    groups: &[FoldGrindGroup<'_, '_, G>],
     tail_t_vectors: Option<usize>,
 ) -> Result<(Vec<FoldGrindGroupOutput<F>>, u32), AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    P: RootOpeningSource<F, 32>
-        + RootOpeningSource<F, 64>
-        + RootOpeningSource<F, 128>
-        + RootOpeningSource<F, 256>
-        + RootOpeningSource<F, 512>,
-    B: crate::compute::ComputeBackendSetup<F> + RuntimeOpeningProveBackendFor<F, P>,
+    E: akita_types::FpExtEncoding<F>
+        + akita_field::ExtField<F>
+        + akita_serialization::AkitaSerialize,
+    G: crate::protocol::core::RootProverGroupOpening<F, E, B>,
+    B: crate::compute::ComputeBackendSetup<F> + crate::DigitRowsComputeBackend<F>,
     T: Transcript<F> + ProverTranscriptGrind<F>,
 {
     let binding = FoldLinfProtocolBinding::CURRENT;
@@ -594,8 +613,8 @@ where
             .group_layout(expected_group_index)?
             .num_polynomials();
         if group.group_index != expected_group_index
-            || group.polys.is_empty()
-            || group.polys.len() != expected_claims
+            || group.group.num_polynomials() == 0
+            || group.group.num_polynomials() != expected_claims
         {
             return Err(AkitaError::InvalidSetup(
                 "fold grind group descriptor is malformed".to_string(),
@@ -607,7 +626,7 @@ where
         );
         let cap_config = root_lp.fold_witness_linf_cap_config_for_params(group.params)?;
         let witness_norms = root_lp.fold_witness_norms_for_params(group.params)?;
-        let sizing_claims = tail_t_vectors.unwrap_or(group.polys.len());
+        let sizing_claims = tail_t_vectors.unwrap_or(group.group.num_polynomials());
         let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
             group.params.num_live_blocks(),
             sizing_claims,
@@ -631,19 +650,17 @@ where
                 digit_positive_bound,
                 tail_t_vectors,
             ),
-            point_indices: (0..group.polys.len()).collect(),
         });
     }
     let group_geometries = prepared_groups
         .iter()
-        .map(|group| (group.input.params, group.input.polys.len()))
+        .map(|group| (group.input.params, group.input.group.num_polynomials()))
         .collect::<Vec<_>>();
     let probe_nonces =
         grind_probe_nonces(&contract, &binding, transcript, root_lp, &group_geometries)?;
 
-    sample_multi_group_fold_decompose_witnesses_native::<F, P, B, T>(
-        backend,
-        prepared,
+    sample_multi_group_fold_decompose_witnesses_native::<F, E, G, B, T>(
+        opening_ctx,
         transcript,
         root_lp,
         &prepared_groups,

@@ -46,7 +46,7 @@ use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
-use akita_schedules::generated::table_entry;
+use akita_schedules::generated::{table_entry, table_entry_range};
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
@@ -223,6 +223,23 @@ fn catalog_identity_rejects_planner_policy_changes() {
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;
     assert_rejected("offloaded witness contraction", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn equal_lookup_keys_form_one_contiguous_candidate_range() {
+    let catalog = fp128::D64Dense::schedule_catalog().expect("generated catalog");
+    let entry = *catalog.entries.first().expect("nonempty generated catalog");
+    let entries = Box::leak(vec![entry, entry].into_boxed_slice());
+    let duplicate_table = akita_schedules::GeneratedScheduleTable {
+        entries,
+        identity: catalog.identity,
+    };
+    let key = entry.to_runtime_lookup_key();
+
+    assert!(catalog_entries_sorted_for_lookup(entries));
+    assert_eq!(table_entry_range(duplicate_table, &key), 0..2);
+    assert_eq!(table_entry(duplicate_table, &key), entries.first());
 }
 
 #[cfg(feature = "all-schedules")]

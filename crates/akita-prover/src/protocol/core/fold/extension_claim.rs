@@ -1,18 +1,16 @@
 use super::super::*;
 use super::{finish_prepared_fold, prepare_non_eor_opening, FinishFoldArgs, PreparedFold};
 use crate::compute::{
-    tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack,
-    RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
+    ComputeBackendSetup, DigitRowsComputeBackend, ProverComputeStack, RuntimeOpeningProveBackendFor,
 };
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AdditiveGroup;
-use akita_types::dispatch_for_field;
 
-pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, E: FieldCore, P> {
+pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, E: FieldCore, G> {
     CurrentClaims,
     Logical {
-        polys: &'a [&'a P],
+        groups: &'a [G],
         claims: &'a OpeningClaims<'a, E>,
     },
 }
@@ -41,28 +39,28 @@ where
         + MulBaseUnreduced<F>
         + AkitaSerialize,
     T: Transcript<F> + ProverTranscriptGrind<F>,
-    P: RuntimeRootProvePoly<F>,
+    P: RootProverGroupOpening<F, E, O> + RootProverGroupTensor<F, E, TS>,
     V: FnOnce() -> Result<(), AkitaError>,
-    TS: RuntimeTensorBackendFor<F, P, E>,
+    TS: ComputeBackendSetup<F>,
     C: ComputeBackendSetup<F>,
-    O: DigitRowsComputeBackend<F>
-        + RuntimeOpeningProveBackendFor<F, P>
-        + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
+    O: DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>,
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = block_claims
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
-    let fold_polys = block_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let (eor_polys, eor_opening_batch): (&[&P], &dyn ExtensionOpeningClaimGeometry<E>) =
+        let (eor_groups, eor_opening_batch): (Vec<&P>, &dyn ExtensionOpeningClaimGeometry<E>) =
             match eor_source {
-                ExtensionOpeningSource::CurrentClaims => {
-                    (&fold_polys, block_claims.opening_claims())
+                ExtensionOpeningSource::CurrentClaims => (
+                    block_claims.group_sources().collect(),
+                    block_claims.opening_claims(),
+                ),
+                ExtensionOpeningSource::Logical { groups, claims } => {
+                    (groups.iter().collect(), claims)
                 }
-                ExtensionOpeningSource::Logical { polys, claims } => (polys, claims),
             };
         let group_ring_dimensions = (0..opening_batch.num_groups())
             .map(|group_index| {
@@ -74,7 +72,7 @@ where
         let proved = prove_extension_opening_reduction::<F, E, T, P, TS>(
             tensor.backend(),
             Some(tensor.prepared()),
-            eor_polys,
+            &eor_groups,
             eor_opening_batch,
             &group_ring_dimensions,
             pad_base_evals,
@@ -103,35 +101,34 @@ where
     // All other arms share one finish path.
     if run_eor && !pad_base_evals {
         let transformed: Vec<RootTensorProjectionPoly<F>> = {
-            let _span =
-                tracing::info_span!("extension_transform_polys", num_claims = fold_polys.len())
-                    .entered();
-            let mut transformed = Vec::with_capacity(fold_polys.len());
+            let _span = tracing::info_span!(
+                "extension_transform_polys",
+                num_claims = opening_batch.num_total_polynomials()
+            )
+            .entered();
+            let mut transformed = Vec::with_capacity(opening_batch.num_total_polynomials());
             for group_index in 0..opening_batch.num_groups() {
                 let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                let group_polys = block_claims.group_polys(group_index)?;
-                transformed.extend(dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
-                    F,
+                transformed.extend(block_claims.group_source(group_index)?.tensor_project(
+                    tensor.backend(),
+                    Some(tensor.prepared()),
                     group_dims.d_a(),
-                    |D| {
-                        cfg_iter!(group_polys)
-                            .map(|poly| {
-                                tensor_root_projection::<F, P, E, TS, D>(
-                                    tensor.backend(),
-                                    Some(tensor.prepared()),
-                                    *poly,
-                                )
-                            })
-                            .collect::<Result<Vec<_>, _>>()
-                    }
                 )?);
             }
             transformed
         };
         let fold_refs = transformed.iter().collect::<Vec<_>>();
         let transformed_block_claims = block_claims.regroup_polynomial_refs(&fold_refs)?;
-        finish_prepared_fold::<F, E, T, RootTensorProjectionPoly<F>, C, O, TS, R>(FinishFoldArgs {
+        finish_prepared_fold::<
+            F,
+            E,
+            T,
+            PreparedProverGroup<'_, RootTensorProjectionPoly<F>>,
+            C,
+            O,
+            TS,
+            R,
+        >(FinishFoldArgs {
             stack,
             block_claims: transformed_block_claims,
             protocol_points: &protocol_points,

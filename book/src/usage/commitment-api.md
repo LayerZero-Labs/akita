@@ -25,10 +25,22 @@ commitment, point coordinates, and evaluations in that order.
 `OpeningClaimsLayout` contains only group arities and polynomial counts, so
 setup and schedule selection do not depend on point values.
 
-On the prover side, `ProverOpeningData::new` receives the same claims together
-with commitment hints and polynomial slices in matching group order.
-The verifier receives only `OpeningClaims` and the proof.
-There is no ambient shared point or coordinate-routing object.
+On the prover side, each commitment hint is bound to one prepared whole-group
+source in a `ProverGroupInput`. `ProverOpeningData` keeps those group records in
+the same protocol-visible order as the public claims. Built-in dense and
+one-hot sources are validated through `DenseGroupProvider` and
+`OneHotGroupProvider`; downstream code can implement
+`WholeGroupSourceProvider` for another concrete polynomial type.
+
+Heterogeneous batches compose `PreparedProverGroup<P>` values with
+`EitherPreparedGroup`. Dispatch occurs once per whole-group root operation;
+the polynomial and backend loops remain monomorphized over their concrete
+types. The verifier receives a `GroupBatchStatement` containing only the exact
+schedule selection and self-describing public claims. It never executes source
+provider code.
+
+There is no ambient shared point, global polynomial type for the batch, or
+coordinate-routing object.
 
 **Sources to fold in**
 
@@ -36,7 +48,10 @@ There is no ambient shared point or coordinate-routing object.
 - `crates/akita-prover/src/api/scheme.rs` (`CommitmentProver`).
 - `crates/akita-types/src/proof/scheme.rs` (`CommitmentVerifier`).
 - `crates/akita-types/src/opening_claims.rs` (`OpeningClaims`, `OpeningClaimsLayout`).
-- `crates/akita-prover/src/types/opening_data.rs` (`ProverOpeningData`).
+- `crates/akita-prover/src/types/opening_data.rs` (`ProverGroupInput`,
+  `ProverOpeningData`).
+- `crates/akita-prover/src/api/group_provider.rs` (whole-group providers and
+  prepared group carriers).
 - `crates/akita-pcs/tests/single_poly_e2e.rs`, `batched_aggregated_e2e.rs`.
 
 ## Setup and caching

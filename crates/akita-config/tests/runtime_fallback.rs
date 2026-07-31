@@ -18,7 +18,7 @@ use akita_config::{
 use akita_planner::find_group_batch_schedule;
 use akita_schedules::{
     resolve_generated_schedule_selection, select_generated_schedule_row, PlannerCostModelId,
-    PlannerPolicy, SelectionPolicyId,
+    PlannerPolicy, ResolvedScheduleRow, SelectionPolicyId,
 };
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupProfile, GroupSource, GroupSourceRegistration,
@@ -151,6 +151,124 @@ fn fixed_width_selection_resolves_the_same_exact_generated_row() {
 }
 
 #[test]
+fn cached_catalog_rows_do_not_bypass_runtime_hook_validation() {
+    type Cfg = fp128::D64Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog.entries.first().expect("nonempty generated catalog");
+    let selected = select_generated_schedule_row(
+        &entry.to_runtime_lookup_key(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect("prime the materialized-catalog cache");
+
+    let error = resolve_generated_schedule_selection(
+        selected.selection(),
+        &policy_of::<Cfg>(),
+        |_| {
+            Err(akita_field::AkitaError::InvalidSetup(
+                "test runtime-hook drift".to_string(),
+            ))
+        },
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect_err("a cache hit must still execute the supplied runtime hook");
+    assert!(
+        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        "expected runtime-hook validation failure, got {error:?}"
+    );
+}
+
+fn assert_mutated_row_is_rejected<Cfg: CommitmentConfig>(
+    profiles: akita_types::CommittedGroupBatchProfile,
+    schedule: akita_types::FoldSchedule,
+    catalog_identity: akita_types::CatalogIdentity,
+) {
+    let row_digest = akita_types::schedule_row_digest(&profiles, &schedule)
+        .expect("mutated row has a canonical digest");
+    let error = ResolvedScheduleRow::try_new(
+        akita_types::OpeningScheduleSelection {
+            catalog_identity,
+            row_digest,
+        },
+        profiles,
+        schedule,
+        &policy_of::<Cfg>(),
+    )
+    .expect_err("security-invalid row must fail before digest admission");
+    assert!(
+        matches!(error, akita_field::AkitaError::InvalidSetup(_)),
+        "expected InvalidSetup, got {error:?}"
+    );
+}
+
+#[test]
+fn resolved_row_audit_rejects_low_rank_root_d_and_terminal_a() {
+    type Cfg = fp128::D64Dense;
+
+    let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
+    let entry = catalog.entries.first().expect("nonempty generated catalog");
+    let selected = select_generated_schedule_row(
+        &entry.to_runtime_lookup_key(),
+        &policy_of::<Cfg>(),
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+        Some(catalog),
+    )
+    .expect("valid generated row");
+    let selection = selected.selection();
+    let profiles = selected.profiles().clone();
+
+    let mut low_rank_d = selected.schedule().clone();
+    let matrix = &low_rank_d
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix;
+    low_rank_d
+        .root
+        .params
+        .final_group
+        .commitment
+        .open_commit_matrix = akita_types::OpenCommitMatrixParams::new_unchecked(
+        matrix.security_policy(),
+        matrix.sis_table_key().table_digest,
+        matrix.sis_modulus_profile(),
+        0,
+        matrix.input_width(),
+        matrix.coeff_linf_bound(),
+        matrix.ring_dimension(),
+    );
+    assert_mutated_row_is_rejected::<Cfg>(profiles.clone(), low_rank_d, selection.catalog_identity);
+
+    let mut low_rank_terminal = selected.schedule().clone();
+    let matrix = &low_rank_terminal
+        .terminal
+        .params
+        .witness
+        .inner_commit_matrix;
+    low_rank_terminal
+        .terminal
+        .params
+        .witness
+        .inner_commit_matrix = akita_types::InnerCommitMatrixParams::new_unchecked(
+        matrix.security_policy(),
+        matrix.sis_table_key().table_digest,
+        matrix.sis_modulus_profile(),
+        0,
+        matrix.input_width(),
+        matrix.coeff_linf_bound(),
+        matrix.ring_dimension(),
+    );
+    assert_mutated_row_is_rejected::<Cfg>(profiles, low_rank_terminal, selection.catalog_identity);
+}
+
+#[test]
 fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     let key = AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(18),
@@ -164,7 +282,7 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 }
 
 #[test]
-fn generated_lookup_preserves_downstream_provider_registration() {
+fn generated_lookup_normalizes_downstream_provider_registration() {
     type Cfg = fp128::D64Dense;
 
     let catalog = Cfg::schedule_catalog().expect("dense schedule catalog");
@@ -185,17 +303,34 @@ fn generated_lookup_preserves_downstream_provider_registration() {
         "catalog lookup identity must depend on protocol encoding, not provider registration"
     );
     let resolved = Cfg::runtime_schedule(key).expect("downstream provider schedule");
+    assert_ne!(
+        resolved
+            .root
+            .params
+            .final_group
+            .commitment
+            .source
+            .registration(),
+        downstream.registration(),
+        "provider registration must disappear at the approved-row boundary"
+    );
     assert_eq!(
-        resolved.root.params.final_group.commitment.source, downstream,
-        "resolved parameters must retain the caller's concrete provider"
+        resolved
+            .root
+            .params
+            .final_group
+            .commitment
+            .source
+            .encoding(),
+        downstream.encoding(),
+        "generated lookup must retain the certified planning encoding"
     );
 
-    let mut built_in_schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+    let built_in_schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         entry.root.final_group.layout,
         built_in,
     ))
     .expect("built-in provider schedule");
-    built_in_schedule.root.params.final_group.commitment.source = downstream;
     assert_schedule_eq(
         "provider-independent schedule resolution",
         &resolved,

@@ -7,8 +7,8 @@ use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{
-    DenseGroupProvider, DensePoly, MultilinearPolynomial, OneHotGroupProvider, OneHotPoly,
-    ProverOpeningData, WholeGroupSourceProvider,
+    DenseGroupProvider, DensePoly, EitherPreparedGroup, OneHotGroupProvider, OneHotPoly,
+    PreparedProverGroup, ProverGroupInput, ProverOpeningData, WholeGroupSourceProvider,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -43,6 +43,12 @@ const ONEHOT_D: usize = OneHotCfg::D;
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
+type HomogeneousProverData<'a, C, P> = ProverOpeningData<
+    'a,
+    <C as CommitmentConfig>::ExtField,
+    PreparedProverGroup<'a, P>,
+    <C as CommitmentConfig>::Field,
+>;
 /// Minimum w vector length (in field elements) below which further folding
 /// is not beneficial.  When `w.len() <= MIN_W_LEN_FOR_FOLDING`, the prover
 /// sends `w` directly instead of recursing.
@@ -60,9 +66,10 @@ fn selected_prover_data<'a, C, P>(
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
-) -> Result<ProverOpeningData<'a, C::ExtField, P, C::Field>, AkitaError>
+) -> Result<HomogeneousProverData<'a, C, P>, AkitaError>
 where
     C: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<C::Field>,
 {
     let profiles = batch_profiles::<C>(&claims)?;
     let selection = C::select_schedule_for_profiles(&profiles)?.selection();
@@ -216,7 +223,10 @@ fn prover_claims<'a, P>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<F>,
     hint: AkitaCommitmentHint<F>,
-) -> ProverOpeningData<'a, F, P, F> {
+) -> ProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F>
+where
+    P: akita_prover::RootPolyMeta<F>,
+{
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
         vec![F::zero(); polynomials.len()],

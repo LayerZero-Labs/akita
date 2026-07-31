@@ -347,24 +347,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ) -> Result<akita_schedules::ResolvedScheduleRow, AkitaError> {
         Self::validate_sis_modulus_profile()?;
         profiles.validate(Self::decomposition().field_bits())?;
-        let row = akita_schedules::select_generated_schedule_row(
+        akita_schedules::select_generated_schedule_row_for_profiles(
             &AkitaScheduleLookupKey {
                 final_group: profiles.final_group.group,
                 final_source: Self::group_source(),
                 precommitteds: profiles.precommitteds.clone(),
                 precommitted_sources: Vec::new(),
             },
+            profiles,
             &policy_of::<Self>(),
             Self::ring_challenge_config,
             Self::fold_challenge_shape_at_level,
             Self::schedule_catalog(),
-        )?;
-        if row.profiles() != profiles {
-            return Err(AkitaError::UnsupportedSchedule(
-                "resolved schedule does not match the exact committed profiles".to_string(),
-            ));
-        }
-        Ok(row)
+        )
     }
 
     /// Resolve one explicit public selection in this config's generated catalog.

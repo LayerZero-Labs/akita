@@ -868,7 +868,7 @@ setup access or allocation.
 
 ### Generalizing `ProverOpeningData`
 
-The current `ProverOpeningData` stores:
+The audited-base `ProverOpeningData` stored:
 
 - one homogeneous polynomial type `P`;
 - raw opening claims;
@@ -879,26 +879,27 @@ The current `ProverOpeningData` stores:
 That ownership is unsuitable for open heterogeneous providers. It encourages
 flattening and makes index alignment a global invariant.
 
-The replacement MUST aggregate each group:
+The replacement MUST preserve `OpeningClaims` as the canonical public grouping
+and aggregate the prover-only material for each corresponding group:
 
 ```rust
-pub struct ProverOpeningData<'a, F, E> {
-    pub schedule: OpeningScheduleSelection,
-    pub groups: Vec<ProverGroupInput<'a, F, E>>,
+pub struct ProverOpeningData<'a, E, G, F> {
+    schedule: OpeningScheduleSelection,
+    claims: OpeningClaims<'a, E, Commitment<F>>,
+    group_inputs: Vec<ProverGroupInput<G, F>>,
 }
 
-pub struct ProverGroupInput<'a, F, E> {
-    pub point: Vec<E>,
-    pub evaluations: Vec<E>,
-    pub committed_group: &'a CommittedGroup<F>,
-    pub hint: AkitaCommitmentHint<F>,
-    pub prepared_source: Box<dyn PreparedGroupProver<F, E> + 'a>,
+pub struct ProverGroupInput<G, F> {
+    hint: AkitaCommitmentHint<F>,
+    prepared_source: G,
 }
 ```
 
-This snippet is an ownership model, not a required allocation strategy. The
-implementation MAY use enums internally for built-in fast paths, arenas,
-borrows, or generics to avoid heap allocation.
+This avoids duplicating points, evaluations, and commitments already owned by
+`OpeningClaims`. Construction checks the one public-claim-group to one
+`ProverGroupInput` correspondence once. Thereafter a hint and its prepared
+source cannot be independently reordered. The implementation MAY use enums,
+arenas, borrows, or generics to avoid heap allocation.
 
 Type erasure SHOULD occur at the whole-group operation boundary, not at every
 low-level polynomial read. Existing `RootOpeningSource` and backend kernels use
@@ -906,7 +907,7 @@ generic associated types, const ring dimensions, and monomorphized hot loops.
 Wrapping those low-level traits directly in `dyn` objects would either be
 impossible or impose unnecessary virtual calls.
 
-`PreparedGroupProver` instead owns one prepared homogeneous group and exposes
+The prepared group carrier instead owns one prepared homogeneous group and exposes
 coarse operations required by the root protocol, such as:
 
 - validate prepared witness against the selected commitment profile;
@@ -916,9 +917,9 @@ coarse operations required by the root protocol, such as:
 - expose checked provider completeness data to the grind planner;
 - report the group layout and exact profile.
 
-The root protocol iterates group records. It MUST NOT require one global `P`,
-build one `flat_polys` source-validation path, or infer group/profile alignment
-from parallel vector positions.
+The root protocol iterates group records. It MUST NOT require one global
+polynomial type `P`, build one `flat_polys` source-validation path, or maintain
+independent parallel hint and polynomial vectors.
 
 ### Public APIs
 

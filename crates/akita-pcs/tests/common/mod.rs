@@ -167,9 +167,10 @@ pub(super) fn prove_input<'a, Cfg, P>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<Cfg::Field>,
     hint: AkitaCommitmentHint<Cfg::Field>,
-) -> ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>
+) -> ProverOpeningData<'a, Cfg::ExtField, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
 where
     Cfg: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
@@ -193,9 +194,10 @@ pub(super) fn selected_prover_data<'a, Cfg, P>(
     claims: OpeningClaims<'a, Cfg::ExtField, CommittedGroup<Cfg::Field>>,
     hints: Vec<AkitaCommitmentHint<Cfg::Field>>,
     polynomials: Vec<&'a [&'a P]>,
-) -> ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field>
+) -> ProverOpeningData<'a, Cfg::ExtField, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
 where
     Cfg: CommitmentConfig,
+    P: akita_prover::RootPolyMeta<Cfg::Field>,
 {
     let (final_group, precommitteds) = claims
         .groups()

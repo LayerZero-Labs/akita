@@ -473,17 +473,12 @@ fn verify_ring_challenge_config_digest_on_cache_hit(
 fn validate_catalog_keys(entries: &[GeneratedFoldScheduleEntry]) -> Result<(), AkitaError> {
     for pair in entries.windows(2) {
         match generated_schedule_key_cmp(&pair[0], &pair[1]) {
-            Ordering::Less => {}
-            Ordering::Equal => {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "schedule catalog contains duplicate key {:?}",
-                    pair[0]
-                )));
-            }
+            Ordering::Less | Ordering::Equal => {}
             Ordering::Greater => {
                 return Err(AkitaError::InvalidSetup(
                     "schedule catalog entries are not sorted for binary lookup \
-                     (final_group num_vars/num_polynomials, then precommitted layout)"
+                     (final_group num_vars/num_polynomials, source encoding, then exact \
+                      precommitted profiles)"
                         .to_string(),
                 ));
             }

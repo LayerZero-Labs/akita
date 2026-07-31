@@ -1,18 +1,22 @@
 //! Prover-side commitment-scheme trait surface for Akita protocol code.
 
-use crate::compute::ComputeBackendSetup;
 use crate::compute::{
-    LevelProveStacks, RecursiveProveBackend, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
-    RuntimeRootProvePoly, UniformProverStack,
+    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeRootCommitBackend,
+    RuntimeRootCommitPoly, RuntimeTensorBackendFor, SuffixOpeningProveBackend,
+    SuffixTensorProveBackend, UniformProverStack,
 };
-use crate::ProverOpeningData;
 use crate::ProverTranscriptGrind;
 use crate::WholeGroupSourceProvider;
+use crate::{
+    PreparedGroupProveOps, ProverOpeningData, RecursiveFoldSource, RootTensorProjectionPoly,
+};
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{
     AdditiveGroup, AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt,
-    RandomSampling,
+    MulBaseUnreduced, RandomSampling,
 };
+use akita_serialization::AkitaSerialize;
 use akita_transcript::Transcript;
 use akita_types::{BasisMode, CommittedGroupProfile, FpExtEncoding};
 
@@ -33,7 +37,7 @@ where
     /// Protocol-facing commitment storage.
     type Commitment: Clone + PartialEq + Send + Sync;
     /// Public opening point, claimed-evaluation, and proof scalar field.
-    type ExtField: ExtField<F>;
+    type ExtField: ExtField<F> + FpExtEncoding<F> + MulBaseUnreduced<F> + AkitaSerialize;
     /// Prover-side hint produced for one opening-point commitment.
     type CommitHint: Clone + Send + Sync;
     /// Batched proof object produced by the scheme.
@@ -142,7 +146,17 @@ where
         T: Transcript<F> + ProverTranscriptGrind<F>,
         F: FromPrimitiveInt + HasWide + RandomSampling + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-        P: RuntimeRootProvePoly<F>,
-        B: RecursiveProveBackend<F, P, Self::ExtField> + ComputeBackendSetup<F> + 'a,
+        P: PreparedGroupProveOps<F, Self::ExtField, B, B>,
+        B: ComputeBackendSetup<F>
+            + CommitmentComputeBackend<F>
+            + RuntimeOpeningProveBackendFor<F, RecursiveFoldSource<F>>
+            + RuntimeOpeningProveBackendFor<F, RootTensorProjectionPoly<F>>
+            + SuffixOpeningProveBackend<F>
+            + DigitRowsComputeBackend<F>
+            + RuntimeTensorBackendFor<F, RecursiveFoldSource<F>, Self::ExtField>
+            + RuntimeTensorBackendFor<F, RootTensorProjectionPoly<F>, Self::ExtField>
+            + SuffixTensorProveBackend<F, Self::ExtField>
+            + RuntimeRingSwitchProveBackend<F>
+            + 'a,
         <B as ComputeBackendSetup<F>>::PreparedSetup: 'a;
 }

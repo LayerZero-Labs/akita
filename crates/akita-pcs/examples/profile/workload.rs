@@ -78,7 +78,10 @@ fn prover_claims<'a, E: FieldCore, P, CommitF: FieldCore>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningData<'a, E, P, CommitF> {
+) -> ProverOpeningData<'a, E, akita_prover::PreparedProverGroup<'a, P>, CommitF>
+where
+    P: akita_prover::RootPolyMeta<CommitF>,
+{
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
         vec![E::zero(); polynomials.len()],

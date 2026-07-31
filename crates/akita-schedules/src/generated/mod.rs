@@ -177,18 +177,32 @@ pub use validate::{validate_generated_schedule_entry, validate_generated_schedul
 pub fn catalog_entries_sorted_for_lookup(entries: &[GeneratedFoldScheduleEntry]) -> bool {
     entries
         .windows(2)
-        .all(|window| generated_schedule_key_cmp(&window[0], &window[1]).is_lt())
+        .all(|window| !generated_schedule_key_cmp(&window[0], &window[1]).is_gt())
+}
+
+pub fn table_entry_range(
+    table: GeneratedScheduleTable,
+    key: &akita_types::AkitaScheduleLookupKey,
+) -> std::ops::Range<usize> {
+    let start = table
+        .entries
+        .partition_point(|entry| generated_schedule_key_cmp_runtime(entry, key).is_lt());
+    let end = table
+        .entries
+        .partition_point(|entry| !generated_schedule_key_cmp_runtime(entry, key).is_gt());
+    start..end
 }
 
 pub fn table_entry(
     table: GeneratedScheduleTable,
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> Option<&'static GeneratedFoldScheduleEntry> {
-    let index = table
-        .entries
-        .binary_search_by(|entry| generated_schedule_key_cmp_runtime(entry, key))
-        .ok()?;
-    table.entries.get(index)
+    let range = table_entry_range(table, key);
+    if range.is_empty() {
+        None
+    } else {
+        table.entries.get(range.start)
+    }
 }
 
 pub fn generated_schedule_key_cmp(

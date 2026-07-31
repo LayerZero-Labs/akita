@@ -108,13 +108,13 @@ fn run_on_large_stack(f: impl FnOnce() + Send + 'static) {
         .expect("test thread panicked");
 }
 
-fn prove_input<'a, Cfg: CommitmentConfig, P>(
+fn prove_input<'a, Cfg: CommitmentConfig, P: akita_prover::RootPolyMeta<Cfg::Field>>(
     selection: OpeningScheduleSelection,
     point: &'a [Cfg::ExtField],
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<Cfg::Field>,
     hint: AkitaCommitmentHint<Cfg::Field>,
-) -> ProverOpeningData<'a, Cfg::ExtField, P, Cfg::Field> {
+) -> ProverOpeningData<'a, Cfg::ExtField, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field> {
     let group = PolynomialGroupClaims::new(
         point.to_vec(),
         vec![Cfg::ExtField::zero(); polynomials.len()],

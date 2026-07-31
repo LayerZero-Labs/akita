@@ -268,17 +268,23 @@ where
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
     let eor_claims =
-        ProverOpeningData::<E, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
+        ProverOpeningData::<
+            E,
+            PreparedProverGroup<'_, RecursiveFoldSource<F>>,
+            F,
+        >::recursive_suffix_eor_claims(
             None,
             sumcheck_challenges.clone(),
         )?;
     let polys = [&logical_source];
+    let logical_group = PreparedProverGroup::from_refs(&polys)?;
     let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
-        let proved = prove_extension_opening_reduction::<F, E, T, RecursiveFoldSource<F>, TS>(
+        let logical_groups = [&logical_group];
+        let proved = prove_extension_opening_reduction::<F, E, T, _, TS>(
             stack.tensor().backend(),
             Some(stack.tensor().prepared()),
-            &polys,
+            &logical_groups,
             &eor_claims,
             &[params.d_a()],
             true,
@@ -506,6 +512,10 @@ where
         .into_iter()
         .chain(std::iter::once(&logical_witness_source))
         .collect::<Vec<_>>();
+    let logical_groups = logical_polys
+        .iter()
+        .map(|poly| PreparedProverGroup::from_ref_vec(vec![*poly]))
+        .collect::<Result<Vec<_>, _>>()?;
     if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, _, _, C, O, TS, R>(
             stack,
@@ -522,7 +532,7 @@ where
             needs_extension_reduction,
             block_claims,
             ExtensionOpeningSource::Logical {
-                polys: &logical_polys,
+                groups: &logical_groups,
                 claims: &eor_opening_batch,
             },
             true,

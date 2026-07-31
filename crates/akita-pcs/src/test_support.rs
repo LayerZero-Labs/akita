@@ -114,7 +114,7 @@ where
         selection,
         profiles.clone(),
         schedule,
-        C::decomposition().field_bits(),
+        &akita_config::policy_of::<C>(),
     )?;
     let mut rows = synthetic_resolved_rows()
         .lock()

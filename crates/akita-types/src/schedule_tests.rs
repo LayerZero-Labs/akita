@@ -22,6 +22,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
+use crate::sis::FoldWitnessLinfCapPolicy;
 use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
@@ -1020,10 +1021,63 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
         crate::schedule_row_digest(&changed_profiles, &schedule).expect("changed-profile digest")
     );
 
-    let mut changed_schedule = schedule;
+    let mut changed_schedule = schedule.clone();
     changed_schedule.terminal.input_witness_len += 1;
     assert_ne!(
         digest,
         crate::schedule_row_digest(&profiles, &changed_schedule).expect("changed-row digest")
     );
+
+    let terminal_config = schedule.terminal.params.witness.fold_linf_cap_config;
+    let mut changed_configs = Vec::new();
+
+    let mut changed = terminal_config;
+    changed.policy = match changed.policy {
+        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => FoldWitnessLinfCapPolicy::TailBoundWithGrind,
+        FoldWitnessLinfCapPolicy::TailBoundWithGrind
+        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
+            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
+        }
+    };
+    changed_configs.push(("policy", changed));
+
+    let mut changed = terminal_config;
+    changed.challenge_l2_sq_max += 1;
+    changed_configs.push(("challenge_l2_sq_max", changed));
+    let mut changed = terminal_config;
+    changed.tensor_factor_l2_sq_max += 1;
+    changed_configs.push(("tensor_factor_l2_sq_max", changed));
+    let mut changed = terminal_config;
+    changed.tensor_factor_nonzero_count_max += 1;
+    changed_configs.push(("tensor_factor_nonzero_count_max", changed));
+    let mut changed = terminal_config;
+    changed.tensor_fold_low_len += 1;
+    changed_configs.push(("tensor_fold_low_len", changed));
+    let mut changed = terminal_config;
+    changed.num_fold_coeffs += 1;
+    changed_configs.push(("num_fold_coeffs", changed));
+    let mut changed = terminal_config;
+    changed.grind_target_accept_num += 1;
+    changed_configs.push(("grind_target_accept_num", changed));
+    let mut changed = terminal_config;
+    changed.grind_target_accept_den += 1;
+    changed_configs.push(("grind_target_accept_den", changed));
+    let mut changed = terminal_config;
+    changed.grind_union_ln += 1;
+    changed_configs.push(("grind_union_ln", changed));
+
+    for (field, changed_config) in changed_configs {
+        let mut changed_schedule = schedule.clone();
+        changed_schedule
+            .terminal
+            .params
+            .witness
+            .fold_linf_cap_config = changed_config;
+        assert_ne!(
+            digest,
+            crate::schedule_row_digest(&profiles, &changed_schedule)
+                .expect("terminal-policy mutation digest"),
+            "terminal fold-linf field {field} must change the row digest"
+        );
+    }
 }

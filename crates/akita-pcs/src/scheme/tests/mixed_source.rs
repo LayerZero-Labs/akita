@@ -1,11 +1,9 @@
 use super::*;
 use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
 
-type MixedPoly = MultilinearPolynomial<OneHotF, u8>;
-
 struct DownstreamK16Provider;
 
-impl WholeGroupSourceProvider<OneHotF, MixedPoly> for DownstreamK16Provider {
+impl WholeGroupSourceProvider<OneHotF, OneHotPoly<OneHotF, u8>> for DownstreamK16Provider {
     fn planning_source(&self) -> GroupSource {
         GroupSource::registered(
             akita_types::GroupSourceRegistration::new(*b"downstream/k016\0", [16; 16]),
@@ -13,7 +11,7 @@ impl WholeGroupSourceProvider<OneHotF, MixedPoly> for DownstreamK16Provider {
         )
     }
 
-    fn validate_group(&self, polynomials: &[MixedPoly]) -> Result<(), AkitaError> {
+    fn validate_group(&self, polynomials: &[OneHotPoly<OneHotF, u8>]) -> Result<(), AkitaError> {
         for poly in polynomials {
             akita_prover::RootPolyMeta::validate_group_source(poly, self.planning_source())?;
         }
@@ -41,20 +39,16 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
             .collect(),
     )
     .expect("K=16 precommitted polynomial");
-    let onehot_pre_wrapped = MixedPoly::onehot(onehot_pre.clone());
+    let onehot_pre_group = [onehot_pre];
     let downstream_provider = DownstreamK16Provider;
     assert_ne!(
         downstream_provider.planning_source().registration(),
         GroupSource::one_hot(16).registration(),
         "fixture must exercise downstream provider identity in a curated group batch"
     );
-    let (onehot_pre_commitment, onehot_pre_hint) = OneHotScheme::commit_group(
-        &setup,
-        std::slice::from_ref(&onehot_pre_wrapped),
-        &stack,
-        &downstream_provider,
-    )
-    .expect("K=16 precommit");
+    let (onehot_pre_commitment, onehot_pre_hint) =
+        OneHotScheme::commit_group(&setup, &onehot_pre_group, &stack, &downstream_provider)
+            .expect("K=16 precommit");
 
     let dense_evals_a = (0..(1usize << DENSE_PRE_NV))
         .map(|index| OneHotF::from_u64((index % 257) as u64))
@@ -66,9 +60,10 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
         .expect("first bounded dense polynomial");
     let dense_b = DensePoly::from_field_evals(DENSE_PRE_NV, ONEHOT_D, &dense_evals_b)
         .expect("second bounded dense polynomial");
-    let dense_group = [MixedPoly::dense(dense_a), MixedPoly::dense(dense_b)];
+    let dense_group = [dense_a, dense_b];
+    let dense_provider = DenseGroupProvider::new(32);
     let (dense_commitment, dense_hint) =
-        OneHotScheme::commit_group(&setup, &dense_group, &stack, &DenseGroupProvider::new(32))
+        OneHotScheme::commit_group(&setup, &dense_group, &stack, &dense_provider)
             .expect("32-bit dense precommit");
 
     let final_onehot = OneHotPoly::<OneHotF, u8>::new(
@@ -79,13 +74,14 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
             .collect(),
     )
     .expect("K=256 final polynomial");
-    let final_wrapped = MixedPoly::onehot(final_onehot.clone());
+    let final_group = [final_onehot];
+    let final_provider = OneHotGroupProvider::new(256);
     let (final_commitment, final_hint) = OneHotScheme::commit_final_group(
         &setup,
-        std::slice::from_ref(&final_wrapped),
+        &final_group,
         &stack,
         vec![onehot_pre_commitment.profile, dense_commitment.profile],
-        &OneHotGroupProvider::new(256),
+        &final_provider,
     )
     .expect("mixed-source final commit");
 
@@ -112,43 +108,70 @@ fn heterogeneous_group_sources_round_trip_with_group_local_points() {
     let final_point = (0..FINAL_NV)
         .map(|index| OneHotF::from_u64((index + 71) as u64))
         .collect::<Vec<_>>();
-    let onehot_pre_opening = opening_from_poly(&onehot_pre, &onehot_pre_point, &onehot_pre_params);
+    let onehot_pre_opening =
+        opening_from_poly(&onehot_pre_group[0], &onehot_pre_point, &onehot_pre_params);
     let dense_openings = vec![
         dense_opening(&dense_evals_a, &dense_point),
         dense_opening(&dense_evals_b, &dense_point),
     ];
-    let final_opening = opening_from_poly(&final_onehot, &final_point, final_params);
+    let final_opening = opening_from_poly(&final_group[0], &final_point, final_params);
 
-    let onehot_refs = [&onehot_pre_wrapped];
-    let dense_refs = [&dense_group[0], &dense_group[1]];
-    let final_refs = [&final_wrapped];
-    let prover_data = selected_prover_data::<OneHotCfg, _>(
-        OpeningClaims::from_groups(vec![
-            PolynomialGroupClaims::new(
-                onehot_pre_point.clone(),
-                vec![onehot_pre_opening],
-                onehot_pre_commitment.clone(),
-            )
-            .expect("K=16 prover claims"),
-            PolynomialGroupClaims::new(
-                dense_point.clone(),
-                dense_openings.clone(),
-                dense_commitment.clone(),
-            )
-            .expect("dense prover claims"),
-            PolynomialGroupClaims::new(
-                final_point.clone(),
-                vec![final_opening],
-                final_commitment.clone(),
-            )
-            .expect("final prover claims"),
-        ])
-        .expect("mixed prover claims"),
-        vec![onehot_pre_hint, dense_hint, final_hint],
-        vec![&onehot_refs, &dense_refs, &final_refs],
+    let prover_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            onehot_pre_point.clone(),
+            vec![onehot_pre_opening],
+            onehot_pre_commitment.clone(),
+        )
+        .expect("K=16 prover claims"),
+        PolynomialGroupClaims::new(
+            dense_point.clone(),
+            dense_openings.clone(),
+            dense_commitment.clone(),
+        )
+        .expect("dense prover claims"),
+        PolynomialGroupClaims::new(
+            final_point.clone(),
+            vec![final_opening],
+            final_commitment.clone(),
+        )
+        .expect("final prover claims"),
+    ])
+    .expect("mixed prover claims");
+    let profiles = batch_profiles::<OneHotCfg>(&prover_claims).expect("mixed profiles");
+    let selection = OneHotCfg::select_schedule_for_profiles(&profiles)
+        .expect("mixed schedule selection")
+        .selection();
+    let prover_data = ProverOpeningData::from_prepared_groups(
+        selection,
+        prover_claims,
+        vec![
+            ProverGroupInput::new(
+                onehot_pre_hint,
+                EitherPreparedGroup::Left(
+                    downstream_provider
+                        .prepare_prover_group(&onehot_pre_group)
+                        .expect("prepared downstream K=16 group"),
+                ),
+            ),
+            ProverGroupInput::new(
+                dense_hint,
+                EitherPreparedGroup::Right(
+                    dense_provider
+                        .prepare_prover_group(&dense_group)
+                        .expect("prepared dense group"),
+                ),
+            ),
+            ProverGroupInput::new(
+                final_hint,
+                EitherPreparedGroup::Left(
+                    final_provider
+                        .prepare_prover_group(&final_group)
+                        .expect("prepared K=256 group"),
+                ),
+            ),
+        ],
     )
     .expect("mixed prover opening data");
-    let selection = prover_data.selection().expect("mixed-source selection");
 
     const DOMAIN: &[u8] = b"test/heterogeneous-group-sources";
     let mut prover_transcript = AkitaTranscript::new(DOMAIN);

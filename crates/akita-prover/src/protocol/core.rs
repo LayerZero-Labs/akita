@@ -13,12 +13,11 @@ use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
-    ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
-    RingRelationWitness,
+    PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, ProverTranscriptGrind,
+    RecursiveCommitmentHintCache, RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
-use akita_field::parallel::*;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide};
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
@@ -68,6 +67,7 @@ mod fold;
 mod fold_kernels;
 mod prove;
 mod root_fold;
+mod root_group;
 mod suffix;
 #[cfg(test)]
 mod tests;
@@ -80,6 +80,10 @@ pub(in crate::protocol::core) use fold::{
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
 use root_fold::prove_root;
+#[allow(unused_imports)]
+pub(crate) use root_group::{
+    PreparedGroupOpening, RootProverGroupMeta, RootProverGroupOpening, RootProverGroupTensor,
+};
 pub use suffix::{prove_suffix, SuffixProverState};
 
 /// Output from a single prove level, used to extend proof wire data and state.
