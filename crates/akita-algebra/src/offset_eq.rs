@@ -337,7 +337,9 @@ where
     // (a fold count), which is bounded by the interval work check above, but we
     // still cap the materialization to keep the allocation bounded and fall
     // back to the scalar primitive for pathologically wide low blocks.
-    let eq_low_table: Option<Vec<F>> = if low_challenges.len() <= OFFSET_EQ_LOW_BITS_CAP {
+    let eq_low_table: Option<Vec<F>> = if low_weights.is_empty() {
+        None
+    } else if low_challenges.len() <= OFFSET_EQ_LOW_BITS_CAP {
         Some(crate::eq_poly::EqPolynomial::evals(low_challenges)?)
     } else {
         None
