@@ -55,8 +55,9 @@ fn exhaustive_suffixes(
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
         for candidate_dimensions in dimensions.candidates() {
-            let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-            if level >= MIXED_SEARCH_FOLD_LEVELS {
+            let mixed_policy = ctx.dimensions.mixed_policy();
+            let suffix_dimensions = mixed_policy.suffix_dimensions;
+            if level >= mixed_policy.mixed_fold_levels {
                 if *candidate_dimensions != suffix_dimensions {
                     continue;
                 }
@@ -66,7 +67,7 @@ fn exhaustive_suffixes(
             let Ok(ring_challenge) = ring_challenge_config(candidate_dimensions.d_a()) else {
                 continue;
             };
-            let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
+            let candidates = if level < mixed_policy.mixed_fold_levels {
                 derive_candidate_level_params_all_splits(
                     policy,
                     &ring_challenge,
@@ -93,7 +94,7 @@ fn exhaustive_suffixes(
             };
 
             for (params, output_witness_len) in candidates {
-                if level >= MIXED_SEARCH_FOLD_LEVELS {
+                if level >= mixed_policy.mixed_fold_levels {
                     if let Some((mut terminal, terminal_bytes)) =
                         suffix_dp::try_terminal_direct_suffix_cost(
                             input_witness_len,
@@ -133,8 +134,8 @@ fn exhaustive_suffixes(
                     }
                 }
 
-                let child_ceiling = if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                    CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                let child_ceiling = if level + 1 >= mixed_policy.mixed_fold_levels {
+                    mixed_policy.suffix_dimensions
                 } else {
                     params.role_dims()
                 };

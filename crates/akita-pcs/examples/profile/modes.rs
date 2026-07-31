@@ -25,7 +25,10 @@ use akita_field::{
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 use akita_pcs::test_support::{MixedDConfig, RecursiveRingDimensionTransitionConfig};
 #[cfg(feature = "profile-ci")]
-use akita_planner::{find_schedule, RingDimensionSearchDomain};
+use akita_planner::{
+    find_schedule, schedule_matrix_field_elements, MixedDimensionPolicy, MixedScheduleObjective,
+    RingDimensionSearchDomain,
+};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, ChunkedWitnessCfg,
@@ -41,7 +44,7 @@ type F = fp128::Field;
 
 // The CI profile intentionally exercises the mixed planner as an actual PCS
 // schedule provider. This adapter is benchmark-only: it keeps setup generation
-// at D256, admits the same D64/D128/D256 candidate domain as the planner example,
+// at D512, admits A dimensions through D512 while keeping B/D at D64 or D128,
 // and rejects grouped or batched keys because the mixed planner currently plans
 // direct scalar schedules only.
 #[cfg(feature = "profile-ci")]
@@ -61,30 +64,23 @@ fn planner_mixed_fp128_onehot_plan(num_vars: usize) -> Result<PlannedFoldSchedul
         return Ok(plan);
     }
 
-    let policy = akita_config::policy_of::<fp128::D256OneHot>();
-    let dimensions = RingDimensionSearchDomain::new(
-        policy.ring_dimension,
-        [
-            akita_types::CommitmentRingDims::uniform(64),
-            akita_types::CommitmentRingDims {
-                inner: 128,
-                outer: 64,
-                opening: 64,
-            },
-            akita_types::CommitmentRingDims::uniform(128),
-            akita_types::CommitmentRingDims {
-                inner: 256,
-                outer: 128,
-                opening: 128,
-            },
-        ],
-    )?;
+    let mut policy = akita_config::policy_of::<fp128::D512OneHot>();
+    policy.sis_table_digest = akita_types::sis::SisTableDigest::Q128_INNER_D512;
+    let dimensions =
+        RingDimensionSearchDomain::nested(policy.ring_dimension, [64, 128, 256, 512], [64, 128])?
+            .with_mixed_policy(MixedDimensionPolicy {
+                max_inner_total_dimension: Some(256 * 3),
+                stop_outer_at_rank_one: true,
+                stop_opening_at_rank_one: true,
+                objective: MixedScheduleObjective::Balanced,
+                ..MixedDimensionPolicy::default()
+            });
     let plan = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &policy,
         &dimensions,
-        fp128::D256OneHot::ring_challenge_config,
-        fp128::D256OneHot::fold_challenge_shape_at_level,
+        fp128::D512OneHot::ring_challenge_config,
+        fp128::D512OneHot::fold_challenge_shape_at_level,
     )?;
     cache
         .lock()
@@ -98,28 +94,28 @@ impl CommitmentConfig for PlannerMixedFp128OneHot {
     type Field = fp128::Field;
     type ExtField = fp128::Field;
 
-    const D: usize = fp128::D256OneHot::D;
+    const D: usize = fp128::D512OneHot::D;
 
     fn decomposition() -> DecompositionParams {
-        fp128::D256OneHot::decomposition()
+        fp128::D512OneHot::decomposition()
     }
 
     fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
-        fp128::D256OneHot::ring_challenge_config(d)
+        fp128::D512OneHot::ring_challenge_config(d)
     }
 
     fn fold_challenge_shape_at_level(
         inputs: akita_types::AkitaScheduleInputs,
     ) -> TensorChallengeShape {
-        fp128::D256OneHot::fold_challenge_shape_at_level(inputs)
+        fp128::D512OneHot::fold_challenge_shape_at_level(inputs)
     }
 
     fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
-        fp128::D256OneHot::sis_modulus_profile()
+        fp128::D512OneHot::sis_modulus_profile()
     }
 
     fn ring_subfield_embedding_norm_bound() -> u32 {
-        fp128::D256OneHot::ring_subfield_embedding_norm_bound()
+        fp128::D512OneHot::ring_subfield_embedding_norm_bound()
     }
 
     fn max_setup_matrix_size(
@@ -151,15 +147,15 @@ impl CommitmentConfig for PlannerMixedFp128OneHot {
     }
 
     fn basis_range() -> (u32, u32) {
-        fp128::D256OneHot::basis_range()
+        fp128::D512OneHot::basis_range()
     }
 
     fn onehot_chunk_size() -> usize {
-        fp128::D256OneHot::onehot_chunk_size()
+        fp128::D512OneHot::onehot_chunk_size()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
-        fp128::D256OneHot::chunked_witness_cfg()
+        fp128::D512OneHot::chunked_witness_cfg()
     }
 
     fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -592,9 +588,29 @@ fn run_profile_onehot_fp128_mixed_d_planner(nv: usize, num_polys: usize) {
             .map(|fold| fold.params.witness.role_dims()),
     )
     .collect::<Vec<_>>();
+    let selected_total_dimensions =
+        std::iter::once(&planned.schedule.root.params.final_group.commitment)
+            .chain(
+                planned
+                    .schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|fold| &fold.params.witness),
+            )
+            .map(|params| {
+                (
+                    params.inner_commit_matrix.output_rank() * params.role_dims().d_a(),
+                    params.outer_commit_matrix.output_rank() * params.role_dims().d_b(),
+                    params.open_commit_matrix.output_rank() * params.role_dims().d_d(),
+                )
+            })
+            .collect::<Vec<_>>();
     tracing::info!(
         selected_dims = ?selected_dims,
+        selected_total_dimensions = ?selected_total_dimensions,
         setup_ring_elements = planned.estimate.estimated_setup_envelope_ring_elements,
+        direct_verifier_matrix_fields = schedule_matrix_field_elements(&planned.schedule)
+            .expect("mixed planner matrix-work estimate"),
         estimated_proof_bytes = planned
             .estimate
             .estimated_proof_payload_bytes()
@@ -604,7 +620,7 @@ fn run_profile_onehot_fp128_mixed_d_planner(nv: usize, num_polys: usize) {
 
     let layout = resolve_layout::<F, Cfg>(nv);
     tracing::info!(
-        "=== onehot_fp128_mixed_d_planner (fp128, setup D256, planner-selected per-level dimensions, 1-of-256) ==="
+        "=== onehot_fp128_mixed_d_planner (fp128, setup D512, balanced planner-selected per-level dimensions, 1-of-256) ==="
     );
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     // `Cfg::runtime_schedule` returns the same planner-selected schedule used

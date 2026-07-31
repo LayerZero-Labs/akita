@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn sis_key_at_dimension(
+pub(in crate::schedule_params) fn sis_key_at_dimension(
     policy: &PlannerPolicy,
     role: akita_types::SisMatrixRole,
     ring_dimension: usize,
@@ -16,7 +16,7 @@ pub(super) fn sis_key_at_dimension(
     }
 }
 
-pub(super) fn projected_collision_role_price(
+pub(in crate::schedule_params) fn projected_collision_role_price(
     policy: &PlannerPolicy,
     role: akita_types::SisMatrixRole,
     carrier_dimension: usize,

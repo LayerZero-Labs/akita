@@ -2,7 +2,7 @@ use super::*;
 
 mod role_pricing;
 
-use role_pricing::{projected_collision_role_price, sis_key_at_dimension};
+pub(super) use role_pricing::{projected_collision_role_price, sis_key_at_dimension};
 
 /// Build one recursive-fold candidate for an explicit ring-element bucket and
 /// split. Setup certification uses the maximum current length in each

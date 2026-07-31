@@ -30,6 +30,7 @@ use akita_types::{
 use crate::PlannerPolicy;
 
 mod candidate;
+mod dimension_domain;
 #[cfg(all(test, feature = "catalog-gen"))]
 mod exhaustive_oracle;
 mod mixed_search;
@@ -43,13 +44,15 @@ pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     scalar_root_fold_level_params_candidate,
 };
+pub use dimension_domain::{
+    MixedDimensionPolicy, MixedScheduleObjective, RingDimensionSearchDomain,
+};
+pub use setup_score::schedule_matrix_field_elements;
 pub(crate) use setup_score::{
-    level_setup_field_elements, terminal_setup_field_elements, MixedScore,
+    level_matrix_field_elements, level_setup_field_elements, terminal_matrix_field_elements,
+    terminal_setup_field_elements, MixedScore,
 };
 pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
-
-const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
-const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
 
 #[derive(Clone, Debug)]
 pub(crate) struct CandidateFoldStep {
@@ -68,90 +71,6 @@ pub(crate) struct CandidateTerminalResponse {
     pub(crate) estimated_direct_payload_bytes: usize,
     pub(crate) response_shape: TerminalResponseShape,
     pub(crate) estimated_payload_bytes: usize,
-}
-
-/// Explicit A/B/D dimensions admitted by mixed-D planner search.
-///
-/// `PlannerPolicy::ring_dimension` remains the setup generation dimension and
-/// the implicit singleton domain used by [`find_schedule`]. This separate
-/// offline-only value makes mixed-D search opt-in without changing runtime
-/// policy or existing catalog identity.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct RingDimensionSearchDomain {
-    setup_generation_dimension: usize,
-    candidates: Vec<CommitmentRingDims>,
-}
-
-impl RingDimensionSearchDomain {
-    /// Construct and canonicalize a non-empty dimension domain.
-    ///
-    /// Every tuple must satisfy the A-carrier invariant, and every role
-    /// dimension must divide `setup_generation_dimension`.
-    pub fn new(
-        setup_generation_dimension: usize,
-        candidates: impl IntoIterator<Item = CommitmentRingDims>,
-    ) -> Result<Self, AkitaError> {
-        if setup_generation_dimension == 0 || !setup_generation_dimension.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "setup generation dimension must be a nonzero power of two".into(),
-            ));
-        }
-        let mut candidates = candidates.into_iter().collect::<Vec<_>>();
-        candidates.sort_by_key(|dims| (dims.d_a(), dims.d_b(), dims.d_d()));
-        candidates.dedup();
-        if candidates.is_empty() {
-            return Err(AkitaError::InvalidSetup(
-                "ring-dimension search domain must be nonempty".into(),
-            ));
-        }
-        for dims in &candidates {
-            dims.validate_a_carrier()?;
-            for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-                if !setup_generation_dimension.is_multiple_of(d) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "candidate dimension D{d} does not divide setup generation dimension \
-                         D{setup_generation_dimension}"
-                    )));
-                }
-            }
-        }
-        Ok(Self {
-            setup_generation_dimension,
-            candidates,
-        })
-    }
-
-    /// Construct the explicit singleton domain used by a uniform policy.
-    pub fn uniform(setup_generation_dimension: usize) -> Result<Self, AkitaError> {
-        Self::new(
-            setup_generation_dimension,
-            [CommitmentRingDims::uniform(setup_generation_dimension)],
-        )
-    }
-
-    /// Canonically ordered admitted A/B/D tuples.
-    pub fn candidates(&self) -> &[CommitmentRingDims] {
-        &self.candidates
-    }
-
-    /// Setup generation dimension against which this domain was validated.
-    pub fn setup_generation_dimension(&self) -> usize {
-        self.setup_generation_dimension
-    }
-
-    fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        if self.setup_generation_dimension != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "ring-dimension domain uses setup generation D{}, but policy uses D{}",
-                self.setup_generation_dimension, policy.ring_dimension
-            )));
-        }
-        Ok(())
-    }
-
-    fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
-        self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.ring_dimension)]
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -477,8 +396,9 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 /// Find the optimal schedule for a root schedule lookup key and dimension domain.
 ///
 /// A singleton domain matching the setup generation dimension preserves the
-/// uniform proof-payload objective. An explicit mixed domain selects exact
-/// physical setup fields first and exact proof payload second.
+/// uniform proof-payload objective. An explicit mixed domain uses its
+/// [`MixedDimensionPolicy`] to retain and select from a setup/proof/matrix-work
+/// frontier.
 ///
 /// The result is a pure,
 /// deterministic function of `(policy, key, dimensions)` (plus the `ring_challenge_config` /
@@ -519,22 +439,28 @@ pub fn find_schedule(
             "mixed-D search does not yet support direct multi-chunk planning".into(),
         ));
     }
-    let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
+    let mixed_policy = dimensions.mixed_policy();
+    let suffix_dimensions = mixed_policy.suffix_dimensions;
     if !dimensions.candidates().contains(&suffix_dimensions) {
         return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
-             used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
+            "mixed-D search requires suffix dimensions {suffix_dimensions:?} in the candidate \
+             domain for fold level {} onward",
+            mixed_policy.mixed_fold_levels
         )));
     }
-    if dimensions.candidates().iter().any(|dims| {
-        dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-    }) {
+    if mixed_policy.mixed_fold_levels == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "mixed-D search requires at least one leading mixed fold level".into(),
+        ));
+    }
+    if dimensions
+        .candidates()
+        .iter()
+        .any(|dims| !componentwise_dimensions_at_most(suffix_dimensions, *dims))
+    {
         return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D candidates must be component-wise at least \
-             D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} so the schedule can return monotonically to \
-             uniform D{MIXED_SEARCH_SUFFIX_RING_DIMENSION}"
+            "mixed-D candidates must be component-wise at least {suffix_dimensions:?} so the \
+             schedule can return monotonically to its fixed suffix dimensions"
         )));
     }
     mixed_search::find_schedule(
@@ -986,17 +912,14 @@ mod geometry_tests {
         for (index, fold) in schedule.recursive_folds.iter().enumerate() {
             let current = fold.params.witness.role_dims();
             assert!(componentwise_dimensions_at_most(current, previous));
-            if index + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                assert_eq!(
-                    current,
-                    CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
-                );
+            if index + 1 >= domain.mixed_policy().mixed_fold_levels {
+                assert_eq!(current, domain.mixed_policy().suffix_dimensions);
             }
             previous = current;
         }
         assert_eq!(
             schedule.terminal.params.witness.d_a(),
-            MIXED_SEARCH_SUFFIX_RING_DIMENSION
+            domain.mixed_policy().suffix_dimensions.d_a()
         );
     }
 
@@ -1258,6 +1181,60 @@ mod geometry_tests {
 
     #[cfg(feature = "catalog-gen")]
     #[test]
+    fn balanced_fp128_policy_enforces_total_dimension_and_rank_one_stops() {
+        use akita_config::{policy_of, proof_optimized::fp128::D512OneHot, CommitmentConfig};
+
+        let mut policy = policy_of::<D512OneHot>();
+        policy.sis_table_digest = akita_types::sis::SisTableDigest::Q128_INNER_D512;
+        let d64 = CommitmentRingDims::uniform(64);
+        let domain = RingDimensionSearchDomain::nested(
+            policy.ring_dimension,
+            [64, 128, 256, 512],
+            [64, 128],
+        )
+        .unwrap()
+        .with_mixed_policy(MixedDimensionPolicy {
+            max_inner_total_dimension: Some(768),
+            stop_outer_at_rank_one: true,
+            stop_opening_at_rank_one: true,
+            objective: MixedScheduleObjective::Balanced,
+            ..MixedDimensionPolicy::default()
+        });
+        let planned = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &policy,
+            &domain,
+            D512OneHot::ring_challenge_config,
+            D512OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let levels = std::iter::once(&planned.schedule.root.params.final_group.commitment)
+            .chain(
+                planned
+                    .schedule
+                    .recursive_folds
+                    .iter()
+                    .map(|fold| &fold.params.witness),
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            levels[0].role_dims(),
+            CommitmentRingDims {
+                inner: 256,
+                outer: 64,
+                opening: 64,
+            }
+        );
+        for params in levels {
+            assert!(params.inner_commit_matrix.output_rank() * params.role_dims().d_a() <= 768);
+            assert_eq!(params.role_dims().d_b(), 64);
+            assert_eq!(params.role_dims().d_d(), 64);
+        }
+        assert_eq!(planned.schedule.terminal.params.witness.d_a(), d64.d_a());
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
     fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
@@ -1275,9 +1252,9 @@ mod geometry_tests {
             D256OneHot::fold_challenge_shape_at_level,
         )
         .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("requires the D64 uniform candidate"));
+        assert!(error.to_string().contains(
+            "requires suffix dimensions CommitmentRingDims { inner: 64, outer: 64, opening: 64 }"
+        ));
 
         let below_d64 = RingDimensionSearchDomain::new(
             policy.ring_dimension,
@@ -1299,7 +1276,9 @@ mod geometry_tests {
             D256OneHot::fold_challenge_shape_at_level,
         )
         .unwrap_err();
-        assert!(error.to_string().contains("component-wise at least D64"));
+        assert!(error.to_string().contains(
+            "component-wise at least CommitmentRingDims { inner: 64, outer: 64, opening: 64 }"
+        ));
     }
 
     #[cfg(feature = "catalog-gen")]
@@ -1354,7 +1333,7 @@ mod geometry_tests {
             .to_string()
             .contains("opening group layouts must be nonempty"));
 
-        let mut invalid_policy = policy.clone();
+        let mut invalid_policy = policy;
         invalid_policy.max_setup_envelope_field_elements = 0;
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
