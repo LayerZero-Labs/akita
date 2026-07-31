@@ -87,7 +87,7 @@ fields on `AkitaScheduleLookupKey`.
 - **Lookup key unchanged.** `AkitaScheduleLookupKey` remains
   `{ num_vars, num_polynomials }` only. No multi-chunk dimensions are added to
   the key or to [`GeneratedScheduleKey`](../crates/akita-planner/src/generated/mod.rs).
-- **Policy is the layout selector.** `find_schedule(key, policy, …)` and
+- **Policy and domain are the layout selector.** `find_schedule(key, policy, domain, …)` and
   `resolve_schedule(key, policy, …)` price chunked layout iff
   `policy.witness_chunk.uses_multi_chunk()`. Callers must pass the policy derived
   from the preset they intend to prove under; mismatched preset vs policy is out
@@ -684,7 +684,7 @@ For each new multi-chunk family:
 
 4. **`EmitSpec.policy`**: full `PlannerPolicy` including
    `witness_chunk: ChunkedWitnessCfg::d64_production()` (via `policy_of`).
-5. Run the same DP regen hook: `find_schedule(key, &policy, …)`.
+5. Run the same DP regen hook: `find_schedule(key, &policy, &domain, …)`.
 
 #### Step 10 — New `Cfg` types and `ALL_GENERATED_FAMILIES` rows (`akita-config`)
 
@@ -726,9 +726,10 @@ behind the new feature flags.
 2. Extend `generated_schedule_tables_match_find_schedule` to cover multi-chunk
    families: for each key, compare table expansion under
    `policy_of::<MultiChunkCfg>()` against
-   `find_schedule(key, &policy_of::<MultiChunkCfg>(), …)`.
-3. Add regression: for a fixed key, `find_schedule(key, &policy_of::<D64OneHot>(), …)`
-   equals `find_schedule(key, &policy_with_default_chunk, …)` where
+   `find_schedule(key, &policy_of::<MultiChunkCfg>(), &domain, …)`.
+3. Add regression: for a fixed key,
+   `find_schedule(key, &policy_of::<D64OneHot>(), &domain, …)` equals
+   `find_schedule(key, &policy_with_default_chunk, &domain, …)` where
    `policy_with_default_chunk` is `policy_of::<D64OneHot>()` with
    `witness_chunk: ChunkedWitnessCfg::default()` — confirms multi-chunk fields do
    not perturb non-chunked presets.
