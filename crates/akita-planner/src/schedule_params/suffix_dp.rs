@@ -13,28 +13,10 @@ use akita_types::{
 use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
-    componentwise_dimensions_at_most, derive_candidate_level_params,
-    derive_candidate_level_params_all_splits, level_setup_envelope_at_generation,
-    stage3_payload_bytes_for_successor, suffix_opening_layout,
-    terminal_setup_envelope_at_generation, CandidateFoldStep, CandidateTerminalResponse,
-    ScheduleSelectionObjective, MAX_RECURSION_DEPTH, MIXED_SEARCH_FOLD_LEVELS,
-    MIXED_SEARCH_SUFFIX_RING_DIMENSION,
+    derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,
+    suffix_opening_layout, terminal_setup_field_elements, CandidateFoldStep,
+    CandidateTerminalResponse, ScheduleCandidate, MAX_RECURSION_DEPTH,
 };
-
-/// A fold-first suffix schedule.
-///
-/// The parent's proof-size formula needs the child's first fold params
-/// (`first_fold_params`), so the suffix carries it directly instead of
-/// re-reading `folds[0]`.
-#[derive(Clone)]
-pub(crate) struct FoldSuffix {
-    pub(crate) total_bytes: usize,
-    pub(crate) setup_envelope_ring_elements: usize,
-    pub(crate) first_direct_setup_field_len: usize,
-    pub(crate) first_fold_params: Option<CommittedGroupParams>,
-    pub(crate) folds: Vec<CandidateFoldStep>,
-    pub(crate) terminal: CandidateTerminalResponse,
-}
 
 /// Result of the suffix DP at one state. Both shape options are reported
 /// because the parent's proof-size formula depends on the child's first
@@ -50,9 +32,8 @@ pub(crate) struct FoldSuffix {
 ///   setup-size objective.
 #[derive(Clone)]
 pub(crate) struct SuffixResult {
-    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix>,
-    pub(crate) best_by_payload_per_lb: BTreeMap<u32, FoldSuffix>,
-    pub(crate) mixed_frontier: Vec<FoldSuffix>,
+    pub(crate) best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate>,
+    pub(crate) best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate>,
 }
 
 impl SuffixResult {
@@ -137,23 +118,7 @@ pub(crate) fn terminal_direct_suffix_cost(
     Ok((direct, terminal_bytes))
 }
 
-pub(crate) type ScheduleMemo =
-    HashMap<(usize, usize, u32, usize, usize, usize, usize), Arc<SuffixResult>>;
-
-#[derive(Clone)]
-struct CandidateSuffixChoice {
-    first_direct_setup_field_len: usize,
-    total_bytes: usize,
-    setup_envelope_ring_elements: usize,
-    folds: Vec<CandidateFoldStep>,
-    terminal: CandidateTerminalResponse,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum MixedFrontierMode {
-    Pareto,
-    Exhaustive,
-}
+pub(crate) type ScheduleMemo = HashMap<(usize, usize, u32, usize), Arc<SuffixResult>>;
 
 fn offloaded_witness_contracts(
     input_witness_len: usize,
@@ -187,12 +152,11 @@ struct ChildEdge<'a> {
     current_witness_len: usize,
     next_witness_len: usize,
     natural_setup_field_len: usize,
-    level_setup_envelope_ring_elements: usize,
+    level_setup_field_elements: usize,
     eor_bytes: usize,
     offloaded: bool,
     require_child_fold: bool,
-    setup_envelope_budget: Option<usize>,
-    objective: ScheduleSelectionObjective,
+    setup_field_budget: Option<usize>,
 }
 
 #[derive(Clone, Copy)]
@@ -203,10 +167,10 @@ struct ChildObjectives {
 
 fn consider_child_suffixes(
     edge: &ChildEdge<'_>,
-    child_candidates: &BTreeMap<u32, FoldSuffix>,
+    child_candidates: &BTreeMap<u32, ScheduleCandidate>,
     objectives: ChildObjectives,
-    best_by_setup: &mut Option<CandidateSuffixChoice>,
-    best_by_payload: &mut Option<CandidateSuffixChoice>,
+    best_by_setup: &mut Option<ScheduleCandidate>,
+    best_by_payload: &mut Option<ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     for suffix in child_candidates.values() {
         let Some(candidate) = child_choice(edge, suffix)? else {
@@ -215,24 +179,14 @@ fn consider_child_suffixes(
         let improves_setup = objectives.first_direct_setup_then_payload
             && best_by_setup.as_ref().is_none_or(|best| {
                 (
-                    candidate.first_direct_setup_field_len,
+                    candidate.first_direct_setup_field_len_or_max(),
                     candidate.total_bytes,
-                ) < (best.first_direct_setup_field_len, best.total_bytes)
+                ) < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
             });
         let improves_payload = objectives.payload
             && best_by_payload
                 .as_ref()
-                .is_none_or(|best| match edge.objective {
-                    ScheduleSelectionObjective::ProofPayload => {
-                        candidate.total_bytes < best.total_bytes
-                    }
-                    ScheduleSelectionObjective::SetupThenProofPayload => {
-                        (
-                            candidate.setup_envelope_ring_elements,
-                            candidate.total_bytes,
-                        ) < (best.setup_envelope_ring_elements, best.total_bytes)
-                    }
-                });
+                .is_none_or(|best| candidate.total_bytes < best.total_bytes);
         if !improves_setup && !improves_payload {
             continue;
         }
@@ -249,8 +203,8 @@ fn consider_child_suffixes(
 
 fn child_choice(
     edge: &ChildEdge<'_>,
-    suffix: &FoldSuffix,
-) -> Result<Option<CandidateSuffixChoice>, AkitaError> {
+    suffix: &ScheduleCandidate,
+) -> Result<Option<ScheduleCandidate>, AkitaError> {
     let child_is_terminal = suffix.folds.is_empty();
     if edge.require_child_fold && child_is_terminal {
         return Ok(None);
@@ -259,7 +213,7 @@ fn child_choice(
         if child_is_terminal || suffix.folds.len() == 1 {
             return Ok(None);
         }
-        if suffix.first_direct_setup_field_len >= edge.natural_setup_field_len {
+        if suffix.first_direct_setup_field_len_or_max() >= edge.natural_setup_field_len {
             return Ok(None);
         }
     }
@@ -268,7 +222,7 @@ fn child_choice(
         edge.policy.decomposition.field_bits(),
         edge.policy.decomposition.field_bits() * edge.policy.chal_ext_degree as u32,
         edge.candidate_params,
-        suffix.first_fold_params.as_ref(),
+        suffix.first_fold_params(),
         edge.next_witness_len,
         Some(if child_is_terminal {
             akita_types::NextWitnessBindingPolicy::TerminalInnerState
@@ -279,7 +233,7 @@ fn child_choice(
     .checked_add(edge.eor_bytes)
     .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
     let stage3_payload_bytes =
-        stage3_payload_bytes_for_successor(edge.policy, suffix.first_fold_params.as_ref())?;
+        stage3_payload_bytes_for_successor(edge.policy, suffix.first_fold_params())?;
     if edge.offloaded != (stage3_payload_bytes != 0) {
         return Err(AkitaError::InvalidSetup(
             "setup edge topology disagrees with Stage-3 accounting".to_string(),
@@ -289,19 +243,19 @@ fn child_choice(
         .checked_add(stage3_payload_bytes)
         .and_then(|value| value.checked_add(suffix.total_bytes))
         .ok_or_else(|| AkitaError::InvalidSetup("suffix proof size overflow".to_string()))?;
-    let setup_envelope_ring_elements = edge
-        .level_setup_envelope_ring_elements
-        .max(suffix.setup_envelope_ring_elements);
+    let setup_field_elements = edge
+        .level_setup_field_elements
+        .max(suffix.setup_field_elements);
     if edge
-        .setup_envelope_budget
-        .is_some_and(|budget| setup_envelope_ring_elements > budget)
+        .setup_field_budget
+        .is_some_and(|budget| setup_field_elements > budget)
     {
         return Ok(None);
     }
     let first_direct_setup_field_len = if edge.offloaded {
         suffix.first_direct_setup_field_len
     } else {
-        edge.natural_setup_field_len
+        Some(edge.natural_setup_field_len)
     };
     let mut folds = Vec::with_capacity(1 + suffix.folds.len());
     folds.push(CandidateFoldStep {
@@ -312,10 +266,10 @@ fn child_choice(
         estimated_stage3_payload_bytes: stage3_payload_bytes,
     });
     folds.extend(suffix.folds.iter().cloned());
-    Ok(Some(CandidateSuffixChoice {
+    Ok(Some(ScheduleCandidate {
         first_direct_setup_field_len,
         total_bytes,
-        setup_envelope_ring_elements,
+        setup_field_elements,
         folds,
         terminal: suffix.terminal.clone(),
     }))
@@ -325,55 +279,7 @@ fn empty_suffix_result() -> Arc<SuffixResult> {
     Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb: BTreeMap::new(),
         best_by_payload_per_lb: BTreeMap::new(),
-        mixed_frontier: Vec::new(),
     })
-}
-
-fn strictly_dominates_setup_and_payload(
-    lhs_setup: usize,
-    lhs_payload: usize,
-    rhs_setup: usize,
-    rhs_payload: usize,
-) -> bool {
-    lhs_setup <= rhs_setup
-        && lhs_payload <= rhs_payload
-        && (lhs_setup < rhs_setup || lhs_payload < rhs_payload)
-}
-
-fn insert_mixed_frontier(
-    mode: MixedFrontierMode,
-    frontier: &mut Vec<CandidateSuffixChoice>,
-    candidate: CandidateSuffixChoice,
-) {
-    if mode == MixedFrontierMode::Exhaustive {
-        frontier.push(candidate);
-        return;
-    }
-    let same_first_step = |other: &CandidateSuffixChoice| {
-        other.folds.first().map(|fold| &fold.params)
-            == candidate.folds.first().map(|fold| &fold.params)
-    };
-    if frontier.iter().any(|other| {
-        same_first_step(other)
-            && strictly_dominates_setup_and_payload(
-                other.setup_envelope_ring_elements,
-                other.total_bytes,
-                candidate.setup_envelope_ring_elements,
-                candidate.total_bytes,
-            )
-    }) {
-        return;
-    }
-    frontier.retain(|other| {
-        !same_first_step(other)
-            || !strictly_dominates_setup_and_payload(
-                candidate.setup_envelope_ring_elements,
-                candidate.total_bytes,
-                other.setup_envelope_ring_elements,
-                other.total_bytes,
-            )
-    });
-    frontier.push(candidate);
 }
 
 /// DP-invariant inputs for the suffix search.
@@ -384,8 +290,6 @@ fn insert_mixed_frontier(
 #[derive(Clone, Copy)]
 pub(crate) struct SuffixCtx<'a> {
     pub(crate) policy: &'a PlannerPolicy,
-    pub(crate) dimension_candidates: &'a [CommitmentRingDims],
-    pub(crate) objective: ScheduleSelectionObjective,
     pub(crate) default_ring_challenge_cfg: &'a akita_challenges::SparseChallengeConfig,
     pub(crate) ring_challenge_config:
         &'a dyn Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -393,9 +297,8 @@ pub(crate) struct SuffixCtx<'a> {
         &'a dyn Fn(akita_types::AkitaScheduleInputs) -> akita_challenges::TensorChallengeShape,
     pub(crate) num_vars: usize,
     pub(crate) key: PolynomialGroupLayout,
-    pub(crate) setup_envelope_budget: Option<usize>,
+    pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
-    pub(crate) mixed_frontier_mode: MixedFrontierMode,
 }
 
 #[derive(Clone, Copy)]
@@ -404,24 +307,15 @@ pub(crate) struct SuffixState {
     pub(crate) current_witness_len: usize,
     pub(crate) current_lb: u32,
     pub(crate) incoming_setup_prefix: Option<usize>,
-    pub(crate) dimension_ceiling: Option<CommitmentRingDims>,
 }
 
 impl SuffixState {
-    fn memo_key(self) -> (usize, usize, u32, usize, usize, usize, usize) {
-        let ceiling = self.dimension_ceiling.unwrap_or(CommitmentRingDims {
-            inner: 0,
-            outer: 0,
-            opening: 0,
-        });
+    fn memo_key(self) -> (usize, usize, u32, usize) {
         (
             self.level,
             self.current_witness_len,
             self.current_lb,
             self.incoming_setup_prefix.unwrap_or(0),
-            ceiling.d_a(),
-            ceiling.d_b(),
-            ceiling.d_d(),
         )
     }
 }
@@ -437,23 +331,15 @@ fn price_level_candidate_with_children(
     direct_child: &SuffixResult,
     offloaded_child: Option<&SuffixResult>,
     require_child_fold: bool,
-    best_for_this_lb: &mut Option<CandidateSuffixChoice>,
-    best_payload_for_this_lb: &mut Option<CandidateSuffixChoice>,
-    mixed_frontier: &mut Vec<CandidateSuffixChoice>,
+    best_for_this_lb: &mut Option<ScheduleCandidate>,
+    best_payload_for_this_lb: &mut Option<ScheduleCandidate>,
 ) -> Result<(), AkitaError> {
     let policy = ctx.policy;
     // Branch A: terminate directly on the witness entering this state.
     // There is no alternative terminal-shaped predecessor output: the
     // predecessor produces one canonical witness, and the terminal inner
     // commitment consumes that exact witness.
-    let terminal_uses_suffix_dimension = !matches!(
-        ctx.objective,
-        ScheduleSelectionObjective::SetupThenProofPayload
-    ) || state.level >= MIXED_SEARCH_FOLD_LEVELS;
-    if terminal_uses_suffix_dimension
-        && state.incoming_setup_prefix.is_none()
-        && !candidate_params.has_precommitted_groups()
-    {
+    if state.incoming_setup_prefix.is_none() && !candidate_params.has_precommitted_groups() {
         let field_bits = policy.decomposition.field_bits();
         if let Some((mut direct_step, suffix_cost)) = try_terminal_direct_suffix_cost(
             state.current_witness_len,
@@ -470,60 +356,44 @@ fn price_level_candidate_with_children(
                 AkitaError::InvalidSetup("terminal proof size overflow".to_string())
             })?;
             direct_step.estimated_direct_payload_bytes = level_proof_size;
-            let candidate = CandidateSuffixChoice {
-                first_direct_setup_field_len: natural_len,
+            let candidate = ScheduleCandidate {
+                first_direct_setup_field_len: Some(natural_len),
                 total_bytes: total,
-                setup_envelope_ring_elements: terminal_setup_envelope_at_generation(
-                    &direct_step.params,
-                    policy.ring_dimension,
-                )?,
+                setup_field_elements: terminal_setup_field_elements(&direct_step.params)?,
                 folds: Vec::new(),
                 terminal: direct_step,
             };
             if best_for_this_lb
                 .as_ref()
                 .map(|best| {
-                    (natural_len, total) < (best.first_direct_setup_field_len, best.total_bytes)
+                    (natural_len, total)
+                        < (best.first_direct_setup_field_len_or_max(), best.total_bytes)
                 })
                 .unwrap_or(true)
             {
                 *best_for_this_lb = Some(candidate.clone());
             }
-            if matches!(
-                ctx.objective,
-                ScheduleSelectionObjective::SetupThenProofPayload
-            ) {
-                insert_mixed_frontier(ctx.mixed_frontier_mode, mixed_frontier, candidate.clone());
-            }
             if best_payload_for_this_lb
                 .as_ref()
-                .is_none_or(|best| match ctx.objective {
-                    ScheduleSelectionObjective::ProofPayload => total < best.total_bytes,
-                    ScheduleSelectionObjective::SetupThenProofPayload => {
-                        (candidate.setup_envelope_ring_elements, total)
-                            < (best.setup_envelope_ring_elements, best.total_bytes)
-                    }
-                })
+                .is_none_or(|best| total < best.total_bytes)
             {
                 *best_payload_for_this_lb = Some(candidate);
             }
         }
     }
 
-    let level_setup_envelope_ring_elements =
-        level_setup_envelope_at_generation(candidate_params, policy.ring_dimension)?;
+    let level_setup_field_elements = level_setup_field_elements(candidate_params)?;
     let direct_edge = ChildEdge {
         policy,
         candidate_params,
         current_witness_len: state.current_witness_len,
         next_witness_len,
         natural_setup_field_len: natural_len,
-        level_setup_envelope_ring_elements,
+        level_setup_field_elements,
         eor_bytes,
         offloaded: false,
         require_child_fold,
-        setup_envelope_budget: ctx.setup_envelope_budget,
-        objective: ctx.objective,
+        setup_field_budget: ctx.setup_field_budget,
     };
     consider_child_suffixes(
         &direct_edge,
@@ -535,17 +405,6 @@ fn price_level_candidate_with_children(
         best_for_this_lb,
         best_payload_for_this_lb,
     )?;
-    if matches!(
-        ctx.objective,
-        ScheduleSelectionObjective::SetupThenProofPayload
-    ) {
-        for suffix in &direct_child.mixed_frontier {
-            if let Some(candidate) = child_choice(&direct_edge, suffix)? {
-                insert_mixed_frontier(ctx.mixed_frontier_mode, mixed_frontier, candidate);
-            }
-        }
-    }
-
     if let Some(offloaded_child) = offloaded_child {
         let offloaded_edge = ChildEdge {
             offloaded: true,
@@ -595,23 +454,19 @@ pub(crate) fn derive_optimal_suffix_schedule(
 ) -> Result<Arc<SuffixResult>, AkitaError> {
     let SuffixCtx {
         policy,
-        dimension_candidates,
-        objective,
         default_ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars,
         key: _,
-        setup_envelope_budget: _,
+        setup_field_budget: _,
         root_lookup_key,
-        mixed_frontier_mode: _,
     } = *ctx;
     let SuffixState {
         level,
         current_witness_len,
         current_lb,
         incoming_setup_prefix,
-        dimension_ceiling,
     } = state;
     let memo_key = state.memo_key();
     if depth <= MAX_RECURSION_DEPTH {
@@ -626,9 +481,8 @@ pub(crate) fn derive_optimal_suffix_schedule(
         return Ok(result);
     }
 
-    let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let mut best_by_payload_per_lb: BTreeMap<u32, FoldSuffix> = BTreeMap::new();
-    let mut mixed_frontier = Vec::new();
+    let mut best_by_first_direct_setup_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
+    let mut best_by_payload_per_lb: BTreeMap<u32, ScheduleCandidate> = BTreeMap::new();
     let root_level_key = root_lookup_key.filter(|_| level == 0);
     if root_level_key.is_some() && incoming_setup_prefix.is_some() {
         return Err(AkitaError::InvalidSetup(
@@ -672,15 +526,12 @@ pub(crate) fn derive_optimal_suffix_schedule(
         input_witness_len: current_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
-    let searches_mixed_dimensions =
-        matches!(objective, ScheduleSelectionObjective::SetupThenProofPayload)
-            && level < MIXED_SEARCH_FOLD_LEVELS;
     for lb in min_log_basis..=max_log_basis {
         if lb < current_lb {
             continue;
         }
-        let mut best_for_this_lb: Option<CandidateSuffixChoice> = None;
-        let mut best_payload_for_this_lb: Option<CandidateSuffixChoice> = None;
+        let mut best_for_this_lb: Option<ScheduleCandidate> = None;
+        let mut best_payload_for_this_lb: Option<ScheduleCandidate> = None;
 
         let (current_opening_layout, candidates, require_child_fold) = if let Some(root_key) =
             root_level_key
@@ -700,51 +551,24 @@ pub(crate) fn derive_optimal_suffix_schedule(
             (current_opening_layout, candidates, true)
         } else {
             let mut candidates = Vec::new();
-            for dimensions in dimension_candidates {
-                if matches!(objective, ScheduleSelectionObjective::SetupThenProofPayload) {
-                    let suffix_dimensions =
-                        CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-                    if level >= MIXED_SEARCH_FOLD_LEVELS {
-                        if *dimensions != suffix_dimensions {
-                            continue;
-                        }
-                    } else if dimension_ceiling.is_some_and(|ceiling| {
-                        !componentwise_dimensions_at_most(*dimensions, ceiling)
-                    }) {
-                        continue;
-                    }
-                }
-                let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
-                    continue;
-                };
-                if searches_mixed_dimensions {
-                    candidates.extend(derive_candidate_level_params_all_splits(
-                        policy,
-                        &ring_challenge_cfg,
-                        *dimensions,
-                        current_witness_len,
-                        lb,
-                        level,
-                        incoming_setup_prefix,
-                        requested_fold_shape,
-                    )?);
-                } else {
-                    let Some(candidate) = derive_candidate_level_params(
-                        policy,
-                        &ring_challenge_cfg,
-                        *dimensions,
-                        current_witness_len,
-                        lb,
-                        level,
-                        incoming_setup_prefix,
-                        requested_fold_shape,
-                    )?
-                    else {
-                        continue;
-                    };
-                    candidates.push(candidate);
-                }
-            }
+            let dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
+            let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
+                continue;
+            };
+            let Some(candidate) = derive_candidate_level_params(
+                policy,
+                &ring_challenge_cfg,
+                dimensions,
+                current_witness_len,
+                lb,
+                level,
+                incoming_setup_prefix,
+                requested_fold_shape,
+            )?
+            else {
+                continue;
+            };
+            candidates.push(candidate);
             if candidates.is_empty() {
                 continue;
             }
@@ -773,18 +597,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 }
             }
             let natural_len = active_setup_field_len(&candidate_params, current_opening_layout)?;
-            let child_dimension_ceiling = match objective {
-                ScheduleSelectionObjective::ProofPayload => None,
-                ScheduleSelectionObjective::SetupThenProofPayload => {
-                    if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                        Some(CommitmentRingDims::uniform(
-                            MIXED_SEARCH_SUFFIX_RING_DIMENSION,
-                        ))
-                    } else {
-                        Some(candidate_params.role_dims())
-                    }
-                }
-            };
             let direct_child = derive_optimal_suffix_schedule(
                 ctx,
                 memo,
@@ -793,7 +605,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                     current_witness_len: next_witness_len,
                     current_lb: lb,
                     incoming_setup_prefix: None,
-                    dimension_ceiling: child_dimension_ceiling,
                 },
                 depth + 1,
             )?;
@@ -806,7 +617,6 @@ pub(crate) fn derive_optimal_suffix_schedule(
                         current_witness_len: next_witness_len,
                         current_lb: lb,
                         incoming_setup_prefix: Some(natural_len),
-                        dimension_ceiling: child_dimension_ceiling,
                     },
                     depth + 1,
                 )?)
@@ -825,47 +635,42 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 require_child_fold,
                 &mut best_for_this_lb,
                 &mut best_payload_for_this_lb,
-                &mut mixed_frontier,
             )?;
         }
 
         if let Some(choice) = best_for_this_lb {
-            let CandidateSuffixChoice {
+            let ScheduleCandidate {
                 first_direct_setup_field_len,
                 total_bytes,
-                setup_envelope_ring_elements,
+                setup_field_elements,
                 folds,
                 terminal,
             } = choice;
-            let first_fold_params = folds.first().map(|fold| fold.params.clone());
             best_by_first_direct_setup_per_lb.insert(
                 lb,
-                FoldSuffix {
+                ScheduleCandidate {
                     total_bytes,
-                    setup_envelope_ring_elements,
+                    setup_field_elements,
                     first_direct_setup_field_len,
-                    first_fold_params,
                     folds,
                     terminal,
                 },
             );
         }
         if let Some(choice) = best_payload_for_this_lb {
-            let CandidateSuffixChoice {
+            let ScheduleCandidate {
                 first_direct_setup_field_len,
                 total_bytes,
-                setup_envelope_ring_elements,
+                setup_field_elements,
                 folds,
                 terminal,
             } = choice;
-            let first_fold_params = folds.first().map(|fold| fold.params.clone());
             best_by_payload_per_lb.insert(
                 lb,
-                FoldSuffix {
+                ScheduleCandidate {
                     total_bytes,
-                    setup_envelope_ring_elements,
+                    setup_field_elements,
                     first_direct_setup_field_len,
-                    first_fold_params,
                     folds,
                     terminal,
                 },
@@ -873,24 +678,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
         }
     }
 
-    let mixed_frontier = mixed_frontier
-        .into_iter()
-        .map(|choice| {
-            let first_fold_params = choice.folds.first().map(|fold| fold.params.clone());
-            FoldSuffix {
-                total_bytes: choice.total_bytes,
-                setup_envelope_ring_elements: choice.setup_envelope_ring_elements,
-                first_direct_setup_field_len: choice.first_direct_setup_field_len,
-                first_fold_params,
-                folds: choice.folds,
-                terminal: choice.terminal,
-            }
-        })
-        .collect();
     let result = Arc::new(SuffixResult {
         best_by_first_direct_setup_per_lb,
         best_by_payload_per_lb,
-        mixed_frontier,
     });
     memo.insert(memo_key, Arc::clone(&result));
     Ok(result)
@@ -898,8 +688,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
 
 #[cfg(test)]
 mod tests {
-    use super::{offloaded_witness_contracts, strictly_dominates_setup_and_payload, SuffixState};
-    use akita_types::CommitmentRingDims;
+    use super::offloaded_witness_contracts;
 
     #[test]
     fn offloaded_contraction_accepts_exact_threefold_boundary() {
@@ -918,50 +707,5 @@ mod tests {
     fn offloaded_contraction_includes_full_field_setup_prefix() {
         assert!(offloaded_witness_contracts(100, 2, 100, 128, 1000, 4, 3).unwrap());
         assert!(!offloaded_witness_contracts(100, 2, 90, 128, 1000, 4, 3).unwrap());
-    }
-
-    #[test]
-    fn mixed_dimension_ceiling_is_part_of_the_suffix_memo_key() {
-        let state = SuffixState {
-            level: 1,
-            current_witness_len: 1024,
-            current_lb: 4,
-            incoming_setup_prefix: None,
-            dimension_ceiling: Some(CommitmentRingDims::uniform(128)),
-        };
-        let lower_ceiling = SuffixState {
-            dimension_ceiling: Some(CommitmentRingDims::uniform(64)),
-            ..state
-        };
-        assert_ne!(state.memo_key(), lower_ceiling.memo_key());
-    }
-
-    #[test]
-    fn mixed_frontier_retains_lower_payload_child_when_parent_masks_setup() {
-        let lower_setup_child = (10usize, 20usize);
-        let lower_payload_child = (15usize, 10usize);
-        assert!(!strictly_dominates_setup_and_payload(
-            lower_setup_child.0,
-            lower_setup_child.1,
-            lower_payload_child.0,
-            lower_payload_child.1,
-        ));
-        assert!(!strictly_dominates_setup_and_payload(
-            lower_payload_child.0,
-            lower_payload_child.1,
-            lower_setup_child.0,
-            lower_setup_child.1,
-        ));
-
-        let parent_setup = 20usize;
-        let lower_setup_after_parent = (parent_setup.max(lower_setup_child.0), lower_setup_child.1);
-        let lower_payload_after_parent = (
-            parent_setup.max(lower_payload_child.0),
-            lower_payload_child.1,
-        );
-        assert!(
-            lower_payload_after_parent < lower_setup_after_parent,
-            "the lower-payload child must survive until the parent masks setup differences"
-        );
     }
 }

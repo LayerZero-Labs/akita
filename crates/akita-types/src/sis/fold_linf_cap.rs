@@ -20,10 +20,14 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 /// Minimum retained fraction of `t*` when snapping `δ_fold` downward after tail sizing.
 /// Retain `1/2` of `t*` (at most 50% reduction vs the tail cap).
 ///
-/// Applied only for `field_bits >= 128`. Smaller fields use retain `3/4` in
-/// [`super::norm_bound::fold_witness_digit_plan`].
+/// The active binding applies this value to every supported field other than
+/// Fp32; the Fp32-specific floor is bound separately below.
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
+
+/// Minimum retained fraction of `t*` for the Fp32 fold-l∞ policy.
+pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 3;
+pub const FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 4;
 
 /// Whether [`crate::sis::fold_witness_digit_plan`] sizes `K` from the sub-Gaussian tail
 /// `t*` (`min(β_inf, t*)`) or from the worst-case envelope `β_inf` alone.

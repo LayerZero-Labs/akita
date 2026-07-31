@@ -128,7 +128,6 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         proof.root.extension_opening_reduction.is_some(),
         "non-base fp32 claims must use root extension-opening reduction"
     );
-
     let shape = proof.shape();
     let mut bytes = Vec::new();
     proof

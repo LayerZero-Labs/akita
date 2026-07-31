@@ -7,7 +7,6 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::PolynomialGroupClaims;
 
 fn validate_non_eor_root_opening_shape<F, E>(
     ring_d: usize,
@@ -73,30 +72,13 @@ where
     R: DigitRowsComputeBackend<F>,
 {
     let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
     let opening_num_vars = opening_batch.max_num_vars();
     // A-role root fold ring dimension (schedule-derived).
     let root_ring_d = root_params.role_dims().d_a();
     let alpha_bits = root_ring_d.trailing_zeros() as usize;
     let needs_extension_reduction =
-        eor_required_at_level::<F, E>(FoldOpeningKind::Root, root_ring_d, opening_num_vars);
+        root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 
-    let flat_polys = claims.flat_polys();
-    if flat_polys.len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
-
-    let final_group_index = opening_batch.root_final_group_index()?;
-    let eor_opening_batch = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-        claims
-            .opening_claims()
-            .group_point(final_group_index)?
-            .to_vec(),
-        vec![E::zero(); num_claims],
-        (),
-    )?])?;
     if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         prepare_single_field_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
@@ -108,12 +90,14 @@ where
             basis,
         )
     } else {
+        let eor_polynomial_groups = (0..opening_batch.num_groups())
+            .map(|group_index| Ok(claims.group_polys(group_index)?.to_vec()))
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             claims,
-            &flat_polys,
-            &eor_opening_batch,
+            eor_polynomial_groups,
             false,
             transcript,
             || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),
@@ -191,15 +175,7 @@ where
     <R as ComputeBackendSetup<F>>::PreparedSetup: 'stack,
 {
     let stack = stacks.prove_stack_at_level(0);
-    let opening_batch = claims.opening_layout::<F>()?;
-    let num_claims = opening_batch.num_total_polynomials();
     let root_params = &scheduled.params.final_group.commitment;
-
-    if claims.flat_polys().len() != num_claims {
-        return Err(AkitaError::InvalidInput(
-            "invalid root-level inputs".to_string(),
-        ));
-    }
 
     // Absorb root claims through the D-free flat commitment encoder keyed on the
     // root level's B-role dimension (byte-identical to the verifier's

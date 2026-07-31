@@ -190,14 +190,6 @@ impl<'a, PointF: Clone, P, CommitF: FieldCore> ProverOpeningData<'a, PointF, P, 
         Ok(())
     }
 
-    /// Return the only group when the current single-group path applies.
-    pub fn single_group_polys(&self) -> Option<&'a [&'a P]> {
-        self.polynomials
-            .first()
-            .copied()
-            .filter(|_| self.polynomials.len() == 1)
-    }
-
     /// Borrow root fold commitment rows in the scheduled M-row commitment order.
     pub(crate) fn fold_commitment(
         &self,
@@ -278,43 +270,6 @@ where
     PointF: FieldCore,
     CommitF: FieldCore,
 {
-    pub(crate) fn recursive_suffix_eor_claims(
-        setup_prefix_point: Option<Vec<PointF>>,
-        witness_point: Vec<PointF>,
-    ) -> Result<OpeningClaims<'a, PointF>, AkitaError> {
-        let mut groups = Vec::with_capacity(usize::from(setup_prefix_point.is_some()) + 1);
-        if let Some(setup_prefix_point) = setup_prefix_point {
-            groups.push(PolynomialGroupClaims::new(
-                setup_prefix_point,
-                vec![PointF::zero()],
-                (),
-            )?);
-        }
-        groups.push(PolynomialGroupClaims::new(
-            witness_point,
-            vec![PointF::zero()],
-            (),
-        )?);
-        OpeningClaims::from_groups(groups)
-    }
-
-    /// Build the single-group recursive suffix batch using the mixed-source type.
-    pub(crate) fn new_recursive_suffix_source(
-        opening_point: &[PointF],
-        recursive_num_vars: usize,
-        witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        commitment: CommitmentWithHint<CommitF>,
-    ) -> Result<Self, AkitaError> {
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(recursive_num_vars, PointF::zero());
-        let claims = PolynomialGroupClaims::new(padded_point, vec![PointF::zero()], commitment.0)?;
-        ProverOpeningData::new(
-            OpeningClaims::from_groups(vec![claims])?,
-            vec![commitment.1],
-            vec![witness_polys],
-        )
-    }
-
     /// Build recursive suffix opening data, with an optional setup-prefix group.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_recursive_suffix_fold(
@@ -326,15 +281,18 @@ where
         witness_eval: PointF,
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
         witness_commitment: CommitmentWithHint<CommitF>,
-    ) -> Result<(Self, OpeningClaims<'a, PointF>, Vec<PointF>), AkitaError> {
+    ) -> Result<Self, AkitaError> {
         if opening_point.len() > recursive_num_vars {
             return Err(AkitaError::InvalidPointDimension {
                 expected: recursive_num_vars,
                 actual: opening_point.len(),
             });
         }
-        let mut padded_witness_point = opening_point.to_vec();
-        padded_witness_point.resize(recursive_num_vars, PointF::zero());
+        let witness_group = PolynomialGroupClaims::new(
+            opening_point.to_vec(),
+            vec![witness_eval],
+            witness_commitment.0,
+        )?;
 
         match (setup_prefix_opening, setup_slot, setup_polys) {
             (
@@ -342,71 +300,30 @@ where
                 Some(setup_slot),
                 Some(setup_polys),
             ) => {
-                let block_claims = Self::new_recursive_suffix_with_setup_prefix(
-                    setup_prefix_point.clone(),
-                    padded_witness_point.clone(),
-                    setup_prefix_eval,
-                    witness_eval,
-                    setup_slot,
-                    setup_polys,
-                    witness_polys,
-                    setup_slot.hint.clone(),
-                    witness_commitment.1,
-                    witness_commitment.0,
+                let setup_commitment_rows =
+                    setup_slot.commitment.rows.first().cloned().ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup-prefix slot has no commitment rows".into())
+                    })?;
+                let setup_group = PolynomialGroupClaims::new(
+                    setup_prefix_point,
+                    vec![setup_prefix_eval],
+                    Commitment::new(setup_commitment_rows),
                 )?;
-                let eor_claims = Self::recursive_suffix_eor_claims(
-                    Some(setup_prefix_point),
-                    opening_point.to_vec(),
-                )?;
-                Ok((block_claims, eor_claims, padded_witness_point))
+                ProverOpeningData::new(
+                    OpeningClaims::from_groups(vec![setup_group, witness_group])?,
+                    vec![setup_slot.hint.clone(), witness_commitment.1],
+                    vec![setup_polys, witness_polys],
+                )
             }
-            (None, None, None) => {
-                let block_claims = Self::new_recursive_suffix_source(
-                    &padded_witness_point,
-                    recursive_num_vars,
-                    witness_polys,
-                    witness_commitment,
-                )?;
-                let eor_claims = Self::recursive_suffix_eor_claims(None, opening_point.to_vec())?;
-                Ok((block_claims, eor_claims, padded_witness_point))
-            }
+            (None, None, None) => ProverOpeningData::new(
+                OpeningClaims::from_groups(vec![witness_group])?,
+                vec![witness_commitment.1],
+                vec![witness_polys],
+            ),
             _ => Err(AkitaError::InvalidInput(
                 "setup-prefix suffix inputs are incomplete".to_string(),
             )),
         }
-    }
-
-    /// Build the two-group recursive suffix batch used when the previous fold
-    /// offloaded setup-prefix evaluation into this fold.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_recursive_suffix_with_setup_prefix(
-        setup_prefix_point: Vec<PointF>,
-        witness_point: Vec<PointF>,
-        setup_prefix_eval: PointF,
-        witness_eval: PointF,
-        setup_slot: &'a SetupPrefixSlot<CommitF>,
-        setup_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        setup_hint: AkitaCommitmentHint<CommitF>,
-        witness_hint: AkitaCommitmentHint<CommitF>,
-        witness_commitment: Commitment<CommitF>,
-    ) -> Result<Self, AkitaError> {
-        let setup_commitment_rows =
-            setup_slot.commitment.rows.first().cloned().ok_or_else(|| {
-                AkitaError::InvalidSetup("setup-prefix slot has no commitment rows".into())
-            })?;
-        let setup_group = PolynomialGroupClaims::new(
-            setup_prefix_point,
-            vec![setup_prefix_eval],
-            Commitment::new(setup_commitment_rows),
-        )?;
-        let witness_group =
-            PolynomialGroupClaims::new(witness_point, vec![witness_eval], witness_commitment)?;
-        ProverOpeningData::new(
-            OpeningClaims::from_groups(vec![setup_group, witness_group])?,
-            vec![setup_hint, witness_hint],
-            vec![setup_polys, witness_polys],
-        )
     }
 }
 
@@ -544,39 +461,6 @@ mod tests {
                 PolynomialGroupLayout::new(2, 1),
                 PolynomialGroupLayout::new(4, 2)
             ]
-        );
-    }
-
-    #[test]
-    fn recursive_suffix_eor_claims_keep_setup_prefix_and_witness_groups() {
-        const SETUP_PREFIX_VARS: usize = 12;
-        const WITNESS_VARS: usize = 20;
-        let setup_prefix_point = vec![F::zero(); SETUP_PREFIX_VARS];
-        let witness_point = vec![F::zero(); WITNESS_VARS];
-
-        let claims =
-            ProverOpeningData::<F, RecursiveFoldSource<F>, F>::recursive_suffix_eor_claims(
-                Some(setup_prefix_point),
-                witness_point,
-            )
-            .expect("recursive setup-prefix EOR claims");
-        let layout = claims.layout().expect("recursive EOR layout");
-
-        assert_eq!(
-            layout.groups(),
-            &[
-                PolynomialGroupLayout::singleton(SETUP_PREFIX_VARS),
-                PolynomialGroupLayout::singleton(WITNESS_VARS),
-            ]
-        );
-        assert_eq!(layout.max_num_vars(), WITNESS_VARS);
-        assert_eq!(
-            claims.group_point(0).expect("setup-prefix point").len(),
-            SETUP_PREFIX_VARS
-        );
-        assert_eq!(
-            claims.group_point(1).expect("witness point").len(),
-            WITNESS_VARS
         );
     }
 

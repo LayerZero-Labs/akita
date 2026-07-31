@@ -1,8 +1,7 @@
-//! Standalone parameter selection for shadow compressed commitments.
+//! Parameter selection for shadow compressed commitments.
 //!
-//! This module does not participate in schedule search or catalog emission.
-//! It selects only the negative-binary F/H ladder exercised by the prover's
-//! opt-in diagnostic mode.
+//! This module is private to the prover's opt-in diagnostic mode. It does not
+//! participate in schedule search, catalog emission, or protocol planning.
 
 use akita_field::AkitaError;
 use akita_types::sis::compression::{
@@ -11,35 +10,33 @@ use akita_types::sis::compression::{
 use akita_types::sis::{SisModulusProfileId, DEFAULT_SIS_SECURITY_POLICY};
 
 /// Maximum uncompressed B/D image size handled by the diagnostic.
-pub const MAX_COMPRESSION_INPUT_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_COMPRESSION_INPUT_BYTES: usize = 16 * 1024;
 
 /// Target terminal compressed commitment size.
-pub const COMPRESSION_TARGET_BYTES: usize = 128;
+pub(crate) const COMPRESSION_TARGET_BYTES: usize = 128;
 
 /// Maximum number of F/H maps in the diagnostic ladder.
-pub const MAX_COMPRESSION_MAPS: usize = 3;
+pub(crate) const MAX_COMPRESSION_MAPS: usize = 3;
 
 /// One selected negative-binary F/H map.
 ///
-/// Compression maps are structurally rank one: the image has exactly
+/// Compression maps are structurally rank one, so the image has exactly
 /// `ring_dimension` field coefficients.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct CompressionDiagnosticMap {
+pub(crate) struct CompressionDiagnosticMap {
     /// Ring dimension of this F/H matrix.
-    pub ring_dimension: usize,
+    pub(crate) ring_dimension: usize,
     /// Number of input ring columns after negative-binary decomposition.
-    pub input_width: usize,
-    /// Number of field coefficients in this map's image (`== ring_dimension`).
-    pub output_coefficients: usize,
+    pub(crate) input_width: usize,
 }
 
 /// Complete shadow-compression plan for one B or D image.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CompressionDiagnosticPlan {
+pub(crate) struct CompressionDiagnosticPlan {
     /// Canonical field byte length.
-    pub field_bytes: usize,
+    pub(crate) field_bytes: usize,
     /// Selected negative-binary maps for the complete source image.
-    pub maps: Vec<CompressionDiagnosticMap>,
+    pub(crate) maps: Vec<CompressionDiagnosticMap>,
 }
 
 fn profile_geometry(profile: SisModulusProfileId) -> (usize, usize) {
@@ -93,14 +90,12 @@ fn select_maps(
                 "compression diagnostic requires rank-one maps, got rank {secure_rank} for profile={profile:?} d={ring_dimension} width={input_width}"
             )));
         }
-        let output_coefficients = ring_dimension;
-        let output_bytes = output_coefficients
+        let output_bytes = ring_dimension
             .checked_mul(field_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("compression output bytes overflow".into()))?;
         maps.push(CompressionDiagnosticMap {
             ring_dimension,
             input_width,
-            output_coefficients,
         });
         if output_bytes == COMPRESSION_TARGET_BYTES {
             return Ok(maps);
@@ -110,22 +105,25 @@ fn select_maps(
                 "compression ladder undershot its terminal byte target".into(),
             ));
         }
-        input_coefficients = output_coefficients;
+        input_coefficients = ring_dimension;
     }
     Err(AkitaError::InvalidSetup(format!(
         "compression ladder did not reach {COMPRESSION_TARGET_BYTES} bytes"
     )))
 }
 
-/// Select the standalone negative-binary diagnostic plan for one B/D image.
+/// Select the negative-binary diagnostic plan for one B/D image.
 ///
 /// # Errors
 ///
-/// Returns an error for an empty or larger-than-16-KiB source, or when the
-/// narrow compression SIS table cannot price every map.
-pub fn plan_compression_diagnostic(
+/// Returns an error when the selected ladder cannot be represented by the
+/// prepared setup's generation ring dimension, for an empty or
+/// larger-than-16-KiB source, or when the narrow compression SIS table cannot
+/// price every map.
+pub(crate) fn plan_compression_diagnostic(
     modulus_profile: SisModulusProfileId,
     source_coefficients: usize,
+    gen_ring_dim: usize,
 ) -> Result<CompressionDiagnosticPlan, AkitaError> {
     if source_coefficients == 0 {
         return Err(AkitaError::InvalidInput(
@@ -151,6 +149,12 @@ pub fn plan_compression_diagnostic(
     } else {
         standard_first_ring_dimension
     };
+    if first_ring_dimension > gen_ring_dim || !gen_ring_dim.is_multiple_of(first_ring_dimension) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "compression ladder requires first ring dimension {first_ring_dimension}, \
+             unsupported by prepared generation ring dimension {gen_ring_dim}"
+        )));
+    }
     let maps = select_maps(
         modulus_profile,
         field_bits,
@@ -173,15 +177,12 @@ mod tests {
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
             for input_kib in [1, 2, 4, 8] {
-                let plan = plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes)
-                    .expect("plan");
+                let plan =
+                    plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes, 128)
+                        .expect("plan");
                 assert_eq!(plan.maps.len(), 2);
-                assert!(plan
-                    .maps
-                    .iter()
-                    .all(|map| map.output_coefficients == map.ring_dimension));
-                assert_eq!(plan.maps[0].output_coefficients * field_bytes, 256);
-                assert_eq!(plan.maps[1].output_coefficients * field_bytes, 128);
+                assert_eq!(plan.maps[0].ring_dimension * field_bytes, 256);
+                assert_eq!(plan.maps[1].ring_dimension * field_bytes, 128);
             }
         }
     }
@@ -193,7 +194,8 @@ mod tests {
             (SisModulusProfileId::Q64Offset59, 8),
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
-            let plan = plan_compression_diagnostic(profile, 16 * 1024 / field_bytes).expect("plan");
+            let plan =
+                plan_compression_diagnostic(profile, 16 * 1024 / field_bytes, 128).expect("plan");
             assert_eq!(plan.maps.len(), 3);
             assert_eq!(
                 plan.maps
@@ -206,20 +208,16 @@ mod tests {
                     SisModulusProfileId::Q32Offset99 => [128, 64, 32],
                 }
             );
-            assert!(plan
-                .maps
-                .iter()
-                .all(|map| map.output_coefficients == map.ring_dimension));
             assert_eq!(
                 plan.maps
                     .iter()
-                    .map(|map| map.output_coefficients * field_bytes)
+                    .map(|map| map.ring_dimension * field_bytes)
                     .collect::<Vec<_>>(),
                 [512, 256, 128]
             );
             let terminal = plan.maps.last().expect("terminal map");
             assert_eq!(
-                terminal.output_coefficients * field_bytes,
+                terminal.ring_dimension * field_bytes,
                 COMPRESSION_TARGET_BYTES
             );
         }
@@ -233,19 +231,28 @@ mod tests {
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
             for source_bytes in [9 * 1024, 12 * 1024, 15 * 1024] {
-                let plan =
-                    plan_compression_diagnostic(profile, source_bytes / field_bytes).expect("plan");
+                let plan = plan_compression_diagnostic(profile, source_bytes / field_bytes, 128)
+                    .expect("plan");
                 assert_eq!(plan.maps.len(), 3);
-                assert!(plan
-                    .maps
-                    .iter()
-                    .all(|map| map.output_coefficients == map.ring_dimension));
             }
         }
     }
 
     #[test]
     fn sources_above_sixteen_kib_are_rejected_not_sliced() {
-        assert!(plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, 1025).is_err());
+        assert!(
+            plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, 1025, 128).is_err()
+        );
+    }
+
+    #[test]
+    fn unsupported_setup_dimension_fails_closed() {
+        assert!(matches!(
+            plan_compression_diagnostic(SisModulusProfileId::Q32Offset99, 4096, 64),
+            Err(AkitaError::InvalidSetup(message))
+                if message.contains("requires first ring dimension 128")
+        ));
+        plan_compression_diagnostic(SisModulusProfileId::Q32Offset99, 2048, 64)
+            .expect("supported setup");
     }
 }

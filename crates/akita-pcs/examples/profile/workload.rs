@@ -7,9 +7,9 @@ use crate::report::{
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
-    AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
-    FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
-    TranscriptChallenge,
+    AdditiveGroup, AkitaError, CanonicalBytes, CanonicalField, ExtField, FieldCore,
+    FrobeniusExtField, FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField,
+    RandomSampling, TranscriptChallenge,
 };
 use akita_pcs::test_support::materialize_schedule_setup_prefix_slots;
 use akita_pcs::AkitaCommitmentScheme;
@@ -24,11 +24,13 @@ use akita_transcript::AkitaTranscript;
 use akita_types::{
     lagrange_weights, reduce_inner_opening_to_ring_element, ring_opening_point_from_field,
     AkitaBatchedProof, AkitaCommitmentHint, BasisMode, Commitment, CommittedGroupParams,
-    FoldSchedule, FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, SetupContributionMode,
+    FoldSchedule, FpExtEncoding, NttCacheKey, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    SetupContributionMode,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+use std::collections::BTreeSet;
 use std::time::Instant;
 
 pub(crate) const ONEHOT_K: usize = 256;
@@ -98,6 +100,42 @@ fn verifier_claims<'a, E: FieldCore, C>(
     )
     .expect("valid verifier claims group")])
     .expect("valid verifier claims")
+}
+
+/// Register every full-envelope NTT dimension selected by a benchmark schedule.
+///
+/// `ComputeBackendSetup::prepare_setup` promises only the setup-generation
+/// dimension. A mixed schedule legitimately consumes divisor dimensions later,
+/// so the profile harness makes those cache slots part of preparation rather
+/// than letting the first prove operation build them lazily.
+fn register_schedule_ntt_contract<FF>(
+    setup: &AkitaProverSetup<FF>,
+    prepared: &akita_prover::CpuPreparedSetup<FF>,
+    schedule: &FoldSchedule,
+) -> Result<(), AkitaError>
+where
+    FF: FieldCore + CanonicalField,
+{
+    let mut ring_dimensions = BTreeSet::new();
+    let mut add_level_dimensions = |params: &CommittedGroupParams| {
+        let dims = params.role_dims();
+        ring_dimensions.extend([dims.d_a(), dims.d_b(), dims.d_d()]);
+        ring_dimensions.extend(params.precommitted_group_iter().flat_map(|group| {
+            let group_dims = group.role_dims(dims.d_d());
+            [group_dims.d_a(), group_dims.d_b(), group_dims.d_d()]
+        }));
+    };
+    add_level_dimensions(&schedule.root.params.final_group.commitment);
+    for fold in &schedule.recursive_folds {
+        add_level_dimensions(&fold.params.witness);
+    }
+    ring_dimensions.insert(schedule.terminal.params.witness.d_a());
+
+    for ring_d in ring_dimensions {
+        let key = NttCacheKey::from_envelope(setup.expanded.as_ref(), ring_d)?;
+        CpuBackend.register_setup_contract_ntt_slot(prepared, key)?;
+    }
+    Ok(())
 }
 
 fn make_profile_onehot_poly<FF>(layout: &CommittedGroupParams, seed: u64) -> OneHotPoly<FF, u8>
@@ -515,7 +553,7 @@ fn run_prove<
     };
 
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     tracing::info!(
         label,
         ext_degree = Cfg::EXT_DEGREE,
@@ -663,6 +701,10 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    if let Some(schedule) = plan {
+        register_schedule_ntt_contract(&setup, &prepared, schedule)
+            .expect("register schedule NTT contract");
+    }
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -752,6 +794,10 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
+    if let Some(schedule) = plan {
+        register_schedule_ntt_contract(&setup, &prepared, schedule)
+            .expect("register schedule NTT contract");
+    }
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
@@ -900,7 +946,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         (commitments, proof, setup)
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, plan);
     let opening_batch = OpeningClaimsLayout::new(nv, num_polys).expect("same-point opening batch");
     let schedule = Cfg::get_params_for_prove(&opening_batch).expect("batched schedule");
     if let Some(plan) = plan {
@@ -1296,7 +1342,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
     };
 
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
-    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof);
+    print_batched_proof_summary::<FF, Cfg::ExtField, D>(label, &proof, Some(&schedule));
     if validate_against_planner {
         report_proof_size_against_planner(
             label,

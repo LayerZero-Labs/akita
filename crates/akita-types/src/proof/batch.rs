@@ -607,7 +607,7 @@ pub fn validate_scalar_point_matches_poly_arity(
 ///
 /// # Errors
 ///
-/// Returns an error if the shared opening point exceeds setup capacity, the
+/// Returns an error if the group-local opening point exceeds setup capacity, the
 /// payload is empty, or the claim count exceeds setup capacity.
 pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
@@ -851,7 +851,7 @@ where
 /// Degree-one proof-scalar fields keep the original base-field folded-root
 /// path. For true extension proof-scalar fields, the folded path supports
 /// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
-/// at the same point are handled by one public row per point, with row-local
+/// in one group are handled by one public row per group, with row-local
 /// extension batching coefficients embedded into the ring relation.
 pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],
@@ -895,7 +895,11 @@ where
 /// Return whether root tensor projection can represent this extension width /
 /// ring shape. Shared by the typed gate and the planner-facing width twin.
 #[inline]
-fn root_tensor_projection_enabled_for_width(width: usize, ring_d: usize, num_vars: usize) -> bool {
+pub(crate) fn root_tensor_projection_enabled_for_width(
+    width: usize,
+    ring_d: usize,
+    num_vars: usize,
+) -> bool {
     let Some(double_width) = width.checked_mul(2) else {
         return false;
     };
@@ -917,55 +921,6 @@ where
     E: ExtField<F>,
 {
     root_tensor_projection_enabled_for_width(E::EXT_DEGREE, ring_d, num_vars)
-}
-
-/// Fold level kind for extension-opening reduction presence.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FoldOpeningKind {
-    /// Root fold: EOR only when root tensor projection is enabled.
-    Root,
-    /// Suffix / recursive fold: EOR whenever claim field is a proper extension.
-    Suffix,
-}
-
-/// Sole per-level authority for whether extension-opening reduction is required.
-///
-/// When `[ExtField : Field] == 1` (claim field coincides with coefficient field),
-/// both arms are false. When the claim field is a proper extension, suffix levels
-/// always require EOR and root levels defer to [`root_tensor_projection_enabled`].
-#[inline]
-pub fn eor_required_at_level<F, E>(
-    kind: FoldOpeningKind,
-    ring_d: usize,
-    opening_num_vars: usize,
-) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    match kind {
-        FoldOpeningKind::Root => root_tensor_projection_enabled::<F, E>(ring_d, opening_num_vars),
-        FoldOpeningKind::Suffix => E::EXT_DEGREE > 1,
-    }
-}
-
-/// Planner-facing twin of [`eor_required_at_level`] that takes extension width
-/// instead of monomorphizing on `ExtField`.
-#[inline]
-pub fn eor_required_for_width(
-    kind: FoldOpeningKind,
-    extension_opening_width: usize,
-    ring_d: usize,
-    opening_num_vars: usize,
-) -> bool {
-    match kind {
-        FoldOpeningKind::Root => root_tensor_projection_enabled_for_width(
-            extension_opening_width,
-            ring_d,
-            opening_num_vars,
-        ),
-        FoldOpeningKind::Suffix => extension_opening_width > 1,
-    }
 }
 
 #[cfg(test)]
@@ -1062,49 +1017,35 @@ mod tests {
     }
 
     #[test]
-    fn eor_required_at_level_matches_geometry_table() {
+    fn eor_predicates_match_geometry_table() {
         // Claim field coincides with coefficient field: never.
-        assert!(!eor_required_at_level::<F, F>(
-            FoldOpeningKind::Root,
-            64,
-            10
-        ));
-        assert!(!eor_required_at_level::<F, F>(
-            FoldOpeningKind::Suffix,
-            64,
-            10
-        ));
+        assert!(!root_tensor_projection_enabled::<F, F>(64, 10));
+        const { assert!(<F as ExtField<F>>::EXT_DEGREE <= 1) };
 
         // Proper extension: suffix always; root follows tensor gate.
-        assert!(eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, 8, 1));
-        assert!(eor_required_at_level::<F, E>(FoldOpeningKind::Root, 8, 3));
-        assert!(!eor_required_at_level::<F, E>(FoldOpeningKind::Root, 4, 2));
+        const { assert!(<E as ExtField<F>>::EXT_DEGREE > 1) };
+        assert!(root_tensor_projection_enabled::<F, E>(8, 3));
+        assert!(!root_tensor_projection_enabled::<F, E>(4, 2));
 
         assert_eq!(
-            eor_required_for_width(FoldOpeningKind::Root, 4, 8, 3),
-            eor_required_at_level::<F, E>(FoldOpeningKind::Root, 8, 3)
-        );
-        assert_eq!(
-            eor_required_for_width(FoldOpeningKind::Suffix, 4, 8, 1),
-            eor_required_at_level::<F, E>(FoldOpeningKind::Suffix, 8, 1)
+            root_tensor_projection_enabled_for_width(4, 8, 3),
+            root_tensor_projection_enabled::<F, E>(8, 3)
         );
 
-        // The width-based planner twin must agree with the typed predicate
-        // across the whole gate boundary, not just at two sample points.
-        for kind in [FoldOpeningKind::Root, FoldOpeningKind::Suffix] {
-            for ring_d in [1usize, 2, 4, 6, 8, 12, 16, 64, 128] {
-                for num_vars in [0usize, 1, 2, 3, 6, 7, 16] {
-                    assert_eq!(
-                        eor_required_for_width(kind, 1, ring_d, num_vars),
-                        eor_required_at_level::<F, F>(kind, ring_d, num_vars),
-                        "width-1 disagreement at {kind:?} ring_d={ring_d} num_vars={num_vars}"
-                    );
-                    assert_eq!(
-                        eor_required_for_width(kind, 4, ring_d, num_vars),
-                        eor_required_at_level::<F, E>(kind, ring_d, num_vars),
-                        "width-4 disagreement at {kind:?} ring_d={ring_d} num_vars={num_vars}"
-                    );
-                }
+        // The width-based planner root gate must agree with the typed root gate
+        // across the whole boundary, not just at two sample points.
+        for ring_d in [1usize, 2, 4, 6, 8, 12, 16, 64, 128] {
+            for num_vars in [0usize, 1, 2, 3, 6, 7, 16] {
+                assert_eq!(
+                    root_tensor_projection_enabled_for_width(1, ring_d, num_vars),
+                    root_tensor_projection_enabled::<F, F>(ring_d, num_vars),
+                    "width-1 root disagreement at ring_d={ring_d} num_vars={num_vars}"
+                );
+                assert_eq!(
+                    root_tensor_projection_enabled_for_width(4, ring_d, num_vars),
+                    root_tensor_projection_enabled::<F, E>(ring_d, num_vars),
+                    "width-4 root disagreement at ring_d={ring_d} num_vars={num_vars}"
+                );
             }
         }
     }

@@ -31,11 +31,11 @@ When `EXT_DEGREE > 1`, prep lives in `prepare_extension_claim_fold` /
 matching verifier prefixes. Extension-opening reduction and (when required)
 root tensor projection bridge \(F\)-coefficient witnesses to \(E\)-valued
 openings. The verifier accepts an EOR payload at a level if and only if
-`eor_required_at_level` holds there. Details:
+the root or suffix EOR predicate holds there. Details:
 [Extension-opening reduction](./extension-opening-reduction.md).
 
 ## Sources to fold in
 
 - `crates/akita-prover/src/protocol/core/fold/{single_field,extension_claim,mod}.rs`
 - `crates/akita-verifier/src/protocol/core/fold/{single_field,extension_claim,mod}.rs`
-- `akita_types::eor_required_at_level` / `FoldOpeningKind`
+- `akita_types::root_tensor_projection_enabled`

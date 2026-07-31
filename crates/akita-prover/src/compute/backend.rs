@@ -117,8 +117,9 @@ where
     }
 }
 
-/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
-pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
+/// Opt-in shadow-compression operations.
+#[cfg(feature = "compression-diagnostics")]
+pub trait CompressionDiagnosticBackend<F>: ComputeBackendSetup<F>
 where
     F: FieldCore + CanonicalField,
 {
@@ -130,15 +131,6 @@ where
         None
     }
 
-    /// Negacyclic single-input digit mat-vec rows.
-    fn digit_rows<const D: usize>(
-        &self,
-        prepared: &Self::PreparedSetup,
-        row_len: usize,
-        digits: &[[i8; D]],
-        log_basis: u32,
-    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
-
     /// Exact-shape rank-one negative-binary compression products over one matrix prefix.
     ///
     /// Compression-capable backends must implement this explicitly. There is no
@@ -148,6 +140,39 @@ where
         prepared: &Self::PreparedSetup,
         digit_vectors: &[&[[i8; D]]],
     ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError>;
+}
+
+/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(not(feature = "compression-diagnostics"))]
+pub trait DigitRowsComputeBackend<F>: ComputeBackendSetup<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Negacyclic single-input digit mat-vec rows.
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digits: &[[i8; D]],
+        log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
+}
+
+/// Negacyclic digit mat-vec operations shared by commitment and protocol code.
+#[cfg(feature = "compression-diagnostics")]
+pub trait DigitRowsComputeBackend<F>:
+    ComputeBackendSetup<F> + CompressionDiagnosticBackend<F>
+where
+    F: FieldCore + CanonicalField,
+{
+    /// Negacyclic single-input digit mat-vec rows.
+    fn digit_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        row_len: usize,
+        digits: &[[i8; D]],
+        log_basis: u32,
+    ) -> Result<Vec<CyclotomicRing<F, D>>, AkitaError>;
 }
 
 /// Cyclic digit mat-vec operations needed by ring-switch relation code.

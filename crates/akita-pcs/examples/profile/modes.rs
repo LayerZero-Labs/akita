@@ -188,6 +188,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
+        name: "onehot_fp128_mixed_dim",
+        run: run_profile_onehot_fp128_mixed_dim,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
@@ -401,6 +405,46 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+#[cfg(feature = "profile-ci")]
+fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
+    type Cfg = fp128::MixedDimFp128OneHot;
+    assert_eq!(nv, 32, "mixed-dimension profile fixes nv=32");
+    assert_singleton_mode("onehot_fp128_mixed_dim", num_polys);
+
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(nv),
+    ))
+    .expect("generated mixed-dimension schedule");
+    let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|fold| fold.params.witness.role_dims()),
+        )
+        .collect::<Vec<_>>();
+    tracing::info!(
+        selected_dims = ?selected_dims,
+        "generated mixed-dimension schedule selection"
+    );
+
+    let layout = resolve_layout::<F, Cfg>(nv);
+    tracing::info!(
+        "=== onehot_fp128_mixed_dim (fp128, setup D256, generated per-level dimensions, 1-of-256) ==="
+    );
+    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    // The catalog row selected here is the same exact row used by the PCS
+    // prover and verifier. The benchmark intentionally does not compare it
+    // against a different uniform-D family.
+    run_onehot::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_mixed_dim",
+        nv,
+        &layout,
+        Some(&schedule),
+        false,
+    );
 }
 
 /// Shared driver for the recursive multi-group profiles. Every such profile

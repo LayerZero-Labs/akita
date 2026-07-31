@@ -11,25 +11,16 @@ pub(in crate::protocol::core) use extension_claim::{
     verify_extension_claim_terminal_suffix,
 };
 pub(in crate::protocol::core) use single_field::{
-    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
     prepare_single_field_terminal_suffix, verify_single_field_root_prefix,
 };
 
-/// Common prepared root prefix produced by the single-field and
-/// extension-claim geometry modules, consumed by the shared root finishing
-/// logic in `root_fold`.
-pub(in crate::protocol::core) struct RootFoldPrefix<F: FieldCore, E: FieldCore> {
+/// Common prepared fold prefix produced by the single-field and
+/// extension-claim geometry modules, consumed by root and suffix finishing
+/// logic.
+pub(in crate::protocol::core) struct FoldPrefix<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) row_coefficients: Vec<E>,
-    pub(in crate::protocol::core) trace_eval_target: E,
-    pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
-}
-
-/// Common prepared suffix prefix produced by the single-field and
-/// extension-claim geometry modules, consumed by the shared suffix finishing
-/// logic in `suffix`.
-pub(in crate::protocol::core) struct SuffixFoldPrefix<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
     pub(in crate::protocol::core) trace_eval_target: E,
     pub(in crate::protocol::core) trace_claim_coefficients: Vec<E>,
 }
@@ -47,18 +38,9 @@ pub(in crate::protocol::core) struct PreparedFoldReplay<'a, F: FieldCore, E: Fie
     /// `RingRelationProver` commitment-row concatenation and
     /// `relation_rhs_layout_for` block order.
     pub(in crate::protocol::core) commitment_rows: RingVec<F>,
-    pub(in crate::protocol::core) row_coefficients: Vec<E>,
-    /// Per-group ring opening points in `OpeningClaims` order.
-    pub(in crate::protocol::core) group_ring_opening_points: Vec<RingOpeningPoint<F>>,
-    /// Per-group ring multiplier points in `OpeningClaims` order.
-    pub(in crate::protocol::core) group_ring_multiplier_points: Vec<RingMultiplierOpeningPoint<F>>,
+    pub(in crate::protocol::core) prefix: FoldPrefix<F, E>,
     pub(in crate::protocol::core) w_len: usize,
     pub(in crate::protocol::core) payload: PreparedFoldPayload<'a, F, E>,
-    /// Per-group prepared opening points in `OpeningClaims` order (one element
-    /// for scalar/suffix folds). Reused for the fused trace term.
-    pub(in crate::protocol::core) evaluation_trace_points: Vec<PreparedOpeningPoint<F, E>>,
-    pub(in crate::protocol::core) evaluation_trace_claim: E,
-    pub(in crate::protocol::core) evaluation_trace_claim_coefficients: Vec<E>,
     pub(in crate::protocol::core) evaluation_trace_basis: BasisMode,
 }
 
@@ -268,6 +250,7 @@ where
     let opening_shape = prepared.opening_shape.clone();
     let num_groups = opening_shape.num_groups();
     let commitment_rows = &prepared.commitment_rows;
+    let prefix = &prepared.prefix;
     let role_dims = prepared.lp.role_dims();
     let _fold_span = tracing::info_span!(
         "verify_fold",
@@ -300,9 +283,7 @@ where
                 |D| prepared.v.as_ring_slice::<D>().map(|_| ())
             )?;
         }
-        if prepared.group_ring_opening_points.len() != num_groups
-            || prepared.group_ring_multiplier_points.len() != num_groups
-        {
+        if prefix.prepared_points.len() != num_groups {
             return Err(AkitaError::InvalidProof);
         }
     }
@@ -325,17 +306,27 @@ where
             role_dims.d_a(),
             |D| {
                 RingRelationInstance::<F>::gamma_and_row_rings_from_coefficients::<D, E>(
-                    &prepared.row_coefficients,
+                    &prefix.row_coefficients,
                 )
             }
         )?;
         let relation_rhs_layout = relation_rhs_layout_for(prepared.lp, &opening_shape)?;
         let relation_rhs =
             assemble_relation_rhs::<F>(&relation_rhs_layout, &prepared.v, commitment_rows)?;
+        let group_ring_opening_points = prefix
+            .prepared_points
+            .iter()
+            .map(|prepared| prepared.ring_opening_point.clone())
+            .collect::<Vec<_>>();
+        let group_ring_multiplier_points = prefix
+            .prepared_points
+            .iter()
+            .map(|prepared| prepared.ring_multiplier_point.clone())
+            .collect::<Vec<_>>();
         let relation_instance = RingRelationInstance::new(
             group_challenges,
-            prepared.group_ring_opening_points,
-            prepared.group_ring_multiplier_points,
+            group_ring_opening_points,
+            group_ring_multiplier_points,
             opening_shape.clone(),
             gamma,
             row_coefficient_rings,
@@ -367,7 +358,7 @@ where
     let ring_switch_replay = RingSwitchReplay {
         setup: &setup.expanded,
         relation: &relation_instance,
-        row_coefficients: &prepared.row_coefficients,
+        row_coefficients: &prefix.row_coefficients,
         lp: prepared.lp,
         opening_source_len: next_opening_source_len,
         opening_ring_dim: next_witness_ring_dim,
@@ -419,7 +410,6 @@ where
         });
     }
     let trace_witness_layout = rs.relation_matrix_evaluator.witness_layout()?;
-    let evaluation_trace_points = &prepared.evaluation_trace_points;
     let trace_preparation_span = tracing::info_span!(
         "stage2_evaluation_trace_preparation",
         claims = opening_batch.num_total_polynomials(),
@@ -439,14 +429,14 @@ where
                 carrier_ring_dimension,
                 level_params: prepared.lp,
                 opening_batch,
-                prepared_points: evaluation_trace_points,
-                claim_coefficients: &prepared.evaluation_trace_claim_coefficients,
+                prepared_points: &prefix.prepared_points,
+                claim_coefficients: &prefix.trace_claim_coefficients,
                 basis: prepared.evaluation_trace_basis,
             })
         }
     )?;
     drop(trace_preparation_span);
-    let evaluation_trace_opening_claim = evaluation_trace_weight * prepared.evaluation_trace_claim;
+    let evaluation_trace_opening_claim = evaluation_trace_weight * prefix.trace_eval_target;
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);
     let sumcheck_challenges = verify_stage2::<F, E, T>(
         transcript,

@@ -325,7 +325,7 @@ impl CommittedGroupParams {
             .effective_l2_sq_max(&self.fold_challenge_config)
     }
 
-    /// Fold-challenge coefficient count `inner_width · D` (single shared opening point).
+    /// Fold-challenge coefficient count `inner_width · D`.
     #[inline]
     pub fn num_fold_coeffs(&self) -> u128 {
         (self.inner_width() as u128).saturating_mul(self.d_a() as u128)

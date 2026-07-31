@@ -6,7 +6,7 @@
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
-//! pure function of `(policy, key)` for offline table generation.
+//! pure function of `(policy, key, dimension domain)` for offline table generation.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
@@ -30,16 +30,23 @@ use akita_types::{
 use crate::PlannerPolicy;
 
 mod candidate;
+#[cfg(all(test, feature = "catalog-gen"))]
+mod exhaustive_oracle;
+mod mixed_search;
+mod setup_score;
 mod suffix_dp;
+#[cfg(feature = "test-support")]
+pub(crate) mod test_support;
 
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     scalar_root_fold_level_params_candidate,
 };
-pub(crate) use suffix_dp::{
-    derive_optimal_suffix_schedule, MixedFrontierMode, ScheduleMemo, SuffixCtx, SuffixState,
+pub(crate) use setup_score::{
+    level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
+pub(crate) use suffix_dp::{derive_optimal_suffix_schedule, ScheduleMemo, SuffixCtx, SuffixState};
 
 const MIXED_SEARCH_FOLD_LEVELS: usize = 2;
 const MIXED_SEARCH_SUFFIX_RING_DIMENSION: usize = 64;
@@ -71,6 +78,7 @@ pub(crate) struct CandidateTerminalResponse {
 /// policy or existing catalog identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RingDimensionSearchDomain {
+    setup_generation_dimension: usize,
     candidates: Vec<CommitmentRingDims>,
 }
 
@@ -107,99 +115,62 @@ impl RingDimensionSearchDomain {
                 }
             }
         }
-        Ok(Self { candidates })
+        Ok(Self {
+            setup_generation_dimension,
+            candidates,
+        })
     }
 
-    fn uniform(d: usize) -> Self {
-        Self {
-            candidates: vec![CommitmentRingDims::uniform(d)],
-        }
+    /// Construct the explicit singleton domain used by a uniform policy.
+    pub fn uniform(setup_generation_dimension: usize) -> Result<Self, AkitaError> {
+        Self::new(
+            setup_generation_dimension,
+            [CommitmentRingDims::uniform(setup_generation_dimension)],
+        )
     }
 
     /// Canonically ordered admitted A/B/D tuples.
     pub fn candidates(&self) -> &[CommitmentRingDims] {
         &self.candidates
     }
-}
 
-/// Plan the commitment geometry for one setup prefix consumed by a recursive
-/// fold.
-///
-/// The prefix source and A matrix use `policy.ring_dimension`; B may use an
-/// independently selected divisor. This is the same candidate derivation used
-/// by recursive schedule planning, exposed for exact synthetic schedules that
-/// establish a mixed-D boundary before the production planner can search it.
-///
-/// # Errors
-///
-/// Returns an error for malformed policy/dimensions or when no audited secure
-/// setup-prefix geometry exists.
-#[allow(clippy::too_many_arguments)]
-#[cfg(feature = "test-support")]
-pub fn plan_setup_prefix_commitment(
-    policy: &PlannerPolicy,
-    ring_challenge_cfg: &SparseChallengeConfig,
-    requested_fold_shape: TensorChallengeShape,
-    log_basis_outer: u32,
-    log_basis_open: u32,
-    n_prefix: usize,
-    num_chunks: usize,
-    outer_ring_dimension: usize,
-) -> Result<PrecommittedLevelParams, AkitaError> {
-    validate_policy(policy)?;
-    candidate::derive_setup_prefix_group(
-        policy,
-        ring_challenge_cfg,
-        requested_fold_shape,
-        log_basis_outer,
-        log_basis_open,
-        n_prefix,
-        num_chunks,
-        outer_ring_dimension,
-    )?
-    .ok_or_else(|| {
-        AkitaError::UnsupportedSchedule(format!(
-            "no setup-prefix commitment at A{}/B{outer_ring_dimension} for n_prefix={n_prefix}",
-            policy.ring_dimension
-        ))
-    })
+    /// Setup generation dimension against which this domain was validated.
+    pub fn setup_generation_dimension(&self) -> usize {
+        self.setup_generation_dimension
+    }
+
+    fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
+        if self.setup_generation_dimension != policy.ring_dimension {
+            return Err(AkitaError::InvalidSetup(format!(
+                "ring-dimension domain uses setup generation D{}, but policy uses D{}",
+                self.setup_generation_dimension, policy.ring_dimension
+            )));
+        }
+        Ok(())
+    }
+
+    fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
+        self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.ring_dimension)]
+    }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateScheduleChoice {
+pub(crate) struct ScheduleCandidate {
     pub(crate) first_direct_setup_field_len: Option<usize>,
     pub(crate) total_bytes: usize,
-    pub(crate) setup_envelope_ring_elements: usize,
+    pub(crate) setup_field_elements: usize,
     pub(crate) folds: Vec<CandidateFoldStep>,
     pub(crate) terminal: CandidateTerminalResponse,
 }
 
-pub(crate) fn level_setup_envelope_at_generation(
-    params: &CommittedGroupParams,
-    setup_generation_dimension: usize,
-) -> Result<usize, AkitaError> {
-    if setup_generation_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be nonzero".into(),
-        ));
+impl ScheduleCandidate {
+    pub(crate) fn first_fold_params(&self) -> Option<&CommittedGroupParams> {
+        self.folds.first().map(|fold| &fold.params)
     }
-    let mut field_elements = 1;
-    akita_types::accumulate_matrix_field_elements_for_level(params, &mut field_elements)?;
-    Ok(field_elements.div_ceil(setup_generation_dimension))
-}
 
-pub(crate) fn terminal_setup_envelope_at_generation(
-    params: &akita_types::TerminalCommittedGroupParams,
-    setup_generation_dimension: usize,
-) -> Result<usize, AkitaError> {
-    if setup_generation_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be nonzero".into(),
-        ));
+    pub(crate) fn first_direct_setup_field_len_or_max(&self) -> usize {
+        self.first_direct_setup_field_len.unwrap_or(usize::MAX)
     }
-    let mut field_elements = 1;
-    akita_types::accumulate_terminal_matrix_field_elements(params, &mut field_elements)?;
-    Ok(field_elements.div_ceil(setup_generation_dimension))
 }
 
 /// Exact Stage-3 payload induced when `successor` consumes the setup prefix
@@ -233,7 +204,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
 
 pub(crate) fn materialize_candidate_schedule(
     cached_total: usize,
-    cached_setup_envelope: usize,
+    cached_setup_field_elements: usize,
     setup_generation_dimension: usize,
     first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
@@ -242,6 +213,11 @@ pub(crate) fn materialize_candidate_schedule(
     if folds.is_empty() {
         return Err(AkitaError::UnsupportedSchedule(
             "a fold schedule requires root and terminal folds".to_string(),
+        ));
+    }
+    if setup_generation_dimension == 0 {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be nonzero".into(),
         ));
     }
     let root = folds.remove(0);
@@ -261,7 +237,8 @@ pub(crate) fn materialize_candidate_schedule(
             .checked_add(terminal_response.estimated_payload_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
-        estimated_setup_envelope_ring_elements: cached_setup_envelope,
+        estimated_setup_envelope_ring_elements: cached_setup_field_elements
+            .div_ceil(setup_generation_dimension),
         first_direct_setup_field_len,
         selected_offload_edges: 0,
     };
@@ -325,16 +302,12 @@ pub(crate) fn materialize_candidate_schedule(
         },
     };
     schedule.validate_structure()?;
-    if setup_generation_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be nonzero".into(),
-        ));
-    }
-    let recomputed_envelope = akita_types::setup_matrix_field_elements_for_schedule(&schedule)?
-        .div_ceil(setup_generation_dimension);
-    if recomputed_envelope != cached_setup_envelope {
+    let recomputed_setup_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(&schedule)?;
+    if recomputed_setup_field_elements != cached_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"
+            "cached setup field count {cached_setup_field_elements} disagrees with materialized \
+             count {recomputed_setup_field_elements}"
         )));
     }
     estimate.selected_offload_edges = schedule
@@ -346,12 +319,12 @@ pub(crate) fn materialize_candidate_schedule(
 }
 
 fn candidate_schedule_descriptor_bytes(
-    choice: &CandidateScheduleChoice,
+    choice: &ScheduleCandidate,
     setup_generation_dimension: usize,
 ) -> Result<Vec<u8>, AkitaError> {
     Ok(materialize_candidate_schedule(
         choice.total_bytes,
-        choice.setup_envelope_ring_elements,
+        choice.setup_field_elements,
         setup_generation_dimension,
         choice.first_direct_setup_field_len,
         choice.folds.clone(),
@@ -501,10 +474,14 @@ pub(crate) fn layout_candidate_score(
 // memo state without changing emitted tables.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
-/// Find the optimal schedule for a root schedule lookup key under `policy`.
+/// Find the optimal schedule for a root schedule lookup key and dimension domain.
 ///
-/// Runs an exhaustive DP that minimizes proof size. The result is a pure,
-/// deterministic function of `(policy, key)` (plus the `ring_challenge_config` /
+/// A singleton domain matching the setup generation dimension preserves the
+/// uniform proof-payload objective. An explicit mixed domain selects exact
+/// physical setup fields first and exact proof payload second.
+///
+/// The result is a pure,
+/// deterministic function of `(policy, key, dimensions)` (plus the `ring_challenge_config` /
 /// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
 /// generated tables were emitted from), so the prover and verifier
 /// regenerate identical schedules on a table miss.
@@ -517,40 +494,21 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 pub fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    let dimensions = RingDimensionSearchDomain::uniform(policy.ring_dimension);
-    find_schedule_inner(
-        key,
-        policy,
-        &dimensions,
-        ScheduleSelectionObjective::ProofPayload,
-        MixedFrontierMode::Pareto,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )
-}
-
-/// Find a schedule over an explicit mixed A/B/D dimension domain.
-///
-/// This offline-only entry point minimizes physical setup field elements
-/// first and exact modeled proof payload second. Existing callers should keep
-/// using [`find_schedule`], whose singleton domain and payload-only comparator
-/// preserve the current scalar-D behavior.
-///
-/// Recursive setup offloading remains on the existing D64-only planner path;
-/// this first mixed-D cut supports direct scalar schedules. Mixed A/B/D
-/// candidates are searched only at fold levels 0 and 1, dimensions are
-/// component-wise non-increasing, and level 2 onward reuses the existing
-/// uniform-D64 split search.
-pub fn find_schedule_with_ring_dimension_domain(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    key.validate()?;
+    validate_policy(policy)?;
+    dimensions.validate_for_policy(policy)?;
+    if dimensions.is_uniform_policy_domain(policy) {
+        return find_schedule_inner(
+            key,
+            policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
     if policy.recursive_setup_planning {
         return Err(AkitaError::InvalidSetup(
             "mixed-D search does not yet support recursive setup planning".into(),
@@ -561,18 +519,14 @@ pub fn find_schedule_with_ring_dimension_domain(
             "mixed-D search does not yet support direct multi-chunk planning".into(),
         ));
     }
-    let validated = RingDimensionSearchDomain::new(
-        policy.ring_dimension,
-        dimensions.candidates().iter().copied(),
-    )?;
     let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-    if !validated.candidates().contains(&suffix_dimensions) {
+    if !dimensions.candidates().contains(&suffix_dimensions) {
         return Err(AkitaError::InvalidSetup(format!(
             "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
              used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
         )));
     }
-    if validated.candidates().iter().any(|dims| {
+    if dimensions.candidates().iter().any(|dims| {
         dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
             || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
@@ -583,21 +537,13 @@ pub fn find_schedule_with_ring_dimension_domain(
              uniform D{MIXED_SEARCH_SUFFIX_RING_DIMENSION}"
         )));
     }
-    find_schedule_inner(
+    mixed_search::find_schedule(
         key,
         policy,
-        &validated,
-        ScheduleSelectionObjective::SetupThenProofPayload,
-        MixedFrontierMode::Pareto,
+        dimensions,
         ring_challenge_config,
         fold_challenge_shape_at_level,
     )
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ScheduleSelectionObjective {
-    ProofPayload,
-    SetupThenProofPayload,
 }
 
 fn componentwise_dimensions_at_most(
@@ -678,19 +624,15 @@ pub fn plan_optimal_suffix(
         ));
     }
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let dimensions = [CommitmentRingDims::uniform(policy.ring_dimension)];
     let ctx = SuffixCtx {
         policy,
-        dimension_candidates: &dimensions,
-        objective: ScheduleSelectionObjective::ProofPayload,
         default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config: &ring_challenge_config,
         fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
         num_vars,
         key: PolynomialGroupLayout::singleton(num_vars),
-        setup_envelope_budget: None,
+        setup_field_budget: None,
         root_lookup_key: None,
-        mixed_frontier_mode: MixedFrontierMode::Pareto,
     };
     let mut memo = ScheduleMemo::new();
     let result = derive_optimal_suffix_schedule(
@@ -701,7 +643,6 @@ pub fn plan_optimal_suffix(
             current_witness_len: start_witness_len,
             current_lb: start_lb,
             incoming_setup_prefix: None,
-            dimension_ceiling: None,
         },
         0,
     )?;
@@ -737,41 +678,22 @@ pub fn plan_optimal_suffix(
 fn find_schedule_inner(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
-    objective: ScheduleSelectionObjective,
-    mixed_frontier_mode: MixedFrontierMode,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
-    key.validate()?;
-    validate_policy(policy)?;
-    let default_ring_challenge_cfg = match objective {
-        ScheduleSelectionObjective::ProofPayload => ring_challenge_config(policy.ring_dimension)?,
-        ScheduleSelectionObjective::SetupThenProofPayload => dimensions
-            .candidates()
-            .iter()
-            .find_map(|dims| ring_challenge_config(dims.d_a()).ok())
-            .ok_or_else(|| {
-                AkitaError::UnsupportedSchedule(
-                    "no ring-dimension candidate has fold-challenge support".into(),
-                )
-            })?,
-    };
+    let default_ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
-        dimension_candidates: dimensions.candidates(),
-        objective,
         default_ring_challenge_cfg: &default_ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
-        setup_envelope_budget: None,
+        setup_field_budget: None,
         root_lookup_key: None,
-        mixed_frontier_mode,
     };
 
     if policy.recursive_setup_planning {
@@ -784,7 +706,7 @@ fn find_schedule_inner(
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
     let field_bits = policy.decomposition.field_bits();
-    let mut best: Option<CandidateScheduleChoice> = None;
+    let mut best: Option<ScheduleCandidate> = None;
     let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -794,20 +716,11 @@ fn find_schedule_inner(
 
     // Chunk count of the witness committed at the root fold (absolute level 0).
     let root_num_chunks = policy.chunks_at_level(0);
-    let root_eor_bytes = extension_opening_reduction_level_bytes(
-        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
-        policy.claim_ext_degree,
-        0,
-        key,
-        witness_len,
-        policy.ring_dimension,
-    )
-    .ok();
-
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
+    let candidate_dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
     for candidate_log_basis in min_log_basis..=max_log_basis {
         let mut root_candidates = Vec::new();
-        for candidate_dimensions in dimensions.candidates() {
+        {
             let alpha = (candidate_dimensions.d_a() as u32).trailing_zeros() as usize;
             let reduced_vars = key.num_vars().saturating_sub(alpha);
             if reduced_vars == 0 {
@@ -822,7 +735,7 @@ fn find_schedule_inner(
                 let Some(candidate_params) = scalar_root_fold_level_params_candidate(
                     policy,
                     &ring_challenge_cfg,
-                    *candidate_dimensions,
+                    candidate_dimensions,
                     key.num_vars(),
                     key.num_polynomials(),
                     candidate_log_basis,
@@ -862,6 +775,18 @@ fn find_schedule_inner(
         }
         for (candidate_params, output_witness_len) in root_candidates {
             let candidate_dimensions = candidate_params.role_dims();
+            // Root projection is governed by the candidate's committed A dimension,
+            // not the setup-generation ceiling.
+            let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
+                policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+                policy.claim_ext_degree,
+                0,
+                key,
+                witness_len,
+                candidate_dimensions.d_a(),
+            ) else {
+                continue;
+            };
             let suffix = derive_optimal_suffix_schedule(
                 &suffix_ctx,
                 &mut memo,
@@ -870,31 +795,14 @@ fn find_schedule_inner(
                     current_witness_len: output_witness_len,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
-                    dimension_ceiling: matches!(
-                        objective,
-                        ScheduleSelectionObjective::SetupThenProofPayload
-                    )
-                    .then_some(candidate_dimensions),
                 },
                 0,
             )?;
             if suffix.is_empty() {
                 continue;
             }
-            let Some(eor_bytes) = root_eor_bytes else {
-                continue;
-            };
-
-            let suffix_candidates = match objective {
-                ScheduleSelectionObjective::ProofPayload => {
-                    suffix.best_by_payload_per_lb.values().collect::<Vec<_>>()
-                }
-                ScheduleSelectionObjective::SetupThenProofPayload => {
-                    suffix.mixed_frontier.iter().collect::<Vec<_>>()
-                }
-            };
             // A supported root must recurse into at least one suffix fold.
-            for suffix_fold in suffix_candidates {
+            for suffix_fold in suffix.best_by_payload_per_lb.values() {
                 let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
@@ -904,14 +812,13 @@ fn find_schedule_inner(
                     field_bits,
                     field_bits * policy.chal_ext_degree as u32,
                     &candidate_params,
-                    suffix_fold.first_fold_params.as_ref(),
+                    suffix_fold.first_fold_params(),
                     output_witness_len,
                     Some(next_witness_binding),
                 )? + eor_bytes;
                 let total = root_proof_size + suffix_fold.total_bytes;
-                let root_envelope =
-                    level_setup_envelope_at_generation(&candidate_params, policy.ring_dimension)?;
-                let setup_envelope = root_envelope.max(suffix_fold.setup_envelope_ring_elements);
+                let root_envelope = level_setup_field_elements(&candidate_params)?;
+                let setup_envelope = root_envelope.max(suffix_fold.setup_field_elements);
                 let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                 folds.push(CandidateFoldStep {
                     params: candidate_params.clone(),
@@ -921,37 +828,16 @@ fn find_schedule_inner(
                     estimated_stage3_payload_bytes: 0,
                 });
                 folds.extend(suffix_fold.folds.iter().cloned());
-                let candidate = CandidateScheduleChoice {
+                let candidate = ScheduleCandidate {
                     first_direct_setup_field_len: None,
                     total_bytes: total,
-                    setup_envelope_ring_elements: setup_envelope,
+                    setup_field_elements: setup_envelope,
                     folds,
                     terminal: suffix_fold.terminal.clone(),
                 };
                 let replace = match &best {
                     None => true,
-                    Some(current) => match objective {
-                        ScheduleSelectionObjective::ProofPayload => {
-                            candidate.total_bytes < current.total_bytes
-                        }
-                        ScheduleSelectionObjective::SetupThenProofPayload => {
-                            let candidate_cost = (
-                                candidate.setup_envelope_ring_elements,
-                                candidate.total_bytes,
-                            );
-                            let current_cost =
-                                (current.setup_envelope_ring_elements, current.total_bytes);
-                            candidate_cost < current_cost
-                                || (candidate_cost == current_cost
-                                    && candidate_schedule_descriptor_bytes(
-                                        &candidate,
-                                        policy.ring_dimension,
-                                    )? < candidate_schedule_descriptor_bytes(
-                                        current,
-                                        policy.ring_dimension,
-                                    )?)
-                        }
-                    },
+                    Some(current) => candidate.total_bytes < current.total_bytes,
                 };
                 if replace {
                     best = Some(candidate);
@@ -969,7 +855,7 @@ fn find_schedule_inner(
     };
     materialize_candidate_schedule(
         best.total_bytes,
-        best.setup_envelope_ring_elements,
+        best.setup_field_elements,
         policy.ring_dimension,
         best.first_direct_setup_field_len,
         best.folds,
@@ -1061,7 +947,7 @@ mod geometry_tests {
         ];
         let domain = RingDimensionSearchDomain::new(policy.ring_dimension, dimensions).unwrap();
         let key = PolynomialGroupLayout::singleton(16);
-        let selected = find_schedule_with_ring_dimension_domain(
+        let selected = find_schedule(
             key,
             &policy,
             &domain,
@@ -1076,7 +962,7 @@ mod geometry_tests {
 
         let uniform =
             RingDimensionSearchDomain::new(policy.ring_dimension, [dimensions[0]]).unwrap();
-        let candidate = find_schedule_with_ring_dimension_domain(
+        let candidate = find_schedule(
             key,
             &policy,
             &uniform,
@@ -1131,7 +1017,7 @@ mod geometry_tests {
         let canonical = RingDimensionSearchDomain::new(policy.ring_dimension, [d64, a128]).unwrap();
         let key = PolynomialGroupLayout::singleton(16);
 
-        let selected = find_schedule_with_ring_dimension_domain(
+        let selected = find_schedule(
             key,
             &policy,
             &reversed_with_duplicate,
@@ -1139,17 +1025,15 @@ mod geometry_tests {
             D256OneHot::fold_challenge_shape_at_level,
         )
         .unwrap();
-        let exhaustive = find_schedule_inner(
+        let exhaustive = exhaustive_oracle::find_schedule(
             key,
             &policy,
             &canonical,
-            ScheduleSelectionObjective::SetupThenProofPayload,
-            MixedFrontierMode::Exhaustive,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
         )
         .unwrap();
-        let repeated = find_schedule_with_ring_dimension_domain(
+        let repeated = find_schedule(
             key,
             &policy,
             &canonical,
@@ -1200,7 +1084,7 @@ mod geometry_tests {
                         ],
                     )
                     .expect("mixed dimension domain");
-                    find_schedule_with_ring_dimension_domain(
+                    find_schedule(
                         PolynomialGroupLayout::singleton(16),
                         &policy,
                         &domain,
@@ -1218,6 +1102,77 @@ mod geometry_tests {
             .map(|handle| handle.join().expect("planner thread"))
             .collect::<Vec<_>>();
         assert!(descriptors.windows(2).all(|pair| pair[0] == pair[1]));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_root_prices_eor_at_candidate_a_dimension() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let mut policy = policy_of::<D256OneHot>();
+        // D256 enables root projection at this width while the D64 candidate does not.
+        policy.claim_ext_degree = 64;
+        let candidate_dimensions = CommitmentRingDims::uniform(64);
+        let domain = RingDimensionSearchDomain::new(policy.ring_dimension, [candidate_dimensions])
+            .expect("mixed dimension domain");
+        let key = PolynomialGroupLayout::singleton(16);
+        let selected = find_schedule(
+            key,
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .expect("mixed planner boundary schedule");
+        let schedule = &selected.schedule;
+        let root_params = &schedule.root.params.final_group.commitment;
+        assert_eq!(root_params.role_dims(), candidate_dimensions);
+
+        let challenge_field_bits =
+            policy.decomposition.field_bits() * policy.chal_ext_degree as u32;
+        let candidate_eor_bytes = extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            0,
+            key,
+            schedule.root.input_witness_len,
+            candidate_dimensions.d_a(),
+        )
+        .expect("candidate EOR bytes");
+        let setup_generation_eor_bytes = extension_opening_reduction_level_bytes(
+            challenge_field_bits,
+            policy.claim_ext_degree,
+            0,
+            key,
+            schedule.root.input_witness_len,
+            policy.ring_dimension,
+        )
+        .expect("setup-generation EOR bytes");
+        assert_eq!(candidate_eor_bytes, 0);
+        assert!(setup_generation_eor_bytes > 0);
+
+        let next_params = schedule
+            .recursive_folds
+            .first()
+            .map(|step| &step.params.witness);
+        let next_binding = if next_params.is_some() {
+            akita_types::NextWitnessBindingPolicy::OuterCommitment
+        } else {
+            akita_types::NextWitnessBindingPolicy::TerminalInnerState
+        };
+        let root_without_eor = level_proof_bytes(
+            policy.decomposition.field_bits(),
+            challenge_field_bits,
+            root_params,
+            next_params,
+            schedule.root.output_witness_len,
+            Some(next_binding),
+        )
+        .expect("root bytes without EOR");
+        assert_eq!(
+            selected.estimate.estimated_root_direct_payload_bytes,
+            root_without_eor + candidate_eor_bytes,
+        );
     }
 
     #[cfg(feature = "catalog-gen")]
@@ -1243,7 +1198,7 @@ mod geometry_tests {
             [d64, d128_mixed, d128, d256_mixed],
         )
         .expect("benchmark dimension domain");
-        let selected = find_schedule_with_ring_dimension_domain(
+        let selected = find_schedule(
             PolynomialGroupLayout::singleton(36),
             &policy,
             &domain,
@@ -1254,9 +1209,11 @@ mod geometry_tests {
         let rank_one_capped_domain =
             RingDimensionSearchDomain::new(policy.ring_dimension, [d64, d128_mixed, d128])
                 .expect("rank-one-capped comparison domain");
-        let rank_one_capped = find_schedule_with_ring_dimension_domain(
+        let mut comparison_policy = policy;
+        comparison_policy.max_setup_envelope_field_elements = usize::MAX;
+        let rank_one_capped = find_schedule(
             PolynomialGroupLayout::singleton(36),
-            &policy,
+            &comparison_policy,
             &rank_one_capped_domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1310,7 +1267,7 @@ mod geometry_tests {
             [CommitmentRingDims::uniform(128)],
         )
         .unwrap();
-        let error = find_schedule_with_ring_dimension_domain(
+        let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
             &missing_d64,
@@ -1334,7 +1291,7 @@ mod geometry_tests {
             ],
         )
         .unwrap();
-        let error = find_schedule_with_ring_dimension_domain(
+        let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
             &below_d64,
@@ -1357,7 +1314,7 @@ mod geometry_tests {
             [CommitmentRingDims::uniform(64)],
         )
         .unwrap();
-        let error = find_schedule_with_ring_dimension_domain(
+        let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
             &domain,
@@ -1368,5 +1325,152 @@ mod geometry_tests {
         assert!(error
             .to_string()
             .contains("does not yet support direct multi-chunk planning"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_search_validates_key_and_policy_at_entry() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let policy = policy_of::<D256OneHot>();
+        let domain = RingDimensionSearchDomain::new(
+            policy.ring_dimension,
+            [
+                CommitmentRingDims::uniform(64),
+                CommitmentRingDims::uniform(policy.ring_dimension),
+            ],
+        )
+        .unwrap();
+
+        let error = find_schedule(
+            PolynomialGroupLayout::new(16, 0),
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("opening group layouts must be nonempty"));
+
+        let mut invalid_policy = policy;
+        invalid_policy.max_setup_envelope_field_elements = 0;
+        let error = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &invalid_policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("maximum setup envelope must be positive"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn dimension_domain_is_bound_to_setup_generation_dimension() {
+        use akita_config::{policy_of, proof_optimized::fp128::D128OneHot, CommitmentConfig};
+
+        let policy = policy_of::<D128OneHot>();
+        let domain = RingDimensionSearchDomain::uniform(256).unwrap();
+        let error = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &policy,
+            &domain,
+            D128OneHot::ring_challenge_config,
+            D128OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("domain uses setup generation D256, but policy uses D128"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_search_applies_setup_budget_in_physical_fields() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let mut policy = policy_of::<D256OneHot>();
+        let domain = RingDimensionSearchDomain::new(
+            policy.ring_dimension,
+            [
+                CommitmentRingDims::uniform(64),
+                CommitmentRingDims {
+                    inner: 128,
+                    outer: 64,
+                    opening: 64,
+                },
+            ],
+        )
+        .unwrap();
+        let selected = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let exact_fields =
+            akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
+        policy.max_setup_envelope_field_elements = exact_fields - 1;
+
+        let error = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("no mixed-D schedule"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn preserved_recursive_proof_size_is_documented() {
+        use akita_config::{
+            policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig,
+            RecursiveCommitmentConfig,
+        };
+        use akita_types::{AkitaScheduleLookupKey, PrecommittedGroupDescriptor};
+
+        type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+        let precommit_layout = PolynomialGroupLayout::singleton(16);
+        let precommit_policy = policy_of::<D64OneHot>();
+        let precommit_domain =
+            RingDimensionSearchDomain::uniform(precommit_policy.ring_dimension).unwrap();
+        let precommit = find_schedule(
+            precommit_layout,
+            &precommit_policy,
+            &precommit_domain,
+            D64OneHot::ring_challenge_config,
+            D64OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+        let descriptor = PrecommittedGroupDescriptor::from_params(
+            precommit_layout,
+            &precommit.schedule.root.params.final_group.commitment,
+        );
+        let key = AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(32, 2),
+            precommitteds: vec![descriptor, descriptor],
+        };
+        let planned = crate::find_group_batch_schedule(
+            &key,
+            &policy_of::<Recursive>(),
+            Recursive::ring_challenge_config,
+            Recursive::fold_challenge_shape_at_level,
+        )
+        .unwrap();
+
+        assert_eq!(
+            planned.estimate.estimated_proof_payload_bytes().unwrap(),
+            102_732
+        );
     }
 }

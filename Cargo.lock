@@ -141,7 +141,6 @@ dependencies = [
  "akita-challenges",
  "akita-config",
  "akita-field",
- "akita-planner",
  "akita-serialization",
  "akita-sumcheck",
  "akita-transcript",

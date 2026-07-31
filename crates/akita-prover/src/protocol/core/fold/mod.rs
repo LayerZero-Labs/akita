@@ -137,6 +137,7 @@ where
         .opening_claims()
         .layout()
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
+    let final_group_index = opening_batch.root_final_group_index()?;
     let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
     let mut e_folded_by_claim = Vec::with_capacity(opening_batch.num_total_polynomials());
     let mut scalar_openings = Vec::with_capacity(opening_batch.num_total_polynomials());
@@ -157,11 +158,21 @@ where
         let group_protocol_point = protocol_points
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if group_protocol_point.len() != target_len {
+        let point_width_is_valid = if pad_base_evals && group_index == final_group_index {
+            group_protocol_point.len() <= target_len
+        } else {
+            group_protocol_point.len() == target_len
+        };
+        if !point_width_is_valid {
             return Err(AkitaError::InvalidPointDimension {
                 expected: target_len,
                 actual: group_protocol_point.len(),
             });
+        }
+        if pad_base_evals {
+            for coordinate in group_protocol_point {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+            }
         }
         let group_polys = block_claims.group_polys(group_index).map_err(|err| {
             AkitaError::InvalidInput(format!(
@@ -174,7 +185,7 @@ where
             group_dims.d_a(),
             |D| {
                 let (prepared_point, (group_folded_rings, group_e_folded_by_claim)) =
-                    prepare_and_evaluate_opening_group::<F, E, T, Q, O, D>(
+                    prepare_and_evaluate_opening_group::<F, E, Q, O, D>(
                         opening.backend(),
                         Some(opening.prepared()),
                         group_polys,
@@ -183,7 +194,6 @@ where
                         group_lp.num_positions_per_block(),
                         group_lp.num_live_blocks(),
                         group_alpha_bits,
-                        transcript,
                     )
                     .map_err(|err| {
                         AkitaError::InvalidInput(format!(
@@ -556,9 +566,10 @@ where
     };
     let (stage3_sumcheck_proof, setup_prefix_opening) = if let Some(stage3) = stage3_sumcheck_proof
     {
+        let setup_prefix_eval = stage3.proof.setup_prefix_eval;
         (
             Some(stage3.proof),
-            Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+            Some((stage3.setup_prefix_point, setup_prefix_eval)),
         )
     } else {
         (None, None)
@@ -784,7 +795,6 @@ where
                     sumcheck: output.sumcheck,
                 },
                 setup_prefix_point: output.setup_prefix_point,
-                setup_prefix_eval: output.setup_prefix_eval,
             }))
         }
         SetupContributionMode::Direct => Ok(None),

@@ -278,14 +278,14 @@ where
     params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    if current_state.opening_point.len() > recursive_num_vars
-        || current_state.setup_prefix_opening.is_some()
-    {
+    if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let mut protocol_point = current_state.opening_point.clone();
-    protocol_point.resize(recursive_num_vars, E::zero());
-    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let protocol_point = current_state.opening_point.clone();
+    let opening_batch = OpeningClaimsLayout::new(protocol_point.len(), 1)?;
     let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
@@ -308,7 +308,14 @@ where
             params,
             transcript,
         )?;
-        (replay.prepared_points, replay.final_relation)
+        (
+            replay
+                .groups
+                .into_iter()
+                .map(|group| group.prepared)
+                .collect(),
+            replay.final_relation,
+        )
     };
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
@@ -394,8 +401,7 @@ where
     if current_state.opening_point.len() > recursive_num_vars {
         return Err(AkitaError::InvalidProof);
     }
-    let mut padded_witness_point = current_state.opening_point.clone();
-    padded_witness_point.resize(recursive_num_vars, E::zero());
+    let witness_point = current_state.opening_point.clone();
 
     let block_claims = match (
         &current_state.setup_prefix_opening,
@@ -408,17 +414,13 @@ where
                     vec![*setup_prefix_eval],
                     (),
                 )?,
-                PolynomialGroupClaims::new(
-                    padded_witness_point.clone(),
-                    vec![current_state.opening],
-                    (),
-                )?,
+                PolynomialGroupClaims::new(witness_point.clone(), vec![current_state.opening], ())?,
             ];
             OpeningClaims::from_groups(groups)?
         }
         (None, None) => {
             let claims =
-                PolynomialGroupClaims::new(padded_witness_point, vec![current_state.opening], ())?;
+                PolynomialGroupClaims::new(witness_point, vec![current_state.opening], ())?;
             OpeningClaims::from_groups(vec![claims])?
         }
         _ => return Err(AkitaError::InvalidProof),
@@ -436,11 +438,7 @@ where
         return Err(AkitaError::InvalidProof);
     }
     let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
-    let SuffixFoldPrefix {
-        prepared_points,
-        trace_eval_target,
-        trace_claim_coefficients,
-    } = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
+    let prefix = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
@@ -451,12 +449,16 @@ where
             role_dims.d_a(),
             alpha_bits,
         )?;
-        absorb_prepared_opening_points(&prepared_points, transcript);
+        let group_points = (0..opening_batch.num_groups())
+            .map(|group_index| block_claims.group_point(group_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        absorb_protocol_opening_points(&group_points, transcript);
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
-        SuffixFoldPrefix {
+        FoldPrefix {
             prepared_points,
             trace_eval_target,
             trace_claim_coefficients: row_coefficients.clone(),
+            row_coefficients,
         }
     } else {
         let group_points = (0..opening_batch.num_groups())
@@ -466,7 +468,7 @@ where
             proof.extension_opening_reduction,
             &group_points,
             &openings,
-            &row_coefficients,
+            row_coefficients,
             &opening_batch,
             current_state.basis,
             lp,
@@ -516,20 +518,9 @@ where
         v: v_storage,
         opening_shape: opening_batch,
         commitment_rows,
-        row_coefficients,
-        group_ring_opening_points: prepared_points
-            .iter()
-            .map(|point| point.ring_opening_point.clone())
-            .collect(),
-        group_ring_multiplier_points: prepared_points
-            .iter()
-            .map(|point| point.ring_multiplier_point.clone())
-            .collect(),
+        prefix,
         w_len: witness_len,
         payload,
-        evaluation_trace_points: prepared_points,
-        evaluation_trace_claim: trace_eval_target,
-        evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: current_state.basis,
     })
 }

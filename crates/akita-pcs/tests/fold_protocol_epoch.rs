@@ -42,15 +42,15 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         witness_seed: 0xd1_613_001,
         transcript_domain: b"akita/protocol-epoch/direct-to-terminal",
         proof_len: 49_056,
-        proof_digest: "59bae92128cdb75d71b99554297ab502",
-        event_count: 151,
-        event_digest: "b9a5fac83fc7137a365b8239e70d796d",
+        proof_digest: "b99ea8b10cf9a231816821699cfa8457",
+        event_count: 139,
+        event_digest: "93fbc90bc6a93a1b908ed837fcb21d1a",
         terminal_len: 46_092,
-        terminal_digest: "4c8f5f60f8933caafbdef515920fdfa6",
+        terminal_digest: "023739153655c055c206d9d12d53d8bf",
         digit_range_levels: &[DigitRangeLevelEpoch {
             basis: 8,
             payload_len: 1_104,
-            payload_digest: "e04008f6b99e2d15636451141bfb9549",
+            payload_digest: "353ab46a5e7b79262d997bf5be07cd32",
         }],
     },
     FoldProtocolEpoch {
@@ -58,37 +58,37 @@ const FOLD_PROTOCOL_EPOCH: &[FoldProtocolEpoch] = &[
         num_vars: 20,
         witness_seed: 0xd1_613_002,
         transcript_domain: b"akita/protocol-epoch/recursive-nonterminal",
-        proof_len: 78_443,
-        proof_digest: "23a3149e0cb0b68208643a63a3f48eac",
-        event_count: 949,
-        event_digest: "173835b11819121b949518eef0567529",
-        terminal_len: 52_391,
-        terminal_digest: "ecc7670a06af8edc8164b31a0b1ffb8b",
+        proof_len: 78_448,
+        proof_digest: "ded42abcccdec493a4a25574eb39b29e",
+        event_count: 929,
+        event_digest: "337d5a7b41b40c10184383d1a89f988b",
+        terminal_len: 52_396,
+        terminal_digest: "de6ee3aa96724d4cf3e3749550f45d1d",
         digit_range_levels: &[
             DigitRangeLevelEpoch {
                 basis: 8,
                 payload_len: 1_232,
-                payload_digest: "ebcbb761b7429b5d08e400bbf312a62d",
+                payload_digest: "9b70ebb776467887e59a3eaeaf74c648",
             },
             DigitRangeLevelEpoch {
                 basis: 32,
                 payload_len: 2_384,
-                payload_digest: "f6af5de3fa5cb53f067fd32b3326df84",
+                payload_digest: "938a816824c792a270723d932bb0636e",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 3_056,
-                payload_digest: "d700e584e8caad8aade00f5f6eff941a",
+                payload_digest: "673131a63a6f531664a66ada1b763138",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "a98584e881d2410cc597727cb4039491",
+                payload_digest: "1d83821bb0c855b33d057a68398c170c",
             },
             DigitRangeLevelEpoch {
                 basis: 64,
                 payload_len: 2_896,
-                payload_digest: "0b0580fdda44144541f111b53c56b4e9",
+                payload_digest: "e12ac249486a9028a6c3ce9f111fb037",
             },
         ],
     },
@@ -142,6 +142,33 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
     assert_eq!(
         prover_events, verifier_events,
         "{} transcript replay",
+        expected.name
+    );
+    let point_run_start = first_label_index(
+        &prover_events,
+        akita_transcript::labels::ABSORB_EVALUATION_CLAIMS,
+    )
+    .expect("root opening-point transcript run");
+    let point_run_end = prover_events[point_run_start..]
+        .iter()
+        .position(|event| {
+            event_label(event) != Some(akita_transcript::labels::ABSORB_EVALUATION_CLAIMS)
+        })
+        .map_or(prover_events.len(), |offset| point_run_start + offset);
+    assert_eq!(
+        point_run_end - point_run_start,
+        point.len(),
+        "{} must absorb each root point coordinate exactly once",
+        expected.name
+    );
+    assert_eq!(
+        event_label(
+            prover_events
+                .get(point_run_end)
+                .expect("opening value after root point")
+        ),
+        Some(akita_transcript::labels::ABSORB_EVAL_OPENINGS_FIELD),
+        "{} root point/opening order",
         expected.name
     );
 

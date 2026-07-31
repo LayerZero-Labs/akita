@@ -2,7 +2,7 @@
 
 // Explicit imports only: the compiler enforces that the single-field path has
 // no extension-opening-reduction symbols in scope.
-use super::RootFoldPrefix;
+use super::FoldPrefix;
 use akita_field::{
     AkitaError, CanonicalField, ExtField, FieldCore, FrobeniusExtField, FromPrimitiveInt,
 };
@@ -15,16 +15,16 @@ use akita_types::{
     OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, TerminalCommittedGroupParams,
 };
 
-pub(in crate::protocol::core) fn absorb_prepared_opening_points<F, E, T>(
-    prepared_points: &[PreparedOpeningPoint<F, E>],
+pub(in crate::protocol::core) fn absorb_protocol_opening_points<F, E, T>(
+    protocol_points: &[&[E]],
     transcript: &mut T,
 ) where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + AkitaSerialize,
     T: Transcript<F>,
 {
-    for prepared in prepared_points {
-        for coordinate in &prepared.padded_point {
+    for point in protocol_points {
+        for coordinate in *point {
             append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
         }
     }
@@ -40,7 +40,7 @@ pub(in crate::protocol::core) fn verify_single_field_root_prefix<F, E, T>(
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<RootFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -77,11 +77,10 @@ where
         )?;
         prepared_points.push(prepared);
     }
-    absorb_prepared_opening_points(&prepared_points, transcript);
     append_claim_values_to_transcript::<F, E, T>(openings, transcript);
     let row_coefficients = sample_public_row_coefficients::<F, E, T>(opening_batch, transcript)?;
     let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, openings)?;
-    Ok(RootFoldPrefix {
+    Ok(FoldPrefix {
         prepared_points,
         trace_claim_coefficients: row_coefficients.clone(),
         row_coefficients,
@@ -118,7 +117,7 @@ where
         }
     )?;
     let prepared_points = vec![prepared_point];
-    absorb_prepared_opening_points(&prepared_points, transcript);
+    absorb_protocol_opening_points(&[protocol_point], transcript);
     append_claim_values_to_transcript::<F, E, T>(std::slice::from_ref(opening), transcript);
     Ok(prepared_points)
 }
@@ -142,6 +141,7 @@ where
         role_d_a,
         |D| {
             let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+            let final_group_index = opening_batch.root_final_group_index()?;
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
@@ -151,7 +151,12 @@ where
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
                 let group_protocol_point = block_claims.group_point(group_index)?;
-                if group_protocol_point.len() != target_len {
+                let point_width_is_valid = if group_index == final_group_index {
+                    group_protocol_point.len() <= target_len
+                } else {
+                    group_protocol_point.len() == target_len
+                };
+                if !point_width_is_valid {
                     return Err(AkitaError::InvalidInput(format!(
                         "suffix group point width mismatch: group={group_index}, \
                          groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",

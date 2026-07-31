@@ -110,7 +110,7 @@ where
 /// Reached from [`verify_root`]; per-role typed kernels dispatch inside
 /// [`verify_fold`] and the geometry prefix modules. Geometry forks only the
 /// prefix (single-field vs extension-claim), both producing a
-/// [`RootFoldPrefix`]; [`PreparedFoldReplay`] assembly is shared.
+/// [`FoldPrefix`]; [`PreparedFoldReplay`] assembly is shared.
 ///
 /// This builds one prepared opening point per group (mirroring the prover's
 /// `finish_prepared_fold` loop and its per-group padded-point absorbs),
@@ -172,13 +172,6 @@ where
             transcript,
         )?
     };
-    let RootFoldPrefix {
-        prepared_points,
-        row_coefficients,
-        trace_eval_target,
-        trace_claim_coefficients,
-    } = prefix;
-
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
     // `relation_rhs_layout_for` block order.
@@ -193,15 +186,6 @@ where
     let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
-    let group_ring_opening_points = prepared_points
-        .iter()
-        .map(|prepared| prepared.ring_opening_point.clone())
-        .collect::<Vec<_>>();
-    let group_ring_multiplier_points = prepared_points
-        .iter()
-        .map(|prepared| prepared.ring_multiplier_point.clone())
-        .collect::<Vec<_>>();
-
     if !witness_len.is_multiple_of(next_witness_ring_dim) {
         return Err(AkitaError::InvalidProof);
     }
@@ -211,9 +195,7 @@ where
         v: v_storage,
         opening_shape: opening_batch.clone(),
         commitment_rows,
-        row_coefficients,
-        group_ring_opening_points,
-        group_ring_multiplier_points,
+        prefix,
         w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
             stage1: &proof.stage1,
@@ -223,9 +205,6 @@ where
             next_opening_source_len: witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
-        evaluation_trace_points: prepared_points,
-        evaluation_trace_claim: trace_eval_target,
-        evaluation_trace_claim_coefficients: trace_claim_coefficients,
         evaluation_trace_basis: basis,
     };
     verify_fold::<F, E, T>(setup, transcript, prepared)

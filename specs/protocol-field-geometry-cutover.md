@@ -43,7 +43,7 @@ The problems are packaging and predicate drift:
 This cutover is **minimal**:
 
 1. Gate module dispatch on `EXT_DEGREE == 1` (the claim/coefficient coincidence).
-2. One per-level predicate `eor_required_at_level` when `EXT_DEGREE > 1`.
+2. Direct canonical predicates for EOR presence: root uses `root_tensor_projection_enabled`, suffix uses `EXT_DEGREE > 1`, and planner root pricing uses the width-based root tensor gate.
 3. Fold prep/verify split so the single-field path has no EOR imports.
 4. Fail-closed wire validation; descriptor stays **v1**.
 
@@ -53,7 +53,7 @@ No `OpeningGeometry` enum (that would duplicate `EXT_DEGREE`), no proof-type enu
 
 ### Goal
 
-Make the single-field fold path (`EXT_DEGREE == 1`) a short, EOR-free module tree, and make “does this level run EOR?” a single function used by prover, verifier, and planner whenever claims live in a proper extension.
+Make the single-field fold path (`EXT_DEGREE == 1`) a short, EOR-free module tree, and make “does this level run EOR?” use the same canonical predicates in prover, verifier, and planner whenever claims live in a proper extension.
 
 ### Diagnosis (current `main`)
 
@@ -106,7 +106,7 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 - All current `EXT_DEGREE == 1` presets (today’s fp128 production set) remain byte-identical after wire hardening.
 - Verifier no-panic contract unchanged.
 - Preset/module dispatch uses only `EXT_DEGREE == 1` vs `> 1` (claim field coincides with coefficient field or not).
-- When `EXT_DEGREE > 1`, `eor_required_at_level` is the only authority for per-level EOR presence in prover, verifier, and planner. The verifier enforces exact presence at the `verify_eor_sumcheck` boundary: a payload is present if and only if the predicate holds, so both an omitted required reduction and an unsolicited one reject.
+- When `EXT_DEGREE > 1`, root EOR presence follows `root_tensor_projection_enabled` and suffix EOR presence follows `EXT_DEGREE > 1`; planner root pricing uses the same width-based root tensor gate. The verifier enforces exact presence at the `verify_eor_sumcheck` boundary: a payload is present if and only if the relevant predicate holds, so both an omitted required reduction and an unsolicited one reject.
 - `fold/single_field.rs` must not reference `extension_opening_reduction`, `tensor_root_projection`, or `RootTensorProjectionPoly`. Enforced by the compiler: the module uses explicit imports only (no `super::*` glob), so any EOR reference fails name resolution.
 
 ### Non-Goals
@@ -130,8 +130,7 @@ With `false`, an extension-claim root that should have EOR can omit it and still
 
 **Phase A — predicate + drift fixes**
 
-- [x] `eor_required_at_level` exists in `akita-types` and matches the table in Design.
-- [x] Root prover, suffix prover, root verifier, suffix verifier, and planner root EOR bytes all call it (no leftover `needs_extension_reduction` / hardcoded `false` at those sites).
+- [x] Root prover, suffix prover, root verifier, suffix verifier, and planner root EOR bytes all use the canonical root/suffix predicates (no leftover hardcoded root `false` at verifier sites).
 - [x] Unit table test: `EXT_DEGREE == 1` always false; `EXT_DEGREE > 1` suffix always true; root matches `root_tensor_projection_enabled`.
 - [x] Extension-claim root missing EOR when required → `InvalidProof` (fail-closed).
 - [x] Current fp128 multifold still has zero EOR wire bytes.
@@ -161,7 +160,7 @@ Keep existing:
 
 Add:
 
-- `eor_required_at_level` alignment table (`akita-types`).
+- Root tensor gate alignment table (`akita-types`).
 - Root fail-closed: tamper omit EOR on a tensor-root schedule → `InvalidProof`.
 - `fp128_multifold_proof_has_no_extension_opening_reduction` structural assert (if not already covered).
 
@@ -183,9 +182,8 @@ Two nested questions:
       no  → extension-claim modules
 
 2. Inside extension-claim only: per-level EOR
-   eor_required_at_level(Root|Suffix, ring_d, num_vars)
-      Suffix → true whenever EXT_DEGREE > 1
-      Root   → root_tensor_projection_enabled(ring_d, num_vars)
+   Root   → root_tensor_projection_enabled(ring_d, num_vars)
+   Suffix → true whenever EXT_DEGREE > 1
 ```
 
 **Why not gate on “fp128” / field bit-width?**
@@ -213,7 +211,7 @@ CommitmentConfig::EXT_DEGREE          (preset fact = [ExtField:Field]; already o
         └── > 1   →  fold/extension_claim.rs
                         │
                         ▼
-              eor_required_at_level(kind, ring_d, num_vars)
+              root/suffix EOR predicates
                         │
                         ├── prove_root / prove_suffix
                         ├── verify_root / verify_suffix
@@ -223,106 +221,53 @@ CommitmentConfig::EXT_DEGREE          (preset fact = [ExtField:Field]; already o
                         shared prove_fold / verify_fold
 ```
 
-### `eor_required_at_level`
+### Canonical EOR predicates
 
-```rust
-// Proposed location: crates/akita-types/src/proof/batch.rs
-// (next to existing root_tensor_projection_enabled)
+Root EOR uses `root_tensor_projection_enabled::<F, E>(ring_d, opening_num_vars)`.
+Suffix EOR uses `E::EXT_DEGREE > 1`.
+Planner root pricing uses the same root tensor gate through the internal width-based helper, because schedule pricing has an extension width instead of concrete field types.
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FoldOpeningKind {
-    Root,
-    Suffix,
-}
+When `E::EXT_DEGREE == 1`, both predicates are false (`root_tensor_projection_enabled` already requires `width > 1`).
+Single-field modules should not call the EOR path; `const` dispatch already excluded them.
+Extension-claim modules call the direct predicate for the level they are preparing or verifying.
 
-#[inline]
-pub fn eor_required_at_level<F, E>(
-    kind: FoldOpeningKind,
-    ring_d: usize,
-    opening_num_vars: usize,
-) -> bool
-where
-    F: FieldCore,
-    E: ExtField<F>,
-{
-    match kind {
-        FoldOpeningKind::Root => root_tensor_projection_enabled::<F, E>(ring_d, opening_num_vars),
-        FoldOpeningKind::Suffix => E::EXT_DEGREE > 1,
-    }
-}
-```
+**Unit tests cover:**
 
-When `E::EXT_DEGREE == 1`, both arms are false (`root_tensor_projection_enabled` already requires `width > 1`).
-Single-field modules should not call this; `const` dispatch already excluded them.
-Extension-claim modules always go through this predicate.
-Keep `root_tensor_projection_enabled` as the root implementation detail.
-
-### Proposed diffs (explicit)
-
-#### Diff 1 — add predicate (`akita-types`)
-
-**File:** `crates/akita-types/src/proof/batch.rs`
-
-**Add** `FoldOpeningKind` + `eor_required_at_level` as above.
-**Export** from `akita_types` / `proof` module tree as needed.
-**Add** unit tests covering:
-
-| `(E, kind, ring_d, num_vars)` | expected |
-|-------------------------------|----------|
-| `EXT_DEGREE == 1` (e.g. fp128 `Field = ExtField`), Root or Suffix, any | `false` |
+| Case | expected |
+|------|----------|
+| `EXT_DEGREE == 1` (e.g. fp128 `Field = ExtField`), Root or Suffix | `false` |
 | `EXT_DEGREE == 4` (e.g. fp32-ext4), Suffix, any | `true` |
 | `EXT_DEGREE == 4`, Root, `ring_d`/`num_vars` that pass `root_tensor_projection_enabled` | `true` |
 | `EXT_DEGREE == 4`, Root, `num_vars` too small for root gate | `false` |
 
-#### Diff 2 — root prover uses predicate
+### Proposed diffs (explicit)
+
+#### Diff 1 — root prover uses root tensor gate
 
 **File:** `crates/akita-prover/src/protocol/core/root_fold.rs`
 
-**Today:**
+**After:**
 
 ```rust
 let needs_extension_reduction =
     root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars);
 ```
 
-**After:**
-
-```rust
-let needs_extension_reduction = eor_required_at_level::<F, E>(
-    FoldOpeningKind::Root,
-    root_ring_d,
-    opening_num_vars,
-);
-```
-
 (Phase B deletes the bool argument entirely by calling the geometry-specific prep function instead.)
 
-#### Diff 3 — suffix prover uses predicate
+#### Diff 2 — suffix prover uses extension degree
 
 **File:** `crates/akita-prover/src/protocol/core/suffix.rs`
 
-**Today (two sites):**
+**After (two sites):**
 
 ```rust
-let needs_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+let needs_reduction = E::EXT_DEGREE > 1;
 // ...
-let needs_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
+let needs_extension_reduction = E::EXT_DEGREE > 1;
 ```
 
-**After:**
-
-```rust
-let needs_extension_reduction = eor_required_at_level::<F, E>(
-    FoldOpeningKind::Suffix,
-    params.d_a(), // or level_params.role_dims().d_a()
-    /* opening_num_vars for the suffix claim */,
-);
-```
-
-For `Suffix`, `ring_d` / `num_vars` are unused by the predicate body but keep the signature uniform.
-Pass the real values for logging/consistency.
-
-#### Diff 4 — root verifier fail-closed (single-group)
+#### Diff 3 — root verifier fail-closed
 
 **File:** `crates/akita-verifier/src/protocol/core/root_fold.rs`
 
@@ -345,8 +290,7 @@ let root_eor = verify_fold_eor::<F, E, T>(
 **After:**
 
 ```rust
-let requires_reduction = eor_required_at_level::<F, E>(
-    FoldOpeningKind::Root,
+let requires_reduction = root_tensor_projection_enabled::<F, E>(
     root_lp.role_dims().d_a(),
     opening_batch.max_num_vars(),
 );
@@ -363,40 +307,30 @@ let root_eor = verify_fold_eor::<F, E, T>(
 )?;
 ```
 
-#### Diff 5 — root verifier fail-closed (multi-group)
+#### Diff 4 — root verifier fail-closed (multi-group)
 
 **File:** same `root_fold.rs` (`verify_root_inner`, reached via `verify_extension_claim_root_prefix`)
 
 **Today:** `verify_fold_eor(..., false, transcript)?` when EOR is present (and the missing-EOR path never requires it).
 
-**After:** compute `requires_reduction` with `FoldOpeningKind::Root` and the multi-group opening layout’s `max_num_vars()` / A-role `ring_d`, then:
+**After:** compute `requires_reduction` with `root_tensor_projection_enabled` and the multi-group opening layout’s `max_num_vars()` / A-role `ring_d`, then:
 
 - Always call `verify_fold_eor` with that flag (including when `extension_opening_reduction` is `None`), **or**
 - If keeping the `if extension_opening_reduction.is_some()` branch, still reject when `requires_reduction && extension_opening_reduction.is_none()`.
 
 Preferred: one call path, same as single-group.
 
-#### Diff 6 — suffix verifier uses predicate
+#### Diff 5 — suffix verifier uses extension degree
 
 **File:** `crates/akita-verifier/src/protocol/core/suffix.rs`
-
-**Today:**
-
-```rust
-let requires_extension_reduction = <E as ExtField<F>>::EXT_DEGREE != 1;
-```
 
 **After:**
 
 ```rust
-let requires_extension_reduction = eor_required_at_level::<F, E>(
-    FoldOpeningKind::Suffix,
-    lp.role_dims().d_a(),
-    opening_batch.max_num_vars(),
-);
+let requires_extension_reduction = E::EXT_DEGREE > 1;
 ```
 
-#### Diff 7 — planner root EOR bytes
+#### Diff 6 — planner root EOR bytes
 
 **File:** `crates/akita-types/src/layout/proof_size.rs`
 
@@ -428,19 +362,21 @@ pub fn extension_opening_reduction_level_bytes(
     input_witness_len: usize,
     ring_d: usize, // NEW: A-role fold ring for this level
 ) -> Result<usize, AkitaError> {
-    let kind = if fold_level == 0 {
-        FoldOpeningKind::Root
-    } else {
-        FoldOpeningKind::Suffix
-    };
     let opening_num_vars = if fold_level == 0 {
         key.num_vars()
     } else {
         padded_boolean_opening_vars(input_witness_len)?
     };
-    // Prefer calling eor_required via a small helper that takes width as EXT_DEGREE proxy,
-    // or monomorphize on F/E at planner call sites.
-    if !eor_required_for_width(kind, extension_opening_width, ring_d, opening_num_vars) {
+    let requires_eor = if fold_level == 0 {
+        root_tensor_projection_enabled_for_width(
+            extension_opening_width,
+            ring_d,
+            opening_num_vars,
+        )
+    } else {
+        extension_opening_width > 1
+    };
+    if !requires_eor {
         return Ok(0);
     }
     // ... existing partials / opening_vars byte math unchanged
@@ -455,9 +391,9 @@ Pass root `ring_d` (from the candidate / policy A-role dimension) into the updat
 
 Pass the suffix level’s A-role `ring_d` likewise.
 
-Exact helper shape may be a width-based twin of `eor_required_at_level` for the planner’s non-generic path; behavior must match the typed predicate.
+The width helper is internal to `akita-types`; public protocol code keeps calling the typed root predicate directly.
 
-#### Diff 8 — fold module split (Phase B)
+#### Diff 7 — fold module split (Phase B)
 
 **Files:**
 
@@ -466,9 +402,9 @@ Exact helper shape may be a width-based twin of `eor_required_at_level` for the 
   - `fold/single_field.rs` — `prepare_single_field_fold` (no EOR imports; used iff `EXT_DEGREE == 1`)
   - `fold/extension_claim.rs` — `prepare_extension_claim_fold` (owns EOR + `RootTensorProjectionPoly`)
 - Mirror under `crates/akita-verifier/src/protocol/core/fold/`:
-  - `fold/mod.rs` — shared `verify_fold` and the common `RootFoldPrefix` produced by both geometry prefixes
+  - `fold/mod.rs` — shared `verify_fold` and the common `FoldPrefix` produced by both geometry prefixes
   - `single_field.rs` — root, terminal-suffix, and recursive-suffix prefixes that never reference EOR
-  - `extension_claim.rs` — root and suffix prefixes plus EOR replay (`verify_eor_sumcheck`, exact presence) keyed off `eor_required_at_level`
+  - `extension_claim.rs` — root and suffix prefixes plus EOR replay (`verify_eor_sumcheck`, exact presence) keyed off the direct root/suffix predicates
   - A scalar root is the one-group case of the same grouped `verify_root_inner` path; there is no separate scalar orchestration
 
 **Delete** the `needs_extension_reduction: bool` parameter from the shared prep entry.
@@ -478,7 +414,7 @@ Dispatch at callers on **extension degree only**:
 // prove_root (sketch)
 if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
     prepare_single_field_fold(...)?
-} else if eor_required_at_level::<F, E>(FoldOpeningKind::Root, root_ring_d, opening_num_vars) {
+} else if root_tensor_projection_enabled::<F, E>(root_ring_d, opening_num_vars) {
     prepare_extension_claim_fold(..., /* run EOR */ true)?
 } else {
     // EXT_DEGREE > 1 but root tensor gate off: extension-claim types, skip EOR
@@ -529,7 +465,7 @@ No new preamble fields.
 | Keep “tensor-projection” as the geometry name | Tensor projection is a root mechanism; the geometry is claim/coefficient mismatch. |
 | Proof enum variants (`IntermediateSingleField` / `...ExtensionClaim`) | Large churn; wire unchanged. Harden `Option` deserialize instead. |
 | Trace / backend file splits | Single-field auditors following fold prep never need them for the EOR problem. Defer. |
-| Delete `root_tensor_projection_enabled` | Still the correct root rule when `EXT_DEGREE > 1`; wrap it. |
+| Delete `root_tensor_projection_enabled` | Still the correct root rule when `EXT_DEGREE > 1`; call it directly. |
 | Descriptor v2 / per-level geometry tags | Fragility is caller convention, not missing wire fields. |
 
 ## Documentation

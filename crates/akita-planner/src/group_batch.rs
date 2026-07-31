@@ -549,19 +549,18 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_envelope_budget = policy
-            .max_setup_envelope_field_elements
-            .checked_div(policy.ring_dimension)
-            .filter(|budget| *budget > 0)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("supported setup envelope is empty".to_string())
-            })?;
+        let setup_field_budget = policy.max_setup_envelope_field_elements;
+        if setup_field_budget == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "supported setup envelope is empty".to_string(),
+            ));
+        }
         return find_group_batch_schedule_inner(
             key,
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
-            Some(setup_envelope_budget),
+            Some(setup_field_budget),
         );
     }
     find_group_batch_schedule_inner(
@@ -578,16 +577,19 @@ fn find_group_batch_schedule_inner(
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    setup_envelope_budget: Option<usize>,
+    setup_field_budget: Option<usize>,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
+        let dimensions =
+            crate::schedule_params::RingDimensionSearchDomain::uniform(policy.ring_dimension)?;
         return find_schedule(
             key.final_group,
             &scalar_policy,
+            &dimensions,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
@@ -598,21 +600,15 @@ fn find_group_batch_schedule_inner(
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
     let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let dimensions = [akita_types::CommitmentRingDims::uniform(
-        policy.ring_dimension,
-    )];
     let suffix_ctx = SuffixCtx {
         policy,
-        dimension_candidates: &dimensions,
-        objective: crate::schedule_params::ScheduleSelectionObjective::ProofPayload,
         default_ring_challenge_cfg: &ring_challenge_cfg,
         ring_challenge_config,
         fold_challenge_shape_at_level,
         num_vars: key.final_group.num_vars(),
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
-        setup_envelope_budget,
+        setup_field_budget,
         root_lookup_key: Some(key),
-        mixed_frontier_mode: crate::schedule_params::MixedFrontierMode::Pareto,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(
@@ -623,7 +619,6 @@ fn find_group_batch_schedule_inner(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
-            dimension_ceiling: None,
         },
         0,
     )?;
@@ -637,7 +632,7 @@ fn find_group_batch_schedule_inner(
             .values()
             .min_by_key(|candidate| {
                 (
-                    candidate.first_direct_setup_field_len,
+                    candidate.first_direct_setup_field_len_or_max(),
                     candidate.total_bytes,
                 )
             }),
@@ -649,13 +644,20 @@ fn find_group_batch_schedule_inner(
             key.final_group.num_vars()
         )));
     };
+    let first_direct_setup_field_len = if policy.recursive_setup_planning {
+        Some(best.first_direct_setup_field_len.ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "recursive setup schedule is missing its first direct setup size".into(),
+            )
+        })?)
+    } else {
+        None
+    };
     materialize_candidate_schedule(
         best.total_bytes,
-        best.setup_envelope_ring_elements,
+        best.setup_field_elements,
         policy.ring_dimension,
-        policy
-            .recursive_setup_planning
-            .then_some(best.first_direct_setup_field_len),
+        first_direct_setup_field_len,
         best.folds,
         best.terminal,
     )

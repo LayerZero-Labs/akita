@@ -788,22 +788,24 @@ byte-identical.
 ### Implementation checkpoint and planner example
 
 The current branch implements the first offline direct scalar cut while
-preserving `find_schedule` and all generated catalogs:
+preserving all generated catalogs:
 
 - `RingDimensionSearchDomain` admits canonical explicit
-  `(d_a, d_b, d_d)` tuples;
-- `find_schedule_with_ring_dimension_domain` selects by physical setup field
-  elements, then exact modeled proof bytes;
+  `(d_a, d_b, d_d)` tuples and binds the setup-generation dimension used to
+  validate them;
+- the one canonical `find_schedule` entry point requires an explicit domain;
+  a uniform caller passes a singleton domain, while a mixed caller selects by
+  physical setup field elements and then exact modeled proof bytes;
 - root and recursive candidates derive role-local widths, SIS keys, and
   matrices directly;
 - L0 and L1 exhaustively enumerate splits over admissible, component-wise
   descending tuples;
 - dimensions are uniform D64 from L2 through the terminal;
 - rank-one dimension pruning is disabled in the authoritative mixed search;
-  production Pareto frontiers are checked against a test-only exhaustive
-  frontier on cost and canonical descriptor bytes;
-- L1 memo identity includes the parent dimension ceiling, while L2+ states
-  canonicalize to D64 and reuse the fixed planner's split search;
+  the selected production result is checked against a test-only brute-force
+  enumerator that does not call the production search or frontier code;
+- the dedicated mixed-search memo includes the parent dimension ceiling, while
+  L2+ states canonicalize to D64 and reuse the fixed planner's split policy;
 - mixed-boundary states retain the required setup/proof alternatives per exact
   parent-visible first fold;
 - recursive setup policies are rejected by the mixed entry point and continue
@@ -859,7 +861,7 @@ For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
 cut. The preserved grouped D64 planner still produced a valid nine-level
 schedule with one setup-offload edge, a 524,288-ring-element D64 setup
-envelope, and a 102,780-byte modeled proof. This confirms behavior
+envelope, and a 102,732-byte modeled proof. This confirms behavior
 preservation, not planner-native recursive mixed-D support.
 
 ### Acceptance criteria

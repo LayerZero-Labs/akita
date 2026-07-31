@@ -1,11 +1,16 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_prepared_opening_points, RootFoldPrefix, SuffixFoldPrefix};
+use super::{absorb_protocol_opening_points, FoldPrefix};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
+pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
+    pub(in crate::protocol::core) protocol: Vec<E>,
+}
+
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
 }
 
@@ -259,7 +264,7 @@ where
         requires_reduction,
         transcript,
     )?;
-    let prepared_points = if let Some(replay) = &replay {
+    let groups = if let Some(replay) = &replay {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(replay.rho.len(), &replay.rho)?;
         let prepared = prepare_opening_point::<F, E, D>(
@@ -269,12 +274,15 @@ where
             num_live_blocks,
             alpha_bits,
         )?;
-        vec![prepared]
+        vec![PreparedProtocolPoint {
+            prepared,
+            protocol: protocol_point,
+        }]
     } else {
         Vec::new()
     };
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -309,9 +317,9 @@ where
         requires_reduction,
         transcript,
     )?;
-    let mut prepared_points = Vec::new();
+    let mut groups = Vec::new();
     if let Some(replay) = &replay {
-        prepared_points.reserve(group_points.len());
+        groups.reserve(group_points.len());
         for (group_index, group_point) in group_points.iter().enumerate() {
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_dims = lp.group_role_dims(opening_batch, group_index)?;
@@ -324,7 +332,7 @@ where
                 .rho
                 .get(..tail_vars)
                 .ok_or(AkitaError::InvalidProof)?;
-            let prepared = dispatch_for_field!(
+            let (prepared, protocol_point) = dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 F,
                 group_dims.d_a(),
@@ -333,20 +341,24 @@ where
                         local_rho.len(),
                         local_rho,
                     )?;
-                    prepare_opening_point::<F, E, D>(
+                    let prepared = prepare_opening_point::<F, E, D>(
                         &protocol_point,
                         basis,
                         group_lp.num_positions_per_block(),
                         group_lp.num_live_blocks(),
                         alpha_bits,
-                    )
+                    )?;
+                    Ok::<_, AkitaError>((prepared, protocol_point))
                 }
             )?;
-            prepared_points.push(prepared);
+            groups.push(PreparedProtocolPoint {
+                prepared,
+                protocol: protocol_point,
+            });
         }
     }
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -364,7 +376,7 @@ pub(in crate::protocol::core) fn verify_extension_claim_root_prefix<F, E, T>(
     basis: BasisMode,
     root_lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<RootFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
@@ -387,8 +399,7 @@ where
         }
         group_points.push(group_point);
     }
-    let requires_reduction = eor_required_at_level::<F, E>(
-        FoldOpeningKind::Root,
+    let requires_reduction = root_tensor_projection_enabled::<F, E>(
         root_lp.role_dims().d_a(),
         opening_batch.max_num_vars(),
     );
@@ -412,9 +423,6 @@ where
                     )
                 }
             )?;
-            for pt in &prepared.padded_point {
-                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-            }
             prepared_points.push(prepared);
         }
     }
@@ -432,8 +440,11 @@ where
         transcript,
     )?;
     if requires_reduction {
-        prepared_points = eor_replay.prepared_points;
-        absorb_prepared_opening_points(&prepared_points, transcript);
+        prepared_points = eor_replay
+            .groups
+            .into_iter()
+            .map(|group| group.prepared)
+            .collect();
     }
     let eor_final_relation = eor_replay.final_relation;
     if prepared_points.len() != opening_batch.num_groups() {
@@ -449,7 +460,7 @@ where
     } else {
         opening_batch.batched_eval_target(&row_coefficients, openings)?
     };
-    Ok(RootFoldPrefix {
+    Ok(FoldPrefix {
         prepared_points,
         row_coefficients,
         trace_eval_target,
@@ -475,7 +486,7 @@ where
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     } = verify_terminal_fold_eor::<F, E, T>(
         extension_opening_reduction,
@@ -487,11 +498,7 @@ where
         params.d_a(),
         params.num_positions_per_block,
         params.num_live_blocks,
-        eor_required_at_level::<F, E>(
-            FoldOpeningKind::Suffix,
-            params.d_a(),
-            opening_batch.max_num_vars(),
-        ),
+        E::EXT_DEGREE > 1,
         transcript,
     )
     .map_err(|error| {
@@ -499,9 +506,13 @@ where
             "terminal extension-opening replay failed: {error:?}"
         ))
     })?;
-    absorb_prepared_opening_points(&prepared_points, transcript);
+    let protocol_point_refs = groups
+        .iter()
+        .map(|group| group.protocol.as_slice())
+        .collect::<Vec<_>>();
+    absorb_protocol_opening_points(&protocol_point_refs, transcript);
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     })
 }
@@ -514,41 +525,42 @@ pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     group_points: &[&[E]],
     openings: &[E],
-    row_coefficients: &[E],
+    row_coefficients: Vec<E>,
     opening_batch: &OpeningClaimsLayout,
     basis: BasisMode,
     lp: &CommittedGroupParams,
     transcript: &mut T,
-) -> Result<SuffixFoldPrefix<F, E>, AkitaError>
+) -> Result<FoldPrefix<F, E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FrobeniusExtField<F> + FromPrimitiveInt + AkitaSerialize,
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     } = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
         group_points,
         openings,
-        row_coefficients,
+        &row_coefficients,
         opening_batch,
         basis,
         lp,
-        eor_required_at_level::<F, E>(
-            FoldOpeningKind::Suffix,
-            lp.role_dims().d_a(),
-            opening_batch.max_num_vars(),
-        ),
+        E::EXT_DEGREE > 1,
         transcript,
     )?;
-    absorb_prepared_opening_points(&prepared_points, transcript);
+    let protocol_point_refs = groups
+        .iter()
+        .map(|group| group.protocol.as_slice())
+        .collect::<Vec<_>>();
+    absorb_protocol_opening_points(&protocol_point_refs, transcript);
     let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
     let trace_claim_coefficients =
-        opening_batch.scale_row_coefficients_by_group(row_coefficients, &factors_by_group)?;
-    Ok(SuffixFoldPrefix {
-        prepared_points,
+        opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
+    Ok(FoldPrefix {
+        prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
+        row_coefficients,
         trace_eval_target: final_claim,
         trace_claim_coefficients,
     })
