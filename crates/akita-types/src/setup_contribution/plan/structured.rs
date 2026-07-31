@@ -20,7 +20,10 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .find(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
-        if group.direct_scan_weights.is_some() && self.direct_scan_alpha != Some(alpha) {
+        if self
+            .direct_scan_alpha
+            .is_some_and(|prepared| prepared != alpha)
+        {
             return Err(AkitaError::InvalidInput(
                 "structured relation alpha disagrees with direct setup weights".into(),
             ));

@@ -456,6 +456,34 @@ fn test_group_plan(
         a_tensors: Vec::new(),
     }
 }
+
+#[test]
+fn structured_evaluation_rejects_alpha_mismatch_after_partial_direct_materialization() {
+    let mut plan = finalize_test_plan(
+        1,
+        1,
+        vec![test_group_plan(
+            0..1,
+            1,
+            1,
+            1,
+            1,
+            vec![test_scalar(2)],
+            vec![test_scalar(5)],
+            vec![test_scalar(7)],
+            vec![test_scalar(11)],
+            vec![test_scalar(13)],
+        )],
+        CommitmentRingDims::uniform(TEST_D),
+    );
+    plan.groups[0].direct_scan_weights = None;
+
+    assert!(matches!(
+        plan.evaluate_structured_group::<F>(0, &[], &[], test_scalar(17)),
+        Err(AkitaError::InvalidInput(_))
+    ));
+}
+
 fn prepare_single_group_plan(
     inputs: &TestSetupInputs,
     full_vec_randomness: &[F],
