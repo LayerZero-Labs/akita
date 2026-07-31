@@ -21,17 +21,17 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 
 The public search entry point is `find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
-`key: AkitaScheduleLookupKey` describes the supported root opening shape. Scalar
-same-point openings store one `PolynomialGroupLayout` in `final_group` and leave
-`precommitteds` empty:
+`key: AkitaScheduleLookupKey` describes the supported root opening shape.
+Single-group openings store one `PolynomialGroupLayout` in `final_group` and
+leave `precommitteds` empty:
 
-- `num_vars`: the number of Boolean variables in the opened polynomial domain
-  (shared opening-point arity).
+- `num_vars`: the number of Boolean variables in that group's opened
+  polynomial domain.
 - `num_polynomials`: the number of polynomials in the single commitment group,
-  opened at the shared point (one claim per polynomial).
+  opened at that group's point (one claim per polynomial).
 
 Multi-group roots use the same lookup key with any earlier groups recorded as
-`CommittedGroupProfile` in `precommitteds`. For the scalar same-point batch,
+`CommittedGroupProfile` in `precommitteds`. For a single-group batch,
 the root `t` and `w` multiplicities are just `num_polynomials` and the `z`
 multiplicity is always `1`; multi-group roots derive those counts from
 `final_group` plus `precommitteds`.

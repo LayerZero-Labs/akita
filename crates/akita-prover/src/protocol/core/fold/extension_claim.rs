@@ -7,12 +7,9 @@ use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AdditiveGroup;
 
-pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, E: FieldCore, G> {
+pub(in crate::protocol::core) enum ExtensionOpeningSource<'a, G> {
     CurrentClaims,
-    Logical {
-        groups: &'a [G],
-        claims: &'a OpeningClaims<'a, E>,
-    },
+    Logical(&'a [G]),
 }
 
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
@@ -21,7 +18,7 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_source: ExtensionOpeningSource<'_, E, P>,
+    eor_source: ExtensionOpeningSource<'_, P>,
     pad_base_evals: bool,
     transcript: &mut T,
     validate_non_eor: V,
@@ -52,29 +49,38 @@ where
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let (eor_groups, eor_opening_batch): (Vec<&P>, &dyn ExtensionOpeningClaimGeometry<E>) =
-            match eor_source {
-                ExtensionOpeningSource::CurrentClaims => (
-                    block_claims.group_sources().collect(),
-                    block_claims.opening_claims(),
-                ),
-                ExtensionOpeningSource::Logical { groups, claims } => {
-                    (groups.iter().collect(), claims)
+        let eor_groups: Vec<&P> = match eor_source {
+            ExtensionOpeningSource::CurrentClaims => block_claims.group_sources().collect(),
+            ExtensionOpeningSource::Logical(groups) => groups.iter().collect(),
+        };
+        if eor_groups.len() != opening_batch.num_groups() {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening source group count mismatch".to_string(),
+            ));
+        }
+        let eor_inputs = eor_groups
+            .into_iter()
+            .enumerate()
+            .map(|(group_index, group)| {
+                let group_layout = opening_batch.group_layout(group_index)?;
+                if group.num_polynomials() != group_layout.num_polynomials() {
+                    return Err(AkitaError::InvalidInput(
+                        "extension-opening source polynomial count mismatch".to_string(),
+                    ));
                 }
-            };
-        let group_ring_dimensions = (0..opening_batch.num_groups())
-            .map(|group_index| {
-                level_params
-                    .group_role_dims(&opening_batch, group_index)
-                    .map(|dims| dims.d_a())
+                Ok(ExtensionOpeningGroupInput {
+                    group,
+                    point: block_claims.opening_claims().group_point(group_index)?,
+                    ring_dimension: level_params
+                        .group_role_dims(&opening_batch, group_index)?
+                        .d_a(),
+                })
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         let proved = prove_extension_opening_reduction::<F, E, T, P, TS>(
             tensor.backend(),
             Some(tensor.prepared()),
-            &eor_groups,
-            eor_opening_batch,
-            &group_ring_dimensions,
+            &eor_inputs,
             pad_base_evals,
             transcript,
             if pad_base_evals { "recursive" } else { "root" },

@@ -217,7 +217,7 @@ impl CommittedGroupProfile {
 
 /// Canonical runtime schedule lookup key.
 ///
-/// Scalar same-point openings use an empty `precommitteds` vector and store the
+/// Single-group openings use an empty `precommitteds` vector and store the
 /// sole group in `final_group`. Multi-group roots list earlier groups in
 /// `precommitteds` and the final group in `final_group`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -281,7 +281,7 @@ impl AkitaScheduleLookupKey {
 
     /// Maximum opening arity across the final and precommitted groups.
     ///
-    /// This is the shared opening-point/EOR domain. It is intentionally
+    /// This is the maximum group-local opening/EOR domain. It is intentionally
     /// distinct from `final_group.num_vars()`, which remains the source arity
     /// used to size the final commitment and root witness.
     pub fn max_num_vars(&self) -> usize {

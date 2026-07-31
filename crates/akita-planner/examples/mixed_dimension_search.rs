@@ -3,10 +3,7 @@ use akita_config::{
     proof_optimized::fp128::{D256OneHot, D64OneHot},
     CommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::{
-    find_group_batch_schedule, find_schedule, find_schedule_with_ring_dimension_domain,
-    RingDimensionSearchDomain,
-};
+use akita_planner::{find_group_batch_schedule, find_schedule, RingDimensionSearchDomain};
 use akita_types::{
     AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
 };
@@ -106,7 +103,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
             dims(256, 128, 128),
         ],
     )?;
-    let direct = find_schedule_with_ring_dimension_domain(
+    let direct = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &direct_policy,
         &domain,
@@ -119,15 +116,21 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &direct,
     );
 
-    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
-    let recursive_policy = policy_of::<Recursive>();
-    let recursive_domain = RingDimensionSearchDomain::new(64, [CommitmentRingDims::uniform(64)])?;
-    let mixed_recursive = find_schedule_with_ring_dimension_domain(
+    type MixedRecursive = RecursiveCommitmentConfig<D256OneHot>;
+    let mixed_recursive_policy = policy_of::<MixedRecursive>();
+    let recursive_domain = RingDimensionSearchDomain::new(
+        D256OneHot::D,
+        [
+            CommitmentRingDims::uniform(64),
+            CommitmentRingDims::uniform(256),
+        ],
+    )?;
+    let mixed_recursive = find_schedule(
         PolynomialGroupLayout::new(32, 2),
-        &recursive_policy,
+        &mixed_recursive_policy,
         &recursive_domain,
-        Recursive::ring_challenge_config,
-        Recursive::fold_challenge_shape_at_level,
+        MixedRecursive::ring_challenge_config,
+        MixedRecursive::fold_challenge_shape_at_level,
     );
     println!("recursive setup mixed-D entry point:");
     println!(
@@ -136,9 +139,11 @@ fn main() -> Result<(), akita_field::AkitaError> {
     );
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
+    let precommit_domain = RingDimensionSearchDomain::uniform(D64OneHot::D)?;
     let precommit = find_schedule(
         precommit_layout,
         &policy_of::<D64OneHot>(),
+        &precommit_domain,
         D64OneHot::ring_challenge_config,
         D64OneHot::fold_challenge_shape_at_level,
     )?;
@@ -152,6 +157,8 @@ fn main() -> Result<(), akita_field::AkitaError> {
         precommitteds: vec![descriptor, descriptor],
         precommitted_sources: vec![D64OneHot::group_source(), D64OneHot::group_source()],
     };
+    type Recursive = RecursiveCommitmentConfig<D64OneHot>;
+    let recursive_policy = policy_of::<Recursive>();
     let preserved = find_group_batch_schedule(
         &recursive_key,
         &recursive_policy,

@@ -267,26 +267,21 @@ where
     let params = &scheduled.witness;
     let alpha_bits = params.d_a().trailing_zeros() as usize;
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    let eor_claims =
-        ProverOpeningData::<
-            E,
-            PreparedProverGroup<'_, RecursiveFoldSource<F>>,
-            F,
-        >::recursive_suffix_eor_claims(
-            None,
-            sumcheck_challenges.clone(),
-        )?;
+    let canonical_opening_point =
+        normalize_recursive_opening_point(&sumcheck_challenges, recursive_num_vars)?;
     let polys = [&logical_source];
     let logical_group = PreparedProverGroup::from_refs(&polys)?;
     let needs_reduction = E::EXT_DEGREE > 1;
     let (protocol_point, reduction, row_coefficients) = if needs_reduction {
-        let logical_groups = [&logical_group];
+        let eor_inputs = vec![ExtensionOpeningGroupInput {
+            group: &logical_group,
+            point: &canonical_opening_point,
+            ring_dimension: params.d_a(),
+        }];
         let proved = prove_extension_opening_reduction::<F, E, T, _, TS>(
             stack.tensor().backend(),
             Some(stack.tensor().prepared()),
-            &logical_groups,
-            &eor_claims,
-            &[params.d_a()],
+            &eor_inputs,
             true,
             transcript,
             "terminal",
@@ -301,22 +296,19 @@ where
             Some(proved.row_coefficients),
         )
     } else {
-        if sumcheck_challenges.len() > recursive_num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: recursive_num_vars,
-                actual: sumcheck_challenges.len(),
-            });
-        }
-        (sumcheck_challenges, None, None)
+        (canonical_opening_point, None, None)
     };
     let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    for coordinate in &protocol_point {
+        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+    }
     let (e_folded, fold_output, extension_opening_reduction) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         params.d_a(),
         |D| {
             let (prepared_point, (folded_rings, folded_blocks)) =
-                prepare_and_evaluate_opening_group::<F, E, T, RecursiveFoldSource<F>, O, D>(
+                prepare_and_evaluate_opening_group::<F, E, RecursiveFoldSource<F>, O, D>(
                     stack.opening().backend(),
                     Some(stack.opening().prepared()),
                     &[&witness_source],
@@ -325,7 +317,6 @@ where
                     params.num_positions_per_block,
                     params.num_live_blocks,
                     alpha_bits,
-                    transcript,
                 )?;
             let (trace, _) = compute_trace_target::<F, E, T, D>(
                 &reduction,
@@ -497,7 +488,7 @@ where
         RecursiveFoldSource::setup_prefix(Arc::clone(expanded), Arc::new(slot.clone()))
     });
     let setup_polys_storage = setup_source_storage.as_ref().map(|source| [source]);
-    let (block_claims, eor_opening_batch, _) = ProverOpeningData::new_recursive_suffix_fold(
+    let block_claims = ProverOpeningData::new_recursive_suffix_fold(
         opening_point,
         recursive_num_vars,
         setup_prefix_opening,
@@ -531,10 +522,7 @@ where
             stack,
             needs_extension_reduction,
             block_claims,
-            ExtensionOpeningSource::Logical {
-                groups: &logical_groups,
-                claims: &eor_opening_batch,
-            },
+            ExtensionOpeningSource::Logical(&logical_groups),
             true,
             transcript,
             || Ok(()),

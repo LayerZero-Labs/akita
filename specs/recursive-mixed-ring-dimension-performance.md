@@ -276,19 +276,19 @@ schedule after a later transition.
 
 ## Planner implementation status on `feat/planner-per-matrix-d`
 
-The first planner-native cut is an opt-in offline scalar search. It deliberately
-does not change the meaning of the current policy or the existing
-`find_schedule` entry point.
+The first planner-native cut is an opt-in offline scalar search. It does not
+change the meaning of the current policy. The canonical `find_schedule` entry
+point now requires an explicit dimension domain.
 
 Implemented:
 
 - `RingDimensionSearchDomain` accepts explicit `(d_a, d_b, d_d)` tuples,
   canonicalizes their order, removes duplicates, validates the A carrier, and
   requires every role dimension to divide the setup-generation dimension.
-- `find_schedule_with_ring_dimension_domain` searches that domain with
+- `find_schedule` searches the supplied domain with
   `PlannerPolicy::ring_dimension` interpreted as the setup-generation
-  dimension. `find_schedule` still uses its historical uniform singleton
-  dimension and proof-payload objective.
+  dimension. Uniform callers supply an explicit singleton domain and retain
+  the historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
   dimensions. B and D physical widths include `d_a / d_role` carrier
   subcolumns; candidates are built directly rather than retargeted afterward.

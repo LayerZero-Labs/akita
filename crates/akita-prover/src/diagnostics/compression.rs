@@ -1,11 +1,9 @@
 //! Opt-in execution of compressed commitments without protocol effects.
 
 use crate::compute::{DigitRowsComputeBackend, OperationCtx};
+use crate::diagnostics::compression_plan::{plan_compression_diagnostic, CompressionDiagnosticMap};
 use akita_algebra::balanced_decompose_coefficients_pow2_i8_into;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_planner::compression_diagnostic::{
-    plan_compression_diagnostic, CompressionDiagnosticMap,
-};
 use akita_types::sis::SisModulusProfileId;
 use akita_types::{dispatch_for_field, field_modulus, RingVec};
 use std::collections::BTreeMap;
@@ -29,6 +27,7 @@ pub(crate) struct CompressionDiagnosticSource<'a, F> {
 pub(crate) struct CompressionDiagnosticReport {
     pub(crate) sources: usize,
     pub(crate) maps: usize,
+    pub(crate) batch_count: usize,
     pub(crate) source_bytes: usize,
     pub(crate) terminal_bytes: usize,
     pub(crate) cache_bytes_before: Option<usize>,
@@ -125,7 +124,7 @@ where
     }
     for (&item_index, rows) in item_indices.iter().zip(outputs) {
         let coefficients = RingVec::from_ring_elems(&rows).coeffs().to_vec();
-        if coefficients.len() != first_map.output_coefficients {
+        if coefficients.len() != first_map.ring_dimension {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong image length".into(),
             ));
@@ -163,7 +162,7 @@ fn execute_stage<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     items: &mut [WorkItem<F>],
     map_index: usize,
-) -> Result<(), AkitaError>
+) -> Result<usize, AkitaError>
 where
     F: FieldCore + CanonicalField,
     B: DigitRowsComputeBackend<F>,
@@ -177,6 +176,7 @@ where
                 .push(item_index);
         }
     }
+    let batch_count = groups.len();
     for ((ring_dimension, _), item_indices) in groups {
         dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Compression,
@@ -185,7 +185,7 @@ where
             |D| execute_group::<F, B, D>(ctx, items, &item_indices, map_index)
         )?;
     }
-    Ok(())
+    Ok(batch_count)
 }
 
 /// Compute compressed commitments for live B/D images and retain only metrics.
@@ -211,7 +211,16 @@ where
         if source.coefficients.is_empty() {
             continue;
         }
-        let plan = plan_compression_diagnostic(profile, source.coefficients.len())?;
+        let Some(plan) =
+            plan_compression_diagnostic(profile, source.coefficients.len(), ctx.gen_ring_dim())?
+        else {
+            tracing::warn!(
+                source = ?source.kind,
+                gen_ring_dim = ctx.gen_ring_dim(),
+                "skipping shadow compression source whose ladder exceeds the prepared setup"
+            );
+            continue;
+        };
         items.push(WorkItem {
             source: source.kind,
             field_bytes: plan.field_bytes,
@@ -231,8 +240,11 @@ where
     })?;
     let map_count = items.iter().map(|item| item.maps.len()).sum();
     let max_maps = items.iter().map(|item| item.maps.len()).max().unwrap_or(0);
+    let mut batch_count = 0usize;
     for map_index in 0..max_maps {
-        execute_stage(ctx, &mut items, map_index)?;
+        batch_count = batch_count
+            .checked_add(execute_stage(ctx, &mut items, map_index)?)
+            .ok_or_else(|| AkitaError::InvalidSetup("compression batch count overflow".into()))?;
     }
     let terminal_bytes = items.iter().try_fold(0usize, |total, item| {
         let bytes = item
@@ -254,6 +266,7 @@ where
     Ok(CompressionDiagnosticReport {
         sources: items.len(),
         maps: map_count,
+        batch_count,
         source_bytes,
         terminal_bytes,
         cache_bytes_before,
@@ -269,11 +282,14 @@ fn duration_micros(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::kernels::linear::compression_rows;
+    use crate::compute::{ComputeBackendSetup, CpuBackend};
+    use crate::kernels::linear::mat_vec_mul_ntt_digits_i8;
+    use crate::AkitaProverSetup;
     use akita_algebra::CyclotomicRing;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use akita_types::layout::FlatMatrix;
     use akita_types::prepare_compression_ntt_cache;
+    use akita_types::SetupMatrixEnvelope;
     use std::hint::black_box;
 
     fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
@@ -319,6 +335,43 @@ mod tests {
         assert_negative_binary_digits::<Prime32Offset99, 32>();
     }
 
+    #[test]
+    fn aggregate_report_distinguishes_logical_maps_from_equal_shape_batches() {
+        type F = Prime64Offset59;
+        const D: usize = 64;
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            D,
+            SetupMatrixEnvelope { max_setup_len: 256 },
+        )
+        .expect("diagnostic setup");
+        let prepared = CpuBackend
+            .prepare_expanded::<D>(setup.expanded.clone())
+            .expect("prepared setup");
+        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("operation context");
+        let coefficients = vec![F::one(); 64];
+        let sources = [
+            CompressionDiagnosticSource {
+                kind: CompressionDiagnosticSourceKind::Outer { group_index: 0 },
+                coefficients: &coefficients,
+            },
+            CompressionDiagnosticSource {
+                kind: CompressionDiagnosticSourceKind::Outer { group_index: 1 },
+                coefficients: &coefficients,
+            },
+        ];
+
+        let report =
+            compute_shadow_compressed_commitments(&ctx, SisModulusProfileId::Q64Offset59, &sources)
+                .expect("shadow compression");
+
+        assert_eq!(report.sources, 2);
+        assert_eq!(report.maps, 4);
+        assert_eq!(report.batch_count, 2);
+    }
+
     fn deterministic_matrix_row<F: FieldCore + CanonicalField, const D: usize>(
         column_count: usize,
         salt: usize,
@@ -354,7 +407,6 @@ mod tests {
         salt: usize,
     ) -> Vec<F> {
         assert_eq!(map.ring_dimension, D);
-        assert_eq!(map.output_coefficients, D);
         let digits =
             negative_binary_digits::<F, D>(coefficients, map.input_width).expect("digitization");
         let matrix_row = deterministic_matrix_row::<F, D>(map.input_width, salt);
@@ -366,7 +418,9 @@ mod tests {
         )
         .expect("exact-prefix compression cache");
         assert!(!slot.has_cyclic());
-        let actual = compression_rows::<F, D>(&slot, &[digits.as_slice()]).expect("kernel");
+        let actual =
+            mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, map.input_width, &[digits.as_slice()], 1)
+                .expect("kernel");
         assert_eq!(actual.len(), 1);
         assert_eq!(actual[0].len(), 1);
         let expected = schoolbook_rank_one_digit_mat_vec(&matrix_row, &digits);
@@ -380,7 +434,9 @@ mod tests {
     ) {
         let field_bytes = (F::modulus_bits() as usize).div_ceil(8);
         let source_coefficients = source_bytes / field_bytes;
-        let plan = plan_compression_diagnostic(profile, source_coefficients).expect("plan");
+        let plan = plan_compression_diagnostic(profile, source_coefficients, 128)
+            .expect("plan")
+            .expect("supported setup");
         let mut coefficients = (0..source_coefficients)
             .map(|index| F::from_u64((index as u64).wrapping_mul(0x9e37).wrapping_add(0x1234)))
             .collect::<Vec<_>>();
@@ -395,7 +451,7 @@ mod tests {
                 }
                 other => panic!("unexpected compression ring dimension {other}"),
             };
-            assert_eq!(coefficients.len(), map.output_coefficients);
+            assert_eq!(coefficients.len(), map.ring_dimension);
             assert_eq!(
                 coefficients.len() * field_bytes,
                 match map_index + 1 == plan.maps.len() {

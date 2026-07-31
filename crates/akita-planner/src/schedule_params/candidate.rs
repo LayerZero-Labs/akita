@@ -1,20 +1,8 @@
 use super::*;
 
-fn sis_key_at_dimension(
-    policy: &PlannerPolicy,
-    role: akita_types::SisMatrixRole,
-    ring_dimension: usize,
-    coeff_linf_bound: u128,
-) -> SisTableKey {
-    SisTableKey {
-        policy: policy.sis_security_policy,
-        table_digest: policy.sis_table_digest,
-        modulus_profile: policy.sis_modulus_profile,
-        role,
-        ring_dimension: ring_dimension as u32,
-        coeff_linf_bound,
-    }
-}
+mod role_pricing;
+
+use role_pricing::{projected_collision_role_price, sis_key_at_dimension};
 
 /// Build one recursive-fold candidate for an explicit ring-element bucket and
 /// split. Setup certification uses the maximum current length in each
@@ -103,58 +91,44 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::Outer,
-        dimensions.d_b(),
-        log_basis,
-    ) else {
-        return Ok(None);
-    };
-    let Some(width_t) = decomposed_t_ring_count(
+    let Some(native_width_t) = decomposed_t_ring_count(
         inner_commit_matrix.output_rank(),
         delta_open,
         num_live_blocks,
         1,
-    )
-    .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_b())) else {
-        return Ok(None);
-    };
-    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Outer,
-            dimensions.d_b(),
-            norm_t,
-        ),
-        width_t,
     ) else {
         return Ok(None);
     };
-    let Some(norm_w) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::Open,
-        dimensions.d_d(),
+    let Some((outer_key, width_t)) = projected_collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Outer,
+        dimensions.d_a(),
+        dimensions.d_b(),
+        native_width_t,
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1)
-        .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_d()))
+    let Ok(outer_commit_matrix) =
+        OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
     else {
         return Ok(None);
     };
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Open,
-            dimensions.d_d(),
-            norm_w,
-        ),
-        width_w,
+    let Some(native_width_w) = decomposed_w_ring_count(delta_open, num_live_blocks, 1) else {
+        return Ok(None);
+    };
+    let Some((open_key, width_w)) = projected_collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Open,
+        dimensions.d_a(),
+        dimensions.d_d(),
+        native_width_w,
+        log_basis,
     ) else {
+        return Ok(None);
+    };
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, width_w)
+    else {
         return Ok(None);
     };
     let params = CommittedGroupParams {
@@ -1032,58 +1006,46 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Some(norm_t) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::Outer,
-        dimensions.d_b(),
-        log_basis,
-    ) else {
-        return Ok(None);
-    };
-    let Some(width_t) = decomposed_t_ring_count(
+    let Some(native_width_t) = decomposed_t_ring_count(
         inner_commit_matrix.output_rank(),
         num_digits_open,
         num_live_blocks,
         num_claims,
-    )
-    .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_b())) else {
-        return Ok(None);
-    };
-    let Ok(outer_commit_matrix) = OuterCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Outer,
-            dimensions.d_b(),
-            norm_t,
-        ),
-        width_t,
     ) else {
         return Ok(None);
     };
-    let Some(norm_w) = rounded_up_collision_inf_norm(
-        policy.sis_security_policy,
-        policy.sis_modulus_profile,
-        akita_types::SisMatrixRole::Open,
-        dimensions.d_d(),
+    let Some((outer_key, width_t)) = projected_collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Outer,
+        dimensions.d_a(),
+        dimensions.d_b(),
+        native_width_t,
         log_basis,
     ) else {
         return Ok(None);
     };
-    let Some(width_w) = decomposed_w_ring_count(num_digits_open, num_live_blocks, num_claims)
-        .and_then(|width| width.checked_mul(dimensions.d_a() / dimensions.d_d()))
+    let Ok(outer_commit_matrix) =
+        OuterCommitMatrixParams::try_new_with_min_rank(outer_key, width_t)
     else {
         return Ok(None);
     };
-    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Open,
-            dimensions.d_d(),
-            norm_w,
-        ),
-        width_w,
+    let Some(native_width_w) =
+        decomposed_w_ring_count(num_digits_open, num_live_blocks, num_claims)
+    else {
+        return Ok(None);
+    };
+    let Some((open_key, width_w)) = projected_collision_role_price(
+        policy,
+        akita_types::SisMatrixRole::Open,
+        dimensions.d_a(),
+        dimensions.d_d(),
+        native_width_w,
+        log_basis,
     ) else {
+        return Ok(None);
+    };
+    let Ok(open_commit_matrix) = OpenCommitMatrixParams::try_new_with_min_rank(open_key, width_w)
+    else {
         return Ok(None);
     };
     let params = (CommittedGroupParams {

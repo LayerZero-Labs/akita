@@ -364,7 +364,7 @@ pub fn root_trace_block_opening<X: FieldCore>(
 /// Build the verifier's short closed-form trace terms for a root opening_batch.
 ///
 /// `b_open` holds the block-axis opening (in the evaluation field `E`) for the
-/// shared opening point; the verifier obtains it via
+/// current group's opening point; the verifier obtains it via
 /// [`root_trace_block_opening`] (lifting claim-field coordinates into `E` as
 /// needed). Mirrors [`trace_public_weights_root_terms`] but emits the succinct
 /// per-claim terms instead of materialized block weights.

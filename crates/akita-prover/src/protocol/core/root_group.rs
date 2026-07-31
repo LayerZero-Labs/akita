@@ -35,7 +35,7 @@ where
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
 {
     #[allow(clippy::too_many_arguments)]
-    fn prepare_opening<T: Transcript<F>>(
+    fn prepare_opening(
         &self,
         ctx: &OperationCtx<'_, F, B>,
         ring_dimension: usize,
@@ -44,7 +44,6 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
-        transcript: &mut T,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError>;
 
     fn probe_fold(
@@ -128,7 +127,7 @@ where
     P: RuntimeRootProvePoly<F>,
     B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F> + RuntimeOpeningProveBackendFor<F, P>,
 {
-    fn prepare_opening<T: Transcript<F>>(
+    fn prepare_opening(
         &self,
         ctx: &OperationCtx<'_, F, B>,
         ring_dimension: usize,
@@ -137,7 +136,6 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
-        transcript: &mut T,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError> {
         dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
@@ -145,7 +143,7 @@ where
             ring_dimension,
             |D| {
                 let (point, (folded_rings, folded_by_claim)) =
-                    prepare_and_evaluate_opening_group::<F, E, T, P, B, D>(
+                    prepare_and_evaluate_opening_group::<F, E, P, B, D>(
                         ctx.backend(),
                         Some(ctx.prepared()),
                         self.polynomial_refs(),
@@ -154,7 +152,6 @@ where
                         num_positions_per_block,
                         num_live_blocks,
                         alpha_bits,
-                        transcript,
                     )?;
                 let inner_point = &protocol_point[..protocol_point.len().min(alpha_bits)];
                 let scalar_openings = folded_rings
@@ -326,7 +323,7 @@ where
     L: RootProverGroupOpening<F, E, B>,
     R: RootProverGroupOpening<F, E, B>,
 {
-    fn prepare_opening<T: Transcript<F>>(
+    fn prepare_opening(
         &self,
         ctx: &OperationCtx<'_, F, B>,
         ring_dimension: usize,
@@ -335,7 +332,6 @@ where
         num_positions_per_block: usize,
         num_live_blocks: usize,
         alpha_bits: usize,
-        transcript: &mut T,
     ) -> Result<PreparedGroupOpening<F, E>, AkitaError> {
         match self {
             Self::Left(group) => group.prepare_opening(
@@ -346,7 +342,6 @@ where
                 num_positions_per_block,
                 num_live_blocks,
                 alpha_bits,
-                transcript,
             ),
             Self::Right(group) => group.prepare_opening(
                 ctx,
@@ -356,7 +351,6 @@ where
                 num_positions_per_block,
                 num_live_blocks,
                 alpha_bits,
-                transcript,
             ),
         }
     }

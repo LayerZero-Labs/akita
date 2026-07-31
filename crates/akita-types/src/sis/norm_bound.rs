@@ -273,22 +273,15 @@ pub fn fold_witness_digit_plan(
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
     //
-    // Small fields (`field_bits < 128`) keep retain fraction `3/4`.
-    // Wide fields use the protocol binding floor (currently `1/2`).
+    // The protocol binding owns the field-width-specific retain floor.
     if let (
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         Some(rademacher_inf_norm_bound),
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
-        let (retain_num, retain_den) = if field_bits < 128 {
-            (3u32, 4u32)
-        } else {
-            (
-                FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
-                FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den,
-            )
-        };
+        let (retain_num, retain_den) =
+            FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain(field_bits);
         if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
             let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
                 / u128::from(retain_den))

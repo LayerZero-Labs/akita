@@ -19,8 +19,9 @@ pub use digit_math::{gadget_row_scalars, isqrt_ceil};
 pub use flat_matrix::{FlatMatrix, RingMatrixView};
 pub use opening_point::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
-    lagrange_weights, monomial_weights, opening_domain_len, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, BasisMode, RingOpeningPoint,
+    lagrange_weights, monomial_weights, normalize_recursive_opening_point, opening_domain_len,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, BasisMode,
+    RingOpeningPoint,
 };
 pub use params::{
     shared_d_digit_log_basis, CommittedGroupParams, InnerCommitMatrixParams, LevelParamsLike,

@@ -11,9 +11,9 @@ use akita_types::{
 ///
 /// Prove and verify must call this helper so fold-vs-direct decisions dispatch
 /// on the schedule root `ring_dimension`, not a caller-supplied stack `D`.
-/// `final_group_point` is the final group's routed view of the shared opening
-/// point; root commitment geometry is final/source-local even when a
-/// precommitted group determines the batch's maximum opening arity.
+/// `final_group_point` is the final group's complete opening point; root
+/// commitment geometry remains final/source-local even when a precommitted
+/// group determines the batch's maximum opening arity.
 ///
 /// # Errors
 ///

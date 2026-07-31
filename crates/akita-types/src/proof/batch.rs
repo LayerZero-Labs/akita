@@ -607,7 +607,7 @@ pub fn validate_scalar_point_matches_poly_arity(
 ///
 /// # Errors
 ///
-/// Returns an error if the shared opening point exceeds setup capacity, the
+/// Returns an error if the group-local opening point exceeds setup capacity, the
 /// payload is empty, or the claim count exceeds setup capacity.
 pub fn validate_batched_inputs<F, E>(
     setup: &AkitaExpandedSetup<F>,
@@ -851,7 +851,7 @@ where
 /// Degree-one proof-scalar fields keep the original base-field folded-root
 /// path. For true extension proof-scalar fields, the folded path supports
 /// psi-packed inner slots plus ring-multiplier outer weights. Multiple claims
-/// at the same point are handled by one public row per point, with row-local
+/// in one group are handled by one public row per group, with row-local
 /// extension batching coefficients embedded into the ring relation.
 pub fn folded_root_supports_opening_shape<F, E, const D: usize>(
     opening_points: &[&[E]],

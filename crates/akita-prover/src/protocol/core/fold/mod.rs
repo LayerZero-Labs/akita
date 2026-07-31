@@ -159,6 +159,11 @@ where
                 actual: group_protocol_point.len(),
             });
         }
+        if pad_base_evals {
+            for coordinate in group_protocol_point {
+                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
+            }
+        }
         let prepared = block_claims
             .group_source(group_index)?
             .prepare_opening(
@@ -169,7 +174,6 @@ where
                 group_lp.num_positions_per_block(),
                 group_lp.num_live_blocks(),
                 group_alpha_bits,
-                transcript,
             )
             .map_err(|err| {
                 AkitaError::InvalidInput(format!(
@@ -517,9 +521,10 @@ where
     };
     let (stage3_sumcheck_proof, setup_prefix_opening) = if let Some(stage3) = stage3_sumcheck_proof
     {
+        let setup_prefix_eval = stage3.proof.setup_prefix_eval;
         (
             Some(stage3.proof),
-            Some((stage3.setup_prefix_point, stage3.setup_prefix_eval)),
+            Some((stage3.setup_prefix_point, setup_prefix_eval)),
         )
     } else {
         (None, None)
@@ -745,7 +750,6 @@ where
                     sumcheck: output.sumcheck,
                 },
                 setup_prefix_point: output.setup_prefix_point,
-                setup_prefix_eval: output.setup_prefix_eval,
             }))
         }
         SetupContributionMode::Direct => Ok(None),

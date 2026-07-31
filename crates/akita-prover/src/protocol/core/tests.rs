@@ -6,8 +6,7 @@ use akita_config::{
 use akita_field::{Fp32, FpExt2, TwoNr};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout,
+    AkitaScheduleLookupKey, CommittedGroupProfile, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 type F = Fp32<251>;
@@ -33,20 +32,15 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
 
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    let opening_batch = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![E::zero()],
-        (),
-    )
-    .expect("group claims")])
-    .expect("opening batch");
-    let logical_groups = [&logical_group];
+    let groups = vec![ExtensionOpeningGroupInput {
+        group: &logical_group,
+        point: &point,
+        ring_dimension: 64,
+    }];
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend,
         None,
-        &logical_groups,
-        &opening_batch,
-        &[64],
+        &groups,
         true,
         &mut transcript,
         "recursive",
@@ -72,25 +66,29 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let long_point = (0..8)
         .map(|index| E::new(F::from_u64(index + 3), F::from_u64(index + 17)))
         .collect::<Vec<_>>();
-    let opening_batch = OpeningClaims::from_groups(vec![
-        PolynomialGroupClaims::new(short_point, vec![E::zero()], ()).expect("short group"),
-        PolynomialGroupClaims::new(long_point.clone(), vec![E::zero()], ()).expect("long group"),
-    ])
-    .expect("opening batch");
     let polys = [&short_witness, &long_witness];
-    let groups = [
+    let prepared_groups = [
         PreparedProverGroup::from_ref_vec(vec![polys[0]]).expect("short group"),
         PreparedProverGroup::from_ref_vec(vec![polys[1]]).expect("long group"),
     ];
-    let group_refs = groups.iter().collect::<Vec<_>>();
+    let groups = vec![
+        ExtensionOpeningGroupInput {
+            group: &prepared_groups[0],
+            point: &short_point,
+            ring_dimension: 64,
+        },
+        ExtensionOpeningGroupInput {
+            group: &prepared_groups[1],
+            point: &long_point,
+            ring_dimension: 64,
+        },
+    ];
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
     let proved = prove_extension_opening_reduction::<F, E, _, _, _>(
         &crate::compute::CpuBackend,
         None,
-        &group_refs,
-        &opening_batch,
-        &[64, 64],
+        &groups,
         true,
         &mut transcript,
         "recursive",

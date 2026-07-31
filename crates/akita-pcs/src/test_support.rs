@@ -384,9 +384,13 @@ where
                     "mixed-D fixture requires a singleton and a non-root switch".into(),
                 ));
             }
+            let envelope_policy = policy_of::<EnvelopeCfg>();
+            let envelope_domain =
+                akita_planner::RingDimensionSearchDomain::uniform(envelope_policy.ring_dimension)?;
             let envelope = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
-                &policy_of::<EnvelopeCfg>(),
+                &envelope_policy,
+                &envelope_domain,
                 EnvelopeCfg::ring_challenge_config,
                 EnvelopeCfg::fold_challenge_shape_at_level,
             )?
@@ -612,9 +616,13 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
             lookup_key: None,
         },
         || {
+            let root_policy = policy_of::<Env>();
+            let root_domain =
+                akita_planner::RingDimensionSearchDomain::uniform(root_policy.ring_dimension)?;
             let mut root = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
-                &policy_of::<Env>(),
+                &root_policy,
+                &root_domain,
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
             )?
@@ -1032,9 +1040,11 @@ where
             let mut root_policy = policy_of::<Root>();
             let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
             root_policy.ring_dimension = planned_root_d;
+            let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
             let mut root = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
                 &root_policy,
+                &root_domain,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
             )?
