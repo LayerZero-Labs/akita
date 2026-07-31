@@ -112,68 +112,84 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             {
                 return Err(AkitaError::InvalidProof);
             }
-            let et = cfg_fold_reduce!(
-                0..block_claims,
-                || Ok(E::zero()),
-                |acc: Result<E, AkitaError>, block_claim| {
-                    let e_start = block_claim
-                        .checked_mul(e_stride)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let e_eq =
-                        checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
-                    let e = e_eq
-                        .iter()
-                        .zip(direct_opening_gadget)
-                        .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+            let fold_et = |acc: Result<E, AkitaError>, block_claim: usize| {
+                let e_start = block_claim
+                    .checked_mul(e_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let e_eq =
+                    checked_slice(&weights.e, e_start, e_stride, "structured direct E slice")?;
+                let e = e_eq
+                    .iter()
+                    .zip(direct_opening_gadget)
+                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
 
-                    let t_start = block_claim
-                        .checked_mul(t_stride)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let t_eq =
-                        checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
-                    let t = t_eq
-                        .chunks_exact(t_row_stride)
-                        .zip(group.a_row_weights.iter())
-                        .fold(E::zero(), |sum, (row, &row_weight)| {
-                            sum + row_weight
-                                * row
-                                    .iter()
-                                    .zip(direct_commitment_gadget)
-                                    .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
-                        });
-                    let block_challenge = *block_challenges
-                        .get(block_claim)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    Ok(acc? + block_challenge * (group.consistency_weight * e + t))
-                },
-                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-            )?;
-            let z = cfg_fold_reduce!(
-                0..group.num_positions_per_block,
-                || Ok(E::zero()),
-                |acc: Result<E, AkitaError>, position| {
-                    let start = position
-                        .checked_mul(group.depth_witness)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let eq = checked_slice(
-                        &weights.z,
-                        start,
-                        group.depth_witness,
-                        "structured direct Z slice",
-                    )?;
-                    let inner = eq
-                        .iter()
-                        .zip(&witness_gadget)
-                        .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
-                    Ok(acc?
-                        + group.consistency_weight
-                            * *opening_a_evals
-                                .get(position)
-                                .ok_or(AkitaError::InvalidProof)?
-                            * inner)
-                },
-                |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
-            )?;
+                let t_start = block_claim
+                    .checked_mul(t_stride)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let t_eq =
+                    checked_slice(&weights.t, t_start, t_stride, "structured direct T slice")?;
+                let t = t_eq
+                    .chunks_exact(t_row_stride)
+                    .zip(group.a_row_weights.iter())
+                    .fold(E::zero(), |sum, (row, &row_weight)| {
+                        sum + row_weight
+                            * row
+                                .iter()
+                                .zip(direct_commitment_gadget)
+                                .fold(E::zero(), |inner, (&eq, &gadget)| inner + eq * gadget)
+                    });
+                let block_challenge = *block_challenges
+                    .get(block_claim)
+                    .ok_or(AkitaError::InvalidProof)?;
+                Ok(acc? + block_challenge * (group.consistency_weight * e + t))
+            };
+            const PARALLEL_THRESHOLD: usize = 1 << 14;
+            let et_work = weights
+                .e
+                .len()
+                .checked_add(weights.t.len())
+                .ok_or(AkitaError::InvalidProof)?;
+            let et = if et_work >= PARALLEL_THRESHOLD {
+                cfg_fold_reduce!(
+                    0..block_claims,
+                    || Ok(E::zero()),
+                    fold_et,
+                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                )
+            } else {
+                (0..block_claims).fold(Ok(E::zero()), fold_et)
+            }?;
+            let fold_z = |acc: Result<E, AkitaError>, position: usize| {
+                let start = position
+                    .checked_mul(group.depth_witness)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let eq = checked_slice(
+                    &weights.z,
+                    start,
+                    group.depth_witness,
+                    "structured direct Z slice",
+                )?;
+                let inner = eq
+                    .iter()
+                    .zip(&witness_gadget)
+                    .fold(E::zero(), |sum, (&eq, &gadget)| sum + eq * gadget);
+                Ok(acc?
+                    + group.consistency_weight
+                        * *opening_a_evals
+                            .get(position)
+                            .ok_or(AkitaError::InvalidProof)?
+                        * inner)
+            };
+            let z = if weights.z.len() >= PARALLEL_THRESHOLD {
+                cfg_fold_reduce!(
+                    0..group.num_positions_per_block,
+                    || Ok(E::zero()),
+                    fold_z,
+                    |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+                )
+            } else {
+                (0..group.num_positions_per_block).fold(Ok(E::zero()), fold_z)
+            }?;
             return Ok(et + z);
         }
 
