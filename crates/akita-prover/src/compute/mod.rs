@@ -31,6 +31,7 @@ mod kernels;
 mod operation_plans;
 mod plans;
 mod poly;
+mod requirements;
 mod stack;
 
 #[cfg(feature = "compression-diagnostics")]
@@ -59,6 +60,7 @@ pub use plans::{
     OneHotCommitRowsPlan, RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan,
     RingSwitchRelationRows, RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+pub use requirements::{NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement};
 
 pub use poly::{
     CommitBackendFor, OpeningProveBackendFor, ProjectBackendFor, ProveBackendFor,
@@ -72,5 +74,6 @@ pub use poly::{
     RECURSIVE_SUFFIX_RING_DIMENSIONS,
 };
 pub use stack::{
-    LevelProveStacks, OperationCtx, ProverComputeStack, TieredProveStacks, UniformProverStack,
+    prewarm_ntt_requirements, LevelProveStacks, OperationCtx, ProverComputeStack,
+    TieredProveStacks, UniformProverStack,
 };

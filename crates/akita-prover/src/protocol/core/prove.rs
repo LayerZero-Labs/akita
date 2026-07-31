@@ -1,7 +1,8 @@
 use super::*;
 use crate::backend::RecursiveFoldSource;
 use crate::compute::{
-    CommitmentComputeBackend, ComputeBackendSetup, DigitRowsComputeBackend, LevelProveStacks,
+    prewarm_ntt_requirements, CommitmentComputeBackend, ComputeBackendSetup,
+    DigitRowsComputeBackend, LevelProveStacks, NttExecutionRequirements,
     RuntimeOpeningProveBackendFor, RuntimeRingSwitchProveBackend, RuntimeTensorBackendFor,
     SuffixOpeningProveBackend, SuffixTensorProveBackend,
 };
@@ -87,6 +88,8 @@ where
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
+    let ntt_requirements = NttExecutionRequirements::from_schedule(schedule)?;
+    prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),
         &opening_batch,

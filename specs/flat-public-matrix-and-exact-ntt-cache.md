@@ -512,6 +512,19 @@ to the kernel. The implementation MUST have one canonical derivation path used
 by prewarming, lazy cache checks, memory reporting, and tests. A prewarm planner
 and the actual kernel call MUST NOT compute independent approximations.
 
+The implementation realizes that contract as follows:
+
+- `NttCacheKey::from_matrix_shape` is the sole rows/active-width derivation
+  primitive used by both the execution compiler and lazy kernel acquisition;
+- `NttExecutionRequirements::from_schedule` compiles the normal
+  commit-and-prove call layout, while `add_setup_prefix_commitment` adds the
+  independently invoked setup-prefix preprocessing call layout;
+- `prewarm_ntt_requirements` routes each level through its selected
+  `ProverComputeStack` cluster before transcript binding; and
+- `CpuPreparedSetup::planned_shared_ntt_cache_bytes` max-joins those same keys
+  for memory reporting, with integration tests requiring the planned and
+  resident byte counts to agree after proving.
+
 For one `(cluster, D, profile, domain)`, multiple requirements over the shared
 matrix combine by maximum:
 
@@ -528,6 +541,10 @@ request `n <= m` with the same keys. Growth SHOULD transform only the missing
 suffix. Replacement by a larger immutable snapshot is acceptable; an existing
 borrower may finish on the older covering snapshot. Concurrent first use or
 growth MUST be single-flight per cache key.
+Failed initialization is not resident cache state. A failed cell MUST be
+removed only when it is still the map entry for that key; callers that waited
+on a failed covering cell retry their own exact request. Thus an oversized or
+otherwise rejected warm cannot poison a later valid smaller prefix.
 
 #### Operation clusters
 

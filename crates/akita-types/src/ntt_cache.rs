@@ -121,6 +121,27 @@ impl NttCacheKey {
             domain,
         ))
     }
+
+    /// Join covering prefixes that share a ring dimension and transform domain.
+    pub fn join(self, other: Self) -> Result<Self, AkitaError> {
+        if self.ring_d != other.ring_d || self.domain != other.domain {
+            return Err(AkitaError::InvalidSetup(
+                "cannot join NTT cache keys with different dimensions or domains".into(),
+            ));
+        }
+        Ok(Self {
+            ring_d: self.ring_d,
+            num_ring_elements: self.num_ring_elements.max(other.num_ring_elements),
+            domain: self.domain,
+        })
+    }
+
+    /// Exact number of public field elements covered by this cache key.
+    pub fn num_field_elements(self) -> Result<usize, AkitaError> {
+        self.num_ring_elements
+            .checked_mul(self.ring_d)
+            .ok_or_else(|| AkitaError::InvalidSetup("NTT cache field count overflow".into()))
+    }
 }
 
 /// Supported protocol CRT+NTT parameter families.

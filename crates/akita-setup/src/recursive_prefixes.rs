@@ -2,7 +2,7 @@ use akita_config::CommitmentConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_prover::{
     commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend, ComputeBackendSetup,
-    CpuBackend,
+    CpuBackend, NttExecutionRequirements,
 };
 use akita_types::{dispatch_for_field, SetupPrefixSlotId};
 use std::collections::BTreeSet;
@@ -50,6 +50,15 @@ where
     F: FieldCore + CanonicalField + RandomSampling,
     B: CommitmentComputeBackend<F>,
 {
+    let mut requirements = NttExecutionRequirements::default();
+    for slot_id in slot_ids {
+        if setup.prefix_slots.get(slot_id).is_none() {
+            requirements.add_setup_prefix_commitment(0, slot_id)?;
+        }
+    }
+    for requirement in requirements.entries() {
+        backend.ensure_ntt_slot(prepared, requirement.key)?;
+    }
     for slot_id in slot_ids {
         commit_setup_prefix_slot(setup, backend, prepared, slot_id)?;
     }

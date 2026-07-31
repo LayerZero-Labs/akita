@@ -15,7 +15,7 @@
 
 #![allow(missing_docs)]
 
-use akita_prover::{ComputeBackendSetup, CpuBackend};
+use akita_prover::{ComputeBackendSetup, CpuBackend, NttExecutionRequirements};
 
 mod common;
 
@@ -164,6 +164,25 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
             BasisMode::Lagrange,
         )
         .expect("prove");
+        let schedule = DenseCfg::get_params_for_prove(
+            &akita_types::OpeningClaimsLayout::new(nv, 1).expect("opening layout"),
+        )
+        .expect("resolved schedule");
+        let requirements =
+            NttExecutionRequirements::from_schedule(&schedule).expect("NTT requirements");
+        let planned_cache_bytes = prepared
+            .planned_shared_ntt_cache_bytes(
+                requirements
+                    .entries()
+                    .iter()
+                    .map(|requirement| requirement.key),
+            )
+            .expect("planned NTT bytes");
+        assert_eq!(
+            prepared.shared_ntt_cache_bytes(),
+            planned_cache_bytes,
+            "lazy kernels and prewarm requirement compiler diverged"
+        );
 
         let mut uncompressed = Vec::new();
         proof

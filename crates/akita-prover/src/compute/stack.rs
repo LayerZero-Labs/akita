@@ -17,6 +17,9 @@
 //! then dispatch through the cluster accessors on that stack.
 
 use crate::compute::backend::ComputeBackendSetup;
+use crate::compute::requirements::{
+    NttExecutionRequirements, NttOperationCluster, RoutedNttRequirement,
+};
 use akita_field::{AkitaError, CanonicalField, FieldCore};
 use akita_types::AkitaExpandedSetup;
 use std::marker::PhantomData;
@@ -70,6 +73,10 @@ where
     /// Borrowed prepared setup for this operation cluster.
     pub fn prepared(&self) -> &'a B::PreparedSetup {
         self.prepared
+    }
+
+    fn prewarm_ntt(&self, key: akita_types::NttCacheKey) -> Result<(), AkitaError> {
+        self.backend.ensure_ntt_slot(self.prepared, key)
     }
 }
 
@@ -142,6 +149,15 @@ where
     pub fn ring_switch(&self) -> &OperationCtx<'a, F, R> {
         &self.ring_switch
     }
+
+    fn prewarm_requirement(&self, requirement: RoutedNttRequirement) -> Result<(), AkitaError> {
+        match requirement.cluster {
+            NttOperationCluster::Commit => self.commit.prewarm_ntt(requirement.key),
+            NttOperationCluster::Opening => self.opening.prewarm_ntt(requirement.key),
+            NttOperationCluster::Tensor => self.tensor.prewarm_ntt(requirement.key),
+            NttOperationCluster::RingSwitch => self.ring_switch.prewarm_ntt(requirement.key),
+        }
+    }
 }
 
 /// Single-backend degenerate [`ProverComputeStack`] (all four clusters share `B`).
@@ -185,6 +201,23 @@ where
         &self,
         level: usize,
     ) -> &ProverComputeStack<'a, F, Self::Commit, Self::Opening, Self::Tensor, Self::RingSwitch>;
+}
+
+/// Prewarm an exact cache plan on the cluster and level that will execute it.
+pub fn prewarm_ntt_requirements<'a, F, S>(
+    stacks: &S,
+    requirements: &NttExecutionRequirements,
+) -> Result<(), AkitaError>
+where
+    F: FieldCore + CanonicalField + 'a,
+    S: LevelProveStacks<'a, F> + ?Sized + 'a,
+{
+    for requirement in requirements.entries() {
+        stacks
+            .prove_stack_at_level(requirement.fold_level)
+            .prewarm_requirement(*requirement)?;
+    }
+    Ok(())
 }
 
 impl<'a, F, C, O, T, R> LevelProveStacks<'a, F> for ProverComputeStack<'a, F, C, O, T, R>
@@ -440,6 +473,62 @@ mod tests {
         assert_eq!(
             selected.commit().backend() as *const _,
             stack.commit().backend() as *const _
+        );
+    }
+
+    #[test]
+    fn prewarm_routes_only_to_declared_physical_cluster_owner() {
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
+            .expect("setup");
+        let commit_prepared = CpuBackend.prepare_setup(&setup).expect("commit prepared");
+        let ring_prepared = CpuBackend.prepare_setup(&setup).expect("ring prepared");
+        let commit_backend = CommitCluster;
+        let ring_backend = RingSwitchCluster;
+        let stack: TestHeterogeneousStack<'_> = ProverComputeStack::new(
+            (&commit_backend, &commit_prepared),
+            (&CpuBackend, &commit_prepared),
+            (&CpuBackend, &commit_prepared),
+            (&ring_backend, &ring_prepared),
+            setup.expanded.as_ref(),
+        )
+        .expect("heterogeneous stack");
+        let mut requirements = NttExecutionRequirements::default();
+        requirements
+            .add_matrix(
+                0,
+                NttOperationCluster::Commit,
+                64,
+                2,
+                3,
+                akita_types::NttTransformDomain::Negacyclic,
+            )
+            .unwrap();
+        requirements
+            .add_matrix(
+                0,
+                NttOperationCluster::RingSwitch,
+                64,
+                1,
+                5,
+                akita_types::NttTransformDomain::Cyclic,
+            )
+            .unwrap();
+
+        prewarm_ntt_requirements::<F, _>(&stack, &requirements).expect("prewarm plan");
+
+        assert_eq!(commit_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
+        assert_eq!(ring_prepared.shared_ntt_cache_metrics().unwrap().len(), 1);
+        assert_eq!(
+            commit_prepared.shared_ntt_cache_metrics().unwrap()[0]
+                .key
+                .domain,
+            akita_types::NttTransformDomain::Negacyclic
+        );
+        assert_eq!(
+            ring_prepared.shared_ntt_cache_metrics().unwrap()[0]
+                .key
+                .domain,
+            akita_types::NttTransformDomain::Cyclic
         );
     }
 
