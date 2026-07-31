@@ -69,6 +69,9 @@ every level, and the optional on-disk setup cache.
 - `crates/akita-setup/src/lib.rs`.
 - Paper §3.9 `sec:akita-setup` (packed shared setup), `Setup` in §3.8 `sec:akita-full-pcs`.
 - `specs/setup-layout-repack.md` (broader packed-setup direction — roadmap).
+- `specs/flat-public-matrix-and-exact-ntt-cache.md` (active stacked follow-up to
+  PR #334: dimension-free field derivation, exact setup capacity, and derived
+  NTT-cache contracts).
 
 ## Transcripts in practice
 

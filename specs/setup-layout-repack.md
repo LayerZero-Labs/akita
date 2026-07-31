@@ -27,6 +27,14 @@ compares direct and offloaded successors at every supported nonterminal edge,
 uses the exact active prefix dictated by packed setup geometry, and may select
 zero, one, or several offloaded levels.
 
+The packed overlapping-prefix layout remains authoritative here. Public-matrix
+derivation, capacity units, setup-prefix source padding, and NTT-cache sizing
+are superseded by
+[`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+In particular, `S[lambda]` below is historical ring-chunk notation; the target
+public object is a dimension-free field stream that schedule-local matrices
+reshape as needed.
+
 ## Original layout-branch scope (archival)
 
 PR #112 was a spec-only cleanup PR. It recorded the target packed setup layout

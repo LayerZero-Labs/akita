@@ -34,6 +34,12 @@ where its provenance is explicit.
 
 ## Executive state
 
+> **Scoped revision (stacked follow-up to PR #334):** Mixed schedule and planner
+> findings remain in force, but setup no longer has a generation/carrier
+> dimension. Flat public matrix derivation, exact field capacity, setup-prefix
+> padding, and per-domain NTT cache sizing are specified by
+> [`flat-public-matrix-and-exact-ntt-cache.md`](flat-public-matrix-and-exact-ntt-cache.md).
+
 Akita now supports both forms of mixed ring dimension needed by this
 experiment:
 
