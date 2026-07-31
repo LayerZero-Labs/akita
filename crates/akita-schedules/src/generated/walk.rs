@@ -202,8 +202,7 @@ pub(crate) fn walk_generated_schedule_entry(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("generated level byte count overflow".to_string())
         })?;
-        let stage3_bytes =
-            stage3_payload_bytes_for_successor(policy, next_lp, *output_witness_len)?;
+        let stage3_bytes = stage3_payload_bytes_for_successor(policy, next_lp)?;
         total_bytes = total_bytes
             .checked_add(direct_level_bytes)
             .and_then(|value| value.checked_add(stage3_bytes))

@@ -25,7 +25,7 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Protocol-facing commitment storage for public claims.
     type Commitment: Clone + PartialEq + Send + Sync;
-    /// Batched single-point evaluation/opening proof object.
+    /// Batched ordered group-local evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment, and a single opening point.
@@ -33,10 +33,10 @@ where
     /// Public opening point, claimed-evaluation, and proof scalar field.
     type ExtField: ExtField<F>;
 
-    /// Verify a fused batched opening proof at one shared opening point.
+    /// Verify a fused batched opening proof over ordered commitment groups.
     ///
-    /// The root layout and Fiat-Shamir batching are derived from the normalized
-    /// [`OpeningClaims`] built from `claims` (single shared point, no multipoint).
+    /// The root layout and Fiat-Shamir batching are derived from normalized
+    /// [`OpeningClaims`], with each group carrying its complete opening point.
     ///
     /// # Errors
     ///

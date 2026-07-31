@@ -24,7 +24,6 @@ pub(in crate::protocol::core) fn prepare_single_field_fold<'a, F, E, T, P, V, C,
     block_claims: ProverOpeningData<'a, E, P, F>,
     pad_base_evals: bool,
     transcript: &mut T,
-    non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -55,7 +54,6 @@ where
         &block_claims,
         &opening_batch,
         pad_base_evals,
-        &non_eor_protocol_point,
         validate_non_eor,
     )?;
     finish_prepared_fold::<F, E, T, P, C, O, TS, R>(FinishFoldArgs {

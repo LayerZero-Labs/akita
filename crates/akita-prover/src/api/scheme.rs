@@ -55,8 +55,8 @@ where
 
     /// Commit a single opening-point bundle.
     ///
-    /// All polynomials in `polys` are aggregated into one commitment using a
-    /// layout derived from the single shared opening-batch shape.
+    /// All polynomials in `polys` are aggregated into one commitment using
+    /// that group's opening layout.
     ///
     /// # Errors
     ///
@@ -75,8 +75,8 @@ where
 
     /// Commit the polynomial bundle used by a batched prove.
     ///
-    /// The input bundle produces one commitment. All polynomials share one
-    /// public opening point in the subsequent [`Self::batched_prove`] call.
+    /// The input bundle produces one commitment and therefore one group-local
+    /// opening point in the subsequent [`Self::batched_prove`] call.
     ///
     /// # Errors
     ///
@@ -118,7 +118,7 @@ where
         P: RuntimeRootCommitPoly<F>,
         B: RuntimeRootCommitBackend<F, P, Self::ExtField>;
 
-    /// Produce a fused batched opening proof for one shared opening point.
+    /// Produce a fused batched opening proof over ordered commitment groups.
     ///
     /// A singleton opening is the 1x1 special case (one polynomial, one
     /// commitment, one opening point).

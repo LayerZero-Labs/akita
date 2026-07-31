@@ -8,10 +8,11 @@ pub mod config;
 pub(crate) mod descriptor_bytes;
 pub mod dispatch;
 pub use dispatch::{
-    field_modulus, ntt_max_ring_d, ntt_min_ring_d, ntt_ring_degree_supported_for_field,
-    ntt_ring_degree_supported_for_tier, outer_opening_min_ring_d, protocol_dispatch_tier,
-    validate_ring_dispatch, validate_role_dims_for_field, validate_role_dispatch,
-    ProtocolDispatchSlot, ProtocolRingDispatchTierId,
+    compression_ring_dim_supported_for_tier, field_modulus, ntt_max_ring_d, ntt_min_ring_d,
+    ntt_ring_degree_supported_for_field, ntt_ring_degree_supported_for_tier,
+    outer_opening_min_ring_d, protocol_dispatch_tier, validate_ring_dispatch,
+    validate_role_dims_for_field, validate_role_dispatch, ProtocolDispatchSlot,
+    ProtocolRingDispatchTierId,
 };
 pub mod extension_opening_reduction;
 pub mod field_reduction;
@@ -26,7 +27,6 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
-pub mod stage3_geometry;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
@@ -77,8 +77,9 @@ pub use layout::{
     SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
-    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_ntt_cache,
-    select_crt_ntt_params, NttCacheKey, NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
+    max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
+    prepare_ntt_cache, select_compression_crt_ntt_params, select_crt_ntt_params, NttCacheKey,
+    NttCacheMode, PreparedNttCache, ProtocolCrtNttParams,
 };
 pub use proof::{
     accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
@@ -105,16 +106,16 @@ pub use proof::{
     CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
     ExtensionOpeningReductionShape, FoldLevelProof, LevelProofShape, NextWitnessBinding,
     NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint,
-    ProverCommitmentRows, PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows,
-    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
+    PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
+    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
@@ -141,7 +142,6 @@ pub use sis::{
     SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
-pub use stage3_geometry::BatchedStage3Geometry;
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,

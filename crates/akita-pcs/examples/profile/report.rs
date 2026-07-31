@@ -495,7 +495,6 @@ fn stage3_sumcheck_size<E: FieldCore + AkitaSerialize>(
     proof.map_or(0, |proof| {
         proof.claim.serialized_size(Compress::No)
             + proof.setup_prefix_eval.serialized_size(Compress::No)
-            + proof.next_w_eval.serialized_size(Compress::No)
             + proof.sumcheck.serialized_size(Compress::No)
     })
 }

@@ -26,7 +26,6 @@ use akita_field::{
 };
 use akita_serialization::AkitaSerialize;
 use akita_sumcheck::{SumcheckInstanceProverExt, SumcheckProof};
-use akita_transcript::labels::ABSORB_STAGE3_NEXT_W_EVAL;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
@@ -47,8 +46,8 @@ use akita_types::{
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
     AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
     CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
+    RecursiveFoldParams, RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
     TerminalFoldParams, TerminalLevelProof,
 };
@@ -106,8 +105,5 @@ pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
 
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
-    pub(in crate::protocol::core) next_w_point: Vec<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
-    pub(in crate::protocol::core) setup_prefix_eval: E,
-    pub(in crate::protocol::core) next_w_eval: E,
 }

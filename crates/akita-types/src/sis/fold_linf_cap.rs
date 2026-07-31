@@ -19,6 +19,9 @@ pub const FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN: u32 = 8;
 
 /// Minimum retained fraction of `t*` when snapping `δ_fold` downward after tail sizing.
 /// Retain `1/2` of `t*` (at most 50% reduction vs the tail cap).
+///
+/// The active binding applies this value to wide fields and owns the tighter
+/// small-field floor in one canonical selector.
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM: u32 = 1;
 pub const FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN: u32 = 2;
 

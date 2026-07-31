@@ -269,7 +269,7 @@ fn reachable_role_cell(
             akita_types::sis::SisModulusProfileId::Q128OffsetA7F7
         }
     };
-    akita_types::sis::SIS_MATRIX_ROLES
+    let production_role = akita_types::sis::SIS_MATRIX_ROLES
         .iter()
         .copied()
         .any(|role| {
@@ -280,7 +280,14 @@ fn reachable_role_cell(
                 u128::from(coeff_linf_bound),
             )
             .is_some()
-        })
+        });
+    production_role
+        || akita_types::sis::compression::compression_sis_cell(
+            profile,
+            ring_dimension,
+            u128::from(coeff_linf_bound),
+        )
+        .is_some()
 }
 
 #[cfg(feature = "parallel")]
@@ -831,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn generation_filters_to_canonical_role_cells() {
+    fn generation_filters_to_canonical_production_and_compression_cells() {
         assert!(reachable_role_cell(
             AkitaModulusProfileId::Q128OffsetA7F7,
             32,
@@ -861,6 +868,36 @@ mod tests {
             AkitaModulusProfileId::Q128OffsetA7F7,
             16,
             15
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            16,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q64Offset59,
+            16,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q32Offset99,
+            32,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q128OffsetA7F7,
+            32,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q64Offset59,
+            64,
+            1
+        ));
+        assert!(reachable_role_cell(
+            AkitaModulusProfileId::Q32Offset99,
+            128,
+            1
         ));
     }
 

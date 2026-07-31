@@ -13,8 +13,8 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, BatchedStage3Geometry, CommittedGroupParams, SetupContributionPlan,
-    SetupIndexWeightEvaluator, SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    AkitaVerifierSetup, CommittedGroupParams, SetupContributionPlan, SetupIndexWeightEvaluator,
+    SetupSumcheckProof, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -22,7 +22,7 @@ use akita_types::{
 ///
 /// Construct with [`SetupSumcheckVerifier::new`], which derives the setup
 /// evaluation plan and sumcheck round count from the ring-switch row
-/// evaluation, then call [`verify_batched_stage3`](Self::verify_batched_stage3)
+/// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
     plan: SetupContributionPlan<E>,
@@ -39,7 +39,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     ///
     /// Derives the setup evaluation plan (and thus the per-round shape) from
     /// the relation-matrix evaluation; must be called before
-    /// [`verify_batched_stage3`](Self::verify_batched_stage3).
+    /// [`verify_stage3`](Self::verify_stage3).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new<F>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
@@ -89,33 +89,21 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         })
     }
 
-    /// Verify the batched setup-product + carried-next-witness stage-3 sumcheck.
+    /// Verify the setup-product stage-3 sumcheck.
     ///
-    /// Returns the projected next-witness opening point `rho_w` to be threaded
-    /// into the next recursive suffix level.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn verify_batched_stage3<F, T>(
+    /// Returns the setup opening point for the next recursive suffix level.
+    pub(crate) fn verify_stage3<F, T>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         next_fold_level_params: &CommittedGroupParams,
         proof: &SetupSumcheckProof<E>,
-        stage2_next_w_eval: E,
-        stage2_challenges: &[E],
-        witness_rounds: usize,
-        eta: E,
         transcript: &mut T,
-    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
+    ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        if stage2_challenges.len() != witness_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_rounds,
-                actual: stage2_challenges.len(),
-            });
-        }
         let ring_d = self.plan.projection_geometry().base_ring_dim();
         let setup_len = setup
             .expanded
@@ -137,15 +125,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             F,
             ring_d,
             |D| {
-                self.verify_batched_stage3_kernel::<F, T, D>(
+                self.verify_stage3_kernel::<F, T, D>(
                     setup,
                     proof,
-                    stage2_next_w_eval,
-                    stage2_challenges,
-                    witness_rounds,
                     setup_eval_len,
                     setup_prefix_eval,
-                    eta,
                     transcript,
                 )
             }
@@ -196,41 +180,29 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn verify_batched_stage3_kernel<F, T, const D: usize>(
+    fn verify_stage3_kernel<F, T, const D: usize>(
         &self,
         setup: &AkitaVerifierSetup<F>,
         proof: &SetupSumcheckProof<E>,
-        stage2_next_w_eval: E,
-        stage2_challenges: &[E],
-        witness_rounds: usize,
         setup_eval_len: usize,
         setup_prefix_eval: Option<E>,
-        eta: E,
         transcript: &mut T,
-    ) -> Result<(Vec<E>, Vec<E>), AkitaError>
+    ) -> Result<Vec<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
         let required = self.plan.required();
-        let geometry = BatchedStage3Geometry::new(witness_rounds, self.rounds)?;
-        let batched_rounds = geometry.batched_rounds();
-        transcript.append_serde(
-            ABSORB_SUMCHECK_CLAIM,
-            &(proof.claim + eta * stage2_next_w_eval),
-        );
+        transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
-            proof.claim + eta * stage2_next_w_eval,
-            batched_rounds,
+            proof.claim,
+            self.rounds,
             SETUP_SUMCHECK_DEGREE,
             transcript,
             |tr| sample_ext_challenge::<F, E, T>(tr, CHALLENGE_SUMCHECK_ROUND),
         )?;
-        let rho_w = geometry.witness_point(&challenges)?;
-        let rho_setup = geometry.setup_point(&challenges)?;
-        let (rho_y, rho_setup_idx) = geometry.setup_y_and_index(&rho_setup, self.ring_bits)?;
+        let (rho_y, rho_setup_idx) = challenges.split_at(self.ring_bits);
 
         // The setup prefix itself is still evaluated by scanning the selected
         // prefix. The setup-index weight is structured, so evaluate its MLE
@@ -266,26 +238,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             }
         };
         let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
-        let witness_scale = geometry.witness_lift_scale::<E>()?;
-        let setup_scale = geometry.setup_lift_scale::<E>()?;
-        let eq_w = EqPolynomial::mle(stage2_challenges, &rho_w)?;
-        let witness_term = eta * eq_w * proof.next_w_eval;
         let setup_term = setup_val * setup_index_weight * alpha_val;
-        let expected = witness_scale * witness_term + setup_scale * setup_term;
-        if final_claim != expected {
-            tracing::error!(
-                witness_rounds,
-                setup_rounds = self.rounds,
-                batched_rounds,
-                matches_unscaled = final_claim == witness_term + setup_term,
-                matches_only_witness_scaled =
-                    final_claim == witness_scale * witness_term + setup_term,
-                matches_only_setup_scaled = final_claim == witness_term + setup_scale * setup_term,
-                "stage-3 final claim disagrees with the lifted product terms"
-            );
+        if final_claim != setup_term {
             return Err(AkitaError::InvalidProof);
         }
-        Ok((rho_w, rho_setup))
+        Ok(challenges)
     }
 }
 

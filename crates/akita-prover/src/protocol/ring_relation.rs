@@ -7,6 +7,11 @@ use crate::compute::{
     OpeningFoldKernel, OperationCtx, RootOpeningSource, RootPolyMeta,
     RuntimeOpeningProveBackendFor,
 };
+#[cfg(feature = "compression-diagnostics")]
+use crate::diagnostics::compression::{
+    compute_shadow_compressed_commitments, CompressionDiagnosticSource,
+    CompressionDiagnosticSourceKind,
+};
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -407,11 +412,11 @@ pub(super) fn window_sparse_challenges(
 pub struct RingRelationProver;
 
 impl RingRelationProver {
-    /// Root-level constructor for one shared opening point with one or more
+    /// Root-level constructor for one or more group-local opening points and
     /// polynomial slots.
     ///
-    /// `opening_point` is the single ring-level opening point used by the
-    /// batch.
+    /// `group_opening_points` and `group_ring_multiplier_points` contain one
+    /// prepared entry per ordered claim group.
     /// For the trivial single-claim case use `polys = &[poly]` and
     /// `gamma = vec![F::one()]`.
     ///
@@ -476,6 +481,8 @@ impl RingRelationProver {
         // Sent-commitment rows are B-role data; keep them as flat coefficients
         // and validate the ring count under `d_b` (no-panic length gate).
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
+        #[cfg(feature = "compression-diagnostics")]
+        let mut compression_b_sources: Vec<(usize, Vec<F>)> = Vec::with_capacity(num_groups);
         let commit_group_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -494,6 +501,8 @@ impl RingRelationProver {
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
+            #[cfg(feature = "compression-diagnostics")]
+            compression_b_sources.push((group_index, group_commitment.rows().coeffs().to_vec()));
             commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
         }
         for group_index in 0..num_groups {
@@ -642,6 +651,50 @@ impl RingRelationProver {
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
+        #[cfg(feature = "compression-diagnostics")]
+        {
+            let mut sources = compression_b_sources
+                .iter()
+                .map(|(group_index, coefficients)| CompressionDiagnosticSource {
+                    kind: CompressionDiagnosticSourceKind::Outer {
+                        group_index: *group_index,
+                    },
+                    coefficients: coefficients.as_slice(),
+                })
+                .collect::<Vec<_>>();
+            if !v.coeffs().is_empty() {
+                sources.push(CompressionDiagnosticSource {
+                    kind: CompressionDiagnosticSourceKind::Opening,
+                    coefficients: v.coeffs(),
+                });
+            }
+            let report = compute_shadow_compressed_commitments(
+                ring_switch_ctx,
+                lp.outer_commit_matrix.sis_modulus_profile(),
+                &sources,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "compressed-commitment diagnostic failed: {err:?}"
+                ))
+            })?;
+            let cache_bytes_added = report
+                .cache_bytes_before
+                .zip(report.cache_bytes_after)
+                .map(|(before, after)| after.saturating_sub(before));
+            tracing::info!(
+                sources = report.sources,
+                maps = report.maps,
+                batch_count = report.batch_count,
+                source_bytes = report.source_bytes,
+                terminal_bytes = report.terminal_bytes,
+                cache_bytes_before = report.cache_bytes_before,
+                cache_bytes_after = report.cache_bytes_after,
+                cache_bytes_added,
+                elapsed_micros = u64::try_from(report.elapsed.as_micros()).unwrap_or(u64::MAX),
+                "computed and discarded shadow compressed commitments"
+            );
+        }
         let flattened_hint = flatten_commitment_hints_for_ring_relation::<F>(hints, &group_sizes)?;
         let opening_backend = opening_ctx.backend();
 

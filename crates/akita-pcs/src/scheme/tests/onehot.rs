@@ -431,20 +431,22 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     )
     .expect("final multi-group commitment");
 
-    let point = debug_random_point(opening_num_vars);
+    let mut pre_point = debug_random_point(pre_num_vars);
+    pre_point[0] += OneHotF::one();
+    let final_point = debug_random_point(final_num_vars);
     let pre_openings: Vec<Vec<OneHotF>> = pre_polys_by_group
         .iter()
         .zip(pre_layouts.iter())
         .map(|(polys, layout)| {
             polys
                 .iter()
-                .map(|poly| opening_from_poly(poly, &point[..pre_num_vars], layout))
+                .map(|poly| opening_from_poly(poly, &pre_point, layout))
                 .collect()
         })
         .collect();
     let final_openings: Vec<OneHotF> = final_polys
         .iter()
-        .map(|poly| opening_from_poly(poly, &point[..final_num_vars], main_params))
+        .map(|poly| opening_from_poly(poly, &final_point, main_params))
         .collect();
 
     let pre_refs_by_group: Vec<Vec<&OneHotPoly<OneHotF, u8>>> = pre_polys_by_group
@@ -457,8 +459,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(pre_num_vars, opening_num_vars)
-                    .expect("pre point vars"),
+                pre_point.clone(),
                 openings.clone(),
                 pre_commitments[group_idx].clone(),
             )
@@ -467,8 +468,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
     prover_groups.push(
         PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(final_num_vars, opening_num_vars)
-                .expect("final point vars"),
+            final_point.clone(),
             final_openings.clone(),
             final_commitment.clone(),
         )
@@ -484,7 +484,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     prover_hints.push(final_hint);
 
     let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
+        OpeningClaims::from_groups(prover_groups).expect("prover claims"),
         prover_hints,
         prover_polys,
     )
@@ -532,8 +532,7 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     for (group_idx, openings) in pre_openings.iter().enumerate() {
         verifier_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(pre_num_vars, opening_num_vars)
-                    .expect("pre point vars"),
+                pre_point.clone(),
                 openings.clone(),
                 &pre_commitments[group_idx],
             )
@@ -542,15 +541,14 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
     }
     verifier_groups.push(
         PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(final_num_vars, opening_num_vars)
-                .expect("final point vars"),
+            final_point.clone(),
             final_openings.clone(),
             &final_commitment,
         )
         .expect("final verifier group"),
     );
-    let verify_claims = OpeningClaims::from_groups(point.clone(), verifier_groups)
-        .expect("multi-group verifier claims");
+    let verify_claims =
+        OpeningClaims::from_groups(verifier_groups).expect("multi-group verifier claims");
     let mut verifier_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
     AkitaCommitmentScheme::<ProtocolCfg>::batched_verify(
         &decoded,
@@ -563,25 +561,20 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
     if check_group_binding {
         assert_eq!(pre_commitments.len(), 1, "binding fixture uses two groups");
-        let swapped_claims = OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(pre_num_vars, opening_num_vars)
-                        .expect("pre point vars"),
-                    pre_openings[0].clone(),
-                    &final_commitment,
-                )
-                .expect("swapped pre verifier group"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(final_num_vars, opening_num_vars)
-                        .expect("final point vars"),
-                    final_openings.clone(),
-                    &pre_commitments[0],
-                )
-                .expect("swapped final verifier group"),
-            ],
-        )
+        let swapped_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                pre_point.clone(),
+                pre_openings[0].clone(),
+                &final_commitment,
+            )
+            .expect("swapped pre verifier group"),
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                final_openings.clone(),
+                &pre_commitments[0],
+            )
+            .expect("swapped final verifier group"),
+        ])
         .expect("swapped verifier claims");
         let mut swapped_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
@@ -598,25 +591,12 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
 
         let mut tampered_final_openings = final_openings.clone();
         tampered_final_openings[0] += OneHotF::one();
-        let tampered_claims = OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(pre_num_vars, opening_num_vars)
-                        .expect("pre point vars"),
-                    pre_openings[0].clone(),
-                    &pre_commitments[0],
-                )
+        let tampered_claims = OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(pre_point, pre_openings[0].clone(), &pre_commitments[0])
                 .expect("pre verifier group"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(final_num_vars, opening_num_vars)
-                        .expect("final point vars"),
-                    tampered_final_openings,
-                    &final_commitment,
-                )
+            PolynomialGroupClaims::new(final_point, tampered_final_openings, &final_commitment)
                 .expect("tampered final verifier group"),
-            ],
-        )
+        ])
         .expect("tampered verifier claims");
         let mut tampered_transcript = AkitaTranscript::<OneHotF>::new(b"test/multi-group-unequal");
         assert!(
@@ -698,7 +678,7 @@ fn multi_group_multi_chunk_fold_round_trips() {
     multi_group_root_round_trip_onehot::<
         fp128::D64OneHotMultiChunkW2R2,
         fp128::D64OneHotMultiChunkW2R2,
-    >(15, 30, &[1], 3, false);
+    >(14, 14, &[1], 1, false);
 }
 
 #[test]

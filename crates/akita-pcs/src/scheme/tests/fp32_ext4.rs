@@ -128,6 +128,56 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         proof.root.extension_opening_reduction.is_some(),
         "non-base fp32 claims must use root extension-opening reduction"
     );
+    let tensor_split = akita_types::tensor_opening_split::<SmallF, SmallE>()
+        .expect("tensor split")
+        .0;
+    let recursive_step = schedule
+        .recursive_folds
+        .first()
+        .expect("fixture recursive fold");
+    let recursive_proof = proof.recursive_folds.first().expect("recursive fold proof");
+    let root_stage2_num_vars = proof.root.stage2.sumcheck_proof.round_polys.len();
+    let recursive_num_vars = recursive_step
+        .params
+        .witness
+        .recursive_opening_num_vars()
+        .expect("recursive opening width");
+    assert!(
+        root_stage2_num_vars <= recursive_num_vars,
+        "Stage 2 point must fit the recursive suffix: \
+         stage2={root_stage2_num_vars}, recursive={recursive_num_vars}"
+    );
+    assert_eq!(
+        recursive_proof
+            .extension_opening_reduction
+            .as_ref()
+            .expect("recursive suffix EOR")
+            .num_rounds(),
+        root_stage2_num_vars - tensor_split,
+        "recursive EOR rounds must follow the raw Stage 2 arity"
+    );
+    let recursive_stage2_num_vars = recursive_proof.stage2.sumcheck_proof.round_polys.len();
+    let terminal_num_vars = schedule
+        .terminal
+        .params
+        .witness
+        .recursive_opening_num_vars()
+        .expect("terminal opening width");
+    assert!(
+        recursive_stage2_num_vars <= terminal_num_vars,
+        "Stage 2 point must fit the terminal suffix: \
+         stage2={recursive_stage2_num_vars}, terminal={terminal_num_vars}"
+    );
+    let terminal_eor = proof
+        .terminal
+        .extension_opening_reduction
+        .as_ref()
+        .expect("extension-field terminal EOR");
+    assert_eq!(
+        terminal_eor.num_rounds(),
+        recursive_stage2_num_vars - tensor_split,
+        "terminal EOR rounds must follow the raw Stage 2 arity"
+    );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();
@@ -261,30 +311,28 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     )
     .expect("final commitment");
 
-    let point = extension_point(FINAL_NV);
-    let pre_opening = onehot_opening_at_point(&pre_poly, &point[..PRE_NV]);
-    let final_opening = onehot_opening_at_point(&final_poly, &point);
+    let mut pre_point = extension_point(PRE_NV);
+    pre_point[0] += SmallE::one();
+    let final_point = extension_point(FINAL_NV);
+    let pre_opening = onehot_opening_at_point(&pre_poly, &pre_point);
+    let final_opening = onehot_opening_at_point(&final_poly, &final_point);
     let pre_refs = [&pre_poly];
     let final_refs = [&final_poly];
     let prover_claims = ProverOpeningData::new(
-        OpeningClaims::from_groups(
-            point.clone(),
-            vec![
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                    vec![pre_opening],
-                    pre_commitment.clone(),
-                )
-                .expect("pre prover claims"),
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV)
-                        .expect("final point routing"),
-                    vec![final_opening],
-                    final_commitment.clone(),
-                )
-                .expect("final prover claims"),
-            ],
-        )
+        OpeningClaims::from_groups(vec![
+            PolynomialGroupClaims::new(
+                pre_point.clone(),
+                vec![pre_opening],
+                pre_commitment.clone(),
+            )
+            .expect("pre prover claims"),
+            PolynomialGroupClaims::new(
+                final_point.clone(),
+                vec![final_opening],
+                final_commitment.clone(),
+            )
+            .expect("final prover claims"),
+        ])
         .expect("grouped prover claims"),
         vec![pre_hint, final_hint],
         vec![&pre_refs, &final_refs],
@@ -315,23 +363,12 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     );
 
     let verifier_setup = ProtocolScheme::setup_verifier(&setup).expect("verifier setup");
-    let verify_claims = OpeningClaims::from_groups(
-        point.clone(),
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening],
-                &pre_commitment,
-            )
+    let verify_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(pre_point.clone(), vec![pre_opening], &pre_commitment)
             .expect("pre verifier claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
+        PolynomialGroupClaims::new(final_point.clone(), vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
-        ],
-    )
+    ])
     .expect("grouped verifier claims");
     let mut verifier_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(
@@ -355,23 +392,16 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     )
     .expect_err("omitting the required multi-group root extension-opening reduction must reject");
 
-    let tampered_claims = OpeningClaims::from_groups(
-        point,
-        vec![
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point routing"),
-                vec![pre_opening + SmallE::one()],
-                &pre_commitment,
-            )
-            .expect("tampered pre claims"),
-            PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point routing"),
-                vec![final_opening],
-                &final_commitment,
-            )
+    let tampered_claims = OpeningClaims::from_groups(vec![
+        PolynomialGroupClaims::new(
+            pre_point,
+            vec![pre_opening + SmallE::one()],
+            &pre_commitment,
+        )
+        .expect("tampered pre claims"),
+        PolynomialGroupClaims::new(final_point, vec![final_opening], &final_commitment)
             .expect("final verifier claims"),
-        ],
-    )
+    ])
     .expect("tampered grouped claims");
     let mut tampered_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     ProtocolScheme::batched_verify(

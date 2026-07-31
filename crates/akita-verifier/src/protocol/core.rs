@@ -24,9 +24,8 @@ use akita_serialization::AkitaSerialize;
 use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
-    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_STAGE3_NEXT_W_EVAL,
-    ABSORB_TERMINAL_E_HAT, ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
+    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -38,10 +37,10 @@ use akita_types::{
     sample_public_row_coefficients, tensor_equality_factor_eval_at_point, AkitaStage1Proof,
     AkitaStage2Proof, AkitaVerifierSetup, BasisMode, CommittedGroupParams, EvaluationTraceInputs,
     ExtensionOpeningReductionProof, FoldLevelProof, FoldLinfProtocolBinding, FoldSchedule,
-    FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PointVariableSelection,
-    PolynomialGroupClaims, PreparedOpeningPoint, RecursiveFoldParams, RingRelationInstance,
-    RingVec, SetupContributionMode, SetupSumcheckProof, TerminalFoldParams, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, TerminalWitnessTranscriptParts,
+    FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PreparedOpeningPoint,
+    RecursiveFoldParams, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
+    TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    TerminalWitnessTranscriptParts,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,
@@ -61,7 +60,7 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
     prepare_single_field_terminal_suffix, verify_extension_claim_root_prefix,
     verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
     verify_single_field_root_prefix, FoldPrefix, PreparedFoldPayload, PreparedFoldReplay,

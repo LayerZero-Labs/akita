@@ -7,6 +7,8 @@
 pub mod api;
 pub mod backend;
 pub mod compute;
+#[cfg(feature = "compression-diagnostics")]
+mod diagnostics;
 pub mod kernels;
 pub mod protocol;
 pub mod types;

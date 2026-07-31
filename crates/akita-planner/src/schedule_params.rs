@@ -72,7 +72,6 @@ pub(crate) struct CandidateScheduleChoice {
 pub(crate) fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
     successor: Option<&CommittedGroupParams>,
-    output_witness_len: usize,
 ) -> Result<usize, AkitaError> {
     let Some(prefix) = successor.and_then(|params| params.setup_prefix.as_ref()) else {
         return Ok(usize::default());
@@ -94,7 +93,6 @@ pub(crate) fn stage3_payload_bytes_for_successor(
         challenge_field_bits,
         prefix.d_setup,
         n_prefix / prefix.d_setup,
-        output_witness_len,
     ))
 }
 

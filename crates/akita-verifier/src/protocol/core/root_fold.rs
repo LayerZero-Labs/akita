@@ -57,7 +57,6 @@ where
     };
     let openings = claims.flat_evaluations();
     let opening_batch = claims.layout().map_err(|_| AkitaError::InvalidProof)?;
-    let shared_opening_point = claims.point();
     let num_claims = opening_batch.num_total_polynomials();
     if openings.len() != num_claims {
         return Err(AkitaError::InvalidProof);
@@ -65,7 +64,7 @@ where
     // Transcript binding, D-free and byte-identical to the prover's absorb
     // (`ProverOpeningData::append_to_transcript`): batch shape header, then each
     // group commitment's flat coefficients under `ring_dim` in `OpeningClaims`
-    // order, then the shared opening point. Each group's committed row count is
+    // order, then each group's complete opening point. Each group's committed row count is
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
@@ -79,8 +78,10 @@ where
         }
         commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
     }
-    for coord in shared_opening_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+    for group in claims.groups() {
+        for coord in group.point() {
+            append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coord);
+        }
     }
 
     // D-free root replay: typed kernels dispatch inside `verify_fold` and the

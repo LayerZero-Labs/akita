@@ -90,7 +90,7 @@ where
     let opening_batch = opening_claims.layout()?;
     let flat_polys = claims.flat_polys();
     let final_group_point = opening_claims.group_point(opening_batch.root_final_group_index()?)?;
-    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, &final_group_point)?;
+    let schedule = effective_batched_schedule::<Cfg>(&opening_batch, final_group_point)?;
     validate_schedule_ring_dims(&schedule, expanded.seed())?;
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), &schedule, &opening_batch)?;
     schedule.validate_structure()?;

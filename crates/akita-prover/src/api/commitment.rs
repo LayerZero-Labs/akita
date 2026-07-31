@@ -601,9 +601,8 @@ where
 
 /// Validate a batched commitment request and derive its `OpeningClaimsLayout`.
 ///
-/// The input slice is one commitment group at the shared opening point.
-/// Polynomials may have smaller natural arity than the shared padded batch
-/// domain; the largest arity selects the root layout.
+/// The input slice is one commitment group. Its natural polynomial arity
+/// selects that group's root layout.
 ///
 /// # Errors
 ///
@@ -835,7 +834,7 @@ where
 
 /// Commit one polynomial bundle under config `Cfg`.
 ///
-/// The config-selected schedule supplies the shared root commitment layout.
+/// The config-selected schedule supplies the resolved root commitment layout.
 /// The root tensor-projection transform is applied internally when the field
 /// tower and schedule call for it.
 ///
@@ -882,7 +881,7 @@ where
 
 /// Commit one polynomial bundle using already-selected level parameters.
 ///
-/// The caller has already resolved the shared root commitment layout (e.g.
+/// The caller has already resolved the root commitment layout (e.g.
 /// via [`batched_commit`]); this function owns only the prover-side matrix
 /// work for the supplied concrete layout.
 ///
