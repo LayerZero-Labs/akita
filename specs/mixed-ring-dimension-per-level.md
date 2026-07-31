@@ -1751,7 +1751,7 @@ back.
 | Planner public entry points and root search | `crates/akita-planner/src/schedule_params.rs` |
 | Planner candidate construction | `crates/akita-planner/src/schedule_params/candidate.rs` |
 | Planner suffix dynamic programming | `crates/akita-planner/src/schedule_params/suffix_dp.rs` |
-| Multi-group root planning | `crates/akita-planner/src/group_batch.rs` |
+| Multi-group root planning | `crates/akita-planner/src/planner.rs` |
 | Generated catalog emission | `crates/akita-planner/src/emit/mod.rs` |
 | Runtime policy and selection IDs | `crates/akita-schedules/src/runtime.rs` |
 | Generated-row expansion and replay | `crates/akita-schedules/src/generated/` |

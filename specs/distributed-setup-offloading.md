@@ -188,8 +188,8 @@ The following are already implemented and verified (the
    `crates/akita-config/tests/generated_tables.rs`
    (`family_catalog_is_linked`, `family_catalog`,
    `assert_family_group_batch_table_hit`, `resolve_family_group_batch_schedule`).
-5. **Planner fix.** `find_group_batch_schedule`
-   (`crates/akita-planner/src/group_batch.rs`) now skips a chunked root fold
+5. **Planner fix.** `find_schedule`
+   (`crates/akita-planner/src/planner.rs`) now skips a chunked root fold
    candidate whose **main** group has `num_live_blocks < num_chunks` (previously
    only precommitted groups were checked; the main-group case was unreachable
    until a multi-group family started emitting chunked roots).
@@ -478,7 +478,7 @@ cycles saved by offloading vs the extra chunked-witness bytes.
 - `specs/distributed-planner.md`
 - `specs/multi-group-batching.md`
 - `specs/batched-stage3-setup-opening.md`
-- `crates/akita-planner/src/group_batch.rs`
+- `crates/akita-planner/src/planner.rs`
 - `crates/akita-planner/src/schedule_params/candidate.rs`
 - `crates/akita-prover/src/protocol/fold_grind.rs`
 - `crates/akita-prover/src/protocol/sumcheck/akita_stage3/mod.rs`

@@ -61,7 +61,7 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .expect("generated schedule estimate");
         }
     }
-    akita_planner::find_group_batch_schedule(
+    akita_planner::find_schedule(
         &key,
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

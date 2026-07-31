@@ -17,10 +17,7 @@ use std::{
     sync::{LazyLock, Mutex, MutexGuard},
 };
 
-use crate::{
-    find_group_batch_schedule, find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy,
-    RingDimensionSearchDomain,
-};
+use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
@@ -83,7 +80,7 @@ pub struct GeneratedFamily {
     /// Opening-batch sizes (`num_polys`) enumerated for this family.
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any generated table
-    /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
+    /// (`find_schedule(single-key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any generated table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
@@ -143,7 +140,7 @@ pub fn emitted_scalar_keys(
 fn plan_regen<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -160,18 +157,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 
 /// Offline mixed-dimension regeneration for the catalog-backed fp128 profile.
 fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    type Cfg = fp128::MixedDimFp128OneHot;
-    let policy = policy_of::<Cfg>();
-    let dimensions =
-        RingDimensionSearchDomain::new(policy.ring_dimension, Cfg::RING_DIMENSION_CANDIDATES)?;
-    Ok(find_schedule(
-        key,
-        &policy,
-        &dimensions,
-        Cfg::ring_challenge_config,
-        Cfg::fold_challenge_shape_at_level,
-    )?
-    .schedule)
+    plan_regen::<fp128::MixedDimFp128OneHot>(&AkitaScheduleLookupKey::single(key))
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -355,7 +341,7 @@ fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>().direct_only();
     policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,

@@ -358,8 +358,16 @@ pub(super) fn find_schedule(
             candidate.setup_field_elements <= policy.max_setup_envelope_field_elements
         })
         .map(|candidate| {
-            let descriptor =
-                candidate_schedule_descriptor_bytes(&candidate, policy.ring_dimension)?;
+            let descriptor = materialize_candidate_schedule(
+                candidate.total_bytes,
+                candidate.setup_field_elements,
+                policy.ring_dimension,
+                candidate.first_direct_setup_field_len,
+                candidate.folds.clone(),
+                candidate.terminal.clone(),
+            )?
+            .schedule
+            .canonical_descriptor_bytes();
             Ok((
                 candidate.setup_field_elements,
                 candidate.total_bytes,

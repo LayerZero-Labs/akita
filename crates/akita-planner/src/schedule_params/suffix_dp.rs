@@ -10,7 +10,7 @@ use akita_types::{
     CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
-use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
+use crate::{planner::multi_group_root_level_candidates_for_basis, PlannerPolicy};
 
 use super::{
     derive_candidate_level_params, level_setup_field_elements, stage3_payload_bytes_for_successor,

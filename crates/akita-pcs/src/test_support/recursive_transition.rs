@@ -77,7 +77,7 @@ where
             // Plan the exact multi-group root at Root::D, then rebuild B and
             // shared D from the requested final carrier geometry.
             let root_policy = policy_of::<Root>().direct_only();
-            let mut root = akita_planner::find_group_batch_schedule(
+            let mut root = akita_planner::find_schedule(
                 key,
                 &root_policy,
                 Root::ring_challenge_config,
