@@ -579,8 +579,10 @@ fn find_group_batch_schedule_inner(
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
-        let dimensions =
-            crate::schedule_params::RingDimensionSearchDomain::uniform(policy.ring_dimension)?;
+        let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
+            scalar_policy.ring_dimension,
+            scalar_policy.ring_dimension_candidates.iter().copied(),
+        )?;
         return find_schedule(
             key.final_group,
             &scalar_policy,
