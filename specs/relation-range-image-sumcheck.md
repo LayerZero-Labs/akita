@@ -4,6 +4,7 @@
 |---|---|
 | Author(s) | Quang Dao (protocol and implementation direction); Codex (design synthesis) |
 | Created | 2026-07-20 |
+| Revised | 2026-07-31 |
 | Status | implemented; verifier relation/setup unification under review |
 | Branch | `quang/unify-verifier-setup-weights` |
 | Base | `feat/planner-per-matrix-d` |
@@ -348,6 +349,11 @@ The setup-index point has the same factor. Projection is applied once before
 the expensive high-address contraction. When `q_R = 1`, the low point is empty,
 `P_beta([]) = 1`, and the exact same formula becomes the identity case; verifier
 control flow does not select a separate uniform algorithm.
+
+The `q_R = 1` inner kernel keeps this identity implicit. It does not allocate a
+one-entry projection vector, evaluate an empty low factor, or multiply by one.
+This is identity elimination inside the shared evaluator, not a second uniform
+evaluator.
 
 The joint common alpha coordinates bind first. Relation lane weights are constant over each
 low-coordinate block and are not folded during these rounds. For
@@ -744,6 +750,10 @@ addresses. Its characterization matrix covers:
 `PreparedRelationPoint` is the production entry for every geometry. Uniform q=1 and
 projected q>1 select inner kernels only; maintaining a parallel historical evaluator is
 forbidden.
+
+The q=1 kernel must preserve the current uniform performance floor by omitting
+all identity projection work.
+
 Dense relation weights remain test oracles, not a production verifier fallback.
 
 Malformed dimensions, group/chunk layouts, claim offsets, point lengths, degrees, round
