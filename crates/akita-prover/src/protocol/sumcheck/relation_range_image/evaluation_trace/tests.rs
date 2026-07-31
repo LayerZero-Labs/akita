@@ -1,6 +1,6 @@
 use super::*;
 
-use akita_algebra::CyclotomicRing;
+use akita_algebra::{poly::multilinear_eval, CyclotomicRing};
 use akita_config::{proof_optimized::fp128, CommitmentConfig};
 use akita_field::{Ext2, ExtField, FromPrimitiveInt};
 use akita_types::{
@@ -46,19 +46,26 @@ fn materialize_semantic_trace_oracle<E: FieldCore>(
             term.group_block_count,
         )
         .unwrap();
-        let block_stride = term.opening_digit_weights.len() * term.source_ring_dimension;
+        let digit_count = term.opening_digit_weights.len();
+        let block_stride = digit_count * term.source_ring_dimension;
+        let role_subcolumns = term.source_ring_dimension / term.opening_ring_dimension;
         for segment in &term.segments {
             for local_block in 0..segment.block_count {
                 let global_block = segment.global_block_start + local_block;
                 let block_start = segment.physical_coefficient_start + local_block * block_stride;
-                for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate() {
-                    let digit_start = block_start + digit * term.source_ring_dimension;
-                    let factor = output_scale
-                        * term.coefficient
-                        * block_weights[global_block]
-                        * digit_weight;
-                    for (inner_coordinate, &inner_weight) in term.inner_trace.iter().enumerate() {
-                        table[digit_start + inner_coordinate] += factor * inner_weight;
+                for role_subcolumn in 0..role_subcolumns {
+                    let source_start = role_subcolumn * term.opening_ring_dimension;
+                    for (digit, &digit_weight) in term.opening_digit_weights.iter().enumerate() {
+                        let digit_start = block_start
+                            + (role_subcolumn * digit_count + digit) * term.opening_ring_dimension;
+                        let factor = output_scale
+                            * term.coefficient
+                            * block_weights[global_block]
+                            * digit_weight;
+                        for role_coefficient in 0..term.opening_ring_dimension {
+                            table[digit_start + role_coefficient] +=
+                                factor * term.inner_trace[source_start + role_coefficient];
+                        }
                     }
                 }
             }
@@ -128,6 +135,8 @@ where
         .map(|index| E::from_u64(53 + 2 * index as u64))
         .collect::<Vec<_>>();
     let expected_table = materialize_semantic_trace_oracle(&semantic_trace, output_scale);
+    let mut padded_expected_table = expected_table.clone();
+    padded_expected_table.resize(1usize << point.len(), E::zero());
 
     for coeff_count in [D, D / 2, D / 4] {
         let prepared =
@@ -136,7 +145,7 @@ where
         let folded = fold_prepared_trace_at_point(prepared, live_len, coeff_count, &point);
         assert_eq!(
             folded,
-            output_scale * semantic_trace.evaluate_at_point(&point).unwrap()
+            multilinear_eval(&padded_expected_table, &point).unwrap()
         );
     }
     for malformed_common_count in [0, 3, D * 2] {
@@ -146,6 +155,48 @@ where
             output_scale,
         )
         .is_err());
+    }
+}
+
+#[test]
+fn projected_semantic_trace_oracle_uses_role_native_subcolumns() {
+    let weights = EvaluationTraceWeights {
+        terms: vec![EvaluationTraceTerm {
+            coefficient: F::from_u64(3),
+            block_opening_point: vec![F::from_u64(5), F::from_u64(7)].into(),
+            basis: BasisMode::Lagrange,
+            group_block_count: 3,
+            source_ring_dimension: 8,
+            opening_ring_dimension: 4,
+            coefficient_block_len: 2,
+            opening_digit_weights: vec![F::from_u64(11), F::from_u64(13)].into(),
+            inner_trace: (0..8)
+                .map(|index| F::from_u64(17 + index as u64))
+                .collect::<Vec<_>>()
+                .into(),
+            segments: vec![EvaluationTraceSegment {
+                physical_coefficient_start: 8,
+                global_block_start: 1,
+                block_count: 2,
+            }],
+        }],
+        physical_field_len: 64,
+        num_vars: 6,
+    };
+    let output_scale = F::from_u64(29);
+    let expected = materialize_semantic_trace_oracle(&weights, output_scale);
+    let point = (0..weights.num_vars)
+        .map(|index| F::from_u64(31 + index as u64))
+        .collect::<Vec<_>>();
+
+    for coeff_count in [2, 4] {
+        let prepared = PreparedProverEvaluationTrace::new(&weights, coeff_count, output_scale)
+            .expect("projected trace geometry");
+        assert_eq!(prepared.materialize_dense(), expected);
+        assert_eq!(
+            fold_prepared_trace_at_point(prepared, expected.len(), coeff_count, &point),
+            multilinear_eval(&expected, &point).unwrap()
+        );
     }
 }
 

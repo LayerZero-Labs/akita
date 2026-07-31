@@ -3,14 +3,8 @@
 use super::fold_two_round_quad;
 use std::{mem, sync::Arc};
 
-#[cfg(test)]
-use akita_algebra::offset_eq::eval_affine_digit_intervals;
-#[cfg(test)]
-use akita_algebra::poly::multilinear_eval;
 use akita_field::{AkitaError, FieldCore};
 use akita_field::{CanonicalField, ExtField, FromPrimitiveInt, Invertible};
-#[cfg(test)]
-use akita_types::basis_weights;
 use akita_types::{
     basis_weights_prefix, prepare_evaluation_trace_group_parameters, BasisMode,
     EvaluationTraceInputs, FpExtEncoding,
@@ -46,58 +40,6 @@ pub(crate) struct EvaluationTraceWeights<E: FieldCore> {
     physical_field_len: usize,
     #[cfg(test)]
     num_vars: usize,
-}
-
-impl<E: FieldCore> EvaluationTraceWeights<E> {
-    #[cfg(test)]
-    fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
-        if point.len() != self.num_vars {
-            return Err(AkitaError::InvalidSize {
-                expected: self.num_vars,
-                actual: point.len(),
-            });
-        }
-        let mut evaluation = E::zero();
-        for term in &self.terms {
-            if term.source_ring_dimension == 0 || !term.source_ring_dimension.is_power_of_two() {
-                return Err(AkitaError::InvalidSetup(
-                    "trace source ring dimension must be a power of two".into(),
-                ));
-            }
-            let coefficient_bits = term.source_ring_dimension.trailing_zeros() as usize;
-            let (coefficient_point, column_point) = point
-                .split_at_checked(coefficient_bits)
-                .ok_or(AkitaError::InvalidProof)?;
-            let inner_trace_evaluation = multilinear_eval(&term.inner_trace, coefficient_point)?;
-            let low_bits = term.block_opening_point.len() / 2;
-            let low_weights = basis_weights(&term.block_opening_point[..low_bits], term.basis)?;
-            let high_weights = basis_weights(&term.block_opening_point[low_bits..], term.basis)?;
-            let mut term_evaluation = E::zero();
-            for segment in &term.segments {
-                if !segment
-                    .physical_coefficient_start
-                    .is_multiple_of(term.source_ring_dimension)
-                {
-                    return Err(AkitaError::InvalidSetup(
-                        "trace segment is not source-ring aligned".into(),
-                    ));
-                }
-                term_evaluation += eval_affine_digit_intervals(
-                    column_point,
-                    &[segment.physical_coefficient_start / term.source_ring_dimension],
-                    segment.global_block_start,
-                    segment.block_count,
-                    term.opening_digit_weights.len(),
-                    1,
-                    &term.opening_digit_weights,
-                    &high_weights,
-                    &low_weights,
-                )?;
-            }
-            evaluation += term.coefficient * inner_trace_evaluation * term_evaluation;
-        }
-        Ok(evaluation)
-    }
 }
 
 /// Build one canonical prover term per opening claim and witness chunk.

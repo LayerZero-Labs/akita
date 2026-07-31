@@ -2,8 +2,8 @@ use super::types::ProjectedEqPairTensor;
 use super::*;
 use akita_algebra::{
     offset_eq::{
-        contract_eq_tensor_left, eval_eq_pair_tensor_families, materialize_eq_tensor_left,
-        EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
+        eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis,
+        EqPairTensorFamily, OffsetEqWindow,
     },
     ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
 };
@@ -66,56 +66,6 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             self.relation_address.equality_window(),
             &projected,
             output_len,
-        )
-    }
-
-    pub(super) fn contract_role_tensor_weights(
-        &self,
-        ratio: usize,
-        tensors: &[EqPairTensorFamily<E>],
-        left_weights: &[E],
-        alpha: E,
-    ) -> Result<E, AkitaError> {
-        if ratio == 1 {
-            return contract_eq_tensor_left(
-                self.relation_address.equality_window(),
-                tensors,
-                left_weights,
-            );
-        }
-        if role_tensors_are_aligned(tensors, ratio) {
-            let low_variable_count = ratio.trailing_zeros() as usize;
-            let point = self.relation_address.point();
-            let low_point = point
-                .get(..low_variable_count)
-                .ok_or(AkitaError::InvalidProof)?;
-            let high_point = point
-                .get(low_variable_count..)
-                .ok_or(AkitaError::InvalidProof)?;
-            let factored = factor_aligned_role_tensors(tensors, ratio)?;
-            let equality = OffsetEqWindow::new(high_point)?;
-            let contraction = contract_eq_tensor_left(&equality, &factored, left_weights)?;
-            let projection = role_projection_evaluation(
-                alpha,
-                self.projection_geometry.base_ring_dim(),
-                low_point,
-            )?;
-            return Ok(if projection == E::one() {
-                contraction
-            } else {
-                projection * contraction
-            });
-        }
-        let projected = project_role_tensors(
-            tensors,
-            ratio,
-            alpha,
-            self.projection_geometry.base_ring_dim(),
-        )?;
-        contract_eq_tensor_left(
-            self.relation_address.equality_window(),
-            &projected,
-            left_weights,
         )
     }
 
