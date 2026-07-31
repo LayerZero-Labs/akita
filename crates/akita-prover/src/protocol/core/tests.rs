@@ -27,7 +27,7 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
     let groups = vec![ExtensionOpeningGroupInput {
         polynomials: vec![&logical_w],
-        point: point.to_vec(),
+        point: &point,
         ring_dimension: 64,
     }];
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
@@ -62,12 +62,12 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let groups = vec![
         ExtensionOpeningGroupInput {
             polynomials: vec![&short_witness],
-            point: short_point,
+            point: &short_point,
             ring_dimension: 64,
         },
         ExtensionOpeningGroupInput {
             polynomials: vec![&long_witness],
-            point: long_point.clone(),
+            point: &long_point,
             ring_dimension: 64,
         },
     ];

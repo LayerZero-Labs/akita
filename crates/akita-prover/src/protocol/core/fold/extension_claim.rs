@@ -9,36 +9,13 @@ use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::AdditiveGroup;
 use akita_types::dispatch_for_field;
 
-pub(in crate::protocol::core) fn extension_opening_group_inputs<'a, E, P, F>(
-    claims: &ProverOpeningData<'a, E, P, F>,
-    level_params: &CommittedGroupParams,
-) -> Result<Vec<ExtensionOpeningGroupInput<'a, E, P>>, AkitaError>
-where
-    E: FieldCore,
-    F: FieldCore,
-{
-    let opening_batch = claims.opening_claims().layout()?;
-    (0..opening_batch.num_groups())
-        .map(|group_index| {
-            let ring_dimension = level_params
-                .group_role_dims(&opening_batch, group_index)?
-                .d_a();
-            Ok(ExtensionOpeningGroupInput {
-                polynomials: claims.group_polys(group_index)?.to_vec(),
-                point: claims.opening_claims().group_point(group_index)?.to_vec(),
-                ring_dimension,
-            })
-        })
-        .collect()
-}
-
 /// Prepare a fold level when claims live in a proper extension of the coefficient field.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V, C, O, TS, R>(
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_inputs: Vec<ExtensionOpeningGroupInput<'a, E, P>>,
+    eor_polynomial_groups: Vec<Vec<&'a P>>,
     pad_base_evals: bool,
     transcript: &mut T,
     validate_non_eor: V,
@@ -72,6 +49,30 @@ where
     let fold_polys = block_claims.flat_polys();
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
+        if eor_polynomial_groups.len() != opening_batch.num_groups() {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening source group count mismatch".to_string(),
+            ));
+        }
+        let eor_inputs = eor_polynomial_groups
+            .into_iter()
+            .enumerate()
+            .map(|(group_index, polynomials)| {
+                let group_layout = opening_batch.group_layout(group_index)?;
+                if polynomials.len() != group_layout.num_polynomials() {
+                    return Err(AkitaError::InvalidInput(
+                        "extension-opening source polynomial count mismatch".to_string(),
+                    ));
+                }
+                Ok(ExtensionOpeningGroupInput {
+                    polynomials,
+                    point: block_claims.opening_claims().group_point(group_index)?,
+                    ring_dimension: level_params
+                        .group_role_dims(&opening_batch, group_index)?
+                        .d_a(),
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
         let proved = prove_extension_opening_reduction::<F, E, T, P, TS>(
             tensor.backend(),
             Some(tensor.prepared()),

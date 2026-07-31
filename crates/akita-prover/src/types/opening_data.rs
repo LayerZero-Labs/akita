@@ -4,8 +4,9 @@ use crate::compute::RootPolyMeta;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    AkitaCommitmentHint, Commitment, CommittedGroupParams, OpeningClaims, OpeningClaimsLayout,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
+    normalize_recursive_opening_point, AkitaCommitmentHint, Commitment, CommittedGroupParams,
+    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, RingVec,
+    SetupPrefixSlot,
 };
 
 /// Prover opening input: public claims plus prover-only hints and polynomials.
@@ -277,8 +278,7 @@ where
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
         commitment: CommitmentWithHint<CommitF>,
     ) -> Result<Self, AkitaError> {
-        let mut padded_point = opening_point.to_vec();
-        padded_point.resize(recursive_num_vars, PointF::zero());
+        let padded_point = normalize_recursive_opening_point(opening_point, recursive_num_vars)?;
         let claims = PolynomialGroupClaims::new(padded_point, vec![PointF::zero()], commitment.0)?;
         ProverOpeningData::new(
             OpeningClaims::from_groups(vec![claims])?,
@@ -299,14 +299,8 @@ where
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
         witness_commitment: CommitmentWithHint<CommitF>,
     ) -> Result<Self, AkitaError> {
-        if opening_point.len() > recursive_num_vars {
-            return Err(AkitaError::InvalidPointDimension {
-                expected: recursive_num_vars,
-                actual: opening_point.len(),
-            });
-        }
-        let mut padded_witness_point = opening_point.to_vec();
-        padded_witness_point.resize(recursive_num_vars, PointF::zero());
+        let padded_witness_point =
+            normalize_recursive_opening_point(opening_point, recursive_num_vars)?;
 
         match (setup_prefix_opening, setup_slot, setup_polys) {
             (
