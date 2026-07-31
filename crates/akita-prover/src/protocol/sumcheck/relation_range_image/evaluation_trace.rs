@@ -88,6 +88,7 @@ impl<E: FieldCore> EvaluationTraceWeights<E> {
                     segment.global_block_start,
                     segment.block_count,
                     term.opening_digit_weights.len(),
+                    1,
                     &term.opening_digit_weights,
                     &high_weights,
                     &low_weights,

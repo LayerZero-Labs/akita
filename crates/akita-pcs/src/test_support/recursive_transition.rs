@@ -58,8 +58,8 @@ where
                 outer: middle_bd_ring_dim,
                 opening: middle_bd_ring_dim,
             };
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             for descriptor in &key.precommitteds {
                 if descriptor.inner_ring_dimension != Root::D
                     || descriptor.outer_ring_dimension != root_bd_ring_dim

@@ -964,7 +964,7 @@ impl CommittedGroupParams {
                 .ok_or(AkitaError::InvalidProof)?
                 .role_dims(self.open_commit_matrix.ring_dimension())
         };
-        dims.validate_a_carrier()?;
+        dims.validate_role_projection()?;
         Ok(dims)
     }
 

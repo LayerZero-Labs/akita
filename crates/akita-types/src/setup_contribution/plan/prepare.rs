@@ -35,7 +35,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|group| {
                 let role_dims = level_params.group_role_dims(opening_batch, group.group_id)?;
                 let (b_subcolumns, d_subcolumns) =
-                    SetupProjectionGeometry::a_carrier_subcolumn_counts(role_dims)?;
+                    SetupProjectionGeometry::native_role_subcolumn_counts(role_dims)?;
                 let raw_d_cols = group.d_active_cols(level_params, opening_batch)?;
                 Ok((role_dims, b_subcolumns, d_subcolumns, raw_d_cols))
             })
@@ -230,40 +230,51 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     .groups
                     .get(group_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                (
+                let e = {
+                    let _span = tracing::info_span!("setup_materialize_e_weights").entered();
                     self.materialize_role_tensor_weights(
                         group.d_ratio,
                         &group.d_tensors,
                         group.d_col_range.len(),
                         alpha,
-                    )?,
+                    )?
+                };
+                let t = {
+                    let _span = tracing::info_span!("setup_materialize_t_weights").entered();
                     self.materialize_role_tensor_weights(
                         group.b_ratio,
                         &group.b_tensors,
                         group.t_cols,
                         alpha,
-                    )?,
+                    )?
+                };
+                let z = {
+                    let _span = tracing::info_span!("setup_materialize_z_weights").entered();
                     self.materialize_role_tensor_weights(
                         group.a_ratio,
                         &group.a_tensors,
                         group.z_cols,
                         alpha,
-                    )?,
-                )
+                    )?
+                };
+                (e, t, z)
             };
             let group = self
                 .groups
                 .get_mut(group_index)
                 .ok_or(AkitaError::InvalidProof)?;
             group.direct_scan_weights = Some(DirectScanWeights { e, t, z });
-            group.refresh_segments(
-                &self.d_weights,
-                self.d_rows,
-                self.d_physical_cols,
-                group.a_ratio,
-                group.b_ratio,
-                group.d_ratio,
-            )?;
+            {
+                let _span = tracing::info_span!("setup_materialize_scan_segments").entered();
+                group.refresh_segments(
+                    &self.d_weights,
+                    self.d_rows,
+                    self.d_physical_cols,
+                    group.a_ratio,
+                    group.b_ratio,
+                    group.d_ratio,
+                )?;
+            }
         }
         Ok(())
     }

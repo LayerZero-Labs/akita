@@ -239,20 +239,20 @@ pub fn decomposed_w_ring_count(
         .checked_mul(num_polynomials)
 }
 
-/// Convert an A-carrier ring-column count into the physical column count of a
-/// lower-dimensional B or D role.
+/// Convert an A-native ring-column count into the physical column count of a
+/// projected B- or D-native role.
 ///
-/// The role dimension must divide the carrier dimension exactly.
+/// The role dimension must divide the source dimension exactly.
 #[inline]
 pub fn projected_role_ring_count(
-    carrier_dimension: usize,
+    source_dimension: usize,
     role_dimension: usize,
     native_ring_count: usize,
 ) -> Option<usize> {
-    if role_dimension == 0 || !carrier_dimension.is_multiple_of(role_dimension) {
+    if role_dimension == 0 || !source_dimension.is_multiple_of(role_dimension) {
         return None;
     }
-    native_ring_count.checked_mul(carrier_dimension / role_dimension)
+    native_ring_count.checked_mul(source_dimension / role_dimension)
 }
 
 #[cfg(test)]

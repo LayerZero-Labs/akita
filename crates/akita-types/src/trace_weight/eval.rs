@@ -596,6 +596,7 @@ where
                 unit.global_block_start(),
                 unit.num_live_blocks(),
                 layout.num_digits_open,
+                1,
                 &gadget_row,
                 &high_weights,
                 &low_weights,

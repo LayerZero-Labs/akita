@@ -365,12 +365,7 @@ fn materialize_dense_left_overlap<F: FieldCore>(
     let mut charged = 0usize;
     charge_work(&mut charged, work)?;
 
-    let mut output = vec![F::zero(); output_len];
-    cfg_iter_mut!(output
-        .get_mut(destination_start..destination_end)
-        .ok_or(AkitaError::InvalidProof)?)
-    .enumerate()
-    .try_for_each(|(coordinate, destination)| {
+    let evaluate_coordinate = |(coordinate, destination): (usize, &mut F)| {
         for view in &views {
             let axis = view
                 .family
@@ -393,7 +388,22 @@ fn materialize_dense_left_overlap<F: FieldCore>(
             )?;
         }
         Ok::<_, AkitaError>(())
-    })?;
+    };
+    let mut output = vec![F::zero(); output_len];
+    let destination = output
+        .get_mut(destination_start..destination_end)
+        .ok_or(AkitaError::InvalidProof)?;
+    const PARALLEL_THRESHOLD: usize = 1 << 14;
+    if work >= PARALLEL_THRESHOLD {
+        cfg_iter_mut!(destination)
+            .enumerate()
+            .try_for_each(evaluate_coordinate)?;
+    } else {
+        destination
+            .iter_mut()
+            .enumerate()
+            .try_for_each(evaluate_coordinate)?;
+    }
     Ok(Some(output))
 }
 

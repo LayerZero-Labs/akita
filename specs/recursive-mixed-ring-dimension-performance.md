@@ -65,7 +65,7 @@ footprints, but verification is still about twice as slow.
 ### 1. Mixed root projections create more verifier work
 
 The root changes from uniform D64 to `256/128/128`. A is twice the common
-relation dimension, so each A carrier contains two D128 relation lanes. The B
+relation dimension, so each A-native source ring projects to two D128 relation lanes. The B
 and D portions of the relation require corresponding projected subcolumns.
 
 The setup-prefix geometry changes as follows:
@@ -82,7 +82,7 @@ has:
 
 - twice the flat field domain;
 - an additional coefficient-axis sumcheck round;
-- extra B/D subcolumns induced by the A carrier ratio;
+- extra B/D subcolumns induced by the A-to-role projection ratio;
 - more setup-index weight evaluation work.
 
 This explains why proof bytes are a poor proxy for verifier work here. The
@@ -146,7 +146,7 @@ requested dimension tuple.
 
 Uniform D64 had hidden two independent-dimension assumptions:
 
-1. `active_setup_field_len` omitted B/D carrier subcolumns. For the mixed root
+1. `active_setup_field_len` omitted B/D projection subcolumns. For the mixed root
    it planned exactly half of the required prefix.
 2. `commit_setup_prefix` used the prefix source dimension for its B
    commitment. A D128 source with a D64 B matrix serialized rows at twice the
@@ -235,7 +235,7 @@ That policy can legitimately choose a verifier-slower schedule, because proof
 bytes do not price:
 
 - setup-projection evaluation terms;
-- carrier subcolumns;
+- native projection subcolumns;
 - sumcheck round count;
 - equality-window and setup-index weight work;
 - per-role ring arithmetic.
@@ -283,7 +283,7 @@ point now requires an explicit dimension domain.
 Implemented:
 
 - `RingDimensionSearchDomain` accepts explicit `(d_a, d_b, d_d)` tuples,
-  canonicalizes their order, removes duplicates, validates the A carrier, and
+  canonicalizes their order, removes duplicates, validates each native role projection, and
   requires every role dimension to divide the setup-generation dimension.
 - `find_schedule` searches the supplied domain with
   `PlannerPolicy::ring_dimension` interpreted as the setup-generation

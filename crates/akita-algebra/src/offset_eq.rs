@@ -58,7 +58,8 @@ impl<F: FieldCore> AffineWeight<F> for F {
 ///
 /// ```text
 /// Σ_base Σ_i Σ_d high[i / Q] · low[i % Q] · digit[d]
-///     · eq(challenges, base + outer_stride · (i - outer_start) + d).
+///     · eq(challenges,
+///          base + outer_stride · (i - outer_start) + digit_stride · d).
 /// ```
 ///
 /// `Q` must be a power of two. The implementation splits the equality point at
@@ -84,6 +85,7 @@ pub fn eval_affine_digit_intervals<F, A>(
     outer_start: usize,
     live_len: usize,
     outer_stride: usize,
+    digit_stride: usize,
     digit_weights: &[F],
     high_weights: &[A],
     low_weights: &[A],
@@ -100,10 +102,18 @@ where
         return Ok(template.zero_like());
     }
     let low_len = low_weights.len();
-    if !low_len.is_power_of_two() || digit_weights.is_empty() || outer_stride < digit_weights.len()
+    let digit_span = digit_weights
+        .len()
+        .checked_sub(1)
+        .and_then(|count| count.checked_mul(digit_stride))
+        .ok_or_else(|| AkitaError::InvalidInput("affine digit span overflow".into()))?;
+    if !low_len.is_power_of_two()
+        || digit_weights.is_empty()
+        || digit_stride == 0
+        || outer_stride <= digit_span
     {
         return Err(AkitaError::InvalidInput(
-            "affine digit geometry requires power-of-two low length and a stride covering every digit"
+            "affine digit geometry requires power-of-two low length and an outer stride covering every strided digit"
                 .into(),
         ));
     }
@@ -133,7 +143,7 @@ where
         .ok_or_else(|| AkitaError::InvalidInput("affine carry count overflow".into()))?;
     let address_span = outer_stride
         .checked_mul(live_len - 1)
-        .and_then(|delta| delta.checked_add(digit_count - 1))
+        .and_then(|delta| delta.checked_add(digit_span))
         .ok_or_else(|| AkitaError::InvalidInput("affine address overflow".into()))?;
     for &base_offset in base_offsets {
         let max_address = base_offset
@@ -207,6 +217,7 @@ where
             base_offsets,
             outer_start,
             outer_stride,
+            digit_stride,
             digit_weights,
             high_weights,
             low_weights,
@@ -224,6 +235,7 @@ where
             base_offsets,
             outer_start,
             outer_stride,
+            digit_stride,
             digit_weights,
             high_weights,
             low_weights,
@@ -241,6 +253,7 @@ where
             base_offsets,
             outer_start,
             outer_stride,
+            digit_stride,
             digit_weights,
             high_weights,
             low_weights,
@@ -261,6 +274,7 @@ fn accumulate_affine_rows<F, A>(
     base_offsets: &[usize],
     outer_start: usize,
     outer_stride: usize,
+    digit_stride: usize,
     digit_weights: &[F],
     high_weights: &[A],
     low_weights: &[A],
@@ -318,6 +332,7 @@ where
             eq_low_table.as_deref(),
             address_low,
             outer_stride,
+            digit_stride,
             low_len,
             low_start,
             low_end,
@@ -387,6 +402,7 @@ fn build_affine_low_summaries<F, A>(
     eq_low_table: Option<&[F]>,
     address_low: usize,
     outer_stride: usize,
+    digit_stride: usize,
     low_len: usize,
     low_start: usize,
     low_end: usize,
@@ -400,20 +416,22 @@ where
 {
     // Geometric digit windows share one prefix scan. Other weights use the
     // dense low summary, still once per distinct low-address residue.
-    if let Some(table) = eq_low_table {
-        if let Some(summaries) = build_geometric_low_summaries(
-            template,
-            table,
-            address_low,
-            outer_stride,
-            low_len,
-            low_start,
-            low_end,
-            digit_weights,
-            low_weights,
-            carry_count,
-        )? {
-            return Ok(summaries);
+    if digit_stride == 1 {
+        if let Some(table) = eq_low_table {
+            if let Some(summaries) = build_geometric_low_summaries(
+                template,
+                table,
+                address_low,
+                outer_stride,
+                low_len,
+                low_start,
+                low_end,
+                digit_weights,
+                low_weights,
+                carry_count,
+            )? {
+                return Ok(summaries);
+            }
         }
     }
     let low_mask = low_len - 1;
@@ -426,9 +444,12 @@ where
             .checked_mul(low - low_start)
             .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
         for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+            let digit_offset = digit_stride
+                .checked_mul(digit)
+                .ok_or_else(|| AkitaError::InvalidInput("affine digit offset overflow".into()))?;
             let shifted = address_low
                 .checked_add(low_delta)
-                .and_then(|value| value.checked_add(digit))
+                .and_then(|value| value.checked_add(digit_offset))
                 .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
             let carry = shifted / low_len;
             let low_index = shifted & low_mask;
@@ -865,9 +886,17 @@ impl<F: FieldCore> OffsetEqWindow<F> {
         start
             .checked_add(output.len())
             .ok_or_else(|| AkitaError::InvalidInput("equality interval overflow".into()))?;
-        cfg_iter_mut!(output)
-            .enumerate()
-            .for_each(|(offset, value)| *value = self.eval(start + offset));
+        const PARALLEL_THRESHOLD: usize = 1 << 14;
+        if output.len() >= PARALLEL_THRESHOLD {
+            cfg_iter_mut!(output)
+                .enumerate()
+                .for_each(|(offset, value)| *value = self.eval(start + offset));
+        } else {
+            output
+                .iter_mut()
+                .enumerate()
+                .for_each(|(offset, value)| *value = self.eval(start + offset));
+        }
         Ok(())
     }
 }

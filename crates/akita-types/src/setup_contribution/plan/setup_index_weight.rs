@@ -47,7 +47,12 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 low_point,
             )?;
             if projection != E::one() {
-                cfg_iter_mut!(weights).for_each(|weight| *weight *= projection);
+                const PARALLEL_THRESHOLD: usize = 1 << 14;
+                if weights.len() >= PARALLEL_THRESHOLD {
+                    cfg_iter_mut!(weights).for_each(|weight| *weight *= projection);
+                } else {
+                    weights.iter_mut().for_each(|weight| *weight *= projection);
+                }
             }
             return Ok(weights);
         }
@@ -422,7 +427,7 @@ fn build_group_role_tensors<E: FieldCore>(
     witness_layout: &WitnessLayout,
 ) -> Result<[Vec<EqPairTensorFamily<E>>; 3], AkitaError> {
     let (b_subcolumns, d_subcolumns) =
-        SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
     let source_lanes = group.a_ratio;
     let a_relation_ring_stride = source_lanes;
 

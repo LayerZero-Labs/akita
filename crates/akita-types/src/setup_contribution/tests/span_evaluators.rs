@@ -93,7 +93,7 @@ pub(super) fn structured_slice_reference(
 ) -> F {
     let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
     let (outer_subcolumns, opening_subcolumns) =
-        SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims).unwrap();
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
     let role_dims = group.role_dims;
     let alpha_powers = scalar_powers(alpha, role_dims.d_a());
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);

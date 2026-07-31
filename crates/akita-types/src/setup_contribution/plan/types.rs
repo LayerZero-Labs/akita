@@ -328,7 +328,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     ///
     /// The D-role slice is laid out
     /// `(claim, block, opening_subcolumn, opening_digit)`, the B-role slice
-    /// `(claim, block, A_row, commit_digit, outer_subcolumn)`, and the A-role
+    /// `(claim, block, A_row, outer_subcolumn, commit_digit)`, and the A-role
     /// slice `(position, witness_digit)` after contraction over units and fold
     /// digits. Subcolumn axes have length one for uniform roles.
     /// The direct ring-switch verifier reuses all three instead of evaluating

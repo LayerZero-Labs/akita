@@ -19,14 +19,14 @@ pub(super) fn sis_key_at_dimension(
 pub(super) fn projected_collision_role_price(
     policy: &PlannerPolicy,
     role: akita_types::SisMatrixRole,
-    carrier_dimension: usize,
+    source_dimension: usize,
     role_dimension: usize,
     native_width: usize,
     log_basis: u32,
 ) -> Option<(SisTableKey, usize)> {
     if role == akita_types::SisMatrixRole::Inner
         || role_dimension == 0
-        || !carrier_dimension.is_multiple_of(role_dimension)
+        || !source_dimension.is_multiple_of(role_dimension)
     {
         return None;
     }
@@ -38,7 +38,7 @@ pub(super) fn projected_collision_role_price(
         log_basis,
     )?;
     let physical_width = akita_types::sis::projected_role_ring_count(
-        carrier_dimension,
+        source_dimension,
         role_dimension,
         native_width,
     )?;
@@ -54,7 +54,7 @@ mod tests {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot};
 
     #[test]
-    fn projected_width_uses_exact_carrier_ratio() {
+    fn projected_width_uses_exact_source_ratio() {
         let policy = policy_of::<D256OneHot>();
         let (_, width) = projected_collision_role_price(
             &policy,

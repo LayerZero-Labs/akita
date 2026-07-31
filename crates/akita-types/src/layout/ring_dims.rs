@@ -41,9 +41,9 @@ pub enum RingRole {
 
 /// Per-fold ring dimensions of the A, B, and D commitment matrices.
 ///
-/// A is the relation-witness carrier, so `inner >= outer` and
-/// `inner >= opening`. B and D are independent: neither is ordered relative to
-/// the other.
+/// Z, E, and T are produced over the A-native source ring. B- and D-native
+/// projections therefore require `inner >= outer` and `inner >= opening`.
+/// B and D are independent: neither is ordered relative to the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRingDims {
     /// Fold / ring-switch / inner-commitment ring (`d_a`).
@@ -64,12 +64,12 @@ impl CommitmentRingDims {
         }
     }
 
-    /// Validate the representation-level A-carrier geometry independently of
-    /// production dispatch and challenge catalogs.
+    /// Validate the representation-level native projection geometry
+    /// independently of production dispatch and challenge catalogs.
     ///
     /// This permits small dimensions in arithmetic/layout tests while keeping
     /// the same ordering contract used by [`validate_role_dims`].
-    pub fn validate_a_carrier(self) -> Result<(), AkitaError> {
+    pub fn validate_role_projection(self) -> Result<(), AkitaError> {
         for (role, d) in [
             (RingRole::Inner, self.inner),
             (RingRole::Outer, self.outer),
@@ -326,7 +326,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
 }
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
-    dims.validate_a_carrier()?;
+    dims.validate_role_projection()?;
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",

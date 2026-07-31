@@ -34,7 +34,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         let commitment_gadget = extension_gadget::<F, E>(group.depth_commit, group.log_basis_outer);
         let witness_gadget = extension_gadget::<F, E>(group.depth_witness, group.log_basis_inner);
         let (outer_subcolumns, opening_subcolumns) =
-            SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
+            SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims)?;
         let opening_scales = (opening_subcolumns != 1)
             .then(|| scalar_powers_with_stride(alpha, group.role_dims.d_d(), opening_subcolumns))
             .transpose()?;

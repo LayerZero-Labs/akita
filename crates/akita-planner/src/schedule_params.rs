@@ -85,7 +85,7 @@ pub struct RingDimensionSearchDomain {
 impl RingDimensionSearchDomain {
     /// Construct and canonicalize a non-empty dimension domain.
     ///
-    /// Every tuple must satisfy the A-carrier invariant, and every role
+    /// Every tuple must satisfy the native role-projection invariant, and every role
     /// dimension must divide `setup_generation_dimension`.
     pub fn new(
         setup_generation_dimension: usize,
@@ -105,7 +105,7 @@ impl RingDimensionSearchDomain {
             ));
         }
         for dims in &candidates {
-            dims.validate_a_carrier()?;
+            dims.validate_role_projection()?;
             for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
                 if !setup_generation_dimension.is_multiple_of(d) {
                     return Err(AkitaError::InvalidSetup(format!(

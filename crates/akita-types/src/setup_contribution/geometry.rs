@@ -183,12 +183,11 @@ impl SetupProjectionGeometry {
         })
     }
 
-    /// Number of native B- and D-role subcolumns in the current A-width
-    /// relation-witness carrier.
+    /// Number of B- and D-native subcolumns in one A-native source ring.
     ///
-    /// B and D are not ordered relative to each other. Both fit the A carrier
-    /// under the canonical role-dimension invariant.
-    pub fn a_carrier_subcolumn_counts(
+    /// B and D are not ordered relative to each other. Both dimensions divide
+    /// the A-native source dimension under the canonical projection invariant.
+    pub fn native_role_subcolumn_counts(
         role_dims: CommitmentRingDims,
     ) -> Result<(usize, usize), AkitaError> {
         let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
@@ -197,7 +196,7 @@ impl SetupProjectionGeometry {
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "current A-width relation witness cannot carry the B role".into(),
+                    "A-native source rings do not decompose into B-native subcolumns".into(),
                 )
             })?;
         let d_subcolumns = a_ratio
@@ -205,7 +204,7 @@ impl SetupProjectionGeometry {
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "current A-width relation witness cannot carry the D role".into(),
+                    "A-native source rings do not decompose into D-native subcolumns".into(),
                 )
             })?;
         if !b_subcolumns.is_power_of_two() || !d_subcolumns.is_power_of_two() {

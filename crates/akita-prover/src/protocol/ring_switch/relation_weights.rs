@@ -338,7 +338,7 @@ fn relation_d_group_width(
 ) -> Result<usize, AkitaError> {
     let group_lp = lp.group_params(opening_batch, group_index)?;
     let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-    let (_, d_subcolumns) = SetupProjectionGeometry::a_carrier_subcolumn_counts(group_dims)?;
+    let (_, d_subcolumns) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
     let num_claims = opening_batch.group_layout(group_index)?.num_polynomials();
     num_claims
         .checked_mul(group_lp.num_live_blocks())
@@ -542,7 +542,7 @@ where
         let group_d_a = group_dims.d_a();
         let group_d_b = group_dims.d_b();
         let group_d_d = group_dims.d_d();
-        let (b_ratio, d_ratio) = SetupProjectionGeometry::a_carrier_subcolumn_counts(group_dims)?;
+        let (b_ratio, d_ratio) = SetupProjectionGeometry::native_role_subcolumn_counts(group_dims)?;
         let group_alpha_pows_a = scalar_powers(alpha, group_d_a);
         let group_alpha_pows_b = scalar_powers(alpha, group_d_b);
         let group_alpha_pows_d = scalar_powers(alpha, group_d_d);

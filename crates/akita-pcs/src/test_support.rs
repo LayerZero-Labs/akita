@@ -478,7 +478,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error when the matrix dimensions do not fit the A carrier, an
+/// Returns an error when the matrix dimensions do not fit the A-native source, an
 /// exact matrix width falls outside the audited SIS table, or no terminating
 /// suffix can be planned.
 pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
@@ -546,7 +546,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
     )
 }
 
-/// Rebuild the B and D matrices from the final A-carrier geometry.
+/// Rebuild the B and D matrices from the final A-native projection geometry.
 ///
 /// The exact widths are the native committed digit counts multiplied by
 /// `d_a / d_b` and `d_a / d_d`. Deriving them from the final parameters is
@@ -563,7 +563,7 @@ fn retarget_commitment_matrices(
         outer: b_ring_dim,
         opening: d_ring_dim,
     };
-    dims.validate_a_carrier()?;
+    dims.validate_role_projection()?;
     let projected_width = |label: &str, native_width: usize, target_d: usize| {
         native_width
             .checked_mul(dims.d_a() / target_d)
@@ -888,8 +888,8 @@ where
                     "ring-dimension transition requires a singleton batch".into(),
                 ));
             }
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             if root_dims.d_a() != Root::D || middle_dims.d_a() != Mid::D {
                 return Err(AkitaError::InvalidSetup(
                     "ring-dimension transition A dimensions must match the Root and Mid policies"
@@ -991,7 +991,7 @@ where
             }
 
             // Rebuild root B/D after the optional A-only promotion. Widths are derived
-            // from the final A carrier, not from the stale planned D256 matrices.
+            // from the final A-native source, not from the stale planned D256 matrices.
             retarget_commitment_matrices(
                 &mut root.params.final_group.commitment,
                 num_polynomials,
@@ -1030,7 +1030,7 @@ where
             })?;
 
             let mut l1_step = planned_fold_step(l1);
-            // Rebuild L1 B/D from its final A carrier before planning the suffix.
+            // Rebuild L1 B/D from its final A-native source before planning the suffix.
             retarget_commitment_matrices(
                 &mut l1_step.params.witness,
                 num_polynomials,

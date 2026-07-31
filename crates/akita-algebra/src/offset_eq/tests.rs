@@ -618,6 +618,7 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
@@ -633,6 +634,44 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
             &high,
             &low,
         );
+        assert_eq!(got, expected);
+    }
+}
+
+#[test]
+fn affine_digit_interval_matches_independent_strided_digit_oracle() {
+    let mut rng = StdRng::seed_from_u64(0x57_12_1d_ed);
+    for &(low_len, high_len, outer_start, live_len, digits, outer_stride, digit_stride, base) in
+        &[(4, 4, 1, 11, 3, 9, 2, 3), (8, 3, 5, 13, 4, 17, 3, 6)]
+    {
+        let challenges = random_vec(&mut rng, 13);
+        let digit_weights = random_vec(&mut rng, digits);
+        let high = random_vec(&mut rng, high_len);
+        let low = random_vec(&mut rng, low_len);
+        let got = eval_affine_digit_intervals(
+            &challenges,
+            &[base],
+            outer_start,
+            live_len,
+            outer_stride,
+            digit_stride,
+            &digit_weights,
+            &high,
+            &low,
+        )
+        .unwrap();
+        let mut expected = F::zero();
+        for outer in outer_start..outer_start + live_len {
+            for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                expected += high[outer / low.len()]
+                    * low[outer % low.len()]
+                    * digit_weight
+                    * eq_eval_at_index(
+                        &challenges,
+                        base + outer_stride * (outer - outer_start) + digit_stride * digit,
+                    );
+            }
+        }
         assert_eq!(got, expected);
     }
 }
@@ -658,7 +697,7 @@ fn affine_digit_interval_handles_boolean_challenges_without_inversion() {
         F::from_u64(29),
     ];
     let got =
-        eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, &digits, &high, &low).unwrap();
+        eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high, &low).unwrap();
     assert_eq!(
         got,
         reference_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low)
@@ -676,6 +715,7 @@ fn affine_digit_interval_rejects_work_above_cap() {
         0,
         1 << 14,
         1 << 14,
+        1,
         &digits,
         &[F::one()],
         &low,
@@ -692,6 +732,7 @@ fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
         0,
         2,
         2,
+        1,
         &[F::one()],
         &[F::one()],
         &[F::one(), F::one()],
@@ -1088,6 +1129,7 @@ fn affine_digit_interval_matches_reference() {
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
@@ -1140,6 +1182,7 @@ fn affine_digit_interval_matches_boolean_challenges() {
             outer_start,
             live_len,
             5,
+            1,
             &digit_weights,
             &high,
             &low,
@@ -1166,6 +1209,7 @@ fn affine_digit_intervals_batch_matches_independent_families() {
             1,
             63,
             7,
+            1,
             &digit_weights,
             &high,
             &low,
@@ -1207,6 +1251,7 @@ fn affine_digit_intervals_many_short_families_avoid_quadratic_bucketing() {
         0,
         1,
         outer_stride,
+        1,
         &[F::one()],
         &[F::one()],
         &[F::one()],
@@ -1250,6 +1295,7 @@ fn affine_digit_interval_bench() {
                     0,
                     live_len,
                     stride,
+                    1,
                     &digit_weights,
                     &high,
                     &low,
@@ -1317,6 +1363,7 @@ fn affine_digit_interval_matches_geometric_digits() {
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
@@ -1368,6 +1415,7 @@ fn affine_digit_interval_bench_geometric() {
                     0,
                     live_len,
                     stride,
+                    1,
                     &digit_weights,
                     &high,
                     &low,
