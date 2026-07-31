@@ -95,8 +95,6 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     let group = &slot.commitment_params;
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
-        d_setup: group.layout.inner_commit_matrix.ring_dimension() as u32,
-        num_digits_fold: group.num_digits_fold as u32,
         commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
                 live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
@@ -337,10 +335,8 @@ fn emit_partition(value: GeneratedWitnessPartition) -> String {
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, num_digits_fold: {}, commitment: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, commitment: {} }})",
             value.natural_len,
-            value.d_setup,
-            value.num_digits_fold,
             emit_committed_group(value.commitment)
         ),
         None => "None".to_string(),
@@ -500,12 +496,13 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    protocol_epoch: {protocol_epoch},\n",
             "    cost_model: PlannerCostModelId::{cost_model},\n",
             "    selection_policy: SelectionPolicyId::{selection_policy},\n",
-            "    max_setup_envelope_field_elements: {max_setup_envelope_field_elements},\n",
+            "    max_num_setup_field_elements: {max_num_setup_field_elements},\n",
             "    min_offloaded_witness_contraction: {min_offloaded_witness_contraction},\n",
             "    sis_modulus_profile: {sis_modulus_profile},\n",
             "    sis_security_policy: SisSecurityPolicyId::{sis_security_policy},\n",
             "    sis_table_digest: SisTableDigest({sis_table_digest}),\n",
-            "    ring_dimension: {ring_dimension},\n",
+            "    uniform_ring_dimension: {uniform_ring_dimension},\n",
+            "    setup_prefix_inner_ring_dimension: {setup_prefix_inner_ring_dimension},\n",
             "    decomposition: {decomposition},\n",
             "    ring_subfield_norm_bound: {ring_subfield_norm_bound},\n",
             "    claim_ext_degree: {claim_ext_degree},\n",
@@ -525,12 +522,13 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         protocol_epoch = identity.protocol_epoch,
         cost_model = identity.cost_model.name(),
         selection_policy = identity.selection_policy.name(),
-        max_setup_envelope_field_elements = identity.max_setup_envelope_field_elements,
+        max_num_setup_field_elements = identity.max_num_setup_field_elements,
         min_offloaded_witness_contraction = identity.min_offloaded_witness_contraction,
         sis_modulus_profile = emit_sis_modulus_profile(identity.sis_modulus_profile),
         sis_security_policy = identity.sis_security_policy.name(),
         sis_table_digest = format_bytes(identity.sis_table_digest.0),
-        ring_dimension = identity.ring_dimension,
+        uniform_ring_dimension = identity.uniform_ring_dimension,
+        setup_prefix_inner_ring_dimension = identity.setup_prefix_inner_ring_dimension,
         decomposition = emit_decomposition(identity.decomposition),
         ring_subfield_norm_bound = identity.ring_subfield_norm_bound,
         claim_ext_degree = identity.claim_ext_degree,

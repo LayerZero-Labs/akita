@@ -176,7 +176,7 @@ impl CommitmentRingDims {
     }
 }
 
-/// Validate every fold level's per-role ring dimensions against the setup seed.
+/// Validate every fold level's per-role ring dimensions and setup capacity.
 ///
 /// Reads [`super::CommittedGroupParams::role_dims`] from each scheduled fold step; does
 /// not copy them into a separate plan object.
@@ -184,15 +184,17 @@ impl CommitmentRingDims {
 /// # Errors
 ///
 /// Returns [`AkitaError::InvalidSetup`] when any catalog, key-consistency,
-/// seed-divisibility, or witness-length check fails.
+/// setup-capacity, or witness-length check fails.
 pub fn validate_schedule_ring_dims(
     schedule: &FoldSchedule,
     seed: &AkitaSetupSeed,
 ) -> Result<(), AkitaError> {
-    if seed.gen_ring_dim == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "gen_ring_dim must be non-zero".to_string(),
-        ));
+    let required_num_field_elements = crate::setup_matrix_field_elements_for_schedule(schedule)?;
+    if seed.num_field_elements < required_num_field_elements {
+        return Err(AkitaError::InvalidSetup(format!(
+            "setup has {} field elements but schedule requires {required_num_field_elements}",
+            seed.num_field_elements
+        )));
     }
     let num_folds = schedule.num_fold_levels();
     if num_folds > MAX_FOLD_LEVELS {
@@ -208,18 +210,6 @@ pub fn validate_schedule_ring_dims(
         let dims = lp.role_dims();
         validate_role_dims(dims)?;
         validate_role_dims_match_keys(lp)?;
-        for (role, d) in [
-            (RingRole::Inner, dims.inner),
-            (RingRole::Outer, dims.outer),
-            (RingRole::Opening, dims.opening),
-        ] {
-            if !seed.gen_ring_dim.is_multiple_of(d) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "setup gen_ring_dim={} is not divisible by {:?} ring d={d}",
-                    seed.gen_ring_dim, role
-                )));
-            }
-        }
         if !input_witness_len.is_multiple_of(dims.inner) {
             return Err(AkitaError::InvalidSetup(format!(
                 "witness length {} is not divisible by fold ring d_a={}",
@@ -279,20 +269,7 @@ pub fn validate_schedule_ring_dims(
                 "root precommitted group {group_index} has an empty fold challenge"
             )));
         }
-        let dims = group.commitment.role_dims(shared_d);
-        validate_role_dims(dims)?;
-        for (role, d) in [
-            (RingRole::Inner, dims.d_a()),
-            (RingRole::Outer, dims.d_b()),
-            (RingRole::Opening, dims.d_d()),
-        ] {
-            if !seed.gen_ring_dim.is_multiple_of(d) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "setup gen_ring_dim={} is not divisible by root precommitted group {group_index} {role:?} ring d={d}",
-                    seed.gen_ring_dim
-                )));
-            }
-        }
+        validate_role_dims(group.commitment.role_dims(shared_d))?;
     }
     for (index, step) in schedule.recursive_folds.iter().enumerate() {
         let next_ring_d = schedule.recursive_folds.get(index + 1).map_or_else(
@@ -310,7 +287,6 @@ pub fn validate_schedule_ring_dims(
     let terminal_d = terminal.d_a();
     if terminal_d == 0
         || !SUPPORTED_RING_DIMS.contains(&terminal_d)
-        || !seed.gen_ring_dim.is_multiple_of(terminal_d)
         || !schedule
             .terminal
             .input_witness_len
@@ -318,8 +294,7 @@ pub fn validate_schedule_ring_dims(
         || terminal.inner_commit_matrix.sis_table_key().ring_dimension as usize != terminal_d
     {
         return Err(AkitaError::InvalidSetup(
-            "terminal inner ring dimension is inconsistent with setup or witness length"
-                .to_string(),
+            "terminal inner ring dimension is inconsistent with witness length".to_string(),
         ));
     }
     Ok(())

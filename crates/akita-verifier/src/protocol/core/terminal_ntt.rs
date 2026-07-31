@@ -144,9 +144,8 @@ mod tests {
                     AkitaSetupSeed {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
-                        gen_ring_dim: D,
-                        max_setup_len: matrix.len(),
-                        public_matrix_seed: [9; 32],
+                        num_field_elements: matrix.len(),
+                        public_matrix_id: [9; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(matrix),
                 ),
@@ -219,9 +218,8 @@ mod tests {
                     AkitaSetupSeed {
                         max_num_vars: 1,
                         max_num_batched_polys: 1,
-                        gen_ring_dim: D,
-                        max_setup_len: matrix.len(),
-                        public_matrix_seed: [8; 32],
+                        num_field_elements: matrix.len(),
+                        public_matrix_id: [8; 32].into(),
                     },
                     FlatMatrix::from_ring_slice(&matrix),
                 ),

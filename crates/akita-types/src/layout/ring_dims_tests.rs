@@ -63,27 +63,29 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
     }
 }
 
-fn seed(gen_ring_dim: usize) -> AkitaSetupSeed {
+fn seed(num_field_elements: usize) -> AkitaSetupSeed {
     AkitaSetupSeed {
         max_num_vars: 0,
         max_num_batched_polys: 0,
-        gen_ring_dim,
-        max_setup_len: 0,
-        public_matrix_seed: [0; 32],
+        num_field_elements,
+        public_matrix_id: [0; 32].into(),
     }
 }
 
 #[test]
 fn accepts_typed_root_and_terminal_ring_dimensions() {
     let schedule = schedule(committed(128), committed(64));
-    validate_schedule_ring_dims(&schedule, &seed(256)).expect("128 and 64 divide setup D");
+    let required = crate::setup_matrix_field_elements_for_schedule(&schedule).unwrap();
+    validate_schedule_ring_dims(&schedule, &seed(required))
+        .expect("exact field capacity covers mixed dimensions");
 }
 
 #[test]
-fn rejects_terminal_dimension_not_dividing_setup_dimension() {
+fn rejects_undersized_field_capacity() {
     let schedule = schedule(committed(128), committed(64));
+    let required = crate::setup_matrix_field_elements_for_schedule(&schedule).unwrap();
     assert!(matches!(
-        validate_schedule_ring_dims(&schedule, &seed(96)),
+        validate_schedule_ring_dims(&schedule, &seed(required - 1)),
         Err(AkitaError::InvalidSetup(_))
     ));
 }

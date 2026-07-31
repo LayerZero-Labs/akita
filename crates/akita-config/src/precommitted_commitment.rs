@@ -12,7 +12,7 @@ use akita_field::AkitaError;
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, AkitaScheduleLookupKey,
     CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity, SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -47,10 +47,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         if max_num_batched_polys == 0 {
             return Err(AkitaError::InvalidSetup(
                 "max_num_batched_polys must be at least 1".to_string(),
@@ -62,8 +62,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
             let params = Self::get_params_for_batched_commitment(&opening_batch)?;
             accumulate_matrix_field_elements_for_level(&params, &mut max_field_elements)?;
         }
-        Ok(SetupMatrixEnvelope {
-            max_setup_len: max_field_elements.div_ceil(Cfg::D),
+        Ok(SetupMatrixCapacity {
+            num_field_elements: max_field_elements,
         })
     }
 

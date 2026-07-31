@@ -7,13 +7,12 @@
 
 use akita_field::{CanonicalField, FieldCore, RandomSampling};
 use akita_prover::{commit_setup_prefix, AkitaProverSetup, CommitmentComputeBackend};
-use akita_types::{dispatch_for_field, FoldSchedule, NttCacheKey};
+use akita_types::{dispatch_for_field, FoldSchedule};
 
 /// Commit every missing `incoming_setup_prefix` slot referenced by `schedule`.
 ///
-/// Already-present registry entries are left untouched. NTT material is warmed
-/// for both the prefix source dimension and the outer commitment dimension
-/// before the slot is committed.
+/// Already-present registry entries are left untouched. Commitment kernels
+/// acquire their exact NTT prefixes lazily.
 pub fn materialize_schedule_setup_prefix_slots<F, B>(
     setup: &mut AkitaProverSetup<F>,
     backend: &B,
@@ -32,22 +31,11 @@ where
         if setup.prefix_slots.get(slot_id).is_some() {
             continue;
         }
-        for ring_d in [
-            slot_id.d_setup,
-            slot_id
-                .commitment_params
-                .layout
-                .outer_commit_matrix
-                .ring_dimension(),
-        ] {
-            let ntt_key = NttCacheKey::from_envelope(&setup.expanded, ring_d)?;
-            backend.ensure_ntt_slot(prepared, ntt_key)?;
-        }
         let n_prefix = slot_id.n_prefix()?;
         let slot = dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
-            slot_id.d_setup,
+            slot_id.d_setup(),
             |D_SETUP| {
                 commit_setup_prefix::<F, D_SETUP, B>(
                     &setup.expanded,

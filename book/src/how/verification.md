@@ -70,7 +70,7 @@ replay, it:
    dimension;
 5. checks root, recursive, setup-prefix, challenge, witness-partition, terminal
    response, and full terminal infinity-norm-cap geometry;
-6. checks that the schedule fits the setup envelope; and only then
+6. checks that the schedule fits the setup field capacity; and only then
 7. binds the instance descriptor and replays the proof.
 
 Private polynomial representations and honest-prover witness models are absent

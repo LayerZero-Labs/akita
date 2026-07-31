@@ -31,7 +31,7 @@ fn sis_key(
         table_digest: policy.sis_table_digest,
         modulus_profile: policy.sis_modulus_profile,
         role,
-        ring_dimension: policy.ring_dimension as u32,
+        ring_dimension: policy.uniform_ring_dimension as u32,
         coeff_linf_bound,
     }
 }
@@ -247,7 +247,7 @@ fn precommitted_groups_for_open_basis(
     let mut d_width = 0usize;
     for group in &groups {
         d_width = d_width
-            .checked_add(group.d_segment_width(policy.ring_dimension)?)
+            .checked_add(group.d_segment_width(policy.uniform_ring_dimension)?)
             .ok_or_else(|| AkitaError::InvalidSetup("multi-group D width overflow".to_string()))?;
     }
     Ok((groups, d_width))
@@ -287,7 +287,7 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
     candidate_log_basis: u32,
 ) -> Result<Vec<(CommittedGroupParams, usize)>, AkitaError> {
     let field_bits = policy.decomposition.field_bits();
-    let alpha = (policy.ring_dimension as u32).trailing_zeros() as usize;
+    let alpha = (policy.uniform_ring_dimension as u32).trailing_zeros() as usize;
     let reduced_vars = key.final_group.num_vars().saturating_sub(alpha);
     if reduced_vars == 0 {
         return Err(AkitaError::UnsupportedSchedule(format!(
@@ -375,7 +375,7 @@ fn multi_group_root_main_level_params_candidate(
     precommitted_d_width: usize,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
-    let d = policy.ring_dimension;
+    let d = policy.uniform_ring_dimension;
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
     let level_decomp = DecompositionParams {
@@ -529,10 +529,10 @@ pub fn find_group_batch_schedule(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
     if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
-        let setup_field_budget = policy.max_setup_envelope_field_elements;
+        let setup_field_budget = policy.max_num_setup_field_elements;
         if setup_field_budget == 0 {
             return Err(AkitaError::InvalidSetup(
-                "supported setup envelope is empty".to_string(),
+                "supported setup field capacity is empty".to_string(),
             ));
         }
         return find_group_batch_schedule_inner(
@@ -570,8 +570,9 @@ fn find_group_batch_schedule_inner(
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
-        let dimensions =
-            crate::schedule_params::RingDimensionSearchDomain::uniform(policy.ring_dimension)?;
+        let dimensions = crate::schedule_params::RingDimensionSearchDomain::uniform(
+            policy.uniform_ring_dimension,
+        )?;
         return find_schedule(
             key.final_group,
             &scalar_policy,
@@ -586,7 +587,7 @@ fn find_group_batch_schedule_inner(
         .ok_or_else(|| {
             AkitaError::InvalidSetup("multi-group root-fold witness length overflow".to_string())
         })?;
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
+    let ring_challenge_cfg = ring_challenge_config(policy.uniform_ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
         default_ring_challenge_cfg: &ring_challenge_cfg,
@@ -645,7 +646,6 @@ fn find_group_batch_schedule_inner(
     materialize_candidate_schedule(
         best.total_bytes,
         best.setup_field_elements,
-        policy.ring_dimension,
         first_direct_setup_field_len,
         best.folds,
         best.terminal,

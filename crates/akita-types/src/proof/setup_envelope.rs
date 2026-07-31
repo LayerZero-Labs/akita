@@ -1,36 +1,26 @@
-//! Canonical setup-matrix envelope accounting.
+//! Canonical setup-matrix field-capacity accounting.
 
 use akita_field::AkitaError;
 
 use crate::{
-    CommittedGroupParams, FoldSchedule, SetupMatrixEnvelope, SetupPrefixSlotId,
+    CommittedGroupParams, FoldSchedule, SetupMatrixCapacity, SetupPrefixSlotId,
     TerminalCommittedGroupParams,
 };
 
-/// Compute the maximum reusable setup-matrix length required by `schedule` at
-/// one explicit setup-generation dimension.
-pub fn setup_matrix_envelope_for_schedule(
+/// Compute the exact maximum reusable setup-matrix field prefix required by
+/// `schedule`.
+pub fn setup_matrix_capacity_for_schedule(
     schedule: &FoldSchedule,
-    generation_ring_dimension: usize,
-) -> Result<SetupMatrixEnvelope, AkitaError> {
-    if generation_ring_dimension == 0 {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be nonzero".into(),
-        ));
-    }
-    let field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
-    Ok(SetupMatrixEnvelope {
-        max_setup_len: field_elements.div_ceil(generation_ring_dimension),
-    })
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    let num_field_elements = setup_matrix_field_elements_for_schedule(schedule)?;
+    Ok(SetupMatrixCapacity { num_field_elements })
 }
 
 /// Compute the largest physical base-field footprint of any setup matrix or
-/// padded setup prefix used by `schedule`.
+/// natural public-matrix prefix used by `schedule`.
 ///
-/// Unlike [`setup_matrix_envelope_for_schedule`], this quantity is independent
-/// of a level-local A dimension and is therefore comparable across mixed-ring
-/// levels. Setup generation converts it to ring elements exactly once with
-/// `field_elements.div_ceil(generation_ring_dimension)`.
+/// This quantity is independent of a level-local ring dimension and is
+/// therefore comparable across mixed-ring levels.
 pub fn setup_matrix_field_elements_for_schedule(
     schedule: &FoldSchedule,
 ) -> Result<usize, AkitaError> {
@@ -111,16 +101,16 @@ pub fn accumulate_terminal_matrix_field_elements(
     )
 }
 
-/// Largest physical base-field footprint of a padded setup prefix or either
-/// matrix used to commit it.
+/// Largest physical base-field footprint of a natural setup source prefix or
+/// either matrix used to commit its padded protocol object.
 pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usize, AkitaError> {
     let n_prefix = slot.n_prefix()?;
-    if slot.d_setup == 0 || !n_prefix.is_multiple_of(slot.d_setup) {
+    if slot.d_setup() == 0 || !n_prefix.is_multiple_of(slot.d_setup()) {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix slot has invalid setup dimension".to_string(),
         ));
     }
-    let mut max_field_elements = n_prefix;
+    let mut max_field_elements = slot.natural_len;
     let params = &slot.commitment_params;
     include_matrix_field_elements(
         &mut max_field_elements,

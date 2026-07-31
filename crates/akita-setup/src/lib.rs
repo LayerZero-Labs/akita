@@ -35,19 +35,6 @@ use std::path::PathBuf;
 #[cfg(feature = "disk-persistence")]
 use std::sync::Arc;
 
-/// The setup-time generation ring dimension for config `Cfg`.
-///
-/// Per the cutover decision, `gen_ring_dim` is the **max `ring_dimension` across
-/// the config's schedule policy/catalog**. Setup is generated once at capacity
-/// time and reused across instances, so it cannot depend on one runtime
-/// schedule. For the current uniform-D presets the policy carries a single
-/// `ring_dimension == Cfg::D`, so this equals `Cfg::D` (and the verifier binds
-/// the same `gen_ring_dim`, preserving transcript byte-parity). A future mixed-D
-/// catalog would set this to the maximum dimension its levels use.
-fn setup_gen_ring_dim<Cfg: CommitmentConfig>() -> usize {
-    akita_config::policy_of::<Cfg>().ring_dimension
-}
-
 #[cfg(feature = "disk-persistence")]
 fn validate_loaded_prefix_registry<F, Cfg>(
     setup: &AkitaProverSetup<F>,
@@ -74,9 +61,6 @@ where
 /// persistence; `akita-prover` owns the concrete setup artifact and
 /// matrix expansion.
 ///
-/// The prover setup artifact is D-free; the setup-time generation ring
-/// dimension `gen_ring_dim` is derived from `Cfg`'s schedule policy.
-///
 /// # Errors
 ///
 /// Returns an error if the requested setup capacity is invalid or setup
@@ -95,18 +79,16 @@ where
             "max_num_batched_polys must be at least 1".to_string(),
         ));
     }
-    let gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-
     #[cfg(feature = "disk-persistence")]
-    let max_setup_len =
-        Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?.max_setup_len;
+    let num_field_elements =
+        Cfg::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?.num_field_elements;
 
     #[cfg(feature = "disk-persistence")]
     {
         match load_prover_setup::<F, Cfg>(max_num_vars, max_num_batched_polys) {
             Ok(setup) => {
-                let cached_total = setup.expanded.shared_matrix().total_ring_elements();
-                let cached_shape_covers_request = cached_total >= max_setup_len;
+                let cached_num_field_elements = setup.expanded.shared_matrix().num_field_elements();
+                let cached_shape_covers_request = cached_num_field_elements >= num_field_elements;
                 if cached_shape_covers_request {
                     validate_loaded_prefix_registry::<F, Cfg>(
                         &setup,
@@ -121,12 +103,12 @@ where
                 {
                     let _ = fs::remove_file(&storage_path);
                     tracing::warn!(
-                        "Rejected cached setup from {}: have total={cached_total}, need total>={max_setup_len}; regenerating",
+                        "Rejected cached setup from {}: have num_field_elements={cached_num_field_elements}, need num_field_elements>={num_field_elements}; regenerating",
                         storage_path.display()
                     );
                 } else {
                     tracing::warn!(
-                        "Rejected cached setup: have total={cached_total}, need total>={max_setup_len}; regenerating"
+                        "Rejected cached setup: have num_field_elements={cached_num_field_elements}, need num_field_elements>={num_field_elements}; regenerating"
                     );
                 }
             }
@@ -146,13 +128,12 @@ where
         }
     }
 
-    let setup_envelope = Cfg::max_setup_matrix_size(max_num_vars, max_num_batched_polys)?;
+    let setup_capacity = Cfg::setup_matrix_capacity(max_num_vars, max_num_batched_polys)?;
 
     let mut setup = AkitaProverSetup::generate_with_capacity(
         max_num_vars,
         max_num_batched_polys,
-        gen_ring_dim,
-        setup_envelope,
+        setup_capacity,
     )?;
 
     recursive_prefixes::populate_required_setup_prefix_slots::<F, Cfg>(
@@ -196,7 +177,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // SIS-derived `n_a`/`n_b`/`n_d` ranks) changes for the same lookup
     // key — the full per-level params are hashed by
     // `digest_effective_schedule`. Akita is still in development, so the cache
-    // namespace remains v1; the digest prevents incompatible schedules from
+    // flat-v2 namespace; the digest prevents incompatible schedules from
     // aliasing within that namespace.
     let raw_schedule =
         match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
@@ -207,7 +188,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
                     let _ = write!(hex, "{byte:02x}");
                 }
                 format!(
-                    "planner_v1_nv{}_batch{}_{hex}",
+                    "planner_flat_v2_nv{}_batch{}_{hex}",
                     schedule_lookup_key.num_vars(),
                     schedule_lookup_key.num_polynomials(),
                 )
@@ -224,8 +205,7 @@ fn cache_file_name<Cfg: CommitmentConfig>(
         .collect::<String>();
     let modulus = detect_field_modulus::<Cfg::Field>();
     format!(
-        "akita_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_d{}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
-        Cfg::D,
+        "akita_q{modulus:032x}_cfg{family_hash:016x}_sched_{schedule}_nv{max_num_vars}_batch{max_num_batched_polys}.setup",
     )
 }
 
@@ -369,7 +349,7 @@ pub(crate) fn load_prover_setup<
             trailing[0]
         )));
     }
-    validate_cached_matrix::<F, Cfg>(&setup)?;
+    validate_cached_matrix::<F>(&setup)?;
 
     tracing::info!(
         "Loaded setup for max_num_vars={max_num_vars}, max_num_batched_polys={max_num_batched_polys}"
@@ -391,13 +371,6 @@ fn deserialize_cached_setup<
 ) -> Result<AkitaExpandedSetup<F>, SerializationError> {
     let seed =
         AkitaSetupSeed::deserialize_with_mode(&mut *reader, Compress::Yes, Validate::Yes, &())?;
-    let expected_gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-    if seed.gen_ring_dim != expected_gen_ring_dim {
-        return Err(SerializationError::InvalidData(format!(
-            "cached setup ring dimension {} does not match config gen_ring_dim={expected_gen_ring_dim}",
-            seed.gen_ring_dim
-        )));
-    }
     if seed.max_num_vars != expected_max_num_vars
         || seed.max_num_batched_polys != expected_max_num_batched_polys
     {
@@ -405,14 +378,14 @@ fn deserialize_cached_setup<
             "cached setup seed capacity does not match cache key".to_string(),
         ));
     }
-    let expected_envelope = Cfg::max_setup_matrix_size(
+    let expected_capacity = Cfg::setup_matrix_capacity(
         expected_max_num_vars,
         expected_max_num_batched_polys,
     )
     .map_err(|err| {
         SerializationError::InvalidData(format!("cached setup expected shape failed: {err}"))
     })?;
-    if seed.max_setup_len != expected_envelope.max_setup_len {
+    if seed.num_field_elements != expected_capacity.num_field_elements {
         return Err(SerializationError::InvalidData(
             "cached setup seed matrix shape does not match cache key".to_string(),
         ));
@@ -421,27 +394,16 @@ fn deserialize_cached_setup<
         &mut *reader,
         Compress::Yes,
         Validate::Yes,
-        seed.max_setup_len,
-        seed.gen_ring_dim,
-        seed.matrix_field_elements()?,
+        seed.num_field_elements,
+        seed.num_field_elements,
     )?;
     Ok(AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(seed, shared_matrix))
 }
 
 #[cfg(feature = "disk-persistence")]
-fn validate_cached_matrix<
-    F: FieldCore + CanonicalField + RandomSampling + Valid,
-    Cfg: CommitmentConfig<Field = F>,
->(
+fn validate_cached_matrix<F: FieldCore + CanonicalField + RandomSampling + Valid>(
     setup: &AkitaExpandedSetup<F>,
 ) -> Result<(), AkitaError> {
-    let expected_gen_ring_dim = setup_gen_ring_dim::<Cfg>();
-    if setup.shared_matrix().gen_ring_dim() != expected_gen_ring_dim {
-        return Err(AkitaError::InvalidSetup(format!(
-            "cached setup ring dimension {} does not match config gen_ring_dim={expected_gen_ring_dim}",
-            setup.shared_matrix().gen_ring_dim()
-        )));
-    }
     setup
         .check()
         .map_err(|e| AkitaError::InvalidSetup(format!("cached setup matrix validation: {e}")))?;
@@ -611,7 +573,7 @@ mod tests {
                     num_digits_open: 1,
                     num_digits_fold: 1,
                 };
-                let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
+                let id = setup_prefix_slot_id(1, commitment_params);
                 // One block of zero planes at the setup ring dimension.
                 let decomposed = DigitBlocks::empty(TEST_D);
                 let hint = AkitaCommitmentHint::singleton(decomposed);
@@ -666,10 +628,10 @@ mod tests {
                 cleanup_setup_file_shape(MAX_VARS, 1);
 
                 let prover_setup = new_prover_setup::<TestF, Cfg>(MAX_VARS, 1).unwrap();
-                let total = prover_setup.expanded.shared_matrix().total_ring_elements();
+                let total = prover_setup.expanded.shared_matrix().num_field_elements();
                 let corrupt = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
                     prover_setup.expanded.seed().clone(),
-                    FlatMatrix::from_flat_data(vec![TestF::zero(); total * TEST_D], TEST_D),
+                    FlatMatrix::from_flat_data(vec![TestF::zero(); total]),
                 );
                 let corrupt = AkitaProverSetup {
                     expanded: Arc::new(corrupt),

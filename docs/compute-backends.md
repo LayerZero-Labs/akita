@@ -9,7 +9,7 @@ scheduling remain follow-up work.
 - `AkitaExpandedSetup<F>` owns setup data shared with verifier/protocol code:
   seed, shared matrix, descriptor digest, and setup shape.
 - `AkitaProverSetup<F>` is a D-free prover setup wrapper around expanded setup.
-  It stores runtime `gen_ring_dim` and does not own CPU NTT caches, device
+  It stores a flat public-matrix prefix and does not own CPU NTT caches, device
   buffers, command queues, or any backend-prepared state.
 - `ComputeBackendSetup<F>` owns backend preparation. Prepared setup slots are
   keyed by field family and ring role at kernel boundaries via `dispatch_for_field!`.
@@ -17,7 +17,8 @@ scheduling remain follow-up work.
   `CommitmentComputeBackend<F>`, and `RingSwitchComputeBackend<F>` own the migrated operation families.
 - `CpuBackend` prepares `CpuPreparedSetup<F>` from an `AkitaProverSetup<F>` or
   an `Arc<AkitaExpandedSetup<F>>`. Per-dimension NTT caches live inside the
-  prepared stack and are warmed from schedule-derived role dimensions.
+  prepared stack. Matrix-consuming kernels lazily acquire exact prefixes keyed
+  by ring dimension and transform domain.
 
 Callers prepare once, then pass both the backend and prepared setup into prover
 entrypoints:

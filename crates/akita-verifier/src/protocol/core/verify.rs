@@ -200,9 +200,9 @@ where
 }
 
 use akita_types::{
-    dispatch_for_field, validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup,
-    BasisMode, Commitment, CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding,
-    GroupBatchStatement, OpeningClaims, PolynomialGroupClaims,
+    validate_schedule_ring_dims, AkitaBatchedProof, AkitaVerifierSetup, BasisMode, Commitment,
+    CommittedGroupBatchProfile, FoldSchedule, FpExtEncoding, GroupBatchStatement, OpeningClaims,
+    PolynomialGroupClaims,
 };
 
 /// Verify a batched proof under config `Cfg`.
@@ -323,26 +323,15 @@ where
     // replay so terminal verification performs cache lookup only.
     super::terminal_ntt::warm_for_schedule(setup, schedule)?;
 
-    // The transcript instance descriptor binds the setup-wide root ring
-    // dimension (`gen_ring_dim`), which is byte-identical to the const `Cfg::D`
-    // the prover binds for uniform-D presets. Dispatch on the runtime value so
-    // the verifier entry stays D-free; the descriptor bytes are unchanged.
     {
         let _span = tracing::info_span!("verifier_transcript_bind_instance").entered();
-        dispatch_for_field!(
-            akita_types::ProtocolDispatchSlot::Envelope,
-            Cfg::Field,
-            setup.expanded.seed().gen_ring_dim,
-            |D| {
-                bind_transcript_instance_descriptor::<Cfg::Field, T, D, Cfg>(
-                    &setup.expanded,
-                    &opening_batch,
-                    selection,
-                    schedule,
-                    basis,
-                    transcript,
-                )
-            }
+        bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
+            &setup.expanded,
+            &opening_batch,
+            selection,
+            schedule,
+            basis,
+            transcript,
         )?;
     }
 

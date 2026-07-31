@@ -46,7 +46,8 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(sis_modulus_profile_tag(policy.sis_modulus_profile));
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
-    h.write_u64(policy.ring_dimension as u64);
+    h.write_u64(policy.uniform_ring_dimension as u64);
+    h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, policy.decomposition);
     h.write_u64(u64::from(policy.ring_subfield_norm_bound));
     h.write_u64(policy.claim_ext_degree as u64);
@@ -58,7 +59,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.recursive_setup_planning));
     h.write_u64(u64::from(policy.cost_model.tag()));
     h.write_u64(u64::from(policy.selection_policy.tag()));
-    h.write_u64(policy.max_setup_envelope_field_elements as u64);
+    h.write_u64(policy.max_num_setup_field_elements as u64);
     h.write_u64(policy.min_offloaded_witness_contraction as u64);
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
@@ -74,7 +75,8 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(sis_modulus_profile_tag(identity.sis_modulus_profile));
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
-    h.write_u64(identity.ring_dimension as u64);
+    h.write_u64(identity.uniform_ring_dimension as u64);
+    h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
     h.write_u64(u64::from(identity.ring_subfield_norm_bound));
     h.write_u64(identity.claim_ext_degree as u64);
@@ -86,7 +88,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.recursive_setup_planning));
     h.write_u64(u64::from(identity.cost_model.tag()));
     h.write_u64(u64::from(identity.selection_policy.tag()));
-    h.write_u64(identity.max_setup_envelope_field_elements as u64);
+    h.write_u64(identity.max_num_setup_field_elements as u64);
     h.write_u64(identity.min_offloaded_witness_contraction as u64);
 
     match identity.root_fold_shape {
@@ -128,12 +130,13 @@ struct CatalogIdentityExpectation {
     protocol_epoch: u32,
     cost_model: crate::PlannerCostModelId,
     selection_policy: crate::SelectionPolicyId,
-    max_setup_envelope_field_elements: usize,
+    max_num_setup_field_elements: usize,
     min_offloaded_witness_contraction: usize,
     sis_modulus_profile: akita_types::SisModulusProfileId,
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
-    ring_dimension: usize,
+    uniform_ring_dimension: usize,
+    setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
     ring_subfield_norm_bound: u32,
     claim_ext_degree: usize,
@@ -157,12 +160,13 @@ impl CatalogIdentityExpectation {
             protocol_epoch: identity.protocol_epoch,
             cost_model: identity.cost_model,
             selection_policy: identity.selection_policy,
-            max_setup_envelope_field_elements: identity.max_setup_envelope_field_elements,
+            max_num_setup_field_elements: identity.max_num_setup_field_elements,
             min_offloaded_witness_contraction: identity.min_offloaded_witness_contraction,
             sis_modulus_profile: identity.sis_modulus_profile,
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
-            ring_dimension: identity.ring_dimension,
+            uniform_ring_dimension: identity.uniform_ring_dimension,
+            setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
             ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
             claim_ext_degree: identity.claim_ext_degree,
@@ -200,12 +204,13 @@ fn catalog_identity_expectation(
         protocol_epoch: AKITA_INSTANCE_DESCRIPTOR_VERSION,
         cost_model: policy.cost_model,
         selection_policy: policy.selection_policy,
-        max_setup_envelope_field_elements: policy.max_setup_envelope_field_elements,
+        max_num_setup_field_elements: policy.max_num_setup_field_elements,
         min_offloaded_witness_contraction: policy.min_offloaded_witness_contraction,
         sis_modulus_profile: policy.sis_modulus_profile,
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
-        ring_dimension: policy.ring_dimension,
+        uniform_ring_dimension: policy.uniform_ring_dimension,
+        setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
         claim_ext_degree: policy.claim_ext_degree,
@@ -243,12 +248,13 @@ pub fn expected_catalog_identity(
         protocol_epoch: expected.protocol_epoch,
         cost_model: expected.cost_model,
         selection_policy: expected.selection_policy,
-        max_setup_envelope_field_elements: expected.max_setup_envelope_field_elements,
+        max_num_setup_field_elements: expected.max_num_setup_field_elements,
         min_offloaded_witness_contraction: expected.min_offloaded_witness_contraction,
         sis_modulus_profile: expected.sis_modulus_profile,
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
-        ring_dimension: expected.ring_dimension,
+        uniform_ring_dimension: expected.uniform_ring_dimension,
+        setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
         ring_subfield_norm_bound: expected.ring_subfield_norm_bound,
         claim_ext_degree: expected.claim_ext_degree,
@@ -427,7 +433,6 @@ fn collect_ring_dimensions(entries: &[GeneratedFoldScheduleEntry]) -> Vec<usize>
             push_unique(&mut dims, fold.open_commit_matrix.ring_dimension as usize);
             if let Some(prefix) = fold.incoming_setup_prefix {
                 collect_group_ring_dimensions(prefix.commitment, &mut dims);
-                push_unique(&mut dims, prefix.d_setup as usize);
             }
         }
         push_unique(
@@ -486,7 +491,6 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
             h.write_u64(u64::from(fold.incoming_setup_prefix.is_some()));
             if let Some(prefix) = fold.incoming_setup_prefix {
                 h.write_u64(prefix.natural_len);
-                h.write_u64(u64::from(prefix.d_setup));
                 write_generated_group(&mut h, prefix.commitment);
             }
         }

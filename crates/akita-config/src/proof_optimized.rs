@@ -7,9 +7,9 @@ use super::CommitmentConfig;
 use akita_field::AkitaError;
 use akita_field::{Ext2, FpExt4, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
 use akita_types::{
-    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     AkitaExpandedSetup, AkitaScheduleLookupKey, CommittedGroupParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
+    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixCapacity,
 };
 use std::any::TypeId;
 use std::collections::HashMap;
@@ -84,19 +84,19 @@ pub(crate) fn proof_optimized_schedule_key(
 ///
 /// Planned role footprints are not monotone across shapes, so scan all
 /// supported sub-shapes and keep the largest packed setup length.
-type SetupMatrixEnvelopeCache =
-    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixEnvelope>>>;
+type SetupMatrixCapacityCache =
+    LazyLock<Mutex<HashMap<(TypeId, usize, usize), SetupMatrixCapacity>>>;
 
-static SETUP_MATRIX_ENVELOPE_CACHE: SetupMatrixEnvelopeCache =
+static SETUP_MATRIX_CAPACITY_CACHE: SetupMatrixCapacityCache =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
+pub(crate) fn proof_optimized_setup_matrix_capacity<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<SetupMatrixEnvelope, AkitaError> {
+) -> Result<SetupMatrixCapacity, AkitaError> {
     validate_setup_capacity_metadata(max_num_vars, max_num_batched_polys)?;
     let cache_key = (TypeId::of::<Cfg>(), max_num_vars, max_num_batched_polys);
-    if let Some(cached) = SETUP_MATRIX_ENVELOPE_CACHE
+    if let Some(cached) = SETUP_MATRIX_CAPACITY_CACHE
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("setup capacity cache lock poisoned".into()))?
         .get(&cache_key)
@@ -106,9 +106,9 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     }
 
     let envelope =
-        proof_optimized_max_setup_matrix_size_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
+        proof_optimized_setup_matrix_capacity_uncached::<Cfg>(max_num_vars, max_num_batched_polys)?;
 
-    SETUP_MATRIX_ENVELOPE_CACHE
+    SETUP_MATRIX_CAPACITY_CACHE
         .lock()
         .map_err(|_| AkitaError::InvalidSetup("setup capacity cache lock poisoned".into()))?
         .insert(cache_key, envelope);
@@ -116,20 +116,22 @@ pub(crate) fn proof_optimized_max_setup_matrix_size<Cfg: CommitmentConfig>(
     Ok(envelope)
 }
 
-fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
+fn proof_optimized_setup_matrix_capacity_uncached<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
-) -> Result<SetupMatrixEnvelope, AkitaError> {
-    let layouts = setup_envelope_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
+) -> Result<SetupMatrixCapacity, AkitaError> {
+    let layouts = setup_capacity_scan_layouts::<Cfg>(max_num_vars, max_num_batched_polys)?;
     let mut saw_supported_shape = false;
-    let mut envelope = SetupMatrixEnvelope::minimum();
+    let mut envelope = SetupMatrixCapacity::minimum();
     for layout in &layouts {
         let Ok(schedule) = Cfg::get_params_for_prove(layout) else {
             continue;
         };
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
+        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
         saw_supported_shape = true;
-        envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        envelope.num_field_elements = envelope
+            .num_field_elements
+            .max(entry_envelope.num_field_elements);
     }
 
     // Generated multi-group rows carry exact frozen precommit descriptors.
@@ -153,9 +155,11 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
                 continue;
             }
             let schedule = Cfg::runtime_schedule(key)?;
-            let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
+            let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
             saw_supported_shape = true;
-            envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+            envelope.num_field_elements = envelope
+                .num_field_elements
+                .max(entry_envelope.num_field_elements);
         }
     }
 
@@ -168,9 +172,11 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
         max_num_batched_polys,
     )? {
         let schedule = Cfg::runtime_schedule(key)?;
-        let entry_envelope = setup_matrix_envelope_for_schedule(&schedule, Cfg::D)?;
+        let entry_envelope = setup_matrix_capacity_for_schedule(&schedule)?;
         saw_supported_shape = true;
-        envelope.max_setup_len = envelope.max_setup_len.max(entry_envelope.max_setup_len);
+        envelope.num_field_elements = envelope
+            .num_field_elements
+            .max(entry_envelope.num_field_elements);
     }
 
     if !saw_supported_shape {
@@ -200,7 +206,7 @@ fn validate_setup_capacity_metadata(
     Ok(())
 }
 
-fn setup_envelope_scan_layouts<Cfg: CommitmentConfig>(
+fn setup_capacity_scan_layouts<Cfg: CommitmentConfig>(
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<Vec<OpeningClaimsLayout>, AkitaError> {
@@ -363,7 +369,7 @@ fn matrix_coefficient_len(
 ) -> Result<usize, AkitaError> {
     rows.checked_mul(columns)
         .and_then(|len| len.checked_mul(ring_dimension))
-        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup envelope overflow")))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{label} setup capacity overflow")))
 }
 
 // ---------------------------------------------------------------------------
@@ -427,11 +433,11 @@ macro_rules! impl_proof_optimized_preset {
                 $family
             }
 
-            fn max_setup_matrix_size(
+            fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
                 )
@@ -502,11 +508,11 @@ macro_rules! impl_proof_optimized_preset {
                 $family
             }
 
-            fn max_setup_matrix_size(
+            fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
                     max_num_vars,
                     max_num_batched_polys,
                 )

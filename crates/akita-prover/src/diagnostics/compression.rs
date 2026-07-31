@@ -211,8 +211,7 @@ where
         if source.coefficients.is_empty() {
             continue;
         }
-        let plan =
-            plan_compression_diagnostic(profile, source.coefficients.len(), ctx.gen_ring_dim())?;
+        let plan = plan_compression_diagnostic(profile, source.coefficients.len())?;
         items.push(WorkItem {
             source: source.kind,
             field_bytes: plan.field_bytes,
@@ -281,7 +280,7 @@ mod tests {
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use akita_types::layout::FlatMatrix;
     use akita_types::prepare_compression_ntt_cache;
-    use akita_types::SetupMatrixEnvelope;
+    use akita_types::SetupMatrixCapacity;
     use std::hint::black_box;
 
     fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
@@ -334,12 +333,13 @@ mod tests {
         let setup = AkitaProverSetup::<F>::generate_with_capacity(
             8,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 256 },
+            SetupMatrixCapacity {
+                num_field_elements: 256,
+            },
         )
         .expect("diagnostic setup");
         let prepared = CpuBackend
-            .prepare_expanded::<D>(setup.expanded.clone())
+            .prepare_expanded(setup.expanded.clone())
             .expect("prepared setup");
         let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("operation context");
@@ -426,7 +426,7 @@ mod tests {
     ) {
         let field_bytes = (F::modulus_bits() as usize).div_ceil(8);
         let source_coefficients = source_bytes / field_bytes;
-        let plan = plan_compression_diagnostic(profile, source_coefficients, 128).expect("plan");
+        let plan = plan_compression_diagnostic(profile, source_coefficients).expect("plan");
         let mut coefficients = (0..source_coefficients)
             .map(|index| F::from_u64((index as u64).wrapping_mul(0x9e37).wrapping_add(0x1234)))
             .collect::<Vec<_>>();

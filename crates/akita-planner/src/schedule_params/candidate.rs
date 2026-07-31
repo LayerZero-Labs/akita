@@ -311,7 +311,9 @@ pub(super) fn derive_setup_prefix_group(
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
-        || !policy.ring_dimension.is_multiple_of(outer_ring_dimension)
+        || !policy
+            .setup_prefix_inner_ring_dimension
+            .is_multiple_of(outer_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix B dimension must be a power-of-two divisor of its A dimension"
@@ -323,7 +325,7 @@ pub(super) fn derive_setup_prefix_group(
             "setup prefix length must be a nonzero power of two".to_string(),
         ));
     }
-    if !n_prefix.is_multiple_of(policy.ring_dimension) {
+    if !n_prefix.is_multiple_of(policy.setup_prefix_inner_ring_dimension) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a multiple of the ring dimension".to_string(),
         ));
@@ -333,11 +335,11 @@ pub(super) fn derive_setup_prefix_group(
             "setup-prefix checkpoint requires one consuming inner/outer/open basis".to_string(),
         ));
     }
-    let ring_slots = n_prefix / policy.ring_dimension;
+    let ring_slots = n_prefix / policy.setup_prefix_inner_ring_dimension;
     let reduced_vars = checked_power_of_two_vars(ring_slots, "setup prefix ring slots")?;
     let prefix_num_vars = checked_power_of_two_vars(n_prefix, "setup prefix field length")?;
     let family = policy.sis_modulus_profile;
-    let d = policy.ring_dimension;
+    let d = policy.setup_prefix_inner_ring_dimension;
     let outer_decomp = DecompositionParams {
         log_basis: log_basis_outer,
         ..policy.decomposition
@@ -411,7 +413,7 @@ pub(super) fn derive_setup_prefix_group(
             sis_key_at_dimension(
                 policy,
                 akita_types::SisMatrixRole::Inner,
-                policy.ring_dimension,
+                policy.setup_prefix_inner_ring_dimension,
                 norm_s,
             ),
             width_s,
@@ -644,11 +646,6 @@ fn prepare_recursive_level_search(
 
     let setup_prefix = match incoming_setup_prefix {
         Some(natural_len) => {
-            if dimensions != CommitmentRingDims::uniform(akita_types::SETUP_OFFLOAD_D_SETUP) {
-                return Err(AkitaError::InvalidSetup(
-                    "recursive setup planning requires uniform D64".to_string(),
-                ));
-            }
             let n_prefix = padded_setup_prefix_len(natural_len);
             let Some(group) = derive_setup_prefix_group(
                 policy,
@@ -663,11 +660,7 @@ fn prepare_recursive_level_search(
             else {
                 return Ok(None);
             };
-            Some(akita_types::setup_prefix_slot_id(
-                dimensions.d_a(),
-                natural_len,
-                group,
-            ))
+            Some(akita_types::setup_prefix_slot_id(natural_len, group))
         }
         None => None,
     };
@@ -1048,6 +1041,41 @@ mod tests {
     use super::*;
     use akita_challenges::SparseChallengeConfig;
     use akita_types::{PolynomialGroupLayout, SisModulusProfileId};
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn setup_prefix_inner_dimension_is_an_independent_planner_knob() {
+        use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+
+        let mut policy = policy_of::<D64OneHot>();
+        assert_eq!(policy.uniform_ring_dimension, 64);
+        policy.setup_prefix_inner_ring_dimension = 128;
+        let challenge = D64OneHot::ring_challenge_config(128).expect("D128 challenge");
+        let group = derive_setup_prefix_group(
+            &policy,
+            &challenge,
+            TensorChallengeShape::Flat,
+            3,
+            3,
+            1 << 16,
+            1,
+            64,
+        )
+        .expect("valid setup-prefix search")
+        .expect("supported setup-prefix geometry");
+
+        assert_eq!(group.layout.inner_commit_matrix.ring_dimension(), 128);
+        assert_eq!(group.layout.outer_commit_matrix.ring_dimension(), 64);
+        assert_eq!(
+            group.role_dims(64),
+            CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64
+            }
+        );
+        assert_eq!(policy.uniform_ring_dimension, 64);
+    }
 
     fn grouped_level_params() -> CommittedGroupParams {
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);

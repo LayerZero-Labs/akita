@@ -106,9 +106,8 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
     let seed = AkitaSetupSeed {
         max_num_vars: 16,
         max_num_batched_polys: 1,
-        gen_ring_dim: 64,
-        max_setup_len: 1 << 20,
-        public_matrix_seed: [0; 32],
+        num_field_elements: 1 << 20,
+        public_matrix_id: [0; 32].into(),
     };
     assert!(matches!(
         validate_schedule_ring_dims(&schedule, &seed),

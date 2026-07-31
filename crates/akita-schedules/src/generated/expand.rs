@@ -82,7 +82,7 @@ impl GeneratedSetupPrefixInput {
             policy,
             "generated setup-prefix group",
         )?;
-        let d = self.d_setup as usize;
+        let d = self.commitment.inner_commit_matrix.ring_dimension as usize;
         let sis_modulus_profile = policy.sis_modulus_profile;
         let sis_policy = policy.sis_security_policy;
         let geometry = self.commitment.geometry;
@@ -259,9 +259,9 @@ impl GeneratedCommittedGroup {
     ///
     /// # Errors
     ///
-    /// Returns an error when the stored role dimensions are invalid for the
-    /// setup-generation policy, bucket/width resolution fails, or a generated
-    /// rank fails its SIS audit against the (batched) width.
+    /// Returns an error when a stored role dimension is invalid,
+    /// bucket/width resolution fails, or a generated rank fails its SIS audit
+    /// against the batched width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
         &self,
@@ -282,14 +282,6 @@ impl GeneratedCommittedGroup {
             opening: open_commit_matrix.ring_dimension as usize,
         };
         validate_role_dims(dimensions)?;
-        for dimension in [dimensions.d_a(), dimensions.d_b(), dimensions.d_d()] {
-            if !policy.ring_dimension.is_multiple_of(dimension) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "generated fold role dimension {dimension} does not divide setup D={}",
-                    policy.ring_dimension
-                )));
-            }
-        }
         let ring_d = dimensions.d_a();
         let is_root = fold_level == 0;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
@@ -458,7 +450,6 @@ impl GeneratedCommittedGroup {
                 ));
             }
             Some(akita_types::setup_prefix_slot_id(
-                policy.ring_dimension,
                 group.natural_len as usize,
                 commitment_params,
             ))
@@ -571,10 +562,10 @@ impl GeneratedCommittedGroup {
         open_commit_matrix: GeneratedOpenCommitMatrix,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let ring_d = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_d == 0 || ring_d != policy.ring_dimension {
+        if ring_d == 0 || ring_d != policy.uniform_ring_dimension {
             return Err(AkitaError::InvalidSetup(format!(
-                "generated multi-group root ring dimension {ring_d} does not match policy D={}",
-                policy.ring_dimension
+                "generated multi-group root ring dimension {ring_d} does not match uniform policy D={}",
+                policy.uniform_ring_dimension
             )));
         }
         if precommitted_groups.is_empty() {
@@ -771,11 +762,10 @@ impl GeneratedTerminalFold {
         input_witness_len: usize,
     ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_dimension == 0 || !policy.ring_dimension.is_multiple_of(ring_dimension) {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated terminal inner ring dimension {ring_dimension} does not divide setup D={}",
-                policy.ring_dimension
-            )));
+        if ring_dimension == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal inner ring dimension must be nonzero".to_string(),
+            ));
         }
         if input_witness_len == 0 || !input_witness_len.is_multiple_of(ring_dimension) {
             return Err(AkitaError::InvalidSetup(

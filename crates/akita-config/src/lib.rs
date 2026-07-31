@@ -17,7 +17,7 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope,
+    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
     SisModulusProfileId,
 };
 
@@ -56,11 +56,11 @@ macro_rules! impl_multi_chunk_companion {
             fn ring_subfield_embedding_norm_bound() -> u32 {
                 <$base as $crate::CommitmentConfig>::ring_subfield_embedding_norm_bound()
             }
-            fn max_setup_matrix_size(
+            fn setup_matrix_capacity(
                 max_num_vars: usize,
                 max_num_batched_polys: usize,
-            ) -> Result<akita_types::SetupMatrixEnvelope, akita_field::AkitaError> {
-                $crate::proof_optimized::proof_optimized_max_setup_matrix_size::<$cfg>(
+            ) -> Result<akita_types::SetupMatrixCapacity, akita_field::AkitaError> {
+                $crate::proof_optimized::proof_optimized_setup_matrix_capacity::<$cfg>(
                     max_num_vars,
                     max_num_batched_polys,
                 )
@@ -127,9 +127,10 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         } else {
             akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
         },
-        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
-        ring_dimension: Cfg::D,
+        uniform_ring_dimension: Cfg::D,
+        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -265,10 +266,19 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     ///
     /// `InvalidSetup` on arithmetic overflow.
     #[doc(hidden)]
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError>;
+    ) -> Result<SetupMatrixCapacity, AkitaError>;
+
+    /// Planner-owned A-matrix ring dimension for setup-prefix commitments.
+    ///
+    /// This controls how the explicitly zero-padded setup-prefix witness is
+    /// chunked for commitment. It is not public-matrix identity or a setup
+    /// materialization dimension.
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Self::D
+    }
 
     /// Inclusive `(min, max)` log-basis search range.
     #[doc(hidden)]
@@ -446,11 +456,11 @@ mod tests {
             SisModulusProfileId::Q32Offset99
         }
 
-        fn max_setup_matrix_size(
+        fn setup_matrix_capacity(
             _max_num_vars: usize,
             _max_num_batched_polys: usize,
-        ) -> Result<SetupMatrixEnvelope, AkitaError> {
-            Ok(SetupMatrixEnvelope::minimum())
+        ) -> Result<SetupMatrixCapacity, AkitaError> {
+            Ok(SetupMatrixCapacity::minimum())
         }
 
         fn basis_range() -> (u32, u32) {

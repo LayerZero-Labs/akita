@@ -56,13 +56,13 @@ fn real_presets_validate_against_setup_ring_dimension() {
         PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp64 schedule");
-    validate_schedule_ring_dims(&fp64_schedule, &ring_plan_test_seed(128))
+    validate_schedule_ring_dims(&fp64_schedule, &ring_plan_test_seed())
         .expect("D128 schedule envelope");
 
     let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(13),
     ))
     .expect("fp128 schedule");
-    validate_schedule_ring_dims(&fp128_schedule, &ring_plan_test_seed(64))
+    validate_schedule_ring_dims(&fp128_schedule, &ring_plan_test_seed())
         .expect("D64 schedule envelope");
 }

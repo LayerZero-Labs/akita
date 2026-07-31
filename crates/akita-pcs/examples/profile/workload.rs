@@ -4,7 +4,6 @@ use crate::report::{
     print_batched_proof_summary, report_crt_profile, report_setup_sizes, report_timing,
     report_verifier_ntt_cache_size,
 };
-use crate::schedule_setup::register_schedule_ntt_contract;
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
 use akita_field::{
@@ -556,7 +555,7 @@ fn run_prove<
                 plan,
             );
         }
-        emit_runtime_schedule_summary(label, plan, 1, Cfg::D, Cfg::decomposition().field_bits());
+        emit_runtime_schedule_summary(label, plan, 1, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -577,13 +576,7 @@ fn run_prove<
                 &schedule,
             );
         }
-        emit_runtime_schedule_summary(
-            label,
-            &schedule,
-            1,
-            Cfg::D,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_runtime_schedule_summary(label, &schedule, 1, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -696,30 +689,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    if let Some(schedule) = plan {
-        register_schedule_ntt_contract(&setup, &prepared, schedule)
-            .expect("register schedule NTT contract");
-    }
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
-    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-    report_setup_sizes(
-        label,
-        setup_ring_elements,
-        setup_ring_elements * D * std::mem::size_of::<FF>(),
-        prepared.shared_ntt_cache_bytes(),
-    );
-    report_crt_profile(
-        label,
-        prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
-    );
-
     run_prove::<FF, D, Cfg, DensePoly<FF>>(
         label,
         &setup,
@@ -729,6 +704,21 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         opening,
         plan,
         validate_against_planner,
+    );
+    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+    report_setup_sizes(
+        label,
+        num_setup_field_elements,
+        num_setup_field_elements * std::mem::size_of::<FF>(),
+        &prepared
+            .shared_ntt_cache_metrics()
+            .expect("prepared setup NTT cache metrics"),
+    );
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
     );
 }
 
@@ -789,30 +779,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let setup_expand_secs = t0.elapsed().as_secs_f64();
     let t_prepare = Instant::now();
     let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-    if let Some(schedule) = plan {
-        register_schedule_ntt_contract(&setup, &prepared, schedule)
-            .expect("register schedule NTT contract");
-    }
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
-    let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-    report_setup_sizes(
-        label,
-        setup_ring_elements,
-        setup_ring_elements * D * std::mem::size_of::<FF>(),
-        prepared.shared_ntt_cache_bytes(),
-    );
-    report_crt_profile(
-        label,
-        prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
-    );
-
     run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
         label,
         &setup,
@@ -822,6 +794,21 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         opening,
         plan,
         validate_against_planner,
+    );
+    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+    report_setup_sizes(
+        label,
+        num_setup_field_elements,
+        num_setup_field_elements * std::mem::size_of::<FF>(),
+        &prepared
+            .shared_ntt_cache_metrics()
+            .expect("prepared setup NTT cache metrics"),
+    );
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
     );
 }
 
@@ -895,20 +882,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
-        let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-        report_setup_sizes(
-            label,
-            setup_ring_elements,
-            setup_ring_elements * D * std::mem::size_of::<FF>(),
-            prepared.shared_ntt_cache_bytes(),
-        );
-        report_crt_profile(
-            label,
-            prepared
-                .shared_ntt_profile::<D>()
-                .expect("prepared setup CRT profile"),
-        );
-
         let t0 = Instant::now();
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
@@ -945,6 +918,21 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
         .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
+        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        report_setup_sizes(
+            label,
+            num_setup_field_elements,
+            num_setup_field_elements * std::mem::size_of::<FF>(),
+            &prepared
+                .shared_ntt_cache_metrics()
+                .expect("prepared setup NTT cache metrics"),
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
         (commitments, proof, setup)
     };
     assert_observed_proof_size::<FF, Cfg::ExtField>(label, &proof);
@@ -960,13 +948,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup_contribution_mode,
             plan,
         );
-        emit_runtime_schedule_summary(
-            label,
-            plan,
-            num_polys,
-            Cfg::D,
-            Cfg::decomposition().field_bits(),
-        );
+        emit_runtime_schedule_summary(label, plan, num_polys, Cfg::decomposition().field_bits());
         emit_proof_tail_report::<FF, Cfg::ExtField>(
             label,
             &proof,
@@ -986,7 +968,6 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             label,
             &schedule,
             num_polys,
-            Cfg::D,
             Cfg::decomposition().field_bits(),
         );
         emit_proof_tail_report::<FF, Cfg::ExtField>(
@@ -1232,20 +1213,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
-        let setup_ring_elements = setup.expanded.shared_matrix().total_ring_elements();
-        report_setup_sizes(
-            label,
-            setup_ring_elements,
-            setup_ring_elements * D * std::mem::size_of::<FF>(),
-            prepared.shared_ntt_cache_bytes(),
-        );
-        report_crt_profile(
-            label,
-            prepared
-                .shared_ntt_profile::<D>()
-                .expect("prepared setup CRT profile"),
-        );
-
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);
         let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
         let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
@@ -1364,6 +1331,21 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
+        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        report_setup_sizes(
+            label,
+            num_setup_field_elements,
+            num_setup_field_elements * std::mem::size_of::<FF>(),
+            &prepared
+                .shared_ntt_cache_metrics()
+                .expect("prepared setup NTT cache metrics"),
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
         (
             proof,
             schedule,
@@ -1400,7 +1382,6 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         label,
         &schedule,
         total_polys,
-        Cfg::D,
         Cfg::decomposition().field_bits(),
     );
     emit_proof_tail_report::<FF, Cfg::ExtField>(

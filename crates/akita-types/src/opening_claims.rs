@@ -99,7 +99,7 @@ impl OpeningClaimsLayout {
         Self::from_groups(groups)
     }
 
-    /// Worst-case setup envelope as a one-group layout.
+    /// Worst-case setup-capacity request as a one-group layout.
     pub fn from_setup_seed(seed: &AkitaSetupSeed) -> Result<Self, AkitaError> {
         Self::new(seed.max_num_vars, seed.max_num_batched_polys)
     }
@@ -437,7 +437,7 @@ impl<'a, F: Clone, C> OpeningClaims<'a, F, C> {
         Ok(())
     }
 
-    /// Validate consistency plus public capacity against the setup envelope.
+    /// Validate consistency plus public capacity against the setup limits.
     pub fn validate(&self, seed: &AkitaSetupSeed) -> Result<(), AkitaError> {
         self.check()?;
         let max_num_vars = self.layout()?.max_num_vars();

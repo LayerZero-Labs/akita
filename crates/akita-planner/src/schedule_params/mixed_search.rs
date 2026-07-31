@@ -41,7 +41,7 @@ fn insert_supported(
     frontier: &mut Vec<ScheduleCandidate>,
     candidate: ScheduleCandidate,
 ) {
-    if candidate.setup_field_elements <= policy.max_setup_envelope_field_elements {
+    if candidate.setup_field_elements <= policy.max_num_setup_field_elements {
         insert_frontier(frontier, candidate);
     }
 }
@@ -371,7 +371,7 @@ pub(super) fn find_schedule(
                         folds,
                         terminal: suffix.terminal,
                     };
-                    if candidate.setup_field_elements <= policy.max_setup_envelope_field_elements {
+                    if candidate.setup_field_elements <= policy.max_num_setup_field_elements {
                         complete.push(candidate);
                     }
                 }
@@ -382,8 +382,7 @@ pub(super) fn find_schedule(
     let mut scored = complete
         .into_iter()
         .map(|candidate| {
-            let descriptor =
-                candidate_schedule_descriptor_bytes(&candidate, policy.ring_dimension)?;
+            let descriptor = candidate_schedule_descriptor_bytes(&candidate)?;
             Ok((
                 MixedScore {
                     setup_field_elements: candidate.setup_field_elements,
@@ -405,7 +404,6 @@ pub(super) fn find_schedule(
     materialize_candidate_schedule(
         selected.total_bytes,
         selected.setup_field_elements,
-        policy.ring_dimension,
         None,
         selected.folds,
         selected.terminal,

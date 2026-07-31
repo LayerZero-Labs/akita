@@ -102,11 +102,11 @@ where
 {
     type PreparedSetup = CpuPreparedSetup<F>;
 
-    fn prepare_expanded<const RING_D: usize>(
+    fn prepare_expanded(
         &self,
         expanded: std::sync::Arc<akita_types::AkitaExpandedSetup<F>>,
     ) -> Result<Self::PreparedSetup, AkitaError> {
-        CpuBackend.prepare_expanded::<RING_D>(expanded)
+        CpuBackend.prepare_expanded(expanded)
     }
 
     fn ensure_ntt_slot(
@@ -197,10 +197,9 @@ fn custom_commit_source_runs_commit_with_params() {
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
-            .expect("setup");
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");
@@ -248,10 +247,9 @@ fn custom_commit_source_runs_batched_commit_with_params() {
     let opening_batch = OpeningClaimsLayout::new(CONTRACT_NUM_VARS, 1).expect("opening batch");
     let params = Cfg::get_params_for_batched_commitment(&opening_batch).expect("layout");
 
-    let setup_envelope = Cfg::max_setup_matrix_size(CONTRACT_NUM_VARS, 1).expect("envelope");
-    let setup =
-        AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, D, setup_envelope)
-            .expect("setup");
+    let setup_envelope = Cfg::setup_matrix_capacity(CONTRACT_NUM_VARS, 1).expect("envelope");
+    let setup = AkitaProverSetup::<F>::generate_with_capacity(CONTRACT_NUM_VARS, 1, setup_envelope)
+        .expect("setup");
     let prepared = ContractCommitBackend
         .prepare_setup(&setup)
         .expect("prepared");

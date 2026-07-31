@@ -166,15 +166,13 @@ fn mixed_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         AkitaSetupSeed {
             max_num_vars: 16,
             max_num_batched_polys: 1,
-            gen_ring_dim: D_INNER,
-            max_setup_len: setup_ring_elements,
-            public_matrix_seed: [7; 32],
+            num_field_elements: setup_ring_elements,
+            public_matrix_id: [7; 32].into(),
         },
         FlatMatrix::from_flat_data(
             (0..setup_ring_elements * D_INNER)
                 .map(|index| MixedF::from_u64(101 + index as u64))
                 .collect(),
-            D_INNER,
         ),
     );
     let point = (0..relation_address_geometry.relation_point_variable_count())

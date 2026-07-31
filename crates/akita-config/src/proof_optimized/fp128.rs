@@ -31,7 +31,7 @@ pub struct D128OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
-/// Binary onehot preset with D256 setup generation and planner-selected
+/// Binary onehot preset with a D256 uniform planner policy and planner-selected
 /// per-level commitment dimensions.
 ///
 /// Mixed-dimension planning is an offline generation step. Runtime proving
@@ -298,7 +298,7 @@ fn candidate<Cfg: CommitmentConfig>(
             estimated_recursive_stage3_payload_bytes: Vec::new(),
             estimated_terminal_direct_payload_bytes: 0,
             estimated_terminal_response_payload_bytes: 0,
-            estimated_setup_envelope_ring_elements: 0,
+            estimated_num_setup_field_elements: 0,
             first_direct_setup_field_len: None,
             selected_offload_edges: 0,
         },

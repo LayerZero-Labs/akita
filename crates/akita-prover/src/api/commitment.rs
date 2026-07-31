@@ -185,7 +185,7 @@ where
         .output_rank()
         .checked_mul(params.inner_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
-    let a_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_a())?;
+    let a_available = setup.shared_matrix.num_field_elements() / dims.d_a();
     if a_required > a_available {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role commit params require {a_required} setup ring elements at d={}, but setup has {a_available}",
@@ -197,7 +197,7 @@ where
         .output_rank()
         .checked_mul(params.outer_commit_matrix.input_width())
         .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
-    let b_available = setup.shared_matrix.total_ring_elements_at_dyn(dims.d_b())?;
+    let b_available = setup.shared_matrix.num_field_elements() / dims.d_b();
     if b_required > b_available {
         return Err(AkitaError::InvalidSetup(format!(
             "B-role commit params require {b_required} setup ring elements at d={}, but setup has {b_available}",
@@ -337,17 +337,6 @@ where
     // between the inner A-role and outer B-role commitment halves) plus the
     // D-free `DigitBlocks` hint payload; recomposed inner rows are recomputed
     // on demand from the digit stream (S5 re-home), not cached here.
-    let gen_ring_dim = backend
-        .prepared_expanded_setup(prepared)
-        .seed()
-        .gen_ring_dim;
-    let mut warmed_ring_dim = gen_ring_dim;
-    for ring_dim in [dims.d_a(), dims.d_b()] {
-        if ring_dim != gen_ring_dim && ring_dim != warmed_ring_dim {
-            ctx.ensure_envelope_ntt(backend.prepared_expanded_setup(prepared), ring_dim)?;
-            warmed_ring_dim = ring_dim;
-        }
-    }
     let (b_input_flat, decomposed_digit_blocks) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
@@ -842,7 +831,7 @@ mod tests {
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
     use akita_types::DigitBlocks;
-    use akita_types::{OpenCommitMatrixParams, SetupMatrixEnvelope, SisModulusProfileId};
+    use akita_types::{OpenCommitMatrixParams, SetupMatrixCapacity, SisModulusProfileId};
 
     type F = Fp64<4294967197>;
     const D: usize = 64;
@@ -914,8 +903,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;
@@ -942,8 +932,9 @@ mod tests {
         let expanded = AkitaProverSetup::<F>::generate_with_capacity(
             5,
             1,
-            D,
-            SetupMatrixEnvelope { max_setup_len: 8 },
+            SetupMatrixCapacity {
+                num_field_elements: D,
+            },
         )
         .unwrap()
         .expanded;

@@ -66,20 +66,20 @@ pub use ring_relation::{
 };
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
-    derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
-    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixSeed, SetupMatrixEnvelope,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    derive_public_matrix_prefix, sample_public_matrix_id, validate_public_matrix_matches_seed,
+    AkitaExpandedSetup, AkitaSetupSeed, AkitaVerifierSetup, PublicMatrixDerivation, PublicMatrixId,
+    SetupMatrixCapacity, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
     accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
-    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_matrix_capacity_for_schedule, setup_matrix_field_elements_for_schedule,
     setup_prefix_slot_field_elements,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,
     setup_prefix_precommitted_params, setup_prefix_slot_id, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SETUP_OFFLOAD_D_SETUP,
+    SetupPrefixVerifierSlot,
 };
 pub use shapes::{
     AkitaBatchedProofShape, AkitaStage1StageShape, ExtensionOpeningReductionShape, LevelProofShape,

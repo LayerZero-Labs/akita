@@ -47,8 +47,6 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
-    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_a())?;
-    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), dims.d_b())?;
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
@@ -152,7 +150,6 @@ where
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let ring_dim = commit_params.d_a();
-    commit_ctx.ensure_envelope_ntt(expanded.as_ref(), ring_dim)?;
     let backend = commit_ctx.backend();
     let prepared = commit_ctx.prepared();
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;

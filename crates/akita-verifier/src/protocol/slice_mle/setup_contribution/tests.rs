@@ -170,11 +170,11 @@ impl SetupContributionFixture {
         let total_len = offset_r;
         let bits = total_len.next_power_of_two().trailing_zeros() as usize;
 
-        let max_setup_len = (shape.n_d * n_cols_e)
+        let num_field_elements = (shape.n_d * n_cols_e)
             .max(shape.n_a * inner_width)
             .max(shape.n_b * n_cols_t);
 
-        let matrix_entries: Vec<CyclotomicRing<TestField, TEST_RING_DIM>> = (0..max_setup_len)
+        let matrix_entries: Vec<CyclotomicRing<TestField, TEST_RING_DIM>> = (0..num_field_elements)
             .map(|idx| {
                 CyclotomicRing::from_coefficients(std::array::from_fn(|coeff| {
                     test_scalar(1_000 + (idx * TEST_RING_DIM + coeff) as u128)
@@ -185,9 +185,8 @@ impl SetupContributionFixture {
             AkitaSetupSeed {
                 max_num_vars: 32,
                 max_num_batched_polys: shape.num_polys_per_group.iter().sum(),
-                gen_ring_dim: TEST_RING_DIM,
-                max_setup_len,
-                public_matrix_seed: [7u8; 32],
+                num_field_elements,
+                public_matrix_id: [7u8; 32].into(),
             },
             FlatMatrix::from_ring_slice::<TEST_RING_DIM>(&matrix_entries),
         );
@@ -283,11 +282,7 @@ impl SetupContributionFixture {
             .unwrap();
         let alpha = self.alpha_pows[1];
         let setup_index_weight = plan.materialize_setup_index_weights(alpha).unwrap();
-        let setup_len = self
-            .setup
-            .shared_matrix()
-            .total_ring_elements_at::<TEST_RING_DIM>()
-            .unwrap();
+        let setup_len = self.setup.shared_matrix().num_field_elements() / TEST_RING_DIM;
         assert!(
             setup_len >= setup_index_weight.len(),
             "fixture setup must cover materialized setup weights"

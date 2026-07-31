@@ -184,8 +184,8 @@ fn catalog_identity_rejects_planner_policy_changes() {
     assert_rejected("selection policy", mutated);
 
     let mut mutated = catalog;
-    mutated.identity.max_setup_envelope_field_elements -= 1;
-    assert_rejected("setup envelope ceiling", mutated);
+    mutated.identity.max_num_setup_field_elements -= 1;
+    assert_rejected("setup capacity ceiling", mutated);
 
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;

@@ -5,7 +5,7 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
-    SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -44,11 +44,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::ring_subfield_embedding_norm_bound()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
-        crate::proof_optimized::proof_optimized_max_setup_matrix_size::<Self>(
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
+        crate::proof_optimized::proof_optimized_setup_matrix_capacity::<Self>(
             max_num_vars,
             max_num_batched_polys,
         )
@@ -91,11 +91,6 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     fn runtime_schedule(
         key: akita_types::AkitaScheduleLookupKey,
     ) -> Result<akita_types::FoldSchedule, AkitaError> {
-        if Cfg::D != SETUP_OFFLOAD_D_SETUP {
-            return Err(AkitaError::InvalidSetup(
-                "recursive setup planning requires D64".to_string(),
-            ));
-        }
         if key.precommitteds.is_empty() {
             return Cfg::runtime_schedule(key);
         }

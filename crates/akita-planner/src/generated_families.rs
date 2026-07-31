@@ -176,8 +176,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     type Cfg = fp128::MixedDimFp128OneHot;
     let policy = policy_of::<Cfg>();
-    let dimensions =
-        RingDimensionSearchDomain::new(policy.ring_dimension, Cfg::RING_DIMENSION_CANDIDATES)?;
+    let dimensions = RingDimensionSearchDomain::new(Cfg::RING_DIMENSION_CANDIDATES)?;
     Ok(find_schedule(
         key,
         &policy,
@@ -286,7 +285,7 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
 
     let min_precommitted_num_vars = family
         .min_num_vars
-        .max(policy_of::<Cfg>().ring_dimension.trailing_zeros() as usize + 1);
+        .max(policy_of::<Cfg>().uniform_ring_dimension.trailing_zeros() as usize + 1);
     let mut mains = family_keys(family)?;
     if !family.num_polys.contains(&3) {
         for nv in family.min_num_vars..=family.max_num_vars {
@@ -452,7 +451,6 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     if !Cfg::recursive_setup_planning()
         || Cfg::decomposition().log_commit_bound != 1
-        || Cfg::D != akita_types::SETUP_OFFLOAD_D_SETUP
         || max_num_batched_polys == 0
     {
         return Ok(Vec::new());

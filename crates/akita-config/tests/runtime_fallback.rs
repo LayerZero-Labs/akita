@@ -312,9 +312,10 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         } else {
             SelectionPolicyId::MinEstimatedProofPayload
         },
-        max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+        max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
-        ring_dimension: Cfg::D,
+        uniform_ring_dimension: Cfg::D,
+        setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,

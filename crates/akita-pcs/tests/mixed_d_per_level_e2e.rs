@@ -1,8 +1,8 @@
 //! Mixed ring-dimension-per-level E2E acceptance test for the runtime ring
 //! cutover (specs/runtime-ring-cutover.md §Acceptance / §Testing Strategy).
 //!
-//! Uses the fp128 `D128Dense` setup (`gen_ring_dim = 128`) with a hand-built
-//! schedule: fold levels `[0, MIXED_D_SWITCH_FOLD)` at `D = 128`, levels
+//! Uses a flat fp128 public setup with a hand-built schedule: fold levels
+//! `[0, MIXED_D_SWITCH_FOLD)` at `D = 128`, levels
 //! `[MIXED_D_SWITCH_FOLD, …)` at `D = 64` (stitched from the shipped
 //! `D64Dense` table by [`mixed_d_per_level_fixture::mixed_d_per_level_schedule`]).
 //!
@@ -25,13 +25,13 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    setup_matrix_envelope_for_schedule, validate_schedule_ring_dims, AkitaBatchedProof,
+    setup_matrix_capacity_for_schedule, validate_schedule_ring_dims, AkitaBatchedProof,
     AkitaScheduleLookupKey, FoldSchedule, GroupBatchStatement, NextWitnessBinding,
     OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RingVec,
 };
 use common::*;
 
-/// Envelope preset: root levels at `D = 128`, generation ring dimension 128.
+/// Root preset: leading levels at `D = 128`.
 type Envelope = fp128::D128Dense;
 /// Suffix preset: recursive levels at `D = 64`.
 type Suffix = fp128::D64Dense;
@@ -52,9 +52,9 @@ const TRANSCRIPT_LABEL: &[u8] = b"test/mixed_d_per_level_e2e";
 /// override is the normal public plumbing, not a test-only side door.
 type MixedD128To64 = MixedDConfig<Envelope, Suffix, MIXED_D_SWITCH_FOLD>;
 
-/// Like [`MixedD128To64`], but one suffix fold level advertises a ring
-/// dimension that does not divide the setup's `gen_ring_dim`. Entry
-/// validation (`validate_schedule_ring_dims`) must reject it with an error, never a panic.
+/// Like [`MixedD128To64`], but one suffix fold advertises unsupported ring
+/// dimension 96. Entry validation (`validate_schedule_ring_dims`) must reject
+/// it with an error, never a panic.
 #[derive(Clone, Copy, Debug, Default)]
 struct MixedDBadLevelDim;
 
@@ -78,11 +78,11 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::sis_modulus_profile()
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<akita_types::SetupMatrixEnvelope, AkitaError> {
-        Envelope::max_setup_matrix_size(max_num_vars, max_num_batched_polys)
+    ) -> Result<akita_types::SetupMatrixCapacity, AkitaError> {
+        Envelope::setup_matrix_capacity(max_num_vars, max_num_batched_polys)
     }
 
     fn basis_range() -> (u32, u32) {
@@ -101,8 +101,7 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
             opening_batch.num_total_polynomials(),
             MIXED_D_SWITCH_FOLD,
         )?;
-        // Corrupt the first suffix fold level: 96 does not divide the
-        // setup's gen_ring_dim (128) and is not a power of two.
+        // Corrupt the first suffix fold level with unsupported dimension 96.
         if let Some(fold) = schedule.recursive_folds.get_mut(MIXED_D_SWITCH_FOLD - 1) {
             let matrix = &fold.params.witness.inner_commit_matrix;
             fold.params.witness.inner_commit_matrix =
@@ -179,7 +178,6 @@ fn prove_mixed_fixture() -> MixedDFixture {
     let opening = opening_from_poly::<ENVELOPE_D, _>(&poly, &point, &layout);
 
     let setup = Scheme::setup_prover(NUM_VARS, 1).expect("setup");
-    assert_eq!(setup.expanded.seed().gen_ring_dim, ENVELOPE_D);
     let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -289,15 +287,15 @@ fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
         PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
     ))
     .expect("tableless mixed-D schedule");
-    let required = setup_matrix_envelope_for_schedule(&schedule, TablelessMixedD::D)
-        .expect("synthetic schedule envelope");
-    let configured = TablelessMixedD::max_setup_matrix_size(TABLELESS_NUM_VARS, 1)
-        .expect("mixed-D setup envelope");
-    assert!(configured.max_setup_len >= required.max_setup_len);
+    let required =
+        setup_matrix_capacity_for_schedule(&schedule).expect("synthetic schedule envelope");
+    let configured = TablelessMixedD::setup_matrix_capacity(TABLELESS_NUM_VARS, 1)
+        .expect("mixed-D setup capacity");
+    assert!(configured.num_field_elements >= required.num_field_elements);
 
     let setup = TablelessScheme::setup_prover(TABLELESS_NUM_VARS, 1)
         .expect("tableless mixed-D prover setup");
-    assert!(setup.expanded.seed().max_setup_len >= required.max_setup_len);
+    assert!(setup.expanded.seed().num_field_elements >= required.num_field_elements);
 }
 
 #[test]
@@ -543,7 +541,7 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
         let malformed_schedule =
             MixedDBadLevelDim::get_params_for_prove(&opening_batch).expect("malformed schedule");
         validate_schedule_ring_dims(&malformed_schedule, setup.expanded.seed())
-            .expect_err("level dim 96 must not divide gen_ring_dim 128");
+            .expect_err("unsupported level dimension 96 must reject");
 
         // An invalid schedule cannot be materialized as an audited resolved
         // row. Exercise both public entries with an unresolved selection and

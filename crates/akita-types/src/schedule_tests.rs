@@ -9,7 +9,7 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
         estimated_recursive_stage3_payload_bytes: vec![22, 0],
         estimated_terminal_direct_payload_bytes: 400,
         estimated_terminal_response_payload_bytes: 350,
-        estimated_setup_envelope_ring_elements: 512,
+        estimated_num_setup_field_elements: 512,
         first_direct_setup_field_len: Some(1_024),
         selected_offload_edges: 2,
     };
@@ -124,10 +124,10 @@ fn recursive_schedule(
     let predecessor = committed_params(predecessor_ring_dimension);
     let mut successor = committed_params(successor_ring_dimension);
     let incoming_setup_prefix = offload.then(|| {
-        let natural_len = crate::SETUP_OFFLOAD_D_SETUP;
+        let natural_len = 64;
         let commitment_params = crate::setup_prefix_precommitted_params(&successor, natural_len)
             .expect("setup-prefix commitment params");
-        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params)
+        crate::setup_prefix_slot_id(natural_len, commitment_params)
     });
     successor.setup_prefix = incoming_setup_prefix.clone();
     let terminal = TerminalCommittedGroupParams::from_expanded_group(committed_params(
@@ -197,13 +197,12 @@ fn schedule_rejects_setup_prefix_split_authority() {
 }
 
 #[test]
-fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
+fn schedule_accepts_prefix_dimension_independent_of_producer_projection() {
     let schedule = recursive_schedule(128, 64, true);
 
-    let err = schedule
+    schedule
         .validate_structure()
-        .expect_err("offload prefix must use the producer setup projection dimension");
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("prefix commitment A dimension is independent of producer projection");
 }
 
 #[test]
@@ -267,15 +266,14 @@ fn schedule_accepts_mixed_producer_projecting_to_prefix_dimension() {
 }
 
 #[test]
-fn schedule_rejects_prefix_commitment_roles_that_miss_consumer_roles() {
+fn schedule_accepts_prefix_commitment_roles_independent_of_consumer_roles() {
     let mut schedule = recursive_schedule(64, 64, true);
     retarget_outer_dimension(&mut schedule.recursive_folds[0].params.witness, 32)
         .expect("retarget consumer B role");
 
-    let err = schedule
+    schedule
         .validate_structure()
-        .expect_err("prefix B commitment must match the consumer B role");
-    assert!(matches!(err, AkitaError::InvalidSetup(_)));
+        .expect("prefix commitment roles are independent of consumer witness roles");
 }
 
 #[test]
@@ -347,7 +345,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
 
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
     let mut consumer = committed_params_with_geometry(64, 16, 64);
-    let prefix_ring_slots = n_prefix / crate::SETUP_OFFLOAD_D_SETUP;
+    let prefix_ring_slots = n_prefix / 64;
     let inner = &consumer.inner_commit_matrix;
     consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
         inner.security_policy(),
@@ -360,8 +358,7 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
     );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
-    let prefix =
-        crate::setup_prefix_slot_id(crate::SETUP_OFFLOAD_D_SETUP, natural_len, commitment_params);
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
     schedule.recursive_folds[0].params.witness = consumer.clone();
     schedule.recursive_folds[0].params.open_commit_matrix = consumer.open_commit_matrix;
     schedule.recursive_folds[0].params.incoming_setup_prefix = Some(prefix.clone());

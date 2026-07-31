@@ -41,11 +41,11 @@ macro_rules! delegate_compute_backend_setup {
         {
             type PreparedSetup = <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup;
 
-            fn prepare_expanded<const D: usize>(
+            fn prepare_expanded(
                 &self,
                 expanded: Arc<AkitaExpandedSetup<F>>,
             ) -> Result<Self::PreparedSetup, AkitaError> {
-                CpuBackend.prepare_expanded::<D>(expanded)
+                CpuBackend.prepare_expanded(expanded)
             }
 
             fn ensure_ntt_slot(
@@ -54,14 +54,6 @@ macro_rules! delegate_compute_backend_setup {
                 key: NttCacheKey,
             ) -> Result<(), AkitaError> {
                 CpuBackend.ensure_ntt_slot(prepared, key)
-            }
-
-            fn register_setup_contract_ntt_slot(
-                &self,
-                prepared: &Self::PreparedSetup,
-                key: NttCacheKey,
-            ) -> Result<(), AkitaError> {
-                CpuBackend.register_setup_contract_ntt_slot(prepared, key)
             }
 
             fn prepared_expanded_setup<'a>(

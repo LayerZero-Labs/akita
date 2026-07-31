@@ -6,19 +6,14 @@ use akita_config::{
 use akita_planner::{find_group_batch_schedule, find_schedule, RingDimensionSearchDomain};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 
-fn print_schedule(
-    label: &str,
-    setup_generation_dimension: usize,
-    planned: &akita_types::PlannedFoldSchedule,
-) {
+fn print_schedule(label: &str, planned: &akita_types::PlannedFoldSchedule) {
     let schedule = &planned.schedule;
     let physical_setup = akita_types::setup_matrix_field_elements_for_schedule(schedule)
-        .expect("physical setup envelope");
+        .expect("physical setup capacity");
     println!("{label}");
     println!(
-        "  objective: setup={} generated D{} ring elements ({} physical field elements), proof={} bytes",
-        planned.estimate.estimated_setup_envelope_ring_elements,
-        setup_generation_dimension,
+        "  objective: setup={} field elements ({} recomputed field elements), proof={} bytes",
+        planned.estimate.estimated_num_setup_field_elements,
         physical_setup,
         planned
             .estimate
@@ -84,10 +79,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
     let direct_policy = policy_of::<MixedDimFp128OneHot>();
-    let domain = RingDimensionSearchDomain::new(
-        direct_policy.ring_dimension,
-        MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES,
-    )?;
+    let domain = RingDimensionSearchDomain::new(MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES)?;
     let direct = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &direct_policy,
@@ -98,19 +90,15 @@ fn main() -> Result<(), akita_field::AkitaError> {
     )?;
     print_schedule(
         &format!("direct scalar mixed-D search (nv={num_vars})"),
-        direct_policy.ring_dimension,
         &direct,
     );
 
     type MixedRecursive = RecursiveCommitmentConfig<D256OneHot>;
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
-    let recursive_domain = RingDimensionSearchDomain::new(
-        D256OneHot::D,
-        [
-            akita_types::CommitmentRingDims::uniform(64),
-            akita_types::CommitmentRingDims::uniform(256),
-        ],
-    )?;
+    let recursive_domain = RingDimensionSearchDomain::new([
+        akita_types::CommitmentRingDims::uniform(64),
+        akita_types::CommitmentRingDims::uniform(256),
+    ])?;
     let mixed_recursive = find_schedule(
         PolynomialGroupLayout::new(32, 2),
         &mixed_recursive_policy,
@@ -160,7 +148,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     println!("preserved recursive grouped planner:");
     println!(
         "  setup={} D64 ring elements, proof={} bytes, levels={}, offload_edges={}",
-        preserved.estimate.estimated_setup_envelope_ring_elements,
+        preserved.estimate.estimated_num_setup_field_elements,
         preserved.estimate.estimated_proof_payload_bytes()?,
         preserved.schedule.recursive_folds.len() + 2,
         preserved.estimate.selected_offload_edges,

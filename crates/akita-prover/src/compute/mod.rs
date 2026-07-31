@@ -39,7 +39,7 @@ pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,
 };
-pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile};
+pub use cpu::{CpuBackend, CpuPreparedSetup, PreparedCrtNttProfile, PreparedNttCacheMetric};
 pub use delegating_cpu::{CommitCluster, OpeningCluster, RingSwitchCluster, TensorCluster};
 pub(crate) use dispatch::tensor_root_projection;
 pub use hint_recompose::{

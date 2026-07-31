@@ -129,21 +129,8 @@ where
                 middle_bd_ring_dim,
             )?;
 
-            // The producer's common relation dimension is the source ring for
-            // the committed setup prefix and must equal the consuming A ring.
             let root_commitment = &root.params.final_group.commitment;
-            let shared_root_d = root_commitment.role_dims().d_d();
-            let mut setup_prefix_d = root_commitment.role_dims().common_relation_coeff_count();
-            for group in &root_commitment.precommitted_groups {
-                setup_prefix_d = setup_prefix_d
-                    .min(group.role_dims(shared_root_d).common_relation_coeff_count());
-            }
-            if setup_prefix_d != Mid::D {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "root setup projection D{setup_prefix_d} does not match L1 A dimension D{}",
-                    Mid::D
-                )));
-            }
+            let setup_prefix_d = mid_policy.setup_prefix_inner_ring_dimension;
             let natural_prefix_len = active_setup_field_len(root_commitment, &opening_layout)?;
             let n_prefix = padded_setup_prefix_len(natural_prefix_len);
             let ring_challenge = Mid::ring_challenge_config(setup_prefix_d)?;
@@ -159,8 +146,7 @@ where
                     outer_ring_dimension: middle_bd_ring_dim,
                 },
             )?;
-            let setup_prefix =
-                setup_prefix_slot_id(setup_prefix_d, natural_prefix_len, prefix_params);
+            let setup_prefix = setup_prefix_slot_id(natural_prefix_len, prefix_params);
             let prefix_d_width = setup_prefix
                 .commitment_params
                 .d_segment_width(middle_bd_ring_dim)?;
@@ -306,10 +292,10 @@ where
             .max(Suffix::ring_subfield_embedding_norm_bound())
     }
 
-    fn max_setup_matrix_size(
+    fn setup_matrix_capacity(
         max_num_vars: usize,
         max_num_batched_polys: usize,
-    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+    ) -> Result<SetupMatrixCapacity, AkitaError> {
         // Two known fixtures share this synthetic config:
         // - CI e2e: 2×(14,1) pre + (24,1) final → setup_prover(24, 3)
         // - profile/bench: 2×(16,1) pre + (32,2) final → setup_prover(32, 4)
@@ -343,7 +329,7 @@ where
             ROOT_BD_RING_DIM,
             L1_BD_RING_DIM,
         )?;
-        akita_types::setup_matrix_envelope_for_schedule(&schedule, Root::D)
+        akita_types::setup_matrix_capacity_for_schedule(&schedule)
     }
 
     fn basis_range() -> (u32, u32) {

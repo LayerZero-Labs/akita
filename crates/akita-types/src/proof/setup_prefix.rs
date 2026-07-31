@@ -23,17 +23,12 @@ use std::io::{Read, Write};
 
 const MAX_SETUP_PREFIX_SLOTS: usize = 4096;
 
-/// Ring dimension used when delegating setup claims to a flat coefficient prefix.
-pub const SETUP_OFFLOAD_D_SETUP: usize = 64;
-
 /// Identity for one committed setup-prefix slot.
 ///
 /// `natural_len` distinguishes exact prefixes that share the padded commitment
 /// domain derived from `commitment_params`.
 #[derive(Debug, Clone)]
 pub struct SetupPrefixSlotId {
-    /// Coefficient-axis ring dimension for the delegated prefix object.
-    pub d_setup: usize,
     /// Exact flat coefficient length represented before zero padding.
     pub natural_len: usize,
     /// Commitment parameters used to build the setup-prefix object.
@@ -49,6 +44,15 @@ impl PartialEq for SetupPrefixSlotId {
 impl Eq for SetupPrefixSlotId {}
 
 impl SetupPrefixSlotId {
+    /// Ring dimension used to commit the setup-prefix coefficient vector.
+    #[must_use]
+    pub fn d_setup(&self) -> usize {
+        self.commitment_params
+            .layout
+            .inner_commit_matrix
+            .ring_dimension()
+    }
+
     /// Padded flat coefficient length committed for this slot.
     pub fn n_prefix(&self) -> Result<usize, AkitaError> {
         n_prefix_from_commitment_params(&self.commitment_params).map_err(|err| {
@@ -57,7 +61,6 @@ impl SetupPrefixSlotId {
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
-        crate::descriptor_bytes::push_usize(bytes, self.d_setup);
         crate::descriptor_bytes::push_usize(bytes, self.natural_len);
         self.commitment_params.append_descriptor_bytes(bytes);
     }
@@ -83,13 +86,11 @@ fn n_prefix_from_commitment_params(
 
 impl Ord for SetupPrefixSlotId {
     fn cmp(&self, other: &Self) -> Ordering {
-        (self.d_setup, self.natural_len)
-            .cmp(&(other.d_setup, other.natural_len))
-            .then_with(|| {
-                precommitted_level_params_descriptor_bytes(&self.commitment_params).cmp(
-                    &precommitted_level_params_descriptor_bytes(&other.commitment_params),
-                )
-            })
+        self.natural_len.cmp(&other.natural_len).then_with(|| {
+            precommitted_level_params_descriptor_bytes(&self.commitment_params).cmp(
+                &precommitted_level_params_descriptor_bytes(&other.commitment_params),
+            )
+        })
     }
 }
 
@@ -101,7 +102,6 @@ impl PartialOrd for SetupPrefixSlotId {
 
 impl Hash for SetupPrefixSlotId {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.d_setup.hash(state);
         self.natural_len.hash(state);
         precommitted_level_params_descriptor_bytes(&self.commitment_params).hash(state);
     }
@@ -109,7 +109,8 @@ impl Hash for SetupPrefixSlotId {
 
 impl Valid for SetupPrefixSlotId {
     fn check(&self) -> Result<(), SerializationError> {
-        if self.d_setup == 0 {
+        let d_setup = self.d_setup();
+        if d_setup == 0 {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot d_setup must be non-zero".to_string(),
             ));
@@ -125,7 +126,7 @@ impl Valid for SetupPrefixSlotId {
                 "setup prefix slot n_prefix must be a non-zero power of two".to_string(),
             ));
         }
-        if !n_prefix.is_multiple_of(self.d_setup) {
+        if !n_prefix.is_multiple_of(d_setup) {
             return Err(SerializationError::InvalidData(
                 "setup prefix slot n_prefix must be a multiple of d_setup".to_string(),
             ));
@@ -531,7 +532,6 @@ impl AkitaSerialize for SetupPrefixSlotId {
         compress: Compress,
     ) -> Result<(), SerializationError> {
         self.check()?;
-        self.d_setup.serialize_with_mode(&mut writer, compress)?;
         self.natural_len
             .serialize_with_mode(&mut writer, compress)?;
         serialize_precommitted_level_params(&self.commitment_params, &mut writer, compress)?;
@@ -539,8 +539,7 @@ impl AkitaSerialize for SetupPrefixSlotId {
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.d_setup.serialized_size(compress)
-            + self.natural_len.serialized_size(compress)
+        self.natural_len.serialized_size(compress)
             + precommitted_level_params_serialized_size(&self.commitment_params, compress)
     }
 }
@@ -554,12 +553,10 @@ impl AkitaDeserialize for SetupPrefixSlotId {
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let d_setup = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let natural_len = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let commitment_params =
             deserialize_precommitted_level_params(&mut reader, compress, validate)?;
         let out = Self {
-            d_setup,
             natural_len,
             commitment_params,
         };
@@ -723,11 +720,11 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
         }
         self.commitment.check()?;
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup {
+            if row.coeff_len() != self.id.d_setup() {
                 return Err(SerializationError::InvalidData(format!(
                     "setup prefix commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup
+                    self.id.d_setup()
                 )));
             }
         }
@@ -830,12 +827,12 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
         // Re-assert the invariant the const generic `D` used to enforce: every
         // commitment row must have exactly `d_setup` coefficients.
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup {
+            if row.coeff_len() != self.id.d_setup() {
                 return Err(SerializationError::InvalidData(format!(
                     "setup prefix prover slot commitment row has {} coefficients, expected \
                      d_setup={}",
                     row.coeff_len(),
-                    self.id.d_setup
+                    self.id.d_setup()
                 )));
             }
         }
@@ -1252,7 +1249,7 @@ pub fn setup_prefix_precommitted_params(
     prefix_params: &CommittedGroupParams,
     n_prefix: usize,
 ) -> Result<PrecommittedLevelParams, AkitaError> {
-    let d_setup = SETUP_OFFLOAD_D_SETUP;
+    let d_setup = prefix_params.inner_commit_matrix.ring_dimension();
     if n_prefix == 0 || !n_prefix.is_power_of_two() || !n_prefix.is_multiple_of(d_setup) {
         return Err(AkitaError::InvalidSetup(
             "setup prefix length must be a nonzero power-of-two multiple of d_setup".to_string(),
@@ -1327,12 +1324,10 @@ pub fn setup_prefix_precommitted_params(
 
 /// Build the slot id for one committed setup prefix.
 pub fn setup_prefix_slot_id(
-    d_setup: usize,
     natural_len: usize,
     commitment_params: PrecommittedLevelParams,
 ) -> SetupPrefixSlotId {
     SetupPrefixSlotId {
-        d_setup,
         natural_len,
         commitment_params,
     }
@@ -1358,7 +1353,7 @@ where
     let Some(template) = &level_params.setup_prefix else {
         return Ok(None);
     };
-    if template.d_setup != d_setup {
+    if template.d_setup() != d_setup {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix source dimension disagrees with the active setup projection".to_string(),
         ));

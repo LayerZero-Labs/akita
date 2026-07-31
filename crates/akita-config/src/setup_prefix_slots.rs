@@ -6,7 +6,7 @@ use akita_field::AkitaError;
 use akita_schedules::suffix_opening_layout;
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, AkitaScheduleLookupKey, FoldSchedule,
-    SetupPrefixSlotId, SETUP_OFFLOAD_D_SETUP,
+    SetupPrefixSlotId,
 };
 
 use crate::CommitmentConfig;
@@ -17,11 +17,6 @@ fn setup_prefix_slot_matches(
     n_prefix: usize,
 ) -> Result<(), AkitaError> {
     let slot_n_prefix = slot.n_prefix()?;
-    if slot.d_setup != SETUP_OFFLOAD_D_SETUP {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix slot must use the recursive offload dimension".to_string(),
-        ));
-    }
     if slot.natural_len != natural_len {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix slot natural_len does not match recomputed active setup footprint"
@@ -124,7 +119,6 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
 ) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
     if !Cfg::recursive_setup_planning()
         || Cfg::decomposition().log_commit_bound != 1
-        || Cfg::D != SETUP_OFFLOAD_D_SETUP
         || max_num_batched_polys == 0
     {
         return Ok(Vec::new());
@@ -229,8 +223,8 @@ mod tests {
             let one_slot_field_elements =
                 setup_prefix_slot_field_elements(slot).expect("size one slot");
             assert!(
-                one_slot_field_elements >= n_prefix,
-                "slot envelope must cover the padded prefix storage"
+                one_slot_field_elements >= slot.natural_len,
+                "slot capacity must cover the natural public-matrix prefix"
             );
             let a_coeff_len = slot
                 .commitment_params
@@ -265,15 +259,12 @@ mod tests {
     fn recursive_requirements_match_successor_slot_identity() {
         let key = profiling_recursive_key();
         let schedule = SetupCfg::runtime_schedule(key.clone()).expect("recursive schedule");
-        let envelope = akita_types::setup_matrix_envelope_for_schedule(&schedule, SetupCfg::D)
-            .expect("setup envelope");
-        let envelope_field_elements = envelope
-            .max_setup_len
-            .checked_mul(schedule.root.params.final_group.commitment.d_a())
-            .expect("setup envelope field length");
+        let capacity =
+            akita_types::setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
+        let capacity_field_elements = capacity.num_field_elements;
         assert!(
-            envelope_field_elements <= akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
-            "selected recursive schedule exceeds the supported setup envelope"
+            capacity_field_elements <= akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+            "selected recursive schedule exceeds the supported setup capacity"
         );
         let ids = extract_setup_prefix_slot_ids_from_schedule(
             &schedule,
@@ -282,7 +273,7 @@ mod tests {
         .expect("slot ids");
         assert!(!ids.is_empty());
         for slot_id in &ids {
-            assert_eq!(slot_id.d_setup, SETUP_OFFLOAD_D_SETUP);
+            assert_eq!(slot_id.d_setup(), 64);
             assert!(slot_id.natural_len > 0);
             assert!(slot_id.n_prefix().expect("n_prefix") >= slot_id.natural_len);
         }

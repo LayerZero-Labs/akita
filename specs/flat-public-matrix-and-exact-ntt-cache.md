@@ -4,7 +4,7 @@
 |---------------|-------|
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
-| Status        | active |
+| Status        | implemented |
 | PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
 | Superseded-by | |
@@ -219,6 +219,7 @@ the repository's canonical length-prefixed encoding:
 ```text
 ("domain",     PUBLIC_MATRIX_DOMAIN)
 ("derivation", DERIVATION_TAG)
+("page_field_elements", PAGE_FIELD_ELEMENTS as u64 little-endian)
 ("seed",       id.seed)
 ("field",      canonical 32-byte big-endian modulus of F)
 ("page",       page index as u64 little-endian)
@@ -803,19 +804,19 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 #### Public matrix and setup API
 
-- [ ] `AkitaSetupSeed`, expanded setup storage, and public setup APIs contain no
+- [x] `AkitaSetupSeed`, expanded setup storage, and public setup APIs contain no
   `gen_ring_dim` or ring-element capacity.
-- [ ] `FlatMatrix` is replaced or cut over so a stored public prefix has no
+- [x] `FlatMatrix` is replaced or cut over so a stored public prefix has no
   generation D and can create any individually supported exact prefix view.
-- [ ] The canonical setup capacity type and all planner/generated estimates are
+- [x] The canonical setup capacity type and all planner/generated estimates are
   measured in base-field elements.
-- [ ] `setup_matrix_envelope_for_schedule`, setup generation dimension policy,
+- [x] `setup_matrix_envelope_for_schedule`, setup generation dimension policy,
   and dimension-divisibility validation are removed, with all call sites cut
   over in one pass.
-- [ ] The flat paged XOF derivation is implemented exactly as specified and old
+- [x] The flat paged XOF derivation is implemented exactly as specified and old
   generation-D derivation is not retained behind an alias or compatibility
   branch.
-- [ ] `RandomSampling` specifies exact canonical rejection sampling, and fp32,
+- [x] `RandomSampling` specifies exact canonical rejection sampling, and fp32,
   fp64, and fp128 implementations pass shared distribution/byte-consumption
   vectors.
 - [x] A temporary page-size microbenchmark covered
@@ -824,69 +825,69 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 
 #### Protocol identity
 
-- [ ] The instance descriptor version is bumped.
-- [ ] The algebra section no longer stores a single ring dimension.
-- [ ] The setup section binds `PublicMatrixId`, not materialization length or
+- [x] The instance descriptor version is bumped.
+- [x] The algebra section no longer stores a single ring dimension.
+- [x] The setup section binds `PublicMatrixId`, not materialization length or
   host provisioning limits.
-- [ ] Schedule digest tests demonstrate that changing any role-local D changes
+- [x] Schedule digest tests demonstrate that changing any role-local D changes
   the plan digest.
-- [ ] A proof generated with one materialized capacity verifies with a larger
+- [x] A proof generated with one materialized capacity verifies with a larger
   covering capacity having the same public matrix ID.
 
 #### Setup-prefix offloading
 
-- [ ] Capacity accounting charges `natural_len`, not `n_prefix`, for the source
+- [x] Capacity accounting charges `natural_len`, not `n_prefix`, for the source
   prefix and separately includes setup-prefix commitment matrices.
-- [ ] Tests cover a non-power-of-two natural length and prove all padded entries
+- [x] Tests cover a non-power-of-two natural length and prove all padded entries
   are zero rather than later public-stream coefficients.
-- [ ] Setup-prefix preprocessing works for independently selected prefix A/B
+- [x] Setup-prefix preprocessing works for independently selected prefix A/B
   dimensions while the same setup serves a differently dimensioned mixed
   schedule.
-- [ ] Validation neither equates the prefix A dimension with the producer
+- [x] Validation neither equates the prefix A dimension with the producer
   Stage 3 projection dimension nor with the consumer witness A dimension.
-- [ ] Slot identity derives the prefix A dimension from the committed-group
+- [x] Slot identity derives the prefix A dimension from the committed-group
   profile without a duplicate `d_setup` field.
-- [ ] Setup-prefix slot identity and registry validation are bound to the flat
+- [x] Setup-prefix slot identity and registry validation are bound to the flat
   public matrix identity and exact natural/padded geometry.
 
 #### NTT caches
 
-- [ ] Prover NTT requests use exact matrix prefixes; no ordinary path calls a
+- [x] Prover NTT requests use exact matrix prefixes; no ordinary path calls a
   full-envelope key constructor.
-- [ ] Negacyclic, cyclic, and optional i16-tail prefixes can have independent
+- [x] Negacyclic, cyclic, and optional i16-tail prefixes can have independent
   lengths.
-- [ ] Prewarming routes requirements only to clusters that consume them.
-- [ ] Lazy lookup accepts a covering prefix and rejects an undersized or wrong-D
+- [x] Prewarming routes requirements only to clusters that consume them.
+- [x] Lazy lookup accepts a covering prefix and rejects an undersized or wrong-D
   slot without panic.
-- [ ] Equal requirements from levels/groups/chunks join by maximum and tests
+- [x] Equal requirements from levels/groups/chunks join by maximum and tests
   demonstrate that they do not sum or multiply.
-- [ ] The terminal verifier retains exact-negacyclic and exact-tail behavior.
-- [ ] Compression diagnostics remain in a separate cache/profile namespace.
-- [ ] Cache byte reporting uses the normative formula and agrees with actual
+- [x] The terminal verifier retains exact-negacyclic and exact-tail behavior.
+- [x] Compression diagnostics remain in a separate cache/profile namespace.
+- [x] Cache byte reporting uses the normative formula and agrees with actual
   allocated transform vectors.
 
 #### Persistence and integration
 
-- [ ] Disk cache format/key namespace is bumped and generation-D caches are
+- [x] Disk cache format/key namespace is bumped and generation-D caches are
   rejected.
-- [ ] A larger validated public prefix can cover a smaller provisioning request
+- [x] A larger validated public prefix can cover a smaller provisioning request
   without changing transcript identity.
-- [ ] `parallel`, no-default-feature, and `disk-persistence` feature graphs use
+- [x] `parallel`, no-default-feature, and `disk-persistence` feature graphs use
   identical public stream coefficients.
-- [ ] The fp128 one-hot nv32 mixed-dimension CI bench runs through production
+- [x] The fp128 one-hot nv32 mixed-dimension CI bench runs through production
   schedule resolution and reports exact setup fields plus per-D/domain/cluster
   NTT bytes.
-- [ ] No setup code uses a config/preset D or `D512OneHot` as public-matrix
+- [x] No setup code uses a config/preset D or `D512OneHot` as public-matrix
   identity or allocation unit.
 
 #### Documentation and quality
 
-- [ ] The setup and caching section of the Akita Book is updated from this spec
+- [x] The setup and caching section of the Akita Book is updated from this spec
   once the cutover is implemented.
-- [ ] Scoped revision notes in older specs point here for setup derivation and
+- [x] Scoped revision notes in older specs point here for setup derivation and
   NTT-cache semantics while preserving their unrelated decisions.
-- [ ] No thin wrapper preserves the removed generation-D API.
-- [ ] `./scripts/check-doc-guardrails.sh` and every repository preflight command
+- [x] No thin wrapper preserves the removed generation-D API.
+- [x] `./scripts/check-doc-guardrails.sh` and every repository preflight command
   required by touched paths pass.
 
 ### Testing strategy

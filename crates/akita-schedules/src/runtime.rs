@@ -72,9 +72,12 @@ impl SelectionPolicyId {
 pub struct PlannerPolicy {
     pub cost_model: PlannerCostModelId,
     pub selection_policy: SelectionPolicyId,
-    pub max_setup_envelope_field_elements: usize,
+    pub max_num_setup_field_elements: usize,
     pub min_offloaded_witness_contraction: usize,
-    pub ring_dimension: usize,
+    /// Ring dimension used when the planner is restricted to a uniform domain.
+    pub uniform_ring_dimension: usize,
+    /// A-matrix ring dimension used to commit offloaded setup prefixes.
+    pub setup_prefix_inner_ring_dimension: usize,
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
@@ -154,10 +157,23 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
             "schedule selection policy disagrees with recursive setup capability".to_string(),
         ));
     }
-    if policy.max_setup_envelope_field_elements == 0 {
+    if policy.max_num_setup_field_elements == 0 {
         return Err(AkitaError::InvalidSetup(
-            "maximum setup envelope must be positive".to_string(),
+            "maximum setup field capacity must be positive".to_string(),
         ));
+    }
+    for (label, dimension) in [
+        ("uniform", policy.uniform_ring_dimension),
+        (
+            "setup-prefix inner",
+            policy.setup_prefix_inner_ring_dimension,
+        ),
+    ] {
+        if !dimension.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(format!(
+                "schedule {label} ring dimension must be a nonzero power of two"
+            )));
+        }
     }
     if policy.min_offloaded_witness_contraction == 0 {
         return Err(AkitaError::InvalidSetup(
@@ -242,7 +258,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
         return Ok(usize::default());
     };
     let n_prefix = prefix.n_prefix()?;
-    if prefix.d_setup == 0 || !n_prefix.is_multiple_of(prefix.d_setup) {
+    if prefix.d_setup() == 0 || !n_prefix.is_multiple_of(prefix.d_setup()) {
         return Err(AkitaError::InvalidSetup(
             "setup-prefix field length does not align with its ring dimension".to_string(),
         ));
@@ -256,15 +272,14 @@ pub(crate) fn stage3_payload_bytes_for_successor(
         })?;
     Ok(akita_types::proof_size::stage3_setup_product_bytes(
         challenge_field_bits,
-        prefix.d_setup,
-        n_prefix / prefix.d_setup,
+        prefix.d_setup(),
+        n_prefix / prefix.d_setup(),
     ))
 }
 
 pub(crate) fn materialize_candidate_schedule(
     cached_total: usize,
-    cached_setup_envelope: usize,
-    setup_generation_dimension: usize,
+    cached_num_setup_field_elements: usize,
     first_direct_setup_field_len: Option<usize>,
     mut folds: Vec<CandidateFoldStep>,
     terminal_response: CandidateTerminalResponse,
@@ -291,7 +306,7 @@ pub(crate) fn materialize_candidate_schedule(
             .checked_add(terminal_response.estimated_payload_bytes)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal estimate overflow".to_string()))?,
         estimated_terminal_response_payload_bytes: terminal_response.estimated_payload_bytes,
-        estimated_setup_envelope_ring_elements: cached_setup_envelope,
+        estimated_num_setup_field_elements: cached_num_setup_field_elements,
         first_direct_setup_field_len,
         selected_offload_edges: 0,
     };
@@ -354,12 +369,11 @@ pub(crate) fn materialize_candidate_schedule(
         },
     };
     schedule.validate_structure()?;
-    let recomputed_envelope =
-        akita_types::setup_matrix_envelope_for_schedule(&schedule, setup_generation_dimension)?
-            .max_setup_len;
-    if recomputed_envelope != cached_setup_envelope {
+    let recomputed_num_setup_field_elements =
+        akita_types::setup_matrix_capacity_for_schedule(&schedule)?.num_field_elements;
+    if recomputed_num_setup_field_elements != cached_num_setup_field_elements {
         return Err(AkitaError::InvalidSetup(format!(
-            "cached setup envelope {cached_setup_envelope} disagrees with materialized envelope {recomputed_envelope}"
+            "cached setup capacity {cached_num_setup_field_elements} field elements disagrees with materialized capacity {recomputed_num_setup_field_elements}"
         )));
     }
     estimate.selected_offload_edges = schedule

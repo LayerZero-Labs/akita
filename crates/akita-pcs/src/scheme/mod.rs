@@ -31,7 +31,8 @@ type CommitmentWithHint<F> = (CommittedGroup<F>, AkitaCommitmentHint<F>);
 /// End-to-end PCS wrapper, generic over commitment config `Cfg`.
 ///
 /// Root ring degree is derived from `Cfg`'s schedule policy at setup time
-/// (`policy_of::<Cfg>().ring_dimension`, equal to `Cfg::D` for uniform-D presets).
+/// (`policy_of::<Cfg>().uniform_ring_dimension`, equal to `Cfg::D` for
+/// uniform-D presets).
 /// Per-level suffix folds dispatch on each step's schedule `ring_dimension`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct AkitaCommitmentScheme<Cfg: CommitmentConfig> {
@@ -57,7 +58,7 @@ where
         + HasOptimizedFold
         + AkitaSerialize,
 {
-    /// Build prover setup for the config's generation ring dimension.
+    /// Build a flat prover setup for the config's provisioning policy.
     ///
     /// # Errors
     ///
@@ -66,14 +67,19 @@ where
         max_num_vars: usize,
         max_num_polys_per_commitment_group: usize,
     ) -> Result<AkitaProverSetup<Cfg::Field>, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
-            akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
-                max_num_vars,
-                max_num_polys_per_commitment_group,
-            )
-        })
+        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::UniformPolicy,
+            Cfg::Field,
+            ring_d,
+            |D| {
+                validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")?;
+                akita_setup::new_prover_setup::<Cfg::Field, Cfg>(
+                    max_num_vars,
+                    max_num_polys_per_commitment_group,
+                )
+            }
+        )
     }
 
     /// Derive verifier setup from prover setup.
@@ -89,30 +95,25 @@ where
 
     /// Validate the field tower against the config schedule policy ring dimension.
     fn validate_cfg_ring_policy() -> Result<usize, AkitaError> {
-        let ring_d = akita_config::policy_of::<Cfg>().ring_dimension;
-        dispatch_for_field!(ProtocolDispatchSlot::Envelope, Cfg::Field, ring_d, |D| {
-            validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
-        })?;
+        let ring_d = akita_config::policy_of::<Cfg>().uniform_ring_dimension;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::UniformPolicy,
+            Cfg::Field,
+            ring_d,
+            |D| validate_ring_subfield_role::<Cfg::Field, Cfg::ExtField, D>("extension field")
+        )?;
         Ok(ring_d)
     }
 
-    /// Validate policy ring dimension and setup envelope generation degree.
-    fn validate_policy_ring_dim(setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
-        let ring_d = Self::validate_cfg_ring_policy()?;
-        setup.ensure_root_ring_dim(ring_d)
+    /// Validate the configured algebra ring dimension.
+    fn validate_policy_ring_dim(_setup: &AkitaProverSetup<Cfg::Field>) -> Result<(), AkitaError> {
+        Self::validate_cfg_ring_policy().map(|_| ())
     }
 
     fn validate_verifier_policy_ring_dim(
-        setup: &AkitaVerifierSetup<Cfg::Field>,
+        _setup: &AkitaVerifierSetup<Cfg::Field>,
     ) -> Result<(), AkitaError> {
-        let ring_d = Self::validate_cfg_ring_policy()?;
-        if setup.expanded.seed().gen_ring_dim != ring_d {
-            return Err(AkitaError::InvalidInput(format!(
-                "setup gen_ring_dim={} does not match scheme root ring degree {ring_d}",
-                setup.expanded.seed().gen_ring_dim
-            )));
-        }
-        Ok(())
+        Self::validate_cfg_ring_policy().map(|_| ())
     }
 
     /// Commit a single opening-point bundle.

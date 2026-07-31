@@ -35,8 +35,8 @@ pub enum ProtocolRingDispatchTierId {
 pub enum ProtocolDispatchSlot {
     /// A/B/D matrix role (`RingRole`).
     Role(RingRole),
-    /// Setup seed `gen_ring_dim`.
-    Envelope,
+    /// Configured uniform-policy algebra ring dimension.
+    UniformPolicy,
     /// CRT/NTT cache warm and build.
     Ntt,
     /// Diagnostic compressed-commitment F/H matrices.

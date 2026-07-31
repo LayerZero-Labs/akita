@@ -432,7 +432,7 @@ fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
 
     let layout = resolve_layout::<F, Cfg>(nv);
     tracing::info!(
-        "=== onehot_fp128_mixed_dim (fp128, setup D256, generated per-level dimensions, 1-of-256) ==="
+        "=== onehot_fp128_mixed_dim (fp128, flat public setup, generated per-level dimensions, 1-of-256) ==="
     );
     print_layout(&layout, 1, Cfg::decomposition().field_bits());
     // The catalog row selected here is the same exact row used by the PCS
@@ -466,7 +466,7 @@ fn run_recursive_multi_group_mode<
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, setup D={D}, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, config D={D}, flat public setup, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
@@ -641,9 +641,8 @@ fn run_profile_onehot_fp128_d128(nv: usize, num_polys: usize) {
 /// Mixed ring-dimension-per-level experiment: the root fold (level 0) runs at
 /// `D = 128` (via [`fp128::D128OneHot`]); every recursive level and the
 /// terminal fold are repriced at `D = 64` (via [`fp128::D64OneHot`]). The
-/// setup matrix is generated at the envelope's `gen_ring_dim = 128`, and the
-/// suffix `D = 64` levels validate as dividing it. See
-/// `specs/runtime-ring-cutover.md`.
+/// flat public matrix is shared by all levels; each scheduled matrix interprets
+/// only its own exact field prefix at its own ring dimension.
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 fn run_profile_onehot_fp128_d64_root_d128(nv: usize, num_polys: usize) {
     let prime = fp128_prime_label();

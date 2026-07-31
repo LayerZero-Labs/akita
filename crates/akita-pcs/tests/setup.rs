@@ -10,7 +10,7 @@
 //!    than commit/prove/verify. These must fail (panic). We cover the
 //!    `max_num_vars` axis and the `max_num_batched_polys` axis separately.
 //! 3. **Large setup.** `setup_prover` is called with a *larger* parameter
-//!    than commit/prove/verify. These must succeed — the setup envelope is
+//!    than commit/prove/verify. These must succeed — the setup capacity is
 //!    an upper bound, not a tight match.
 //!
 //! Every preset listed in `presets.rs` for the production D64 merge gate gets its
@@ -127,8 +127,22 @@ where
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
-    let verifier_setup =
-        AkitaCommitmentScheme::<Cfg>::setup_verifier(&setup).expect("verifier setup");
+    let verifier_setup_source =
+        AkitaCommitmentScheme::<Cfg>::setup_prover(setup_nv + 1, setup_polys + 1)
+            .expect("larger verifier materialization");
+    assert_eq!(
+        setup.expanded.seed().public_matrix_id,
+        verifier_setup_source.expanded.seed().public_matrix_id
+    );
+    assert!(
+        verifier_setup_source
+            .expanded
+            .shared_matrix()
+            .num_field_elements()
+            >= setup.expanded.shared_matrix().num_field_elements()
+    );
+    let verifier_setup = AkitaCommitmentScheme::<Cfg>::setup_verifier(&verifier_setup_source)
+        .expect("verifier setup from a larger covering public prefix");
 
     let (commitment, hint) =
         AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, std::slice::from_ref(&poly), &stack)

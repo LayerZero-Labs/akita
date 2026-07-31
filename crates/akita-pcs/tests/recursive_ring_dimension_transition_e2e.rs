@@ -29,8 +29,8 @@ use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
     active_setup_field_len, dispatch_for_field, lagrange_weights, padded_setup_prefix_len,
     AkitaBatchedProof, AkitaScheduleLookupKey, BasisMode, CommitmentRingDims,
-    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, NttCacheKey, OpeningClaims,
-    OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
+    CommittedGroupProfile, FoldSchedule, GroupBatchStatement, OpeningClaims, OpeningClaimsLayout,
+    PolynomialGroupClaims, PolynomialGroupLayout, WitnessPartition,
 };
 use common::*;
 use rand::rngs::StdRng;
@@ -123,7 +123,7 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
         .incoming_setup_prefix
         .as_ref()
         .expect("L1 must carry a setup prefix");
-    assert_eq!(prefix.d_setup, 128, "setup prefix must use D128");
+    assert_eq!(prefix.d_setup(), 128, "setup prefix must use D128");
     assert_eq!(
         prefix
             .commitment_params
@@ -377,7 +377,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
 }
 
 #[test]
-fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
+fn recursive_mixed_d_prefix_commit_lazily_builds_exact_ntt_slots() {
     let _serial = RECURSIVE_E2E_LOCK.lock().expect("recursive E2E lock");
     init_rayon_pool();
     run_on_large_stack(|| {
@@ -402,17 +402,11 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
         let setup = AkitaCommitmentScheme::<PlainCfg>::setup_prover(FINAL_NV, TOTAL_GROUP_SIZE)
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared setup");
-        let source_ntt =
-            NttCacheKey::from_envelope(&setup.expanded, prefix.d_setup).expect("source NTT key");
-        CpuBackend
-            .ensure_ntt_slot(&prepared, source_ntt)
-            .expect("warm only source NTT slot");
-
         let n_prefix = prefix.n_prefix().expect("padded prefix length");
-        let error = dispatch_for_field!(
+        dispatch_for_field!(
             akita_types::ProtocolDispatchSlot::Role(akita_types::RingRole::Inner),
             F,
-            prefix.d_setup,
+            prefix.d_setup(),
             |D_SETUP| {
                 commit_setup_prefix::<F, D_SETUP, _>(
                     &setup.expanded,
@@ -424,11 +418,7 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
                 )
             }
         )
-        .expect_err("missing D64 outer NTT slot must reject");
-        assert!(
-            error.to_string().contains("NTT slot not warmed"),
-            "unexpected missing-slot error: {error}"
-        );
+        .expect("setup-prefix commitment lazily acquires its exact NTT prefixes");
     });
 }
 

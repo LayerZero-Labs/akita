@@ -18,7 +18,7 @@
 
 use crate::compute::backend::ComputeBackendSetup;
 use akita_field::{AkitaError, CanonicalField, FieldCore};
-use akita_types::{AkitaExpandedSetup, NttCacheKey};
+use akita_types::AkitaExpandedSetup;
 use std::marker::PhantomData;
 
 /// A single operation context: a backend plus its validated prepared setup.
@@ -34,7 +34,6 @@ where
 {
     backend: &'a B,
     prepared: &'a B::PreparedSetup,
-    gen_ring_dim: usize,
     _field: PhantomData<fn() -> F>,
 }
 
@@ -59,7 +58,6 @@ where
         Ok(Self {
             backend,
             prepared,
-            gen_ring_dim: expanded.seed().gen_ring_dim,
             _field: PhantomData,
         })
     }
@@ -72,25 +70,6 @@ where
     /// Borrowed prepared setup for this operation cluster.
     pub fn prepared(&self) -> &'a B::PreparedSetup {
         self.prepared
-    }
-
-    /// Setup-time generation ring dimension backing this prepared context.
-    pub fn gen_ring_dim(&self) -> usize {
-        self.gen_ring_dim
-    }
-
-    /// Warm the full-envelope NTT slot for `ring_d` on this cluster's prepared setup.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the envelope key cannot be derived or cache build fails.
-    pub fn ensure_envelope_ntt(
-        &self,
-        expanded: &AkitaExpandedSetup<F>,
-        ring_d: usize,
-    ) -> Result<(), AkitaError> {
-        let key = NttCacheKey::from_envelope(expanded, ring_d)?;
-        self.backend.ensure_ntt_slot(self.prepared, key)
     }
 }
 
@@ -162,45 +141,6 @@ where
     /// Ring-switch operation context.
     pub fn ring_switch(&self) -> &OperationCtx<'a, F, R> {
         &self.ring_switch
-    }
-
-    /// Warm full-envelope NTT slots for every cluster at fold ring degree `ring_d`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any cluster fails envelope key derivation or cache build.
-    pub fn ensure_fold_level_envelope_ntt(
-        &self,
-        expanded: &AkitaExpandedSetup<F>,
-        ring_d: usize,
-    ) -> Result<(), AkitaError> {
-        self.commit.ensure_envelope_ntt(expanded, ring_d)?;
-        self.opening.ensure_envelope_ntt(expanded, ring_d)?;
-        self.tensor.ensure_envelope_ntt(expanded, ring_d)?;
-        self.ring_switch.ensure_envelope_ntt(expanded, ring_d)
-    }
-
-    /// Warm full-envelope NTT slots for each distinct role dimension at one fold level.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when any cluster fails envelope key derivation or cache build.
-    pub fn ensure_fold_level_role_ntt(
-        &self,
-        expanded: &AkitaExpandedSetup<F>,
-        dims: akita_types::CommitmentRingDims,
-    ) -> Result<(), AkitaError> {
-        let mut unique = [0usize; 3];
-        let mut count = 0usize;
-        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-            if d == 0 || unique[..count].contains(&d) {
-                continue;
-            }
-            unique[count] = d;
-            count += 1;
-            self.ensure_fold_level_envelope_ntt(expanded, d)?;
-        }
-        Ok(())
     }
 }
 
@@ -410,20 +350,18 @@ mod tests {
     use crate::AkitaProverSetup;
     use crate::CpuBackend;
     use akita_field::{AkitaError, Fp64};
-    use akita_types::SetupMatrixEnvelope;
+    use akita_types::SetupMatrixCapacity;
 
     type F = Fp64<4294967197>;
-    const D: usize = 64;
-
-    fn test_envelope(max_setup_len: usize) -> SetupMatrixEnvelope {
-        SetupMatrixEnvelope { max_setup_len }
+    fn test_envelope(num_field_elements: usize) -> SetupMatrixCapacity {
+        SetupMatrixCapacity { num_field_elements }
     }
 
     #[test]
     fn operation_ctx_rejects_mismatched_expanded_setup() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         assert_ne!(setup_a.expanded.seed(), setup_b.expanded.seed());
 
@@ -436,7 +374,7 @@ mod tests {
 
     #[test]
     fn operation_ctx_accepts_matching_expanded_setup() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -458,7 +396,7 @@ mod tests {
 
     #[test]
     fn heterogeneous_stack_accepts_distinct_operation_clusters() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitCluster;
@@ -484,7 +422,7 @@ mod tests {
 
     #[test]
     fn heterogeneous_stack_implements_level_prove_stacks() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let commit_backend = CommitCluster;
@@ -514,7 +452,7 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_length_mismatch() {
-        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup");
         let prepared = CpuBackend.prepare_setup(&setup).expect("prepared");
         let stack = TestUniformStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
@@ -526,9 +464,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_rejects_non_increasing_bounds() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");
@@ -545,9 +483,9 @@ mod tests {
 
     #[test]
     fn tiered_prove_stacks_selects_by_fold_level() {
-        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(4096))
+        let setup_a = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(4096))
             .expect("setup a");
-        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, D, test_envelope(8192))
+        let setup_b = AkitaProverSetup::<F>::generate_with_capacity(8, 1, test_envelope(8192))
             .expect("setup b");
         let prepared_a = CpuBackend.prepare_setup(&setup_a).expect("prepared a");
         let prepared_b = CpuBackend.prepare_setup(&setup_b).expect("prepared b");

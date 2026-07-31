@@ -786,16 +786,6 @@ impl FoldSchedule {
             first_successor_d,
             first_successor_opening_num_vars,
         )?;
-        let mut predecessor = &self.root.params.final_group.commitment;
-        let root_shared_d = predecessor.role_dims().d_d();
-        let mut predecessor_setup_d = self.root.params.precommitted_groups.iter().try_fold(
-            predecessor.role_dims().common_relation_coeff_count(),
-            |common, group| {
-                let dims = group.commitment.role_dims(root_shared_d);
-                crate::validate_role_dims(dims)?;
-                Ok::<_, AkitaError>(common.min(dims.common_relation_coeff_count()))
-            },
-        )?;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             if step.input_witness_len == 0 || step.output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(
@@ -808,30 +798,14 @@ impl FoldSchedule {
                 )));
             }
             if let Some(prefix) = &step.params.incoming_setup_prefix {
-                let producer_dims = predecessor.role_dims();
-                let consumer_dims = step.params.witness.role_dims();
-                crate::validate_role_dims(producer_dims)?;
-                crate::validate_role_dims(consumer_dims)?;
-                let prefix_inner_d = prefix
-                    .commitment_params
-                    .layout
-                    .inner_commit_matrix
-                    .ring_dimension();
-                let prefix_outer_d = prefix
-                    .commitment_params
-                    .layout
-                    .outer_commit_matrix
-                    .ring_dimension();
-                if prefix.d_setup != predecessor_setup_d
-                    || prefix_inner_d != consumer_dims.d_a()
-                    || prefix_outer_d != consumer_dims.d_b()
+                let n_prefix = prefix.n_prefix()?;
+                if prefix.natural_len == 0
+                    || prefix.natural_len > n_prefix
+                    || prefix.d_setup() == 0
+                    || !n_prefix.is_multiple_of(prefix.d_setup())
                 {
                     return Err(AkitaError::InvalidSetup(format!(
-                        "recursive fold {index} setup offload geometry disagrees: \
-                         producer roles {producer_dims:?} project at D{}, prefix source is D{}, \
-                         prefix commitment roles are A{prefix_inner_d}/B{prefix_outer_d}, and \
-                         consumer roles are {consumer_dims:?}",
-                        predecessor_setup_d, prefix.d_setup,
+                        "recursive fold {index} setup-prefix geometry is invalid"
                     )));
                 }
             }
@@ -868,8 +842,6 @@ impl FoldSchedule {
                 successor_d,
                 successor_opening_num_vars,
             )?;
-            predecessor = &step.params.witness;
-            predecessor_setup_d = predecessor.role_dims().common_relation_coeff_count();
         }
         if self.terminal.input_witness_len == 0
             || self.terminal.params.response_shape.logical_num_elems() == 0
@@ -1017,9 +989,8 @@ pub struct FoldScheduleEstimate {
     pub estimated_recursive_stage3_payload_bytes: Vec<usize>,
     pub estimated_terminal_direct_payload_bytes: usize,
     pub estimated_terminal_response_payload_bytes: usize,
-    /// Maximum setup-matrix envelope, in ring elements at the active level's
-    /// inner ring dimension.
-    pub estimated_setup_envelope_ring_elements: usize,
+    /// Maximum flat setup-matrix capacity required by the schedule.
+    pub estimated_num_setup_field_elements: usize,
     /// Natural (unpadded) setup length at the first direct edge, when the
     /// recursive setup planner is active.
     pub first_direct_setup_field_len: Option<usize>,

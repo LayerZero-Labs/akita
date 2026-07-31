@@ -105,10 +105,12 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         let ring_d = self.plan.projection_geometry().base_ring_dim();
-        let setup_len = setup
-            .expanded
-            .shared_matrix()
-            .total_ring_elements_at_dyn(ring_d)?;
+        if ring_d == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "Stage 3 setup ring dimension must be nonzero".into(),
+            ));
+        }
+        let setup_len = setup.expanded.shared_matrix().num_field_elements() / ring_d;
         let setup_eval_len = self.setup_eval_len::<F, T>(
             setup,
             next_fold_level_params,
