@@ -614,6 +614,7 @@ where
                 &gadget_row,
                 &high_weights,
                 &low_weights,
+                &[],
             )?;
             for (slot, &value) in v.iter_mut().zip(&contribution.coordinates) {
                 *slot += value;

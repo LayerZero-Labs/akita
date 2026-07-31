@@ -622,6 +622,7 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let expected = reference_affine_digit_interval(
@@ -654,6 +655,7 @@ fn affine_digit_interval_empty_low_factor_is_structural_identity() {
         &digit_weights,
         &high,
         &[F::one()],
+        &[],
     )
     .unwrap();
     let identity = eval_affine_digit_intervals(
@@ -665,6 +667,7 @@ fn affine_digit_interval_empty_low_factor_is_structural_identity() {
         2,
         &digit_weights,
         &high,
+        &[],
         &[],
     )
     .unwrap();
@@ -680,6 +683,7 @@ fn affine_digit_interval_empty_low_factor_is_structural_identity() {
         &digit_weights[..1],
         &high,
         &[F::one()],
+        &[],
     )
     .unwrap();
     let identity_single_digit = eval_affine_digit_intervals(
@@ -691,6 +695,7 @@ fn affine_digit_interval_empty_low_factor_is_structural_identity() {
         1,
         &digit_weights[..1],
         &high,
+        &[],
         &[],
     )
     .unwrap();
@@ -717,6 +722,7 @@ fn affine_digit_interval_matches_independent_strided_digit_oracle() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let mut expected = F::zero();
@@ -755,8 +761,8 @@ fn affine_digit_interval_handles_boolean_challenges_without_inversion() {
         F::from_u64(23),
         F::from_u64(29),
     ];
-    let got =
-        eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high, &low).unwrap();
+    let got = eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high, &low, &[])
+        .unwrap();
     assert_eq!(
         got,
         reference_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low)
@@ -778,6 +784,7 @@ fn affine_digit_interval_rejects_work_above_cap() {
         &digits,
         &[F::one()],
         &low,
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
@@ -795,6 +802,7 @@ fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
         &[F::one()],
         &[F::one()],
         &[F::one(), F::one()],
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
@@ -1192,6 +1200,7 @@ fn affine_digit_interval_matches_reference() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let tag = (
@@ -1245,6 +1254,7 @@ fn affine_digit_interval_matches_boolean_challenges() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         assert_eq!(
@@ -1272,6 +1282,7 @@ fn affine_digit_intervals_batch_matches_independent_families() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let expected = base_offsets
@@ -1291,6 +1302,62 @@ fn affine_digit_intervals_batch_matches_independent_families() {
             .sum();
         assert_eq!(got, expected);
     }
+}
+
+#[test]
+fn affine_digit_intervals_weighted_bases_match_independent_oracle() {
+    let mut rng = StdRng::seed_from_u64(0xBA5E_5CA1);
+    let challenges = random_vec(&mut rng, 17);
+    let base_offsets = [3usize, 211, 419];
+    let base_scales = random_vec(&mut rng, base_offsets.len());
+    let digit_weights = random_vec(&mut rng, 3);
+    let high = random_vec(&mut rng, 26);
+    let outer_stride = digit_weights.len();
+
+    let got = eval_affine_digit_intervals(
+        &challenges,
+        &base_offsets,
+        0,
+        high.len(),
+        outer_stride,
+        1,
+        &digit_weights,
+        &high,
+        &[],
+        &base_scales,
+    )
+    .unwrap();
+    let expected = base_offsets
+        .iter()
+        .zip(&base_scales)
+        .map(|(&base, &base_scale)| {
+            let mut family = F::zero();
+            for (outer, &high_weight) in high.iter().enumerate() {
+                for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                    family += high_weight
+                        * digit_weight
+                        * eq_eval_at_index(&challenges, base + outer_stride * outer + digit);
+                }
+            }
+            base_scale * family
+        })
+        .sum();
+    assert_eq!(got, expected);
+
+    let err = eval_affine_digit_intervals(
+        &challenges,
+        &base_offsets,
+        0,
+        high.len(),
+        outer_stride,
+        1,
+        &digit_weights,
+        &high,
+        &[],
+        &base_scales[..2],
+    )
+    .unwrap_err();
+    assert!(matches!(err, AkitaError::InvalidSize { .. }));
 }
 
 #[test]
@@ -1314,6 +1381,7 @@ fn affine_digit_intervals_many_short_families_avoid_quadratic_bucketing() {
         &[F::one()],
         &[F::one()],
         &[F::one()],
+        &[],
     )
     .unwrap();
     let expected = base_offsets
@@ -1358,6 +1426,7 @@ fn affine_digit_interval_bench() {
                     &digit_weights,
                     &high,
                     &low,
+                    &[],
                 )
                 .unwrap(),
             );
@@ -1426,6 +1495,7 @@ fn affine_digit_interval_matches_geometric_digits() {
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let tag = (
@@ -1478,6 +1548,7 @@ fn affine_digit_interval_bench_geometric() {
                     &digit_weights,
                     &high,
                     &low,
+                    &[],
                 )
                 .unwrap(),
             );

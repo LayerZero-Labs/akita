@@ -162,6 +162,7 @@ impl<E: FieldCore> PreparedEvaluationTrace<E> {
                                     digit_weights,
                                     &high_block_weights,
                                     &low_block_weights,
+                                    &[],
                                 )?;
                         }
                     }

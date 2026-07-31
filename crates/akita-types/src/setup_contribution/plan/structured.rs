@@ -363,6 +363,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         opening_digits,
                         claim_challenges,
                         opening_low,
+                        &[],
                     )?;
 
                 if let Some(b_tensor) = b_tensor {
@@ -384,6 +385,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         commitment_digits,
                         t_high_weights.get(claim).ok_or(AkitaError::InvalidProof)?,
                         outer_low,
+                        &[],
                     )?;
                 }
                 Ok(acc? + contribution)
@@ -440,36 +442,50 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 &fold_digits,
                 opening_a_evals,
                 &witness_gadget,
+                &[],
             )?
         } else {
-            opening_a_evals.iter().enumerate().try_fold(
-                E::zero(),
-                |sum, (position, &opening_a)| {
-                    let position_offset = position
-                        .checked_mul(group.depth_witness)
-                        .and_then(|offset| offset.checked_mul(fold_digits.len()))
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let position_bases = a_base_offsets
-                        .iter()
-                        .map(|base| {
-                            base.checked_add(position_offset)
-                                .ok_or(AkitaError::InvalidProof)
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
-                    Ok(sum
-                        + opening_a
-                            * eval_affine_digit_intervals(
-                                point,
-                                &position_bases,
-                                0,
-                                group.depth_witness,
-                                fold_digits.len(),
-                                1,
-                                &fold_digits,
-                                &witness_gadget,
-                                &[],
-                            )?)
-                },
+            let weighted_base_count = checked_product(
+                opening_a_evals.len(),
+                a_base_offsets.len(),
+                "structured weighted A base count overflow",
+            )?;
+            let mut weighted_bases = Vec::new();
+            let mut base_scales = Vec::new();
+            weighted_bases
+                .try_reserve_exact(weighted_base_count)
+                .map_err(|_| {
+                    AkitaError::InvalidSetup("structured weighted A bases are too large".into())
+                })?;
+            base_scales
+                .try_reserve_exact(weighted_base_count)
+                .map_err(|_| {
+                    AkitaError::InvalidSetup("structured weighted A scales are too large".into())
+                })?;
+            for (position, &opening_a) in opening_a_evals.iter().enumerate() {
+                let position_offset = position
+                    .checked_mul(group.depth_witness)
+                    .and_then(|offset| offset.checked_mul(fold_digits.len()))
+                    .ok_or(AkitaError::InvalidProof)?;
+                for &base in &a_base_offsets {
+                    weighted_bases.push(
+                        base.checked_add(position_offset)
+                            .ok_or(AkitaError::InvalidProof)?,
+                    );
+                    base_scales.push(opening_a);
+                }
+            }
+            eval_affine_digit_intervals(
+                point,
+                &weighted_bases,
+                0,
+                group.depth_witness,
+                fold_digits.len(),
+                1,
+                &fold_digits,
+                &witness_gadget,
+                &[],
+                &base_scales,
             )?
         };
         Ok(evaluation + group.consistency_weight * z)

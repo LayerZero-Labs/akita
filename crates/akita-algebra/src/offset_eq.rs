@@ -25,7 +25,7 @@ pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;
 /// `F`. Keeping these operations abstract lets the trace evaluator preserve
 /// its factored extension coordinates without introducing another address
 /// kernel.
-pub trait AffineWeight<F: FieldCore>: Clone {
+pub trait AffineWeight<F: FieldCore>: Clone + Send + Sync {
     /// Additive identity carrying the same algebra metadata as `self`.
     fn zero_like(&self) -> Self;
 
@@ -72,10 +72,12 @@ impl<F: FieldCore> AffineWeight<F> for F {
 /// `[outer_start, outer_start + live_len)`, this computes
 ///
 /// ```text
-/// Σ_base Σ_i Σ_d high[i / Q] · low[i % Q] · digit[d]
+/// Σ_base base_scale[base] · Σ_i Σ_d high[i / Q] · low[i % Q] · digit[d]
 ///     · eq(challenges,
 ///          base + outer_stride · (i - outer_start) + digit_stride · d).
 /// ```
+/// An empty `base_scales` slice denotes unit scale for every base, avoiding
+/// multiplication by one. Otherwise it must contain one scale per base offset.
 /// An empty `low_weights` slice denotes the multiplicative identity at `Q = 1`.
 /// This structural identity avoids allocating a singleton or multiplying by one.
 ///
@@ -106,6 +108,7 @@ pub fn eval_affine_digit_intervals<F, A>(
     digit_weights: &[F],
     high_weights: &[A],
     low_weights: &[A],
+    base_scales: &[F],
 ) -> Result<A, AkitaError>
 where
     F: FieldCore,
@@ -117,6 +120,12 @@ where
         .ok_or_else(|| AkitaError::InvalidInput("affine factors must be non-empty".into()))?;
     if live_len == 0 || base_offsets.is_empty() {
         return Ok(template.zero_like());
+    }
+    if !base_scales.is_empty() && base_scales.len() != base_offsets.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: base_offsets.len(),
+            actual: base_scales.len(),
+        });
     }
     let low_len = low_weights.len().max(1);
     let digit_span = digit_weights
@@ -238,6 +247,7 @@ where
             digit_weights,
             high_weights,
             low_weights,
+            base_scales,
             outer_start / low_len,
             outer_start % low_len,
             outer_start % low_len + prefix_span,
@@ -256,6 +266,7 @@ where
             digit_weights,
             high_weights,
             low_weights,
+            base_scales,
             full_start / low_len,
             0,
             low_len,
@@ -274,6 +285,7 @@ where
             digit_weights,
             high_weights,
             low_weights,
+            base_scales,
             cursor / low_len,
             0,
             suffix_span,
@@ -295,6 +307,7 @@ fn accumulate_affine_rows<F, A>(
     digit_weights: &[F],
     high_weights: &[A],
     low_weights: &[A],
+    base_scales: &[F],
     first_high: usize,
     low_start: usize,
     low_end: usize,
@@ -318,15 +331,22 @@ where
     let address_delta = outer_stride
         .checked_mul(local_outer)
         .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-    let mut address_groups = BTreeMap::<usize, Vec<usize>>::new();
-    for &base_offset in base_offsets {
+    let mut address_groups = BTreeMap::<usize, (Vec<usize>, Vec<F>)>::new();
+    for (base_index, &base_offset) in base_offsets.iter().enumerate() {
         let first_address = base_offset
             .checked_add(address_delta)
             .ok_or_else(|| AkitaError::InvalidInput("affine row address overflow".into()))?;
-        address_groups
+        let group = address_groups
             .entry(first_address & (low_len - 1))
-            .or_default()
-            .push(first_address);
+            .or_default();
+        group.0.push(first_address);
+        if !base_scales.is_empty() {
+            group.1.push(
+                *base_scales
+                    .get(base_index)
+                    .ok_or_else(|| AkitaError::InvalidInput("affine base scale missing".into()))?,
+            );
+        }
     }
     let template = high_weights
         .get(first_high)
@@ -344,7 +364,7 @@ where
     } else {
         None
     };
-    for (address_low, first_addresses) in address_groups {
+    for (address_low, (first_addresses, first_scales)) in address_groups {
         let summaries = build_affine_low_summaries(
             template,
             low_challenges,
@@ -366,6 +386,7 @@ where
             out,
             high_challenges,
             &first_addresses,
+            &first_scales,
             outer_stride,
             low_challenges.len(),
             high_weights,
@@ -376,7 +397,8 @@ where
             continue;
         }
 
-        for first_address in first_addresses {
+        for (base_index, first_address) in first_addresses.into_iter().enumerate() {
+            let base_scale = first_scales.get(base_index).copied();
             for row in 0..rows {
                 let high_index = first_high
                     .checked_add(row)
@@ -405,7 +427,8 @@ where
                         })?,
                     );
                     if !eq_high.is_zero() {
-                        out.add_scaled(&high_factor.multiply(summary), eq_high);
+                        let scale = base_scale.map_or(eq_high, |base_scale| eq_high * base_scale);
+                        out.add_scaled(&high_factor.multiply(summary), scale);
                     }
                 }
             }
@@ -639,6 +662,12 @@ where
 /// table setup. Below this the base row loop is cheaper.
 const FAST_HIGH_ROWS_MIN: usize = 8;
 
+/// Minimum row work before compatible affine bases build high buckets in
+/// parallel. Smaller contractions are commonly nested under an outer parallel
+/// fold, so keeping them in one task avoids scheduler and bucket-allocation
+/// overhead.
+const PARALLEL_HIGH_ROWS_MIN: usize = 1 << 12;
+
 /// Return the bounded bucket window when bucketing performs less charged work
 /// than the direct row/carry contraction.
 fn bucketed_high_rows_plan(
@@ -724,6 +753,7 @@ fn accumulate_high_rows_bucketed<F, A>(
     out: &mut A,
     high_challenges: &[F],
     first_addresses: &[usize],
+    first_scales: &[F],
     outer_stride: usize,
     low_bits: usize,
     high_weights: &[A],
@@ -735,6 +765,12 @@ where
     F: FieldCore,
     A: AffineWeight<F>,
 {
+    if !first_scales.is_empty() && first_scales.len() != first_addresses.len() {
+        return Err(AkitaError::InvalidSize {
+            expected: first_addresses.len(),
+            actual: first_scales.len(),
+        });
+    }
     let carry_count = summaries.len();
     let total_rows = rows
         .checked_mul(first_addresses.len())
@@ -769,33 +805,82 @@ where
     let window_mask = window - 1;
     // Bucket each row by its low-window position, split into the "no carry into
     // the next high block" bucket (`bucket0`) and the "carries" bucket (`bucket1`).
-    let mut bucket0 = vec![template.zero_like(); window];
-    let mut bucket1 = vec![template.zero_like(); window];
-    for &first_address in first_addresses {
-        let h0 = first_address >> low_bits;
-        for row in 0..rows {
-            let high_index = first_high
-                .checked_add(row)
-                .ok_or_else(|| AkitaError::InvalidInput("affine high index overflow".into()))?;
-            let high_factor = high_weights.get(high_index).ok_or_else(|| {
-                AkitaError::InvalidInput("affine high factor out of range".into())
-            })?;
-            let address_high = h0
-                .checked_add(outer_stride.checked_mul(row).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine high address overflow".into())
-                })?)
-                .ok_or_else(|| AkitaError::InvalidInput("affine high address overflow".into()))?;
-            let low_pos = address_high & window_mask;
-            let block = address_high >> window_bits;
-            let eq_block0 = eval_high(block)?;
-            let eq_block1 =
-                eval_high(block.checked_add(1).ok_or_else(|| {
-                    AkitaError::InvalidInput("affine high block overflow".into())
-                })?)?;
-            bucket0[low_pos].add_scaled(high_factor, eq_block0);
-            bucket1[low_pos].add_scaled(high_factor, eq_block1);
+    // Large compatible-base families use one private bucket pair per base and
+    // reduce them afterward. Small or single-base contractions stay in one
+    // task, which is important when this kernel is already under a parallel
+    // outer fold.
+    let task_count = if total_rows >= PARALLEL_HIGH_ROWS_MIN {
+        first_addresses.len()
+    } else {
+        1
+    };
+    let addresses_per_task = first_addresses.len().div_ceil(task_count);
+    let (bucket0, bucket1) = cfg_fold_reduce!(
+        0..task_count,
+        || Ok((
+            vec![template.zero_like(); window],
+            vec![template.zero_like(); window]
+        )),
+        |acc: Result<(Vec<A>, Vec<A>), AkitaError>, task| {
+            let (mut bucket0, mut bucket1) = acc?;
+            let start = task
+                .checked_mul(addresses_per_task)
+                .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
+            let end = start
+                .checked_add(addresses_per_task)
+                .map(|end| end.min(first_addresses.len()))
+                .ok_or_else(|| AkitaError::InvalidInput("affine task range overflow".into()))?;
+            let addresses = first_addresses
+                .get(start..end)
+                .ok_or_else(|| AkitaError::InvalidInput("affine task range invalid".into()))?;
+            for (address_index, &first_address) in addresses.iter().enumerate() {
+                let scale_index = start.checked_add(address_index).ok_or_else(|| {
+                    AkitaError::InvalidInput("affine base scale index overflow".into())
+                })?;
+                let base_scale = first_scales.get(scale_index).copied();
+                let h0 = first_address >> low_bits;
+                for row in 0..rows {
+                    let high_index = first_high.checked_add(row).ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high index overflow".into())
+                    })?;
+                    let high_factor = high_weights.get(high_index).ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high factor out of range".into())
+                    })?;
+                    let address_high = h0
+                        .checked_add(outer_stride.checked_mul(row).ok_or_else(|| {
+                            AkitaError::InvalidInput("affine high address overflow".into())
+                        })?)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidInput("affine high address overflow".into())
+                        })?;
+                    let low_pos = address_high & window_mask;
+                    let block = address_high >> window_bits;
+                    let eq_block0 = eval_high(block)?;
+                    let eq_block1 = eval_high(block.checked_add(1).ok_or_else(|| {
+                        AkitaError::InvalidInput("affine high block overflow".into())
+                    })?)?;
+                    let eq_block0 =
+                        base_scale.map_or(eq_block0, |base_scale| eq_block0 * base_scale);
+                    let eq_block1 =
+                        base_scale.map_or(eq_block1, |base_scale| eq_block1 * base_scale);
+                    bucket0[low_pos].add_scaled(high_factor, eq_block0);
+                    bucket1[low_pos].add_scaled(high_factor, eq_block1);
+                }
+            }
+            Ok((bucket0, bucket1))
+        },
+        |lhs: Result<(Vec<A>, Vec<A>), AkitaError>, rhs: Result<(Vec<A>, Vec<A>), AkitaError>| {
+            let (mut lhs0, mut lhs1) = lhs?;
+            let (rhs0, rhs1) = rhs?;
+            for (slot, value) in lhs0.iter_mut().zip(rhs0) {
+                slot.add(&value);
+            }
+            for (slot, value) in lhs1.iter_mut().zip(rhs1) {
+                slot.add(&value);
+            }
+            Ok((lhs0, lhs1))
         }
-    }
+    )?;
 
     // Combine: out += Σ_carry (Σ_pos bucket[pos] * eq_low_hi[(pos+carry) mod window]) * summaries[carry].
     for (carry, summary) in summaries.iter().enumerate() {
