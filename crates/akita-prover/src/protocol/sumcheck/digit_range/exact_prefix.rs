@@ -1,4 +1,4 @@
-use akita_field::{AkitaError, FieldCore};
+use akita_field::{parallel::*, AkitaError, FieldCore};
 
 /// Explicit prefix of a power-of-two table followed by one implicit default value.
 pub(super) struct ExactPrefixTable<T: Copy> {
@@ -46,19 +46,52 @@ impl<T: Copy> ExactPrefixTable<T> {
 
     pub(super) fn fold_in_place(
         &mut self,
-        mut fold_pair: impl FnMut(T, T) -> T,
-    ) -> Result<(), AkitaError> {
+        fold_pair: impl Fn(T, T) -> T + Sync,
+    ) -> Result<(), AkitaError>
+    where
+        T: Send + Sync,
+    {
         if self.domain_len < 2 {
             return Err(AkitaError::InvalidInput(
                 "cannot fold a one-element exact-prefix table".to_string(),
             ));
         }
+        const SEQUENTIAL_PREFIX: usize = 1 << 12;
+
         let next_explicit_len = self.explicit.len().div_ceil(2);
-        for pair_index in 0..next_explicit_len {
-            let left = self.value_or_default(2 * pair_index);
-            let right = self.value_or_default(2 * pair_index + 1);
+        let explicit_len = self.explicit.len();
+        let default = self.default;
+        let sequential_len = next_explicit_len.min(SEQUENTIAL_PREFIX);
+        for pair_index in 0..sequential_len {
+            let left = self.explicit[2 * pair_index];
+            let right = self
+                .explicit
+                .get(2 * pair_index + 1)
+                .copied()
+                .unwrap_or(default);
             self.explicit[pair_index] = fold_pair(left, right);
         }
+
+        let mut wave_start = sequential_len;
+        while wave_start < next_explicit_len {
+            // Pair i writes i and reads 2i..=2i+1. Once [0, a) is folded,
+            // [a, 2a) has disjoint inputs and may run in parallel.
+            let wave_end = (2 * wave_start).min(next_explicit_len);
+            let source_start = 2 * wave_start;
+            let (output_prefix, source_suffix) = self.explicit.split_at_mut(source_start);
+            let output = &mut output_prefix[wave_start..wave_end];
+            let source_len = (2 * output.len()).min(explicit_len - source_start);
+            let source = &source_suffix[..source_len];
+            cfg_iter_mut!(output)
+                .enumerate()
+                .for_each(|(pair_index, folded)| {
+                    let left = source[2 * pair_index];
+                    let right = source.get(2 * pair_index + 1).copied().unwrap_or(default);
+                    *folded = fold_pair(left, right);
+                });
+            wave_start = wave_end;
+        }
+
         self.default = fold_pair(self.default, self.default);
         self.explicit.truncate(next_explicit_len);
         self.domain_len /= 2;
@@ -162,6 +195,34 @@ mod tests {
                 assert_eq!(compact.final_value(), Some(padded[0]));
             }
         }
+    }
+
+    #[test]
+    fn exact_prefix_fold_matches_dense_table_across_parallel_waves() {
+        let domain_len = 1 << 16;
+        let explicit_len = 3 * domain_len / 4 + 1;
+        let challenge = F::from_u64(17);
+        let default = F::from_u64(91);
+        let explicit = (0..explicit_len)
+            .map(|index| F::from_u64(index as u64 + 3))
+            .collect::<Vec<_>>();
+        let mut compact = ExactPrefixTable::new(domain_len, explicit.clone(), default).unwrap();
+        let mut expected = explicit;
+        expected.resize(domain_len, default);
+
+        compact
+            .fold_in_place(|left, right| left + challenge * (right - left))
+            .unwrap();
+        for pair_index in 0..domain_len / 2 {
+            let left = expected[2 * pair_index];
+            let right = expected[2 * pair_index + 1];
+            expected[pair_index] = left + challenge * (right - left);
+        }
+        expected.truncate(domain_len / 2);
+
+        assert_eq!(compact.explicit, expected[..explicit_len.div_ceil(2)]);
+        assert_eq!(compact.default, default);
+        assert_eq!(compact.domain_len, domain_len / 2);
     }
 
     #[test]
