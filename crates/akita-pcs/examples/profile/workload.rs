@@ -5,7 +5,9 @@ use crate::report::{
     report_verifier_ntt_cache_size,
 };
 use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo};
+use akita_field::unreduced::{
+    HasCommitAccum, HasOptimizedFold, HasUnreducedOps, HasWide, ReduceTo,
+};
 use akita_field::{
     AdditiveGroup, CanonicalBytes, CanonicalField, ExtField, FieldCore, FrobeniusExtField,
     FromPrimitiveInt, HalvingField, LiftBase, PseudoMersenneField, RandomSampling,
@@ -470,6 +472,7 @@ fn run_prove<
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -615,6 +618,7 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -705,6 +709,7 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -794,6 +799,7 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -1002,6 +1008,7 @@ pub(crate) fn run_recursive_multi_group_onehot<FF, const D: usize, Cfg>(
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
@@ -1055,6 +1062,7 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         + PseudoMersenneField
         + HalvingField
         + HasWide
+        + HasCommitAccum
         + Valid
         + AkitaSerialize
         + 'static,
