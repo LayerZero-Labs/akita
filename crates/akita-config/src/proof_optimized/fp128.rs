@@ -173,7 +173,8 @@ impl_proof_optimized_preset!(
         "schedules-fp128-mixed-dim-onehot",
         "fp128_mixed_dim_onehot",
         fp128_mixed_dim_onehot_table
-    )
+    ),
+    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
 );
 impl_proof_optimized_preset!(
     D512OneHot,

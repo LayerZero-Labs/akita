@@ -631,6 +631,11 @@ fn find_group_batch_schedule_inner(
                     candidate.total_bytes,
                 )
             }),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
     };
 
     let Some(best) = best.cloned() else {
