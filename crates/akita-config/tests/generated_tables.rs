@@ -53,7 +53,7 @@ use akita_schedules::generated::{table_entry, table_entry_range};
 #[cfg(feature = "all-schedules")]
 use akita_schedules::{
     catalog_entries_sorted_for_lookup, schedule_from_entry, validate_catalog_identity,
-    validate_generated_schedule_entry, validate_generated_schedule_table,
+    validate_generated_schedule_table,
 };
 
 #[test]
