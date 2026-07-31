@@ -484,48 +484,6 @@ fn contract_residual_tensor_axes<F: FieldCore>(
     Ok(acc)
 }
 
-/// Contract arbitrary left-address weights against tensor families and one
-/// equality point on the right.
-///
-/// # Errors
-///
-/// Returns an error for an invalid equality window, malformed tensor address,
-/// input overflow, or work above [`MAX_COMPACT_STRIDE_TERMS`].
-pub fn contract_eq_tensor_left<F: FieldCore>(
-    equality: &OffsetEqWindow<F>,
-    families: &[EqPairTensorFamily<F>],
-    left_weights: &[F],
-) -> Result<F, AkitaError> {
-    let mut acc = F::zero();
-    let mut work = 0usize;
-    for family in families {
-        visit_tensor_coordinates(
-            family,
-            0,
-            family.left_offset,
-            family.right_offset,
-            family.scalar,
-            &mut work,
-            &mut |left, right, weight| {
-                let left_weight = *left_weights.get(left).ok_or_else(|| {
-                    AkitaError::InvalidInput("paired tensor left address out of range".into())
-                })?;
-                if left_weight.is_zero() {
-                    return Ok(());
-                }
-                let equality = equality.eval(right);
-                acc += if weight == F::one() {
-                    left_weight * equality
-                } else {
-                    left_weight * equality * weight
-                };
-                Ok(())
-            },
-        )?;
-    }
-    Ok(acc)
-}
-
 #[allow(clippy::too_many_arguments)]
 fn visit_tensor_coordinates<F: FieldCore>(
     family: &EqPairTensorFamily<F>,

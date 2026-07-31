@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 
 mod tensor_pair;
 pub use tensor_pair::{
-    contract_eq_tensor_left, eval_eq_pair_tensor_families, materialize_eq_tensor_left,
-    EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
+    eval_eq_pair_tensor_families, materialize_eq_tensor_left, EqPairTensorAxis, EqPairTensorFamily,
+    EqPairTensorWeights,
 };
 
 /// Verifier work cap for one compact-stride equality contraction.

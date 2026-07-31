@@ -1,8 +1,11 @@
 use super::*;
 use akita_algebra::{
-    offset_eq::{eval_affine_digit_intervals, EqPairTensorFamily},
+    offset_eq::{
+        eval_affine_digit_intervals, EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
+    },
     ring::scalar_powers_with_stride,
 };
+use std::collections::BTreeMap;
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Contract one group's structured E/T/Z terms through its canonical
@@ -199,14 +202,108 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .unwrap_or(&commitment_gadget);
 
         if group.num_claims == 0
+            || group.num_live_blocks == 0
             || !group.d_tensors.len().is_multiple_of(group.num_claims)
-            || (group.n_b != 0 && group.b_tensors.len() != group.d_tensors.len())
         {
             return Err(AkitaError::InvalidSetup(
                 "structured role tensor families disagree".into(),
             ));
         }
-        let unit_count = group.d_tensors.len() / group.num_claims;
+        if (group.n_b == 0 && !group.b_tensors.is_empty())
+            || (group.n_b != 0 && group.b_tensors.len() != group.d_tensors.len())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "structured B tensor families disagree".into(),
+            ));
+        }
+
+        let mut b_by_unit = BTreeMap::new();
+        for tensor in &group.b_tensors {
+            let key = canonical_unit_tensor_key(
+                tensor,
+                t_stride,
+                group.b_ratio,
+                group.num_claims,
+                group.num_live_blocks,
+                "structured B tensor",
+            )?;
+            if b_by_unit.insert(key, tensor).is_some() {
+                return Err(AkitaError::InvalidSetup(
+                    "structured B tensor unit is duplicated".into(),
+                ));
+            }
+        }
+        let mut unit_families = Vec::with_capacity(group.d_tensors.len());
+        for tensor in &group.d_tensors {
+            let key = canonical_unit_tensor_key(
+                tensor,
+                e_stride,
+                group.d_ratio,
+                group.num_claims,
+                group.num_live_blocks,
+                "structured D tensor",
+            )?;
+            let b_tensor = if group.n_b == 0 {
+                None
+            } else {
+                Some(b_by_unit.remove(&key).ok_or_else(|| {
+                    AkitaError::InvalidSetup("structured D/B tensor units disagree".into())
+                })?)
+            };
+            unit_families.push((key, tensor, b_tensor));
+        }
+        if !b_by_unit.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "structured B tensor has no matching D unit".into(),
+            ));
+        }
+        unit_families.sort_unstable_by_key(|(key, _, _)| *key);
+        let mut claim_coverage = vec![0usize; group.num_claims];
+        for (key, _, _) in &unit_families {
+            let (claim, block_start, unit_blocks) = *key;
+            let cursor = claim_coverage
+                .get_mut(claim)
+                .ok_or(AkitaError::InvalidProof)?;
+            if *cursor != block_start {
+                return Err(AkitaError::InvalidSetup(
+                    "structured tensor units do not form a block partition".into(),
+                ));
+            }
+            *cursor = cursor
+                .checked_add(unit_blocks)
+                .ok_or(AkitaError::InvalidProof)?;
+        }
+        if claim_coverage
+            .iter()
+            .any(|&covered| covered != group.num_live_blocks)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "structured tensors do not cover every live block".into(),
+            ));
+        }
+        let partition = unit_families
+            .iter()
+            .take_while(|((claim, _, _), _, _)| *claim == 0)
+            .map(|((_, block_start, unit_blocks), _, _)| (*block_start, *unit_blocks))
+            .collect::<Vec<_>>();
+        if partition.is_empty() {
+            return Err(AkitaError::InvalidSetup(
+                "structured tensor partition is empty".into(),
+            ));
+        }
+        for claim in 1..group.num_claims {
+            if !unit_families
+                .iter()
+                .filter(|((family_claim, _, _), _, _)| *family_claim == claim)
+                .map(|((_, block_start, unit_blocks), _, _)| (*block_start, *unit_blocks))
+                .eq(partition.iter().copied())
+            {
+                return Err(AkitaError::InvalidSetup(
+                    "structured claims disagree on the chunk partition".into(),
+                ));
+            }
+        }
+        let unit_count = partition.len();
         if group.a_tensors.len() != usize::from(group.n_a != 0) * unit_count {
             return Err(AkitaError::InvalidSetup(
                 "structured A tensor families disagree".into(),
@@ -233,44 +330,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
 
-        let mut evaluation = E::zero();
-        let mut global_block_start = 0usize;
-        for unit in 0..unit_count {
-            let first_d = group
-                .d_tensors
-                .get(
-                    unit.checked_mul(group.num_claims)
-                        .ok_or(AkitaError::InvalidProof)?,
-                )
-                .ok_or(AkitaError::InvalidProof)?;
-            let d_coordinates = tensor_coordinate_count(first_d)?;
-            let unit_blocks = d_coordinates
-                .checked_div(e_stride)
-                .filter(|&count| count != 0 && d_coordinates.is_multiple_of(e_stride))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("structured D tensor is not a complete unit".into())
-                })?;
-            let unit_end = global_block_start
-                .checked_add(unit_blocks)
-                .ok_or(AkitaError::InvalidProof)?;
-            if unit_end > group.num_live_blocks {
-                return Err(AkitaError::InvalidProof);
-            }
-
-            for claim in 0..group.num_claims {
-                let family_index = unit
-                    .checked_mul(group.num_claims)
-                    .and_then(|base| base.checked_add(claim))
-                    .ok_or(AkitaError::InvalidProof)?;
-                let d_tensor = group
-                    .d_tensors
+        let evaluation = cfg_fold_reduce!(
+            0..unit_families.len(),
+            || Ok(E::zero()),
+            |acc: Result<E, AkitaError>, family_index| {
+                let (key, d_tensor, b_tensor) = unit_families
                     .get(family_index)
                     .ok_or(AkitaError::InvalidProof)?;
-                if tensor_coordinate_count(d_tensor)? != d_coordinates {
-                    return Err(AkitaError::InvalidSetup(
-                        "structured D claim tensors disagree".into(),
-                    ));
-                }
+                let (claim, global_block_start, unit_blocks) = *key;
                 let claim_start = claim
                     .checked_mul(group.num_live_blocks)
                     .ok_or(AkitaError::InvalidProof)?;
@@ -286,7 +353,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let e_live_len = unit_blocks
                     .checked_mul(opening_subcolumns)
                     .ok_or(AkitaError::InvalidProof)?;
-                evaluation += group.consistency_weight
+                let mut contribution = group.consistency_weight
                     * eval_affine_digit_intervals(
                         point,
                         &[d_tensor.right_offset],
@@ -299,19 +366,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         opening_low,
                     )?;
 
-                if group.n_b != 0 {
-                    let b_tensor = group
-                        .b_tensors
-                        .get(family_index)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    let expected_b = unit_blocks
-                        .checked_mul(t_stride)
-                        .ok_or(AkitaError::InvalidProof)?;
-                    if tensor_coordinate_count(b_tensor)? != expected_b {
-                        return Err(AkitaError::InvalidSetup(
-                            "structured B tensor is not a complete unit".into(),
-                        ));
-                    }
+                if let Some(b_tensor) = b_tensor {
                     let t_outer_start = global_block_start
                         .checked_mul(group.n_a)
                         .and_then(|start| start.checked_mul(outer_subcolumns))
@@ -320,7 +375,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         .checked_mul(group.n_a)
                         .and_then(|len| len.checked_mul(outer_subcolumns))
                         .ok_or(AkitaError::InvalidProof)?;
-                    evaluation += eval_affine_digit_intervals(
+                    contribution += eval_affine_digit_intervals(
                         point,
                         &[b_tensor.right_offset],
                         t_outer_start,
@@ -332,36 +387,41 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         outer_low,
                     )?;
                 }
-            }
-            global_block_start = unit_end;
-        }
-        if global_block_start != group.num_live_blocks {
-            return Err(AkitaError::InvalidSetup(
-                "structured D tensors do not cover every live block".into(),
-            ));
-        }
+                Ok(acc? + contribution)
+            },
+            |lhs: Result<E, AkitaError>, rhs: Result<E, AkitaError>| Ok(lhs? + rhs?)
+        )?;
 
         let projection_lanes = (group.a_ratio != 1)
             .then(|| scalar_powers_with_stride(alpha, base_ring_dim, group.a_ratio))
             .transpose()?;
-        let fold_digits = group
+        let fold_digits = if let Some(lanes) = &projection_lanes {
+            group
+                .fold_gadget
+                .iter()
+                .flat_map(|&fold| lanes.iter().map(move |&lane| -(fold * lane)))
+                .collect::<Vec<_>>()
+        } else {
+            group.fold_gadget.iter().map(|&fold| -fold).collect()
+        };
+        let fold_weights = group
             .fold_gadget
             .iter()
-            .flat_map(|&fold| {
-                projection_lanes
-                    .as_deref()
-                    .unwrap_or(&one)
-                    .iter()
-                    .map(move |&lane| -(fold * lane))
-            })
-            .collect::<Vec<_>>();
-        let a_coordinates = z_cols
-            .checked_mul(group.fold_gadget.len())
-            .ok_or(AkitaError::InvalidProof)?;
+            .map(|&fold| -fold)
+            .collect::<Vec<E>>();
         for tensor in &group.a_tensors {
-            if tensor_coordinate_count(tensor)? != a_coordinates {
+            let expected = EqPairTensorFamily::new(
+                0,
+                tensor.right_offset,
+                E::one(),
+                vec![
+                    EqPairTensorAxis::unit(z_cols, 1, fold_digits.len()),
+                    EqPairTensorAxis::dense(0, group.a_ratio, fold_weights.clone()),
+                ],
+            )?;
+            if tensor != &expected {
                 return Err(AkitaError::InvalidSetup(
-                    "structured A tensor is not a complete unit".into(),
+                    "structured A tensor disagrees with canonical geometry".into(),
                 ));
             }
         }
@@ -441,4 +501,52 @@ fn tensor_coordinate_count<E: FieldCore>(
             .checked_mul(axis.len)
             .ok_or_else(|| AkitaError::InvalidSetup("structured tensor size overflow".into()))
     })
+}
+
+fn canonical_unit_tensor_key<E: FieldCore>(
+    tensor: &EqPairTensorFamily<E>,
+    semantic_stride: usize,
+    role_ratio: usize,
+    num_claims: usize,
+    num_live_blocks: usize,
+    context: &'static str,
+) -> Result<(usize, usize, usize), AkitaError> {
+    let coordinates = tensor_coordinate_count(tensor)?;
+    let unit_blocks = coordinates
+        .checked_div(semantic_stride)
+        .filter(|&count| count != 0 && coordinates.is_multiple_of(semantic_stride))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} is not a complete unit")))?;
+    let semantic_start = tensor
+        .left_offset
+        .checked_div(semantic_stride)
+        .filter(|_| tensor.left_offset.is_multiple_of(semantic_stride))
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} is not column aligned")))?;
+    let claim = semantic_start / num_live_blocks;
+    let block_start = semantic_start % num_live_blocks;
+    if claim >= num_claims
+        || block_start
+            .checked_add(unit_blocks)
+            .is_none_or(|end| end > num_live_blocks)
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{context} is outside the group block domain"
+        )));
+    }
+    let expected = EqPairTensorFamily::new(
+        tensor.left_offset,
+        tensor.right_offset,
+        E::one(),
+        vec![EqPairTensorAxis {
+            len: coordinates,
+            left_stride: 1,
+            right_stride: role_ratio,
+            weights: EqPairTensorWeights::Unit,
+        }],
+    )?;
+    if tensor != &expected {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{context} disagrees with canonical affine geometry"
+        )));
+    }
+    Ok((claim, block_start, unit_blocks))
 }
