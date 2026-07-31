@@ -415,8 +415,8 @@ impl RingRelationProver {
     /// Root-level constructor for one or more group-local opening points and
     /// polynomial slots.
     ///
-    /// `opening_point` is the single ring-level opening point used by the
-    /// batch.
+    /// `group_opening_points` and `group_ring_multiplier_points` contain one
+    /// prepared entry per ordered claim group.
     /// For the trivial single-claim case use `polys = &[poly]` and
     /// `gamma = vec![F::one()]`.
     ///

@@ -211,16 +211,8 @@ where
         if source.coefficients.is_empty() {
             continue;
         }
-        let Some(plan) =
-            plan_compression_diagnostic(profile, source.coefficients.len(), ctx.gen_ring_dim())?
-        else {
-            tracing::warn!(
-                source = ?source.kind,
-                gen_ring_dim = ctx.gen_ring_dim(),
-                "skipping shadow compression source whose ladder exceeds the prepared setup"
-            );
-            continue;
-        };
+        let plan =
+            plan_compression_diagnostic(profile, source.coefficients.len(), ctx.gen_ring_dim())?;
         items.push(WorkItem {
             source: source.kind,
             field_bytes: plan.field_bytes,
@@ -434,9 +426,7 @@ mod tests {
     ) {
         let field_bytes = (F::modulus_bits() as usize).div_ceil(8);
         let source_coefficients = source_bytes / field_bytes;
-        let plan = plan_compression_diagnostic(profile, source_coefficients, 128)
-            .expect("plan")
-            .expect("supported setup");
+        let plan = plan_compression_diagnostic(profile, source_coefficients, 128).expect("plan");
         let mut coefficients = (0..source_coefficients)
             .map(|index| F::from_u64((index as u64).wrapping_mul(0x9e37).wrapping_add(0x1234)))
             .collect::<Vec<_>>();

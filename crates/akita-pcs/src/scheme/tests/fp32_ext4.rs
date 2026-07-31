@@ -128,6 +128,56 @@ fn fp32_ext4_folded_eor_batched_roundtrip_and_rejections() {
         proof.root.extension_opening_reduction.is_some(),
         "non-base fp32 claims must use root extension-opening reduction"
     );
+    let tensor_split = akita_types::tensor_opening_split::<SmallF, SmallE>()
+        .expect("tensor split")
+        .0;
+    let recursive_step = schedule
+        .recursive_folds
+        .first()
+        .expect("fixture recursive fold");
+    let recursive_proof = proof.recursive_folds.first().expect("recursive fold proof");
+    let root_stage2_num_vars = proof.root.stage2.sumcheck_proof.round_polys.len();
+    let recursive_num_vars = recursive_step
+        .params
+        .witness
+        .recursive_opening_num_vars()
+        .expect("recursive opening width");
+    assert!(
+        root_stage2_num_vars <= recursive_num_vars,
+        "Stage 2 point must fit the recursive suffix: \
+         stage2={root_stage2_num_vars}, recursive={recursive_num_vars}"
+    );
+    assert_eq!(
+        recursive_proof
+            .extension_opening_reduction
+            .as_ref()
+            .expect("recursive suffix EOR")
+            .num_rounds(),
+        root_stage2_num_vars - tensor_split,
+        "recursive EOR rounds must follow the raw Stage 2 arity"
+    );
+    let recursive_stage2_num_vars = recursive_proof.stage2.sumcheck_proof.round_polys.len();
+    let terminal_num_vars = schedule
+        .terminal
+        .params
+        .witness
+        .recursive_opening_num_vars()
+        .expect("terminal opening width");
+    assert!(
+        recursive_stage2_num_vars <= terminal_num_vars,
+        "Stage 2 point must fit the terminal suffix: \
+         stage2={recursive_stage2_num_vars}, terminal={terminal_num_vars}"
+    );
+    let terminal_eor = proof
+        .terminal
+        .extension_opening_reduction
+        .as_ref()
+        .expect("extension-field terminal EOR");
+    assert_eq!(
+        terminal_eor.num_rounds(),
+        recursive_stage2_num_vars - tensor_split,
+        "terminal EOR rounds must follow the raw Stage 2 arity"
+    );
 
     let shape = proof.shape();
     let mut bytes = Vec::new();

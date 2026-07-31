@@ -273,10 +273,45 @@ fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
 }
 
 #[test]
-fn schedule_accepts_direct_ring_dimension_transition() {
+fn schedule_accepts_short_stage2_points_for_wider_successors() {
     recursive_schedule(128, 64, false)
         .validate_structure()
-        .expect("direct setup contribution supports a ring-dimension transition");
+        .expect("both successor cubes may be wider than their incoming Stage 2 points");
+}
+
+#[test]
+fn schedule_rejects_root_stage2_point_wider_than_successor() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    let narrow_successor = committed_params_with_geometry(64, 1, 1);
+    schedule.root.output_witness_len = 128;
+    schedule.recursive_folds[0].input_witness_len = 128;
+    schedule.recursive_folds[0].params.open_commit_matrix =
+        narrow_successor.open_commit_matrix.clone();
+    schedule.recursive_folds[0].params.witness = narrow_successor;
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("the successor cube cannot hold the root Stage 2 point");
+    assert!(
+        matches!(err, AkitaError::InvalidSetup(message) if message.contains("root fold Stage 2 point"))
+    );
+}
+
+#[test]
+fn schedule_rejects_recursive_stage2_point_wider_than_terminal() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    let narrow_terminal = committed_params_with_geometry(64, 1, 1);
+    schedule.recursive_folds[0].output_witness_len = 128;
+    schedule.terminal.input_witness_len = 128;
+    schedule.terminal.params.witness =
+        TerminalCommittedGroupParams::from_expanded_group(narrow_terminal);
+
+    let err = schedule
+        .validate_structure()
+        .expect_err("the terminal cube cannot hold the recursive Stage 2 point");
+    assert!(
+        matches!(err, AkitaError::InvalidSetup(message) if message.contains("recursive fold 0 Stage 2 point"))
+    );
 }
 
 #[test]

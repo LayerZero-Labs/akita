@@ -4,9 +4,13 @@ use super::super::*;
 use super::{absorb_protocol_opening_points, FoldPrefix};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
+pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
+    pub(in crate::protocol::core) protocol: Vec<E>,
+}
+
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
-    pub(in crate::protocol::core) protocol_points: Vec<Vec<E>>,
+    pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
 }
 
@@ -260,7 +264,7 @@ where
         requires_reduction,
         transcript,
     )?;
-    let (prepared_points, protocol_points) = if let Some(replay) = &replay {
+    let groups = if let Some(replay) = &replay {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(replay.rho.len(), &replay.rho)?;
         let prepared = prepare_opening_point::<F, E, D>(
@@ -270,13 +274,15 @@ where
             num_live_blocks,
             alpha_bits,
         )?;
-        (vec![prepared], vec![protocol_point])
+        vec![PreparedProtocolPoint {
+            prepared,
+            protocol: protocol_point,
+        }]
     } else {
-        (Vec::new(), Vec::new())
+        Vec::new()
     };
     Ok(FoldEorReplay {
-        prepared_points,
-        protocol_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -311,11 +317,9 @@ where
         requires_reduction,
         transcript,
     )?;
-    let mut prepared_points = Vec::new();
-    let mut protocol_points = Vec::new();
+    let mut groups = Vec::new();
     if let Some(replay) = &replay {
-        prepared_points.reserve(group_points.len());
-        protocol_points.reserve(group_points.len());
+        groups.reserve(group_points.len());
         for (group_index, group_point) in group_points.iter().enumerate() {
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_dims = lp.group_role_dims(opening_batch, group_index)?;
@@ -347,13 +351,14 @@ where
                     Ok::<_, AkitaError>((prepared, protocol_point))
                 }
             )?;
-            prepared_points.push(prepared);
-            protocol_points.push(protocol_point);
+            groups.push(PreparedProtocolPoint {
+                prepared,
+                protocol: protocol_point,
+            });
         }
     }
     Ok(FoldEorReplay {
-        prepared_points,
-        protocol_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -435,7 +440,11 @@ where
         transcript,
     )?;
     if requires_reduction {
-        prepared_points = eor_replay.prepared_points;
+        prepared_points = eor_replay
+            .groups
+            .into_iter()
+            .map(|group| group.prepared)
+            .collect();
     }
     let eor_final_relation = eor_replay.final_relation;
     if prepared_points.len() != opening_batch.num_groups() {
@@ -477,8 +486,7 @@ where
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
-        protocol_points,
+        groups,
         final_relation,
     } = verify_terminal_fold_eor::<F, E, T>(
         extension_opening_reduction,
@@ -498,14 +506,13 @@ where
             "terminal extension-opening replay failed: {error:?}"
         ))
     })?;
-    let protocol_point_refs = protocol_points
+    let protocol_point_refs = groups
         .iter()
-        .map(Vec::as_slice)
+        .map(|group| group.protocol.as_slice())
         .collect::<Vec<_>>();
     absorb_protocol_opening_points(&protocol_point_refs, transcript);
     Ok(FoldEorReplay {
-        prepared_points,
-        protocol_points,
+        groups,
         final_relation,
     })
 }
@@ -530,8 +537,7 @@ where
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
-        protocol_points,
+        groups,
         final_relation,
     } = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
@@ -544,16 +550,16 @@ where
         E::EXT_DEGREE > 1,
         transcript,
     )?;
-    let protocol_point_refs = protocol_points
+    let protocol_point_refs = groups
         .iter()
-        .map(Vec::as_slice)
+        .map(|group| group.protocol.as_slice())
         .collect::<Vec<_>>();
     absorb_protocol_opening_points(&protocol_point_refs, transcript);
     let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
     let trace_claim_coefficients =
         opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
     Ok(FoldPrefix {
-        prepared_points,
+        prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
         row_coefficients,
         trace_eval_target: final_claim,
         trace_claim_coefficients,

@@ -30,25 +30,6 @@ pub enum BasisMode {
     Monomial,
 }
 
-/// Normalize a carried Stage 2 point to its recursive opening cube.
-///
-/// Shorter points are embedded canonically by fixing the additional
-/// coordinates to zero. Points larger than the scheduled cube are rejected.
-pub fn normalize_recursive_opening_point<F: FieldCore>(
-    opening_point: &[F],
-    recursive_num_vars: usize,
-) -> Result<Vec<F>, AkitaError> {
-    if opening_point.len() > recursive_num_vars {
-        return Err(AkitaError::InvalidPointDimension {
-            expected: recursive_num_vars,
-            actual: opening_point.len(),
-        });
-    }
-    let mut normalized = opening_point.to_vec();
-    normalized.resize(recursive_num_vars, F::zero());
-    Ok(normalized)
-}
-
 /// Ring-native opening point storing field scalars.
 ///
 /// Contains the two exact factors of the physical source opening:
@@ -315,22 +296,6 @@ mod tests {
             opening.live_block_weights,
             lagrange_weights(&point[2..]).unwrap()[..3]
         );
-    }
-
-    #[test]
-    fn recursive_opening_point_normalization_pads_and_rejects_oversized_points() {
-        let point = [F::from_u64(2), F::from_u64(3)];
-        assert_eq!(
-            normalize_recursive_opening_point(&point, 4).unwrap(),
-            vec![point[0], point[1], F::zero(), F::zero()]
-        );
-        assert!(matches!(
-            normalize_recursive_opening_point(&point, 1),
-            Err(AkitaError::InvalidPointDimension {
-                expected: 1,
-                actual: 2
-            })
-        ));
     }
 
     #[test]
