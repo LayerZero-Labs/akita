@@ -35,6 +35,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {

@@ -96,6 +96,19 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
 }
 
+#[test]
+fn adapters_forward_ring_dimension_candidates() {
+    type Base = fp128::MixedDimFp128OneHot;
+    assert_eq!(
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::ring_dimension_candidates(),
+        Base::ring_dimension_candidates(),
+    );
+    assert_eq!(
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::ring_dimension_candidates(),
+        Base::ring_dimension_candidates(),
+    );
+}
+
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
