@@ -170,6 +170,8 @@ Its parameter selection is diagnostics-local:
 
 - one private prover module validates the input bound and selects dimensions,
   widths, ranks, and map count;
+- one feature-gated backend extension owns diagnostic execution and cache
+  metrics, so ordinary digit-row backends and prepared setups remain unchanged;
 - schedule search, candidate derivation, suffix dynamic programming, generated
   schedule tables, catalog identity, and proof-size scoring are untouched;
 - the selector runs only after the prover has the real B/D source lengths.

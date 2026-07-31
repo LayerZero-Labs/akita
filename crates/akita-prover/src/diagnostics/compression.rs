@@ -124,7 +124,7 @@ where
     }
     for (&item_index, rows) in item_indices.iter().zip(outputs) {
         let coefficients = RingVec::from_ring_elems(&rows).coeffs().to_vec();
-        if coefficients.len() != first_map.output_coefficients {
+        if coefficients.len() != first_map.ring_dimension {
             return Err(AkitaError::InvalidSetup(
                 "compression backend returned the wrong image length".into(),
             ));
@@ -273,11 +273,14 @@ fn duration_micros(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compute::{ComputeBackendSetup, CpuBackend};
     use crate::kernels::linear::mat_vec_mul_ntt_digits_i8;
+    use crate::AkitaProverSetup;
     use akita_algebra::CyclotomicRing;
     use akita_field::{Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59};
     use akita_types::layout::FlatMatrix;
     use akita_types::prepare_compression_ntt_cache;
+    use akita_types::SetupMatrixEnvelope;
     use std::hint::black_box;
 
     fn assert_negative_binary_digits<F: FieldCore + CanonicalField, const D: usize>() {
@@ -323,6 +326,43 @@ mod tests {
         assert_negative_binary_digits::<Prime32Offset99, 32>();
     }
 
+    #[test]
+    fn aggregate_report_distinguishes_logical_maps_from_equal_shape_batches() {
+        type F = Prime64Offset59;
+        const D: usize = 64;
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            D,
+            SetupMatrixEnvelope { max_setup_len: 256 },
+        )
+        .expect("diagnostic setup");
+        let prepared = CpuBackend
+            .prepare_expanded::<D>(setup.expanded.clone())
+            .expect("prepared setup");
+        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref())
+            .expect("operation context");
+        let coefficients = vec![F::one(); 64];
+        let sources = [
+            CompressionDiagnosticSource {
+                kind: CompressionDiagnosticSourceKind::Outer { group_index: 0 },
+                coefficients: &coefficients,
+            },
+            CompressionDiagnosticSource {
+                kind: CompressionDiagnosticSourceKind::Outer { group_index: 1 },
+                coefficients: &coefficients,
+            },
+        ];
+
+        let report =
+            compute_shadow_compressed_commitments(&ctx, SisModulusProfileId::Q64Offset59, &sources)
+                .expect("shadow compression");
+
+        assert_eq!(report.sources, 2);
+        assert_eq!(report.maps, 4);
+        assert_eq!(report.batch_count, 2);
+    }
+
     fn deterministic_matrix_row<F: FieldCore + CanonicalField, const D: usize>(
         column_count: usize,
         salt: usize,
@@ -358,7 +398,6 @@ mod tests {
         salt: usize,
     ) -> Vec<F> {
         assert_eq!(map.ring_dimension, D);
-        assert_eq!(map.output_coefficients, D);
         let digits =
             negative_binary_digits::<F, D>(coefficients, map.input_width).expect("digitization");
         let matrix_row = deterministic_matrix_row::<F, D>(map.input_width, salt);
@@ -401,7 +440,7 @@ mod tests {
                 }
                 other => panic!("unexpected compression ring dimension {other}"),
             };
-            assert_eq!(coefficients.len(), map.output_coefficients);
+            assert_eq!(coefficients.len(), map.ring_dimension);
             assert_eq!(
                 coefficients.len() * field_bytes,
                 match map_index + 1 == plan.maps.len() {
