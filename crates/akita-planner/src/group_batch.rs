@@ -142,22 +142,16 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let num_digits_open = num_digits_open(open_decomp);
     let source = group.source;
-    let onehot_chunk_size = source.sparse_chunk_size();
     let challenge_shape = TensorChallengeShape::Flat;
     let challenge = FoldChallengeNorms {
         infinity_norm: challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
         l1_norm: challenge_shape.effective_l1_mass(ring_challenge_cfg) as u128,
     };
-    let witness = FoldWitnessNorms::new(
+    let witness = FoldWitnessNorms::from_source_encoding(
         group.layout.log_basis_inner,
         group.layout.inner_commit_matrix.ring_dimension(),
-        if onehot_chunk_size == 0 {
-            1
-        } else {
-            onehot_chunk_size
-        },
-        onehot_chunk_size > 0,
-    );
+        source.encoding(),
+    )?;
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         ring_challenge_cfg,
         challenge_shape,
@@ -434,19 +428,13 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let onehot_chunk_size = source.sparse_chunk_size();
     let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
         num_live_blocks,
         main_num_polys,
         policy.decomposition.field_bits(),
         log_basis,
         FoldChallengeNorms::new(ctx.ring_challenge_cfg, fold_challenge_shape),
-        FoldWitnessNorms::new(
-            witness_decomp.log_basis,
-            d,
-            onehot_chunk_size,
-            onehot_chunk_size > 0,
-        ),
+        FoldWitnessNorms::from_source_encoding(witness_decomp.log_basis, d, source.encoding())?,
         &fold_cap_config,
     ) else {
         return Ok(None);

@@ -195,30 +195,48 @@ impl FoldWitnessNorms {
     /// Per-block committed witness `s` (`(||s||_inf, ||s||_1)`), used to derive
     /// the worst-case `‖z‖_inf` envelope `β_inf` on the fold sum `z = Σ c_i·s_i`.
     ///
-    /// `||s||_inf` is `1` for one-hot or `b/2 = 2^(log_basis-1)` for dense
-    /// balanced digits; `||s||_1 = nonzeros · ||s||_inf` with
-    /// `nonzeros = ceil(D / K)`:
-    ///
-    /// - dense                     : `K = 1`     ⇒ `nonzeros = D`
-    /// - one-hot, chunk size `K ≥ D`: single-chunk ⇒ `nonzeros = 1`
-    /// - one-hot, chunk size `K < D`: multi-chunk  ⇒ `nonzeros = D / K`
+    /// `||s||_inf = b/2 = 2^(log_basis-1)` and every ring coefficient may be
+    /// nonzero.
     #[inline]
     #[must_use]
-    pub fn new(
-        log_basis: u32,
-        ring_dimension: usize,
-        onehot_chunk_size: usize,
-        is_onehot: bool,
-    ) -> Self {
-        let (infinity_norm, chunk) = if is_onehot {
-            (1u128, onehot_chunk_size)
-        } else {
-            (1u128 << (log_basis.saturating_sub(1)), 1)
-        };
-        let nonzeros = (ring_dimension as u128).div_ceil((chunk.max(1)) as u128);
+    pub fn bounded(log_basis: u32, ring_dimension: usize) -> Self {
+        let infinity_norm = 1u128 << (log_basis.saturating_sub(1));
         Self {
             infinity_norm,
-            l1_norm: infinity_norm.saturating_mul(nonzeros),
+            l1_norm: infinity_norm.saturating_mul(ring_dimension as u128),
+        }
+    }
+
+    /// Sparse-binary witness with at most one nonzero per logical chunk.
+    ///
+    /// `||s||_inf = 1` and `||s||_1 = ceil(D / K)`.
+    #[inline]
+    pub fn sparse_binary(ring_dimension: usize, chunk_size: usize) -> Result<Self, AkitaError> {
+        if chunk_size == 0 || !chunk_size.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "sparse-binary fold witness chunk size must be a nonzero power of two".into(),
+            ));
+        }
+        Ok(Self {
+            infinity_norm: 1,
+            l1_norm: (ring_dimension as u128).div_ceil(chunk_size as u128),
+        })
+    }
+
+    /// Derive witness norms from the source's discriminated encoding.
+    #[inline]
+    pub fn from_source_encoding(
+        log_basis: u32,
+        ring_dimension: usize,
+        encoding: crate::GroupSourceEncoding,
+    ) -> Result<Self, AkitaError> {
+        match encoding {
+            crate::GroupSourceEncoding::Bounded { .. } => {
+                Ok(Self::bounded(log_basis, ring_dimension))
+            }
+            crate::GroupSourceEncoding::SparseBinary { chunk_size } => {
+                Self::sparse_binary(ring_dimension, chunk_size)
+            }
         }
     }
 }
@@ -433,12 +451,14 @@ mod tests {
 
     #[test]
     fn witness_block_l1_norm_chunks() {
-        // dense (K=1): ||s||_1 = D · b/2 = 64 · 4.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).l1_norm, 64 * 4);
+        // Dense: ||s||_1 = D · b/2 = 64 · 4.
+        assert_eq!(FoldWitnessNorms::bounded(3, 64).l1_norm, 64 * 4);
         // one-hot single-chunk (K >= D): nonzeros = 1.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).l1_norm, 1);
+        assert_eq!(FoldWitnessNorms::sparse_binary(64, 64).unwrap().l1_norm, 1);
         // one-hot multi-chunk (K < D): nonzeros = ceil(D/K) = 8.
-        assert_eq!(FoldWitnessNorms::new(3, 64, 8, true).l1_norm, 8);
+        assert_eq!(FoldWitnessNorms::sparse_binary(64, 8).unwrap().l1_norm, 8);
+        assert!(FoldWitnessNorms::sparse_binary(64, 0).is_err());
+        assert!(FoldWitnessNorms::sparse_binary(64, 3).is_err());
     }
 
     #[test]
@@ -446,10 +466,14 @@ mod tests {
         // One-hot: ||s||_inf = 1. Dense: ||s||_inf = b/2 = 2^(lb-1), the same
         // at root and recursive (the committed witness is a balanced base-b
         // decomposition with digits in [-b/2, b/2-1] at every level).
-        assert_eq!(FoldWitnessNorms::new(3, 64, 64, true).infinity_norm, 1);
-        assert_eq!(FoldWitnessNorms::new(3, 64, 1, false).infinity_norm, 4); // 2^2
-                                                                             // No root/recursive split: dense is b/2 regardless of `is_onehot=false`.
-        assert_eq!(FoldWitnessNorms::new(5, 64, 1, false).infinity_norm, 16); // 2^4
+        assert_eq!(
+            FoldWitnessNorms::sparse_binary(64, 64)
+                .unwrap()
+                .infinity_norm,
+            1
+        );
+        assert_eq!(FoldWitnessNorms::bounded(3, 64).infinity_norm, 4); // 2^2
+        assert_eq!(FoldWitnessNorms::bounded(5, 64).infinity_norm, 16); // 2^4
     }
 
     #[test]
@@ -472,14 +496,12 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, true, 64usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 2usize, 1usize, 1u32, 2u64);
 
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+        let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &fold_challenge_config,
             fold_shape,
@@ -547,13 +569,11 @@ mod tests {
             log_commit_bound: 1,
             log_open_bound: Some(128),
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, true, 64usize, 4usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 4usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+        let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &fold_challenge_config,
             fold_shape,
@@ -621,7 +641,7 @@ mod tests {
         };
         let fold_shape = TensorChallengeShape::Flat;
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let witness = FoldWitnessNorms::bounded(3, 64);
         let decomposition = DecompositionParams {
             log_basis: 3,
             log_commit_bound: 128,
@@ -688,13 +708,11 @@ mod tests {
             log_commit_bound: 128,
             log_open_bound: None,
         };
-        let (d, is_root, onehot_chunk_size, num_live_blocks, num_claims, subfield, inner_width) =
-            (64usize, false, 1usize, 2usize, 1usize, 1u32, 2u64);
+        let (d, num_live_blocks, num_claims, subfield, inner_width) =
+            (64usize, 2usize, 1usize, 1u32, 2u64);
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
-        let is_onehot = is_root && decomposition.log_commit_bound == 1 && onehot_chunk_size > 0;
-        let witness =
-            FoldWitnessNorms::new(decomposition.log_basis, d, onehot_chunk_size, is_onehot);
+        let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
             &fold_challenge_config,
             fold_shape,

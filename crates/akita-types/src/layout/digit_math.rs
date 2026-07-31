@@ -101,7 +101,6 @@ pub fn optimal_block_geometry_split(
     fold_challenge_config: &SparseChallengeConfig,
     fold_challenge_shape: TensorChallengeShape,
     decomposition: DecompositionParams,
-    onehot_chunk_size: usize,
     reduced_vars: usize,
     num_ring: usize,
 ) -> (usize, usize, u32) {
@@ -140,19 +139,13 @@ pub fn optimal_block_geometry_split(
             Ok(config) => config,
             Err(_) => continue,
         };
-        let witness_norms = FoldWitnessNorms::new(
-            decomposition.log_basis,
-            d as usize,
-            onehot_chunk_size,
-            log_commit_bound == 1 && onehot_chunk_size > 0,
-        );
         let Ok((fold_digit_depth, _)) = fold_witness_digit_plan(
             num_live_blocks,
             num_claims,
             field_bits,
             decomposition.log_basis,
             FoldChallengeNorms::new(fold_challenge_config, fold_challenge_shape),
-            witness_norms,
+            fold_witness,
             &fold_cap_config,
         ) else {
             continue;
@@ -291,7 +284,7 @@ mod tests {
         };
         let fold_challenge =
             crate::sis::FoldChallengeNorms::new(&fold_challenge_config, TensorChallengeShape::Flat);
-        let fold_witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let fold_witness = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
         let cap_config = FoldWitnessLinfCapConfig::for_fold_level_scoring(
             crate::sis::fold_witness_linf_cap_policy(
                 &fold_challenge_config,

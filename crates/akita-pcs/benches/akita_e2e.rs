@@ -248,7 +248,9 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     )
     .expect("benchmark layout");
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    let onehot_k = Cfg::onehot_chunk_size();
+    let onehot_k = Cfg::group_source()
+        .sparse_chunk_size()
+        .expect("one-hot benchmark config");
     let total_field = total_ring * D;
     assert_eq!(total_field % onehot_k, 0);
     let total_chunks = total_field / onehot_k;

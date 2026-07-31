@@ -42,7 +42,7 @@ pub(super) type OneHotCfg = fp128::D64OneHot;
 pub(super) const ONEHOT_D: usize = OneHotCfg::D;
 // `fp128::D64OneHot` requires K=256 one-hot schedules (chunks span `K/D = 4`
 // ring elements), so the committed poly has `2^nv / K` chunks, not one chunk
-// per ring element. Must match `OneHotCfg::onehot_chunk_size()`.
+// per ring element. Must match `OneHotCfg::group_source()`.
 pub(super) const ONEHOT_K: usize = 256;
 
 pub(super) type DenseCfg = fp128::D64Dense;
@@ -476,7 +476,11 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             &final_polys,
             &stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
-            &OneHotGroupProvider::new(BaseCfg::onehot_chunk_size()),
+            &OneHotGroupProvider::new(
+                BaseCfg::group_source()
+                    .sparse_chunk_size()
+                    .expect("one-hot generated-profile config"),
+            ),
         )
         .expect("final generated-profile commitment");
 

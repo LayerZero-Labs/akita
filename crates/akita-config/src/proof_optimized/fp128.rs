@@ -65,7 +65,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     128,
-    1,
+    source = akita_types::GroupSource::bounded(128),
     schedules = (
         "schedules-fp128-d128-dense",
         "fp128_d128_dense",
@@ -80,7 +80,7 @@ impl_proof_optimized_preset!(
     128,
     128,
     1,
-    256,
+    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE),
     schedules = (
         "schedules-fp128-d128-onehot",
         "fp128_d128_onehot",
@@ -95,7 +95,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     128,
-    1,
+    source = akita_types::GroupSource::bounded(128),
     schedules = (
         "schedules-fp128-d64-dense",
         "fp128_d64_dense",
@@ -110,7 +110,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    256,
+    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE),
     schedules = (
         "schedules-fp128-d64-onehot",
         "fp128_d64_onehot",
@@ -125,7 +125,7 @@ impl_proof_optimized_preset!(
     64,
     128,
     1,
-    16
+    source = akita_types::GroupSource::one_hot(16)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -135,7 +135,7 @@ impl_proof_optimized_preset!(
     256,
     128,
     1,
-    256
+    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE)
 );
 impl_proof_optimized_preset!(
     D512OneHot,
@@ -145,7 +145,7 @@ impl_proof_optimized_preset!(
     512,
     128,
     1,
-    256
+    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE)
 );
 impl_multi_chunk_companion!(
     D64OneHotMultiChunk,

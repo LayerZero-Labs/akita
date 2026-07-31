@@ -139,7 +139,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub onehot_chunk_size: usize,
+    pub root_source_encoding: akita_types::GroupSourceEncoding,
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.

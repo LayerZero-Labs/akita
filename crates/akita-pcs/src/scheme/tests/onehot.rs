@@ -232,7 +232,11 @@ fn group_batch_commits_independent_arity_precommitteds() {
         &final_polys,
         &stack,
         vec![pre_a_commitment.profile, pre_b_commitment.profile],
-        &OneHotGroupProvider::new(OneHotCfg::onehot_chunk_size()),
+        &OneHotGroupProvider::new(
+            OneHotCfg::group_source()
+                .sparse_chunk_size()
+                .expect("one-hot config"),
+        ),
     )
     .expect("final multi-group commitment");
 
@@ -296,7 +300,11 @@ fn commit_group_returns_frozen_exact_layout() {
         &setup,
         &polys,
         &stack,
-        &OneHotGroupProvider::new(OneHotCfg::onehot_chunk_size()),
+        &OneHotGroupProvider::new(
+            OneHotCfg::group_source()
+                .sparse_chunk_size()
+                .expect("one-hot config"),
+        ),
     )
     .expect("commit group");
     let frozen_layout = commitment.profile;

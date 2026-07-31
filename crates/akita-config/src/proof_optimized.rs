@@ -25,6 +25,11 @@ use std::sync::{LazyLock, Mutex};
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MIN: u32 = 3;
 /// Maximum proof-optimized log-basis.
 pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
+/// Explicit sparse-binary chunk size used by standard one-hot presets.
+///
+/// Smaller/nonstandard chunking is represented by a separately named preset
+/// or an explicit provider; it is never inferred as a fallback.
+pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
 /// Bound setup preprocessing work before schedule resolution.
 ///
@@ -397,13 +402,13 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $group_source:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $group_source, none);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk_size:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $onehot_chunk_size, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $group_source:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $group_source, table, $feat, $family_name, $table);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, none) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $group_source:expr, none) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -448,8 +453,8 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn onehot_chunk_size() -> usize {
-                $onehot_chunk
+            fn group_source() -> akita_types::GroupSource {
+                $group_source
             }
 
             fn get_params_for_prove(
@@ -463,7 +468,7 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $onehot_chunk:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $group_source:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -508,8 +513,8 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn onehot_chunk_size() -> usize {
-                $onehot_chunk
+            fn group_source() -> akita_types::GroupSource {
+                $group_source
             }
 
             fn get_params_for_prove(

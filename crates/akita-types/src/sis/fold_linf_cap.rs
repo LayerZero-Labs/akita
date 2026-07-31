@@ -593,7 +593,7 @@ mod tests {
             infinity_norm: 2,
             l1_norm: 51,
         };
-        let witness = FoldWitnessNorms::new(3, 64, 64, true);
+        let witness = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
         let (_, tight_beta) = crate::sis::fold_witness_digit_plan(
             4,
             1,

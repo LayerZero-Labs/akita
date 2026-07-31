@@ -29,7 +29,9 @@ fn small_verifier_statement<'a>(
 }
 
 fn onehot_poly(seed: usize) -> OneHotPoly<SmallF, u8> {
-    let onehot_k = SmallCfg::onehot_chunk_size();
+    let onehot_k = SmallCfg::group_source()
+        .sparse_chunk_size()
+        .expect("fp32 one-hot config");
     assert!(onehot_k <= 1usize << u8::BITS);
     let num_chunks = (1usize << SMALL_NV) / onehot_k;
     let indices = (0..num_chunks)

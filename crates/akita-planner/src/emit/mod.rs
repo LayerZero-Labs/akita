@@ -299,6 +299,17 @@ fn emit_group_source(source: GroupSource) -> String {
     )
 }
 
+fn emit_group_source_encoding(encoding: GroupSourceEncoding) -> String {
+    match encoding {
+        GroupSourceEncoding::Bounded { coefficient_bits } => {
+            format!("GroupSourceEncoding::Bounded {{ coefficient_bits: {coefficient_bits} }}")
+        }
+        GroupSourceEncoding::SparseBinary { chunk_size } => {
+            format!("GroupSourceEncoding::SparseBinary {{ chunk_size: {chunk_size} }}")
+        }
+    }
+}
+
 fn emit_geometry(value: GeneratedBlockGeometry) -> String {
     format!(
         "GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}",
@@ -504,7 +515,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
-            "    onehot_chunk_size: {onehot_chunk_size},\n",
+            "    root_source_encoding: {root_source_encoding},\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
@@ -531,7 +542,7 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         chal_ext_degree = identity.chal_ext_degree,
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
-        onehot_chunk_size = identity.onehot_chunk_size,
+        root_source_encoding = emit_group_source_encoding(identity.root_source_encoding),
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
@@ -556,7 +567,7 @@ fn materialized_entries(
     keys.extend(spec.keys.iter().copied().map(|key| {
         AkitaScheduleLookupKey::single(
             key,
-            GroupSource::from_config(spec.policy.decomposition, spec.policy.onehot_chunk_size),
+            GroupSource::from_encoding(spec.policy.root_source_encoding),
         )
     }));
     keys.extend(spec.group_batch_keys.iter().cloned());

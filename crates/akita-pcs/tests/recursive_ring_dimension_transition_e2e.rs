@@ -244,7 +244,11 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             &final_polys,
             &stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
-            &OneHotGroupProvider::new(ProofCfg::onehot_chunk_size()),
+            &OneHotGroupProvider::new(
+                ProofCfg::group_source()
+                    .sparse_chunk_size()
+                    .expect("one-hot transition config"),
+            ),
         )
         .expect("final mixed commitment");
 

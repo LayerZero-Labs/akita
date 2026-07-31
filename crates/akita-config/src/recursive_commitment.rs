@@ -59,8 +59,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Cfg::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Cfg::group_source()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {

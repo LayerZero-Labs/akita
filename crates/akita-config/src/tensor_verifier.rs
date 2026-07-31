@@ -73,8 +73,8 @@ pub mod fp128 {
             )
         }
 
-        fn onehot_chunk_size() -> usize {
-            256
+        fn group_source() -> akita_types::GroupSource {
+            akita_types::GroupSource::one_hot(crate::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE)
         }
 
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {

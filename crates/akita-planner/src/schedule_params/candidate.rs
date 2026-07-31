@@ -74,7 +74,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         policy.decomposition.field_bits(),
         decomp.log_basis,
         FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
-        FoldWitnessNorms::new(decomp.log_basis, dimensions.d_a(), 1, false),
+        FoldWitnessNorms::bounded(decomp.log_basis, dimensions.d_a()),
         &fold_cap_config,
     ) else {
         return Ok(None);
@@ -419,7 +419,7 @@ pub(super) fn derive_setup_prefix_group(
             policy.decomposition.field_bits(),
             log_basis_open,
             FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::new(inner_decomp.log_basis, d, 1, false),
+            FoldWitnessNorms::bounded(inner_decomp.log_basis, d),
             &fold_cap_config,
         ) else {
             continue;
@@ -489,7 +489,7 @@ pub(super) fn derive_setup_prefix_group(
             policy.decomposition.field_bits(),
             log_basis_open,
             challenge,
-            FoldWitnessNorms::new(log_basis_inner, d, 1, false),
+            FoldWitnessNorms::bounded(log_basis_inner, d),
             &fold_linf_cap_config,
         )?;
         let layout = CommittedGroupProfile {
@@ -993,19 +993,17 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let root_is_onehot = witness_decomp.log_commit_bound == 1 && policy.onehot_chunk_size > 0;
     let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
         num_live_blocks,
         num_claims,
         policy.decomposition.field_bits(),
         log_basis,
         FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
-        FoldWitnessNorms::new(
+        FoldWitnessNorms::from_source_encoding(
             witness_decomp.log_basis,
             dimensions.d_a(),
-            policy.onehot_chunk_size,
-            root_is_onehot,
-        ),
+            policy.root_source_encoding,
+        )?,
         &fold_cap_config,
     ) else {
         return Ok(None);
@@ -1089,10 +1087,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let params = (CommittedGroupParams {
-        source: akita_types::GroupSource::from_config(
-            policy.decomposition,
-            policy.onehot_chunk_size,
-        ),
+        source: akita_types::GroupSource::from_encoding(policy.root_source_encoding),
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,

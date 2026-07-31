@@ -606,7 +606,7 @@ where
             group.params.fold_challenge_shape(),
         );
         let cap_config = root_lp.fold_witness_linf_cap_config_for_params(group.params)?;
-        let witness_norms = root_lp.fold_witness_norms_for_params(group.params);
+        let witness_norms = root_lp.fold_witness_norms_for_params(group.params)?;
         let sizing_claims = tail_t_vectors.unwrap_or(group.polys.len());
         let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
             group.params.num_live_blocks(),

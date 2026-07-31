@@ -708,11 +708,11 @@ impl GroupSource {
         }
     }
 
-    /// Sparse-binary chunk size used by fold-norm pricing, or zero otherwise.
-    pub const fn sparse_chunk_size(self) -> usize {
+    /// Sparse-binary chunk size used by fold-norm pricing.
+    pub const fn sparse_chunk_size(self) -> Option<usize> {
         match self.encoding {
-            GroupSourceEncoding::Bounded { .. } => 0,
-            GroupSourceEncoding::SparseBinary { chunk_size } => chunk_size,
+            GroupSourceEncoding::Bounded { .. } => None,
+            GroupSourceEncoding::SparseBinary { chunk_size } => Some(chunk_size),
         }
     }
 
@@ -726,18 +726,6 @@ impl GroupSource {
                 bytes.push(1);
                 push_usize(bytes, chunk_size);
             }
-        }
-    }
-
-    /// Derive the root-source contract selected by a configuration.
-    pub fn from_config(
-        decomposition: crate::DecompositionParams,
-        onehot_chunk_size: usize,
-    ) -> Self {
-        if decomposition.log_commit_bound == 1 && onehot_chunk_size > 0 {
-            Self::one_hot(onehot_chunk_size)
-        } else {
-            Self::bounded(decomposition.log_commit_bound)
         }
     }
 
@@ -916,7 +904,7 @@ impl TerminalCommittedGroupParams {
             sparse,
             akita_challenges::TensorChallengeShape::Flat,
         );
-        let witness = crate::sis::FoldWitnessNorms::new(self.log_basis_inner, self.d_a(), 1, false);
+        let witness = crate::sis::FoldWitnessNorms::bounded(self.log_basis_inner, self.d_a());
         let (unconstrained_target, _) = crate::sis::fold_witness_unsnapped_linf_cap(
             self.num_live_blocks,
             1,

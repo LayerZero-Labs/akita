@@ -337,9 +337,9 @@ mod tests {
             l1_norm: 54,
         };
         // dense: log_basis=3 ⇒ ||s||_inf = b/2 = 4, ||s||_1 = D·b/2 = 64·4.
-        let dense = FoldWitnessNorms::new(3, 64, 1, false);
+        let dense = FoldWitnessNorms::bounded(3, 64);
         // one-hot single-chunk: ||s||_inf = 1, ||s||_1 = 1.
-        let onehot = FoldWitnessNorms::new(3, 64, 64, true);
+        let onehot = FoldWitnessNorms::sparse_binary(64, 64).unwrap();
         let (dense_digits, _) = fold_witness_digit_plan(
             8,
             1,
@@ -382,7 +382,7 @@ mod tests {
             infinity_norm: 8,
             l1_norm: 54,
         };
-        let witness = FoldWitnessNorms::new(3, 64, 1, false);
+        let witness = FoldWitnessNorms::bounded(3, 64);
         // A fold must contain at least one live block.
         assert!(fold_witness_digit_plan(
             0,

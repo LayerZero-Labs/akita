@@ -289,7 +289,7 @@ pub fn resolve_schedule(
     resolve_group_batch_schedule(
         &AkitaScheduleLookupKey::single(
             key,
-            akita_types::GroupSource::from_config(policy.decomposition, policy.onehot_chunk_size),
+            akita_types::GroupSource::from_encoding(policy.root_source_encoding),
         ),
         policy,
         ring_challenge_config,

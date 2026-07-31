@@ -52,7 +52,7 @@ const D: usize = 64;
 type Cfg = fp128::D64OneHot;
 type Claim = <Cfg as CommitmentConfig>::ExtField;
 type Challenge = <Cfg as CommitmentConfig>::ExtField;
-const ONEHOT_K: usize = 256;
+const ONEHOT_K: usize = akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE;
 
 const TRANSCRIPT_DOMAIN: &[u8] = b"akita-recursion/onehot-d64";
 

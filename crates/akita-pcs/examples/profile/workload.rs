@@ -1275,7 +1275,11 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             &final_polys,
             &stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
-            &OneHotGroupProvider::new(ProofCfg::onehot_chunk_size()),
+            &OneHotGroupProvider::new(
+                ProofCfg::group_source()
+                    .sparse_chunk_size()
+                    .expect("one-hot profile config"),
+            ),
         )
         .expect("final multi-group commitment");
         report_timing(label, "commit", t_commit.elapsed().as_secs_f64());

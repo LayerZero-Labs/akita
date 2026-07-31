@@ -345,7 +345,9 @@ fn heterogeneous_d64_onehot_catalog_key<Cfg: CommitmentConfig>(
     let dense_params = planner_committed_group_params::<Cfg>(&dense_group, dense_source)?;
     Ok(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        final_source: GroupSource::one_hot(256),
+        final_source: GroupSource::one_hot(
+            akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE,
+        ),
         precommitteds: vec![
             CommittedGroupProfile::from_params(onehot_group, &onehot_params),
             CommittedGroupProfile::from_params(dense_group, &dense_params),

@@ -26,10 +26,10 @@ use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    CommittedGroupBatchProfile, DecompositionParams, DigitRangePlan,
-    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
-    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
-    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
+    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
+    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
+    EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_algebra::CyclotomicRing;
 use akita_challenges::SparseChallengeConfig;
@@ -187,49 +187,16 @@ fn recursive_schedule(
 }
 
 #[test]
-fn root_source_derivation_distinguishes_dense_and_onehot_bounds() {
+fn committed_params_preserve_the_discriminated_source_contract() {
     let dense = committed_params(64);
     assert_eq!(
         GroupSource::from_commitment(&dense),
         GroupSource::bounded(128)
     );
-    assert_eq!(
-        GroupSource::from_config(
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 128,
-                log_open_bound: None,
-            },
-            256,
-        ),
-        GroupSource::bounded(128)
-    );
-    assert_eq!(
-        GroupSource::from_config(
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 32,
-                log_open_bound: Some(128),
-            },
-            0,
-        ),
-        GroupSource::bounded(32)
-    );
 
     let onehot = dense.with_source(GroupSource::one_hot(256));
     assert_eq!(
         GroupSource::from_commitment(&onehot),
-        GroupSource::one_hot(256)
-    );
-    assert_eq!(
-        GroupSource::from_config(
-            DecompositionParams {
-                log_basis: 3,
-                log_commit_bound: 1,
-                log_open_bound: Some(128),
-            },
-            256,
-        ),
         GroupSource::one_hot(256)
     );
 }

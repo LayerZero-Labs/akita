@@ -346,8 +346,8 @@ where
         Root::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Root::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Root::group_source()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {

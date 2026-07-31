@@ -280,14 +280,11 @@ impl CommittedGroupParams {
     /// Per-row committed-witness `(||s||_inf, ||s||_1)` for the folded
     /// witness at this level (one-hot vs dense, see [`Self::source`]).
     #[inline]
-    pub fn fold_witness_norms(&self) -> crate::sis::FoldWitnessNorms {
-        let onehot_chunk_size = self.source.sparse_chunk_size();
-        let is_onehot = onehot_chunk_size > 0;
-        crate::sis::FoldWitnessNorms::new(
+    pub fn fold_witness_norms(&self) -> Result<crate::sis::FoldWitnessNorms, AkitaError> {
+        crate::sis::FoldWitnessNorms::from_source_encoding(
             self.log_basis_inner,
             self.d_a(),
-            if is_onehot { onehot_chunk_size } else { 1 },
-            is_onehot,
+            self.source.encoding(),
         )
     }
 
@@ -296,14 +293,11 @@ impl CommittedGroupParams {
     pub fn fold_witness_norms_for_params(
         &self,
         params: &(impl LevelParamsLike + ?Sized),
-    ) -> crate::sis::FoldWitnessNorms {
-        let onehot_chunk_size = params.source().sparse_chunk_size();
-        let is_onehot = onehot_chunk_size > 0;
-        crate::sis::FoldWitnessNorms::new(
+    ) -> Result<crate::sis::FoldWitnessNorms, AkitaError> {
+        crate::sis::FoldWitnessNorms::from_source_encoding(
             params.log_basis_inner(),
             params.inner_commit_matrix_params().ring_dimension(),
-            if is_onehot { onehot_chunk_size } else { 1 },
-            is_onehot,
+            params.source().encoding(),
         )
     }
 
@@ -405,7 +399,7 @@ impl CommittedGroupParams {
             &self.fold_challenge_config,
             self.fold_challenge_shape,
         );
-        let witness = self.fold_witness_norms();
+        let witness = self.fold_witness_norms()?;
         let (num_digits_fold, _) = crate::sis::fold_witness_digit_plan(
             self.num_live_blocks,
             root_num_claims,
@@ -435,7 +429,7 @@ impl CommittedGroupParams {
                 &self.fold_challenge_config,
                 self.fold_challenge_shape,
             ),
-            self.fold_witness_norms(),
+            self.fold_witness_norms()?,
             &self.fold_linf_cap_config,
         )?;
         Ok(inf_norm_bound)
@@ -470,7 +464,7 @@ impl CommittedGroupParams {
                 &params.fold_challenge_config(),
                 params.fold_challenge_shape(),
             );
-            let witness_norms = self.fold_witness_norms_for_params(params);
+            let witness_norms = self.fold_witness_norms_for_params(params)?;
             let (_, witness_linf_cap) = crate::sis::fold_witness_digit_plan(
                 params.num_live_blocks(),
                 num_claims,
@@ -548,7 +542,7 @@ impl CommittedGroupParams {
                 "fold_witness_linf_tail_bound_sq: num_fold_coeffs must be positive".to_string(),
             ));
         }
-        let witness_linf = self.fold_witness_norms().infinity_norm();
+        let witness_linf = self.fold_witness_norms()?.infinity_norm();
         let witness_linf_sq = witness_linf.saturating_mul(witness_linf);
         crate::sis::rademacher_proxy_variance(
             self.num_live_blocks,
@@ -610,7 +604,7 @@ impl CommittedGroupParams {
             self.field_bits_for_cache(),
             params.log_basis_open(),
             challenge,
-            self.fold_witness_norms_for_params(params),
+            self.fold_witness_norms_for_params(params)?,
             &cap_config,
         )?;
         Ok(inf_norm_bound)

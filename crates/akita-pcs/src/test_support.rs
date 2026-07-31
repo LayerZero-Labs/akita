@@ -249,8 +249,8 @@ where
         Envelope::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Envelope::onehot_chunk_size().min(Final::onehot_chunk_size())
+    fn group_source() -> akita_types::GroupSource {
+        Envelope::group_source()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -537,8 +537,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Env::group_source()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -850,8 +850,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Env::group_source()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1275,8 +1275,8 @@ where
         Root::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Root::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Root::group_source()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1419,8 +1419,8 @@ where
         Env::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Env::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Env::group_source()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {

@@ -68,8 +68,8 @@ macro_rules! impl_multi_chunk_companion {
             fn basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::basis_range()
             }
-            fn onehot_chunk_size() -> usize {
-                <$base as $crate::CommitmentConfig>::onehot_chunk_size()
+            fn group_source() -> akita_types::GroupSource {
+                <$base as $crate::CommitmentConfig>::group_source()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -138,7 +138,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        onehot_chunk_size: Cfg::onehot_chunk_size(),
+        root_source_encoding: Cfg::group_source().encoding(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
@@ -270,28 +270,13 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// One-hot chunk size `K` of the committed witnesses under this config.
-    ///
-    /// Bounds the committed one-hot witness L1 mass per ring element as
-    /// `nonzeros = ceil(D / K)`, which feeds the Hachi Lemma 7 weak-binding
-    /// collision norm and the folded-witness digit count. The value must be a
-    /// true worst case (the smallest `K`, i.e. the largest `nonzeros`, any
-    /// instance under this config may commit). It is only consulted for a root
-    /// level whose `log_commit_bound == 1` (one-hot commitment); dense configs
-    /// always use `nonzeros = D` regardless of this hook.
-    ///
-    /// The default `1` is the fully generic one-hot case: it safely covers every
-    /// valid chunking accepted by `OneHotPoly`, including `K < D` multi-chunk
-    /// roots. A config that publicly guarantees a larger minimum chunk size may
-    /// override this hook to recover tighter one-hot schedules.
-    fn onehot_chunk_size() -> usize {
-        1
-    }
-
     /// Default group source contract selected by this preset.
-    fn group_source() -> akita_types::GroupSource {
-        akita_types::GroupSource::from_config(Self::decomposition(), Self::onehot_chunk_size())
-    }
+    ///
+    /// This is a discriminated planning/prover contract: dense presets return a
+    /// bounded source with no one-hot `K`, while one-hot presets return a sparse
+    /// source with an explicit chunk size. It is not part of
+    /// `CommittedGroupProfile` or verifier-facing identity.
+    fn group_source() -> akita_types::GroupSource;
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -478,6 +463,10 @@ mod tests {
 
         fn basis_range() -> (u32, u32) {
             (3, 3)
+        }
+
+        fn group_source() -> akita_types::GroupSource {
+            akita_types::GroupSource::bounded(8)
         }
 
         fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {

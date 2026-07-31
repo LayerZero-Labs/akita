@@ -58,7 +58,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
-    h.write_u64(policy.onehot_chunk_size as u64);
+    write_source_encoding(&mut h, policy.root_source_encoding);
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
@@ -87,7 +87,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
-    h.write_u64(identity.onehot_chunk_size as u64);
+    write_source_encoding(&mut h, identity.root_source_encoding);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
@@ -253,7 +253,7 @@ struct CatalogIdentityExpectation {
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
-    onehot_chunk_size: usize,
+    root_source_encoding: akita_types::GroupSourceEncoding,
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -283,7 +283,7 @@ impl CatalogIdentityExpectation {
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
-            onehot_chunk_size: identity.onehot_chunk_size,
+            root_source_encoding: identity.root_source_encoding,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -327,7 +327,7 @@ fn catalog_identity_expectation(
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
-        onehot_chunk_size: policy.onehot_chunk_size,
+        root_source_encoding: policy.root_source_encoding,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -371,7 +371,7 @@ pub fn expected_catalog_identity(
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
-        onehot_chunk_size: expected.onehot_chunk_size,
+        root_source_encoding: expected.root_source_encoding,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -659,7 +659,11 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupPro
 }
 
 fn write_generated_source(h: &mut Fnv64, source: akita_types::GroupSource) {
-    match source.encoding() {
+    write_source_encoding(h, source.encoding());
+}
+
+fn write_source_encoding(h: &mut Fnv64, encoding: akita_types::GroupSourceEncoding) {
+    match encoding {
         akita_types::GroupSourceEncoding::Bounded { coefficient_bits } => {
             h.write_u64(0);
             h.write_u64(u64::from(coefficient_bits));

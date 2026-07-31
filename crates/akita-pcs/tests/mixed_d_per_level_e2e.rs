@@ -89,6 +89,10 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
+    fn group_source() -> akita_types::GroupSource {
+        Envelope::group_source()
+    }
+
     fn get_params_for_prove(
         opening_batch: &OpeningClaimsLayout,
     ) -> Result<FoldSchedule, AkitaError> {

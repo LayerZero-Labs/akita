@@ -71,8 +71,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::basis_range()
     }
 
-    fn onehot_chunk_size() -> usize {
-        Cfg::onehot_chunk_size()
+    fn group_source() -> akita_types::GroupSource {
+        Cfg::group_source()
     }
 
     fn supports_multi_group_final_commit() -> bool {

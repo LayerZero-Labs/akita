@@ -83,7 +83,11 @@ pub struct PlannerPolicy {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub onehot_chunk_size: usize,
+    /// Default root source's certified encoding.
+    ///
+    /// This is a discriminated planner/catalog fact: bounded sources carry no
+    /// sparse chunk size, while sparse-binary sources carry an explicit `K`.
+    pub root_source_encoding: akita_types::GroupSourceEncoding,
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -96,7 +100,7 @@ impl PlannerPolicy {
     pub fn with_group_source(self, source: akita_types::GroupSource) -> Self {
         Self {
             decomposition: source.decomposition(self.decomposition),
-            onehot_chunk_size: source.sparse_chunk_size(),
+            root_source_encoding: source.encoding(),
             ..self
         }
     }

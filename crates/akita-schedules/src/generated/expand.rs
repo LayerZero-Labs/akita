@@ -145,7 +145,7 @@ impl GeneratedSetupPrefixInput {
             policy.decomposition.field_bits(),
             log_basis_open,
             FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::new(self.commitment.inner_commit_matrix.log_basis, d, 1, false),
+            FoldWitnessNorms::bounded(self.commitment.inner_commit_matrix.log_basis, d),
             &fold_linf_cap_config,
         )?;
         let a_bucket = rounded_up_role_a_inf_norm(
@@ -370,19 +370,22 @@ impl GeneratedCommittedGroup {
             ring_d,
             inner_width,
         )?;
-        let onehot_chunk_size = source.sparse_chunk_size();
+        let witness_norms = if is_root {
+            FoldWitnessNorms::from_source_encoding(
+                witness_decomp.log_basis,
+                ring_d,
+                source.encoding(),
+            )?
+        } else {
+            FoldWitnessNorms::bounded(witness_decomp.log_basis, ring_d)
+        };
         let (num_digits_fold, _) = fold_witness_digit_plan(
             num_live_blocks,
             num_claims,
             policy.decomposition.field_bits(),
             log_basis_open,
             FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::new(
-                witness_decomp.log_basis,
-                ring_d,
-                onehot_chunk_size,
-                is_root && onehot_chunk_size > 0,
-            ),
+            witness_norms,
             &fold_linf_cap_config,
         )?;
         let a_bucket = rounded_up_role_a_inf_norm(
@@ -632,19 +635,17 @@ impl GeneratedCommittedGroup {
             ring_d,
             inner_width,
         )?;
-        let onehot_chunk_size = source.sparse_chunk_size();
         let (num_digits_fold, _) = fold_witness_digit_plan(
             num_live_blocks,
             main_num_polys,
             policy.decomposition.field_bits(),
             log_basis_open,
             FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::new(
+            FoldWitnessNorms::from_source_encoding(
                 witness_decomp.log_basis,
                 ring_d,
-                onehot_chunk_size,
-                onehot_chunk_size > 0,
-            ),
+                source.encoding(),
+            )?,
             &fold_linf_cap_config,
         )?;
         let a_bucket = rounded_up_role_a_inf_norm(
@@ -833,7 +834,7 @@ impl GeneratedTerminalFold {
             policy.decomposition.field_bits(),
             log_basis_inner,
             FoldChallengeNorms::new(&sparse, TensorChallengeShape::Flat),
-            FoldWitnessNorms::new(log_basis_inner, ring_dimension, 1, false),
+            FoldWitnessNorms::bounded(log_basis_inner, ring_dimension),
             &fold_linf_cap_config,
         )?;
         let collision_bucket = rounded_up_role_a_inf_norm(

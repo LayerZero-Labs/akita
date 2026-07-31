@@ -145,8 +145,8 @@ fn grouped_fold_witness_norms_use_each_groups_source() {
         .expect("precommitted group params");
     let final_group = grouped.group_params(&batch, 1).expect("final group params");
 
-    let precommitted_norms = grouped.fold_witness_norms_for_params(precommitted);
-    let final_norms = grouped.fold_witness_norms_for_params(final_group);
+    let precommitted_norms = grouped.fold_witness_norms_for_params(precommitted).unwrap();
+    let final_norms = grouped.fold_witness_norms_for_params(final_group).unwrap();
     assert_eq!(
         precommitted_norms.infinity_norm(),
         1u128 << (precommitted.log_basis_inner() - 1)
