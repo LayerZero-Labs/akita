@@ -639,6 +639,65 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
 }
 
 #[test]
+fn affine_digit_interval_empty_low_factor_is_structural_identity() {
+    let mut rng = StdRng::seed_from_u64(0x1d_e0_1d_e0);
+    let challenges = random_vec(&mut rng, 12);
+    let digit_weights = random_vec(&mut rng, 5);
+    let high = random_vec(&mut rng, 13);
+    let dense = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        2,
+        &digit_weights,
+        &high,
+        &[F::one()],
+    )
+    .unwrap();
+    let identity = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        2,
+        &digit_weights,
+        &high,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(identity, dense);
+
+    let dense_single_digit = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        1,
+        &digit_weights[..1],
+        &high,
+        &[F::one()],
+    )
+    .unwrap();
+    let identity_single_digit = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        1,
+        &digit_weights[..1],
+        &high,
+        &[],
+    )
+    .unwrap();
+    assert_eq!(identity_single_digit, dense_single_digit);
+}
+
+#[test]
 fn affine_digit_interval_matches_independent_strided_digit_oracle() {
     let mut rng = StdRng::seed_from_u64(0x57_12_1d_ed);
     for &(low_len, high_len, outer_start, live_len, digits, outer_stride, digit_stride, base) in

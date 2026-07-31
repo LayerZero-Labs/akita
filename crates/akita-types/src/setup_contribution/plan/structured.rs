@@ -179,9 +179,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
 
         let point = self.relation_address.point();
         let base_ring_dim = self.projection_geometry.base_ring_dim();
-        let one = [E::one()];
-        let opening_low = opening_scales.as_deref().unwrap_or(&one);
-        let outer_low = outer_scales.as_deref().unwrap_or(&one);
+        let opening_low = opening_scales.as_deref().unwrap_or(&[]);
+        let outer_low = outer_scales.as_deref().unwrap_or(&[]);
         let projected_digits = |gadget: &[E], ratio: usize| -> Result<Option<Vec<E>>, AkitaError> {
             if ratio == 1 {
                 return Ok(None);
@@ -468,7 +467,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                                 1,
                                 &fold_digits,
                                 &witness_gadget,
-                                &one,
+                                &[],
                             )?)
                 },
             )?

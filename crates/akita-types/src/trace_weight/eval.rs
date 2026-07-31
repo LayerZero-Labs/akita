@@ -368,6 +368,20 @@ where
         }
     }
 
+    fn add(&mut self, factor: &Self) {
+        for (slot, &value) in self.coordinates.iter_mut().zip(&factor.coordinates) {
+            *slot += value;
+        }
+    }
+
+    fn add_scalar(&mut self, scale: E) -> Result<(), AkitaError> {
+        let constant = self.coordinates.first_mut().ok_or_else(|| {
+            AkitaError::InvalidSetup("trace affine coordinates must be non-empty".into())
+        })?;
+        *constant += scale;
+        Ok(())
+    }
+
     fn multiply(&self, rhs: &Self) -> Self {
         Self {
             coordinates: cstar_mul::<F, E>(&self.coordinates, &rhs.coordinates, &self.gamma),

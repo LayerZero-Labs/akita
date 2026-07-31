@@ -32,6 +32,12 @@ pub trait AffineWeight<F: FieldCore>: Clone {
     /// Add `factor * scale` to `self`.
     fn add_scaled(&mut self, factor: &Self, scale: F);
 
+    /// Add `factor` to `self` without a unit scalar multiplication.
+    fn add(&mut self, factor: &Self);
+
+    /// Add the embedded scalar `scale` to `self`.
+    fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError>;
+
     /// Multiply two outer factors.
     fn multiply(&self, rhs: &Self) -> Self;
 }
@@ -45,6 +51,15 @@ impl<F: FieldCore> AffineWeight<F> for F {
         *self += *factor * scale;
     }
 
+    fn add(&mut self, factor: &Self) {
+        *self += *factor;
+    }
+
+    fn add_scalar(&mut self, scale: F) -> Result<(), AkitaError> {
+        *self += scale;
+        Ok(())
+    }
+
     fn multiply(&self, rhs: &Self) -> Self {
         *self * *rhs
     }
@@ -53,7 +68,7 @@ impl<F: FieldCore> AffineWeight<F> for F {
 /// Evaluate compatible digit-innermost affine intervals with factored outer
 /// weights.
 ///
-/// For `Q = low_weights.len()` and `i` in the exact global outer window
+/// For `Q = max(low_weights.len(), 1)` and `i` in the exact global outer window
 /// `[outer_start, outer_start + live_len)`, this computes
 ///
 /// ```text
@@ -61,6 +76,8 @@ impl<F: FieldCore> AffineWeight<F> for F {
 ///     · eq(challenges,
 ///          base + outer_stride · (i - outer_start) + digit_stride · d).
 /// ```
+/// An empty `low_weights` slice denotes the multiplicative identity at `Q = 1`.
+/// This structural identity avoids allocating a singleton or multiplying by one.
 ///
 /// `Q` must be a power of two. The implementation splits the equality point at
 /// `log2(Q)`, summarizes the low factor into at most `outer_stride + 1` carry
@@ -101,7 +118,7 @@ where
     if live_len == 0 || base_offsets.is_empty() {
         return Ok(template.zero_like());
     }
-    let low_len = low_weights.len();
+    let low_len = low_weights.len().max(1);
     let digit_span = digit_weights
         .len()
         .checked_sub(1)
@@ -287,7 +304,7 @@ where
     F: FieldCore,
     A: AffineWeight<F>,
 {
-    let low_len = low_weights.len();
+    let low_len = low_weights.len().max(1);
     let carry_count = outer_stride
         .checked_add(1)
         .ok_or_else(|| AkitaError::InvalidInput("affine carry count overflow".into()))?;
@@ -414,6 +431,30 @@ where
     F: FieldCore,
     A: AffineWeight<F>,
 {
+    if low_weights.is_empty() {
+        if low_len != 1
+            || !low_challenges.is_empty()
+            || address_low != 0
+            || low_start != 0
+            || low_end != 1
+        {
+            return Err(AkitaError::InvalidInput(
+                "affine identity low factor requires the unit low domain".into(),
+            ));
+        }
+        let mut summaries = vec![template.zero_like(); carry_count];
+        for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+            let carry = digit_stride
+                .checked_mul(digit)
+                .ok_or_else(|| AkitaError::InvalidInput("affine digit offset overflow".into()))?;
+            summaries
+                .get_mut(carry)
+                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
+                .add_scalar(digit_weight)?;
+        }
+        return Ok(summaries);
+    }
+
     // Geometric digit windows share one prefix scan. Other weights use the
     // dense low summary, still once per distinct low-address residue.
     if digit_stride == 1 {
@@ -434,7 +475,6 @@ where
             }
         }
     }
-    let low_mask = low_len - 1;
     let mut summaries = vec![template.zero_like(); carry_count];
     for low in low_start..low_end {
         let low_factor = low_weights
@@ -452,7 +492,7 @@ where
                 .and_then(|value| value.checked_add(digit_offset))
                 .ok_or_else(|| AkitaError::InvalidInput("affine low address overflow".into()))?;
             let carry = shifted / low_len;
-            let low_index = shifted & low_mask;
+            let low_index = shifted & (low_len - 1);
             let eq_low = match eq_low_table {
                 Some(table) => table.get(low_index).copied().ok_or_else(|| {
                     AkitaError::InvalidInput("affine low index out of range".into())
@@ -572,10 +612,10 @@ where
         // Σ_d digit[0] r^d eq_low[s+d] = digit[0] * r^{-s} * (P[s+count1] - P[s]).
         let seg = prefix[s + count1] - prefix[s];
         let val = d0 * rinvpow[s] * seg;
-        summaries
+        let summary = summaries
             .get_mut(carry)
-            .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
-            .add_scaled(low_factor, val);
+            .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?;
+        summary.add_scaled(low_factor, val);
         if count1 < delta {
             // Wrap window: digits count1..delta land at the start of block carry+1.
             // Σ_{d>=count1} digit[0] r^d eq_low[d-count1] = digit[0] * r^{count1} * P[delta-count1].
@@ -584,10 +624,10 @@ where
             let carry = carry
                 .checked_add(1)
                 .ok_or_else(|| AkitaError::InvalidInput("affine carry overflow".into()))?;
-            summaries
+            let summary = summaries
                 .get_mut(carry)
-                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?
-                .add_scaled(low_factor, val);
+                .ok_or_else(|| AkitaError::InvalidInput("affine carry out of range".into()))?;
+            summary.add_scaled(low_factor, val);
         }
     }
     Ok(Some(summaries))
@@ -766,7 +806,7 @@ where
                 phi.add_scaled(&bucket1[pos], eq_low_hi[shifted - window]);
             }
         }
-        out.add_scaled(&phi.multiply(summary), F::one());
+        out.add(&phi.multiply(summary));
     }
     Ok(true)
 }
