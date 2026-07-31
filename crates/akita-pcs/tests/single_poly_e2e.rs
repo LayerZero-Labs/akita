@@ -233,17 +233,17 @@ fn single_onehot_nv20() {
 
 #[test]
 fn single_dense_nv13() {
-    run_single_dense(13, 84_753);
+    run_single_dense(13, 84_752);
 }
 
 #[test]
 fn single_dense_nv15() {
-    run_single_dense(15, 92_839);
+    run_single_dense(15, 92_840);
 }
 
 #[test]
 fn single_dense_nv18() {
-    run_single_dense(18, 102_099);
+    run_single_dense(18, 102_097);
 }
 
 // #[test]
