@@ -48,10 +48,11 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 
 /// CPU-prepared setup keyed by runtime ring dimension.
 ///
-/// NTT caches are keyed by exact [`NttCacheKey`] prefixes and built lazily.
-/// A larger initialized prefix covers a smaller request with the same ring
-/// dimension and transform domain. Each cell makes concurrent first use
-/// single-flight. Diagnostic compression caches remain in a separate namespace.
+/// NTT caches are keyed by [`NttCacheKey`] and built lazily. Each ring
+/// dimension/domain pair retains only its largest requested prefix; a covering
+/// cell also serves smaller requests. Each cell makes concurrent construction
+/// of that prefix single-flight. Diagnostic compression caches remain in a
+/// separate namespace.
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
@@ -133,7 +134,6 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                 "NTT prefix requirement ring dimension does not match kernel".into(),
             ));
         }
-        let required_num_ring_elements = requirement.num_ring_elements;
         let required_num_field_elements = requirement.num_field_elements()?;
         if required_num_field_elements > self.expanded.shared_matrix.num_field_elements() {
             return Err(AkitaError::InvalidSetup(format!(
@@ -141,42 +141,12 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
                 self.expanded.shared_matrix.num_field_elements()
             )));
         }
-        let covering_key = self
-            .shared_ntt
-            .lock()
-            .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-            .iter()
-            .filter(|(key, entry)| {
-                key.ring_d == D
-                    && key.domain == domain
-                    && key.num_ring_elements >= required_num_ring_elements
-                    && entry.get().is_some_and(Result::is_ok)
-            })
-            .map(|(key, _)| *key)
-            .min_by_key(|key| key.num_ring_elements);
-        let key = covering_key.unwrap_or(NttCacheKey {
+        let requested_key = NttCacheKey {
             ring_d: D,
-            num_ring_elements: required_num_ring_elements,
+            num_ring_elements: requirement.num_ring_elements,
             domain,
-        });
-        if covering_key.is_none() {
-            insert_ntt_slot_on_prepared(self, key)?;
-        }
-        let entry = {
-            let cache = self
-                .shared_ntt
-                .lock()
-                .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-            cache.get(&key).cloned().ok_or_else(|| {
-                AkitaError::InvalidSetup(format!(
-                    "prepared setup NTT slot not warmed for ring_d={} num_ring_elements={}",
-                    key.ring_d, key.num_ring_elements
-                ))
-            })?
         };
-        // A registered cell may still be under construction by another thread.
-        // Join that single-flight build instead of reporting a false cache miss.
-        let slot = entry.wait().as_ref().map_err(Clone::clone)?.clone();
+        let slot = prepare_ntt_slot_on_prepared(self, requested_key)?;
         if slot.ring_d != D {
             return Err(AkitaError::InvalidSetup(format!(
                 "prepared CPU NTT ring_d mismatch: stored {}, requested {D}",
@@ -297,23 +267,40 @@ fn record_ntt_profile_on_prepared<F: FieldCore>(
     Ok(())
 }
 
-fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
+fn prepare_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
-    key: NttCacheKey,
-) -> Result<(), AkitaError> {
-    let profile = dispatch_for_field!(ProtocolDispatchSlot::Ntt, F, key.ring_d, |RING_D| {
-        selected_crt_i8_capacity_profile::<F, RING_D>()
-    })?;
-    let entry = {
+    requested_key: NttCacheKey,
+) -> Result<Arc<ErasedCpuNttCache>, AkitaError> {
+    let profile = dispatch_for_field!(
+        ProtocolDispatchSlot::Ntt,
+        F,
+        requested_key.ring_d,
+        |RING_D| selected_crt_i8_capacity_profile::<F, RING_D>()
+    )?;
+    let (key, entry) = {
         let mut cache = prepared
             .shared_ntt
             .lock()
             .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?;
-        Arc::clone(
-            cache
-                .entry(key)
-                .or_insert_with(|| Arc::new(OnceLock::new())),
-        )
+        if let Some((key, entry)) = cache
+            .iter()
+            .filter(|(key, _)| {
+                key.ring_d == requested_key.ring_d
+                    && key.domain == requested_key.domain
+                    && key.num_ring_elements >= requested_key.num_ring_elements
+            })
+            .min_by_key(|(key, _)| key.num_ring_elements)
+            .map(|(key, entry)| (*key, Arc::clone(entry)))
+        {
+            (key, entry)
+        } else {
+            cache.retain(|key, _| {
+                key.ring_d != requested_key.ring_d || key.domain != requested_key.domain
+            });
+            let entry = Arc::new(OnceLock::new());
+            cache.insert(requested_key, Arc::clone(&entry));
+            (requested_key, entry)
+        }
     };
     let build_result = entry.get_or_init(|| {
         #[cfg(test)]
@@ -322,24 +309,16 @@ fn insert_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
             .fetch_add(1, Ordering::Relaxed);
         build_ntt_slot_for_key(prepared.expanded.as_ref(), key).map(Arc::new)
     });
-    build_result.as_ref().map_err(Clone::clone)?;
-    record_ntt_profile_on_prepared(prepared, key, profile)
+    let slot = build_result.as_ref().map_err(Clone::clone)?.clone();
+    record_ntt_profile_on_prepared(prepared, key, profile)?;
+    Ok(slot)
 }
 
 fn ensure_ntt_slot_on_prepared<F: FieldCore + CanonicalField>(
     prepared: &CpuPreparedSetup<F>,
     key: NttCacheKey,
 ) -> Result<(), AkitaError> {
-    let initialized = prepared
-        .shared_ntt
-        .lock()
-        .map_err(|_| AkitaError::InvalidSetup("NTT cache lock poisoned".into()))?
-        .get(&key)
-        .is_some_and(|entry| entry.get().is_some_and(Result::is_ok));
-    if initialized {
-        return Ok(());
-    }
-    insert_ntt_slot_on_prepared(prepared, key)
+    prepare_ntt_slot_on_prepared(prepared, key).map(|_| ())
 }
 
 fn validate_digit_row_request(
@@ -982,6 +961,61 @@ mod tests {
         let cache = prepared.shared_ntt.lock().unwrap();
         assert_eq!(cache.len(), 1);
         assert!(cache.contains_key(&covering_key));
+    }
+
+    #[test]
+    fn larger_request_replaces_smaller_cached_prefix() {
+        let prepared = prepared();
+        let small = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 3,
+            domain: NttTransformDomain::Negacyclic,
+        };
+        let large = NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 8,
+            domain: NttTransformDomain::Negacyclic,
+        };
+        CpuBackend
+            .ensure_ntt_slot(&prepared, small)
+            .expect("warm small prefix");
+        CpuBackend
+            .ensure_ntt_slot(&prepared, large)
+            .expect("grow to larger prefix");
+
+        let cache = prepared.shared_ntt.lock().unwrap();
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(&large));
+    }
+
+    #[test]
+    fn concurrent_prefix_growth_retains_only_the_maximum() {
+        let prepared = prepared();
+        std::thread::scope(|scope| {
+            for num_ring_elements in [2, 5, 3, 8, 4, 7] {
+                let prepared = &prepared;
+                scope.spawn(move || {
+                    CpuBackend
+                        .ensure_ntt_slot(
+                            prepared,
+                            NttCacheKey {
+                                ring_d: D,
+                                num_ring_elements,
+                                domain: NttTransformDomain::Cyclic,
+                            },
+                        )
+                        .expect("grow shared NTT prefix");
+                });
+            }
+        });
+
+        let cache = prepared.shared_ntt.lock().unwrap();
+        assert_eq!(cache.len(), 1);
+        assert!(cache.contains_key(&NttCacheKey {
+            ring_d: D,
+            num_ring_elements: 8,
+            domain: NttTransformDomain::Cyclic,
+        }));
     }
 
     #[test]

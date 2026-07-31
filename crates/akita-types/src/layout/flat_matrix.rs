@@ -159,12 +159,17 @@ impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
     ///
     /// Returns an error when `row` lies outside the view.
     pub fn row_flat(&self, row: usize) -> Result<&'a [F], AkitaError> {
-        let row_len = self.num_cols * self.ring_d;
+        let row_len = self.num_cols.checked_mul(self.ring_d).ok_or_else(|| {
+            AkitaError::InvalidInput("ring matrix row length overflow".to_string())
+        })?;
         let start = row
             .checked_mul(row_len)
             .ok_or_else(|| AkitaError::InvalidInput("ring matrix row overflow".to_string()))?;
+        let end = start
+            .checked_add(row_len)
+            .ok_or_else(|| AkitaError::InvalidInput("ring matrix row overflow".to_string()))?;
         self.data
-            .get(start..start + row_len)
+            .get(start..end)
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
 
@@ -187,8 +192,11 @@ impl<'a, F: FieldCore> FlatRingMatrixView<'a, F> {
             .ok_or_else(|| {
                 AkitaError::InvalidInput("ring matrix element index overflow".to_string())
             })?;
+        let end = idx.checked_add(self.ring_d).ok_or_else(|| {
+            AkitaError::InvalidInput("ring matrix element index overflow".to_string())
+        })?;
         self.data
-            .get(idx..idx + self.ring_d)
+            .get(idx..end)
             .ok_or_else(|| AkitaError::InvalidInput(format!("ring matrix row {row} out of range")))
     }
 }
@@ -495,6 +503,10 @@ mod tests {
         assert!(flat.ring_view::<2>(1, 1).is_ok());
         assert!(flat.ring_view::<3>(2, 1).is_err());
         assert!(flat.ring_view::<3>(usize::MAX, usize::MAX).is_err());
+
+        let dynamic = flat.ring_view_dyn(1, 1, 1).unwrap();
+        assert!(dynamic.row_flat(usize::MAX).is_err());
+        assert!(dynamic.elem(usize::MAX, 0).is_err());
     }
 
     #[test]

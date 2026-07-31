@@ -736,6 +736,16 @@ are not semantic cache keys. Provisioning limits and a schedule/catalog digest
 MAY key or validate the derived setup-prefix registry because that registry
 promises a particular set of precomputed slots.
 
+The base-prefix artifact serializes only `PublicMatrixId`, the materialized
+field count, and the flat coefficients. It does not serialize host admission
+limits. A load reconstructs `max_num_vars` and `max_num_batched_polys` from the
+current request while retaining any larger covering coefficient prefix. Thus a
+covering cache cannot silently widen the setup package's admission contract.
+Concurrent writers take the lineage lock, validate the resident artifact, and
+replace it only when the candidate is a strict prefix extension. The resident
+base prefix therefore forms a monotone max-join and cannot shrink under racing
+small and large requests.
+
 Loading MUST validate all lengths before allocation and verify that serialized
 coefficients equal the deterministic flat stream. Validation SHOULD stream by
 page or bounded chunk rather than allocate a second full expected matrix.

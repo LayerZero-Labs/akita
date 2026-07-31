@@ -244,7 +244,7 @@ pub trait CanonicalU64 {
 /// Prime fields consume the minimum whole-byte candidate width covering the
 /// modulus, clear unused high bits, and reject candidates outside the canonical
 /// range. This byte-consumption contract is deterministic for a fixed
-/// [`RngCore`](rand_core::RngCore) stream. Extension fields sample their base
+/// [`RngCore`] stream. Extension fields sample their base
 /// coefficients independently through the same contract.
 pub trait RandomSampling {
     /// Samples an exactly uniform element using canonical rejection sampling.

@@ -229,7 +229,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     use akita_field::Prime32Offset99 as F;
 
     let level_params = prefix_eligible_level_params();
-    let d_setup = 64;
+    let source_ring_dimension = 32;
     let natural_len = 129usize;
     let n_prefix = padded_setup_prefix_len(natural_len);
     let commitment_params =
@@ -245,11 +245,11 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
             rows: vec![RingVec::from_coeffs(vec![F::zero()])],
         },
     };
-    let mut registry = SetupPrefixVerifierRegistry::<F>::new();
+    let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot).expect("insert slot");
 
     let selection = select_setup_prefix_slot(
-        3,
+        5,
         |candidate| {
             registry
                 .get(candidate)
@@ -257,16 +257,17 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         },
         &level_params,
         natural_len,
-        d_setup,
+        source_ring_dimension,
         "slot does not cover request",
     )
     .expect("selection succeeds")
     .expect("slot selected");
     assert_eq!(&selection.0.id, &id);
-    assert_eq!(selection.1, 4);
+    assert_eq!(selection.0.id.d_setup(), 64);
+    assert_eq!(selection.1, 8);
 
     let err = select_setup_prefix_slot(
-        3,
+        5,
         |candidate| {
             registry
                 .get(candidate)
@@ -274,14 +275,14 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         },
         &level_params,
         natural_len + 1,
-        d_setup,
+        source_ring_dimension,
         "slot does not cover request",
     )
     .expect_err("different natural_len must fail");
     assert!(err.to_string().contains("slot does not cover request"));
 
     let err = select_setup_prefix_slot(
-        3,
+        5,
         |candidate| {
             registry
                 .get(candidate)
@@ -289,7 +290,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         },
         &level_params,
         natural_len,
-        d_setup,
+        source_ring_dimension,
         "slot does not cover request",
     )
     .expect_err("insufficient padded slot capacity must fail");
@@ -298,7 +299,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     ));
 
     let err = select_setup_prefix_slot(
-        3,
+        5,
         |candidate| {
             registry
                 .get(candidate)
@@ -306,7 +307,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         },
         &level_params,
         193,
-        d_setup,
+        source_ring_dimension,
         "slot does not cover request",
     )
     .expect_err("natural prefix beyond shared setup must fail");
@@ -367,7 +368,7 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
         }
     };
 
-    let mut registry = SetupPrefixProverRegistry::<F>::new();
+    let mut registry = SetupPrefixProverRegistry::<F>::new([0; 32].into());
     registry.insert(slot()).expect("first insert");
     registry
         .insert(slot())
@@ -392,7 +393,7 @@ fn verifier_registry_duplicate_insert_does_not_replace_existing_slot() {
         },
     };
 
-    let mut registry = SetupPrefixVerifierRegistry::<F>::new();
+    let mut registry = SetupPrefixVerifierRegistry::<F>::new([0; 32].into());
     registry.insert(slot()).expect("first insert");
     registry
         .insert(slot())

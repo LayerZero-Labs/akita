@@ -249,14 +249,14 @@ where
         .incoming_setup_prefix
         .as_ref()
         .expect("root setup prefix");
-    assert_eq!(prefix.d_setup(), 128);
+    assert_eq!(prefix.d_setup(), 64);
     assert_eq!(
         prefix
             .commitment_params
             .layout
             .inner_commit_matrix
             .ring_dimension(),
-        128
+        64
     );
     assert_eq!(
         prefix
@@ -295,7 +295,7 @@ fn recursive_transition_supports_ci_and_profile_setup_capacities() {
 }
 
 #[test]
-fn recursive_transition_supports_dynamic_d128_setup_prefix() {
+fn recursive_transition_supports_independent_d64_setup_prefix() {
     let schedule = recursive_transition_schedule::<fp128::D64OneHot>();
     assert_eq!(
         schedule.recursive_folds[0].params.witness_partition,

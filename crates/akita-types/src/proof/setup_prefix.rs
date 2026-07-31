@@ -10,7 +10,7 @@ use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, 
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
     CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, PublicMatrixId,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -914,15 +914,25 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
 }
 
 /// In-memory registry of prover-ready setup-prefix slots.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixProverRegistry<F: FieldCore> {
+    public_matrix_id: PublicMatrixId,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixProverRegistry<F> {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(public_matrix_id: PublicMatrixId) -> Self {
+        Self {
+            public_matrix_id,
+            slots: BTreeMap::new(),
+        }
+    }
+
+    /// Public field stream to which every committed prefix belongs.
+    #[must_use]
+    pub fn public_matrix_id(&self) -> &PublicMatrixId {
+        &self.public_matrix_id
     }
 
     #[must_use]
@@ -950,10 +960,6 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
         Ok(())
     }
 
-    pub fn replace_from(&mut self, other: Self) {
-        self.slots = other.slots;
-    }
-
     pub fn iter(&self) -> impl Iterator<Item = (&SetupPrefixSlotId, &SetupPrefixSlot<F>)> {
         self.slots.iter()
     }
@@ -969,6 +975,7 @@ impl<F: FieldCore> SetupPrefixProverRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixProverRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        self.public_matrix_id.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -993,6 +1000,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.public_matrix_id
+            .serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1003,7 +1012,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixProverRegistry
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.slots.len().serialized_size(compress)
+        self.public_matrix_id.serialized_size(compress)
+            + self.slots.len().serialized_size(compress)
             + self
                 .slots
                 .values()
@@ -1024,9 +1034,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let public_matrix_id =
+            PublicMatrixId::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new();
+        let mut out = Self::new(public_matrix_id);
         for _ in 0..slot_count {
             let slot =
                 SetupPrefixSlot::deserialize_with_mode(&mut reader, compress, validate, &())?;
@@ -1041,15 +1053,25 @@ where
 }
 
 /// In-memory registry of verifier-visible setup-prefix slots.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetupPrefixVerifierRegistry<F: FieldCore> {
+    public_matrix_id: PublicMatrixId,
     slots: BTreeMap<SetupPrefixSlotId, SetupPrefixVerifierSlot<F>>,
 }
 
 impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(public_matrix_id: PublicMatrixId) -> Self {
+        Self {
+            public_matrix_id,
+            slots: BTreeMap::new(),
+        }
+    }
+
+    /// Public field stream to which every committed prefix belongs.
+    #[must_use]
+    pub fn public_matrix_id(&self) -> &PublicMatrixId {
+        &self.public_matrix_id
     }
 
     #[must_use]
@@ -1081,6 +1103,11 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
         &mut self,
         prover_registry: &SetupPrefixProverRegistry<F>,
     ) -> Result<(), AkitaError> {
+        if self.public_matrix_id != *prover_registry.public_matrix_id() {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix registries belong to different public matrices".to_string(),
+            ));
+        }
         self.slots.clear();
         for slot in prover_registry.verifier_slots() {
             self.insert(slot)?;
@@ -1095,6 +1122,7 @@ impl<F: FieldCore> SetupPrefixVerifierRegistry<F> {
 
 impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierRegistry<F> {
     fn check(&self) -> Result<(), SerializationError> {
+        self.public_matrix_id.check()?;
         if self.slots.len() > MAX_SETUP_PREFIX_SLOTS {
             return Err(SerializationError::LengthLimitExceeded {
                 len: u64::try_from(self.slots.len()).unwrap_or(u64::MAX),
@@ -1119,6 +1147,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
+        self.public_matrix_id
+            .serialize_with_mode(&mut writer, compress)?;
         self.slots
             .len()
             .serialize_with_mode(&mut writer, compress)?;
@@ -1129,7 +1159,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for SetupPrefixVerifierRegist
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.slots.len().serialized_size(compress)
+        self.public_matrix_id.serialized_size(compress)
+            + self.slots.len().serialized_size(compress)
             + self
                 .slots
                 .values()
@@ -1150,9 +1181,11 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
+        let public_matrix_id =
+            PublicMatrixId::deserialize_with_mode(&mut reader, compress, validate, &())?;
         let slot_count =
             read_limited_usize(&mut reader, compress, validate, MAX_SETUP_PREFIX_SLOTS)?;
-        let mut out = Self::new();
+        let mut out = Self::new(public_matrix_id);
         for _ in 0..slot_count {
             let slot = SetupPrefixVerifierSlot::deserialize_with_mode(
                 &mut reader,
@@ -1337,13 +1370,14 @@ pub fn setup_prefix_slot_id(
 ///
 /// This centralizes the derivation shared by prover and verifier: setup seed
 /// digest, padded prefix length, prefix commitment parameters, slot id, natural
-/// source coverage, and the ring-slot evaluation length used for setup MLEs.
+/// source coverage, and the producer-ring evaluation length used for setup
+/// MLEs. The slot's commitment dimension is independent of that producer view.
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
     setup_ring_slots_at_d: usize,
     lookup_slot: Lookup,
     level_params: &CommittedGroupParams,
     natural_field_len: usize,
-    d_setup: usize,
+    source_ring_dimension: usize,
     coverage_error: &'static str,
 ) -> Result<Option<(&'a Slot, usize)>, AkitaError>
 where
@@ -1353,16 +1387,12 @@ where
     let Some(template) = &level_params.setup_prefix else {
         return Ok(None);
     };
-    if template.d_setup() != d_setup {
-        return Err(AkitaError::InvalidSetup(
-            "setup-prefix source dimension disagrees with the active setup projection".to_string(),
-        ));
-    }
-
     let n_prefix = padded_setup_prefix_len(natural_field_len);
-    let setup_field_len = setup_ring_slots_at_d.checked_mul(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-    })?;
+    let setup_field_len = setup_ring_slots_at_d
+        .checked_mul(source_ring_dimension)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
+        })?;
     if natural_field_len > setup_field_len {
         return Err(AkitaError::InvalidSetup(
             "setup prefix request exceeds shared matrix capacity".to_string(),
@@ -1388,9 +1418,11 @@ where
              active lengths are {natural_field_len}/{n_prefix}",
         )));
     }
-    let setup_eval_len = template_n_prefix.checked_div(d_setup).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
-    })?;
+    let setup_eval_len = template_n_prefix
+        .checked_div(source_ring_dimension)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())
+        })?;
     Ok(Some((slot, setup_eval_len)))
 }
 

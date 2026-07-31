@@ -111,10 +111,6 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    fn validate_for_policy(&self, _policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        Ok(())
-    }
-
     fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
         self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.uniform_ring_dimension)]
     }
@@ -468,7 +464,6 @@ pub fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
     if dimensions.is_uniform_policy_domain(policy) {
         return find_schedule_inner(
             key,

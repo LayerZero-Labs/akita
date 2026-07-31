@@ -9,10 +9,9 @@ use super::*;
 ///   emitted by L0;
 /// - L2+ use uniform `Suffix::D`.
 ///
-/// The setup prefix is planned at the producer's common relation dimension.
-/// This is D128 for the requested `256/128/128 -> 128/64/64 -> 64` profile,
-/// so the experiment exercises dynamic setup-prefix dispatch rather than the
-/// shipped D64-only planner path.
+/// The setup prefix uses the suffix configuration's independent A dimension.
+/// This is D64 for the requested `256/128/128 -> 128/64/64 -> 64` profile, so
+/// producer Stage 3 D128, prefix A D64, and consumer A D128 remain distinct.
 #[allow(clippy::too_many_arguments)]
 pub fn recursive_ring_dimension_transition_schedule<Root, Mid, Suffix, ChunkCfg>(
     key: &AkitaScheduleLookupKey,
@@ -108,6 +107,7 @@ where
             // rebuild its B/D matrices before attaching the setup prefix.
             let mut mid_policy = policy_of::<Mid>().direct_only();
             mid_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
+            mid_policy.setup_prefix_inner_ring_dimension = Suffix::D;
             let mid = akita_planner::plan_optimal_suffix(
                 &mid_policy,
                 Mid::ring_challenge_config,
@@ -330,6 +330,10 @@ where
             L1_BD_RING_DIM,
         )?;
         akita_types::setup_matrix_capacity_for_schedule(&schedule)
+    }
+
+    fn setup_prefix_inner_ring_dimension() -> usize {
+        Suffix::D
     }
 
     fn basis_range() -> (u32, u32) {

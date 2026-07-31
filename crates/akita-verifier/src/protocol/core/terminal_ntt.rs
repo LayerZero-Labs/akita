@@ -150,8 +150,9 @@ mod tests {
                     FlatMatrix::from_ring_slice(matrix),
                 ),
             ),
-            SetupPrefixVerifierRegistry::new(),
+            SetupPrefixVerifierRegistry::new([9; 32].into()),
         )
+        .expect("matching public-matrix identity")
     }
 
     fn centered_rings(values: &[[i16; D]]) -> Vec<CyclotomicRing<F, D>> {
@@ -224,8 +225,9 @@ mod tests {
                     FlatMatrix::from_ring_slice(&matrix),
                 ),
             ),
-            SetupPrefixVerifierRegistry::new(),
-        );
+            SetupPrefixVerifierRegistry::new([8; 32].into()),
+        )
+        .expect("matching public-matrix identity");
         let rhs = vec![[i16::MAX; D]; 5];
         assert!(
             !ntt_cache_requires_i16_tail::<F32, D>(rhs.len(), TERMINAL_I16_LOG_BASIS)

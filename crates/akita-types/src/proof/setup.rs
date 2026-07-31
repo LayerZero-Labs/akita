@@ -135,16 +135,20 @@ impl<F: FieldCore> Eq for AkitaVerifierSetup<F> {}
 
 impl<F: FieldCore> AkitaVerifierSetup<F> {
     /// Construct verifier setup state from validated expanded setup and prefix metadata.
-    #[must_use]
     pub fn from_parts(
         expanded: Arc<AkitaExpandedSetup<F>>,
         prefix_slots: SetupPrefixVerifierRegistry<F>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, AkitaError> {
+        if prefix_slots.public_matrix_id() != &expanded.seed.public_matrix_id {
+            return Err(AkitaError::InvalidSetup(
+                "setup-prefix registry belongs to a different public matrix".to_string(),
+            ));
+        }
+        Ok(Self {
             expanded,
             prefix_slots,
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
-        }
+        })
     }
 
     /// In-memory byte footprint of verifier NTT prefixes materialized so far.
@@ -242,14 +246,14 @@ pub fn sample_public_matrix_id() -> PublicMatrixId {
     PublicMatrixId::shake256_paged_v1(seed)
 }
 
-/// Derive a flat public vector of ring elements from a seed.
+/// Derive an exact flat prefix of public field elements from a seed.
 ///
 /// The coefficient stream uses the page size owned by the selected derivation
 /// policy.
-/// Ring dimension `D` determines only how many coefficients the caller asks
-/// for and how the returned matrix storage is shaped; it is not absorbed into
-/// the XOF. Equal field-length requests therefore derive equal coefficient
-/// prefixes at every ring dimension.
+/// Ring dimensions are not absorbed into the XOF and do not affect this
+/// derivation. Consumers reshape the returned field prefix into role-specific
+/// ring-matrix views. Equal field-length requests therefore derive identical
+/// coefficient prefixes for every schedule.
 ///
 /// Each page owns one SHAKE256 stream and repeated [`RandomSampling::random`]
 /// calls consume that stream sequentially. Pages may be derived in parallel,
@@ -609,6 +613,11 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
 impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
+        if self.prefix_slots.public_matrix_id() != &self.expanded.seed.public_matrix_id {
+            return Err(SerializationError::InvalidData(
+                "setup-prefix registry belongs to a different public matrix".to_string(),
+            ));
+        }
         self.prefix_slots.check()
     }
 }
@@ -640,21 +649,16 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<C
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
         let mut reader = reader;
-        Ok(Self {
-            expanded: Arc::new(AkitaExpandedSetup::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?),
-            prefix_slots: SetupPrefixVerifierRegistry::deserialize_with_mode(
-                reader,
-                compress,
-                validate,
-                &(),
-            )?,
-            verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
-        })
+        let expanded = Arc::new(AkitaExpandedSetup::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+        let prefix_slots =
+            SetupPrefixVerifierRegistry::deserialize_with_mode(reader, compress, validate, &())?;
+        Self::from_parts(expanded, prefix_slots)
+            .map_err(|err| SerializationError::InvalidData(err.to_string()))
     }
 }
 
@@ -729,7 +733,8 @@ mod tests {
 
         let setup_seed = seed([7u8; 32]);
         let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.public_matrix_id);
-        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        let mut prefix_slots =
+            SetupPrefixVerifierRegistry::new(setup_seed.public_matrix_id.clone());
         let d_setup = 64;
         let commitment_params = prefix_commitment_params(d_setup, d_setup);
         let commitment_rows = commitment_params.layout.outer_commit_matrix.output_rank();
@@ -763,8 +768,27 @@ mod tests {
     }
 
     #[test]
+    fn verifier_setup_rejects_prefix_registry_from_another_public_matrix() {
+        let setup_seed = seed([7u8; 32]);
+        let shared_matrix = derive_public_matrix_prefix::<F>(2 * D, &setup_seed.public_matrix_id);
+        let expanded = Arc::new(
+            AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
+                setup_seed,
+                shared_matrix,
+            ),
+        );
+        let foreign_registry =
+            SetupPrefixVerifierRegistry::new(PublicMatrixId::shake256_paged_v1([9u8; 32]));
+
+        let err = AkitaVerifierSetup::from_parts(expanded, foreign_registry)
+            .expect_err("cross-seed prefix registry must be rejected");
+        assert!(err.to_string().contains("different public matrix"));
+    }
+
+    #[test]
     fn strict_verifier_setup_decode_rejects_matrix_not_derived_from_seed() {
         let setup_seed = seed([7u8; 32]);
+        let public_matrix_id = setup_seed.public_matrix_id.clone();
         let wrong_seed = PublicMatrixId::shake256_paged_v1([9u8; 32]);
         let wrong_matrix = derive_public_matrix_prefix::<F>(2 * D, &wrong_seed);
         let setup = AkitaVerifierSetup {
@@ -774,7 +798,7 @@ mod tests {
                     wrong_matrix,
                 ),
             ),
-            prefix_slots: SetupPrefixVerifierRegistry::new(),
+            prefix_slots: SetupPrefixVerifierRegistry::new(public_matrix_id),
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 
@@ -790,6 +814,7 @@ mod tests {
     #[test]
     fn strict_verifier_setup_decode_rejects_truncated_seed_prefix_matrix() {
         let setup_seed = seed([7u8; 32]);
+        let public_matrix_id = setup_seed.public_matrix_id.clone();
         let short_matrix = derive_public_matrix_prefix::<F>(D, &setup_seed.public_matrix_id);
         let setup = AkitaVerifierSetup {
             expanded: Arc::new(
@@ -798,7 +823,7 @@ mod tests {
                     short_matrix,
                 ),
             ),
-            prefix_slots: SetupPrefixVerifierRegistry::new(),
+            prefix_slots: SetupPrefixVerifierRegistry::new(public_matrix_id),
             verifier_ntt: Arc::new(crate::ntt_cache::VerifierNttCache::default()),
         };
 

@@ -2,7 +2,7 @@
 
 #![allow(missing_docs)]
 
-use akita_field::{AkitaError, Prime128OffsetA7F7 as F};
+use akita_field::Prime128OffsetA7F7 as F;
 use akita_types::{
     validate_role_dims, validate_role_dispatch, validate_schedule_ring_dims, AkitaSetupSeed,
     CommitmentRingDims, CommittedGroupParams, FoldSchedule, RingRole, RingView, RootFinalChallenge,
@@ -60,7 +60,7 @@ fn params(ring_dimension: usize) -> CommittedGroupParams {
 }
 
 #[test]
-fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
+fn typed_schedule_accepts_root_dimension_independent_of_flat_setup() {
     let root = params(128);
     let terminal_witness = TerminalCommittedGroupParams::from_expanded_group(params(64));
     let schedule = FoldSchedule {
@@ -109,10 +109,8 @@ fn typed_schedule_rejects_root_dimension_above_setup_dimension() {
         num_field_elements: 1 << 20,
         public_matrix_id: [0; 32].into(),
     };
-    assert!(matches!(
-        validate_schedule_ring_dims(&schedule, &seed),
-        Err(AkitaError::InvalidSetup(_))
-    ));
+    validate_schedule_ring_dims(&schedule, &seed)
+        .expect("flat setup capacity has no generation ring dimension");
 }
 
 #[test]

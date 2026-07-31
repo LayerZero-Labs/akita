@@ -1,7 +1,7 @@
 //! Recursive mixed ring-dimension transition E2E.
 //!
 //! Synthetic profile geometry (not planner output):
-//! - L0: A/B/D = `256/128/128` with a D128 setup-prefix handoff
+//! - L0: A/B/D = `256/128/128` with an independently committed D64 setup prefix
 //! - L1: A/B/D = `128/64/64`
 //! - L2+: uniform D64
 //!
@@ -123,15 +123,19 @@ fn assert_mixed_recursive_geometry(schedule: &FoldSchedule) {
         .incoming_setup_prefix
         .as_ref()
         .expect("L1 must carry a setup prefix");
-    assert_eq!(prefix.d_setup(), 128, "setup prefix must use D128");
+    assert_eq!(
+        prefix.d_setup(),
+        64,
+        "setup prefix must use independent D64 A"
+    );
     assert_eq!(
         prefix
             .commitment_params
             .layout
             .inner_commit_matrix
             .ring_dimension(),
-        128,
-        "setup-prefix A dimension must be 128"
+        64,
+        "setup-prefix A dimension must be 64"
     );
     assert_eq!(
         prefix

@@ -7,9 +7,9 @@
 //!
 //! ## Descriptor version policy
 //!
-//! Akita is under active development, so the descriptor remains version 1
-//! until the protocol is frozen. Integrators must pin an exact revision; there
-//! is no compatibility guarantee between revisions that both identify as v1.
+//! Akita is under active development. The version changes whenever a cutover
+//! intentionally changes descriptor-bound protocol semantics; integrators must
+//! pin an exact revision because no backward compatibility is guaranteed.
 
 mod fold_linf_binding;
 #[cfg(test)]

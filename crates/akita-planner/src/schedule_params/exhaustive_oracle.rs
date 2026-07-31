@@ -203,7 +203,6 @@ pub(super) fn find_schedule(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
     let input_witness_len = 1usize

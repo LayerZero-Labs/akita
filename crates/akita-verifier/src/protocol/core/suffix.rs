@@ -448,13 +448,8 @@ where
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
         }
-        let prepared_points = prepare_single_field_suffix_groups::<F, E>(
-            &block_claims,
-            lp,
-            &opening_batch,
-            role_dims.d_a(),
-            alpha_bits,
-        )?;
+        let prepared_points =
+            prepare_single_field_suffix_groups::<F, E>(&block_claims, lp, &opening_batch)?;
         let group_points = (0..opening_batch.num_groups())
             .map(|group_index| block_claims.group_point(group_index))
             .collect::<Result<Vec<_>, _>>()?;

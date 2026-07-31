@@ -64,7 +64,7 @@ impl<F: FieldCore> AkitaProverSetup<F> {
 
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(),
+            prefix_slots: SetupPrefixProverRegistry::new(public_matrix_id),
         })
     }
 
@@ -79,12 +79,10 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     /// Returns an error if prover prefix-slot metadata cannot be converted into
     /// verifier-visible prefix slots.
     pub fn verifier_setup(&self) -> Result<AkitaVerifierSetup<F>, AkitaError> {
-        let mut prefix_slots = SetupPrefixVerifierRegistry::new();
+        let mut prefix_slots =
+            SetupPrefixVerifierRegistry::new(self.expanded.seed().public_matrix_id.clone());
         prefix_slots.replace_from_prover_registry(&self.prefix_slots)?;
-        Ok(AkitaVerifierSetup::from_parts(
-            self.expanded.clone(),
-            prefix_slots,
-        ))
+        AkitaVerifierSetup::from_parts(self.expanded.clone(), prefix_slots)
     }
 
     /// Wrap an already-validated [`AkitaExpandedSetup`] in a prover setup.
@@ -132,10 +130,11 @@ impl<F: FieldCore> AkitaProverSetup<F> {
                 "expanded setup matrix field count does not match setup seed".to_string(),
             ));
         }
+        let public_matrix_id = expanded.seed().public_matrix_id.clone();
         let expanded = Arc::new(expanded);
         Ok(Self {
             expanded,
-            prefix_slots: SetupPrefixProverRegistry::new(),
+            prefix_slots: SetupPrefixProverRegistry::new(public_matrix_id),
         })
     }
 }
@@ -145,6 +144,11 @@ impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Va
 {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
+        if self.prefix_slots.public_matrix_id() != &self.expanded.seed().public_matrix_id {
+            return Err(SerializationError::InvalidData(
+                "setup-prefix registry belongs to a different public matrix".to_string(),
+            ));
+        }
         self.prefix_slots.check()
     }
 }
