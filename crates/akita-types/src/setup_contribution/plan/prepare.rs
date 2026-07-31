@@ -209,6 +209,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             relation_address,
             relation_address_geometry,
             projection_geometry,
+            direct_scan_alpha: None,
         };
         plan.setup_index_tensors = plan.prepare_setup_index_tensors(witness_layout)?;
         Ok(plan)
@@ -217,6 +218,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     /// Materialize the derived column-weight and scan caches used only by the
     /// direct setup scan.
     pub fn materialize_direct_scan(&mut self, alpha: E) -> Result<(), AkitaError> {
+        if self
+            .direct_scan_alpha
+            .is_some_and(|prepared| prepared != alpha)
+        {
+            return Err(AkitaError::InvalidInput(
+                "direct setup weights were prepared for a different alpha".into(),
+            ));
+        }
+        self.direct_scan_alpha = Some(alpha);
         for group_index in 0..self.groups.len() {
             if self
                 .groups

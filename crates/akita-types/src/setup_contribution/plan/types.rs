@@ -310,6 +310,7 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
+    pub(crate) direct_scan_alpha: Option<E>,
 }
 
 pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {

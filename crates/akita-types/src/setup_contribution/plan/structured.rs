@@ -20,6 +20,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .iter()
             .find(|group| group.group_id == group_id)
             .ok_or(AkitaError::InvalidProof)?;
+        if group.direct_scan_weights.is_some() && self.direct_scan_alpha != Some(alpha) {
+            return Err(AkitaError::InvalidInput(
+                "structured relation alpha disagrees with direct setup weights".into(),
+            ));
+        }
         let block_claims = group
             .num_claims
             .checked_mul(group.num_live_blocks)

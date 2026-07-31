@@ -386,6 +386,7 @@ fn finalize_test_plan(
         )
         .unwrap(),
         projection_geometry,
+        direct_scan_alpha: Some(test_scalar(3)),
     };
     for group in &mut plan.groups {
         group.role_dims = role_dims;

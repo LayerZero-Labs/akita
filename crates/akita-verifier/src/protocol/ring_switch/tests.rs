@@ -191,6 +191,9 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         )
         .unwrap();
     direct_plan.materialize_direct_scan(alpha).unwrap();
+    assert!(direct_plan
+        .materialize_direct_scan(MixedF::from_u64(11))
+        .is_err());
     let setup_claim = direct_plan
         .evaluate_direct::<MixedF>(
             &setup,
