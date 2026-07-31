@@ -498,6 +498,8 @@ pub fn find_schedule(
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    key.validate()?;
+    validate_policy(policy)?;
     dimensions.validate_for_policy(policy)?;
     if dimensions.is_uniform_policy_domain(policy) {
         return find_schedule_inner(
@@ -682,8 +684,6 @@ fn find_schedule_inner(
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
-    key.validate()?;
-    validate_policy(policy)?;
     let default_ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
     let suffix_ctx = SuffixCtx {
         policy,
@@ -1325,6 +1325,48 @@ mod geometry_tests {
         assert!(error
             .to_string()
             .contains("does not yet support direct multi-chunk planning"));
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn mixed_search_validates_key_and_policy_at_entry() {
+        use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+        let policy = policy_of::<D256OneHot>();
+        let domain = RingDimensionSearchDomain::new(
+            policy.ring_dimension,
+            [
+                CommitmentRingDims::uniform(64),
+                CommitmentRingDims::uniform(policy.ring_dimension),
+            ],
+        )
+        .unwrap();
+
+        let error = find_schedule(
+            PolynomialGroupLayout::new(16, 0),
+            &policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("opening group layouts must be nonempty"));
+
+        let mut invalid_policy = policy.clone();
+        invalid_policy.max_setup_envelope_field_elements = 0;
+        let error = find_schedule(
+            PolynomialGroupLayout::singleton(16),
+            &invalid_policy,
+            &domain,
+            D256OneHot::ring_challenge_config,
+            D256OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("maximum setup envelope must be positive"));
     }
 
     #[cfg(feature = "catalog-gen")]
