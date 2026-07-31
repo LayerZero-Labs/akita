@@ -570,8 +570,9 @@ fn find_group_batch_schedule_inner(
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
-        let dimensions = crate::schedule_params::RingDimensionSearchDomain::uniform(
-            policy.uniform_ring_dimension,
+        let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
+            scalar_policy.ring_dimension,
+            scalar_policy.ring_dimension_candidates.iter().copied(),
         )?;
         return find_schedule(
             key.final_group,
@@ -617,10 +618,11 @@ fn find_group_batch_schedule_inner(
             .best_by_payload_per_lb
             .values()
             .min_by_key(|candidate| candidate.total_bytes),
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => suffix
-            .best_by_payload_per_lb
-            .values()
-            .min_by_key(|candidate| (candidate.setup_field_elements, candidate.total_bytes)),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
         crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
             .best_by_first_direct_setup_per_lb
             .values()

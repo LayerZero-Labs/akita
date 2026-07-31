@@ -1,6 +1,6 @@
 use akita_config::{
     policy_of,
-    proof_optimized::fp128::{D256OneHot, D64OneHot, MixedDimFp128OneHot},
+    proof_optimized::fp128::{D64OneHot, MixedDimFp128OneHot},
     CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::{find_group_batch_schedule, find_schedule, RingDimensionSearchDomain};
@@ -79,7 +79,10 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
     let direct_policy = policy_of::<MixedDimFp128OneHot>();
-    let domain = RingDimensionSearchDomain::new(MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES)?;
+    let domain = RingDimensionSearchDomain::new(
+        MixedDimFp128OneHot::D,
+        MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES,
+    )?;
     let direct = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &direct_policy,
@@ -93,12 +96,12 @@ fn main() -> Result<(), akita_field::AkitaError> {
         &direct,
     );
 
-    type MixedRecursive = RecursiveCommitmentConfig<D256OneHot>;
+    type MixedRecursive = RecursiveCommitmentConfig<MixedDimFp128OneHot>;
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
-    let recursive_domain = RingDimensionSearchDomain::new([
-        akita_types::CommitmentRingDims::uniform(64),
-        akita_types::CommitmentRingDims::uniform(256),
-    ])?;
+    let recursive_domain = RingDimensionSearchDomain::new(
+        MixedRecursive::D,
+        MixedRecursive::RING_DIMENSION_CANDIDATES,
+    )?;
     let mixed_recursive = find_schedule(
         PolynomialGroupLayout::new(32, 2),
         &mixed_recursive_policy,

@@ -178,7 +178,8 @@ impl_proof_optimized_preset!(
         fp128_mixed_dim_onehot_table
     ),
     selection_policy =
-        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+        akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload,
+    ring_dimension_candidates = &MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES
 );
 impl_proof_optimized_preset!(
     D512OneHot,

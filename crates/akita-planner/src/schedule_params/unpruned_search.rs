@@ -1,6 +1,6 @@
 use super::*;
 
-struct OracleCtx<'a> {
+struct UnprunedCtx<'a> {
     policy: &'a PlannerPolicy,
     dimensions: &'a RingDimensionSearchDomain,
     ring_challenge_config: &'a dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -9,25 +9,25 @@ struct OracleCtx<'a> {
 }
 
 #[derive(Clone, Copy)]
-struct OracleState {
+struct UnprunedState {
     level: usize,
     input_witness_len: usize,
     current_log_basis: u32,
     dimension_ceiling: CommitmentRingDims,
 }
 
-fn exhaustive_suffixes(
-    ctx: &OracleCtx<'_>,
-    state: OracleState,
+fn enumerate_suffixes(
+    ctx: &UnprunedCtx<'_>,
+    state: UnprunedState,
 ) -> Result<Vec<ScheduleCandidate>, AkitaError> {
-    let OracleCtx {
+    let UnprunedCtx {
         policy,
         dimensions,
         ring_challenge_config,
         fold_shape,
         key,
     } = *ctx;
-    let OracleState {
+    let UnprunedState {
         level,
         input_witness_len,
         current_log_basis,
@@ -37,20 +37,13 @@ fn exhaustive_suffixes(
         return Ok(Vec::new());
     }
     let field_bits = policy.decomposition.field_bits();
+    let challenge_field_bits = policy.challenge_field_bits()?;
     let requested_fold_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level,
         input_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
-    let eor_bytes = extension_opening_reduction_level_bytes(
-        field_bits * policy.chal_ext_degree as u32,
-        policy.claim_ext_degree,
-        level,
-        key,
-        input_witness_len,
-        dimension_ceiling.d_a(),
-    )?;
     let mut schedules = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
@@ -63,6 +56,17 @@ fn exhaustive_suffixes(
             } else if !componentwise_dimensions_at_most(*candidate_dimensions, dimension_ceiling) {
                 continue;
             }
+            let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+                challenge_field_bits,
+                policy.claim_ext_degree,
+                level,
+                key,
+                input_witness_len,
+                candidate_dimensions.d_a(),
+            )?
+            else {
+                continue;
+            };
             let Ok(ring_challenge) = ring_challenge_config(candidate_dimensions.d_a()) else {
                 continue;
             };
@@ -108,7 +112,7 @@ fn exhaustive_suffixes(
                             .checked_add(eor_bytes)
                             .ok_or_else(|| {
                                 AkitaError::InvalidSetup(
-                                    "oracle terminal proof size overflow".into(),
+                                    "unpruned traversal terminal proof size overflow".into(),
                                 )
                             })?;
                         terminal.estimated_direct_payload_bytes = direct_bytes;
@@ -122,7 +126,7 @@ fn exhaustive_suffixes(
                             total_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
                                 || {
                                     AkitaError::InvalidSetup(
-                                        "oracle terminal proof size overflow".into(),
+                                        "unpruned traversal terminal proof size overflow".into(),
                                     )
                                 },
                             )?,
@@ -138,9 +142,9 @@ fn exhaustive_suffixes(
                 } else {
                     params.role_dims()
                 };
-                for child in exhaustive_suffixes(
+                for child in enumerate_suffixes(
                     ctx,
-                    OracleState {
+                    UnprunedState {
                         level: level + 1,
                         input_witness_len: output_witness_len,
                         current_log_basis: log_basis,
@@ -150,7 +154,7 @@ fn exhaustive_suffixes(
                     let child_is_terminal = child.folds.is_empty();
                     let direct_bytes = level_proof_bytes(
                         field_bits,
-                        field_bits * policy.chal_ext_degree as u32,
+                        challenge_field_bits,
                         &params,
                         child.first_fold_params(),
                         output_witness_len,
@@ -162,7 +166,9 @@ fn exhaustive_suffixes(
                     )?
                     .checked_add(eor_bytes)
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("oracle fold proof size overflow".into())
+                        AkitaError::InvalidSetup(
+                            "unpruned traversal fold proof size overflow".into(),
+                        )
                     })?;
                     let mut folds = Vec::with_capacity(child.folds.len() + 1);
                     folds.push(CandidateFoldStep {
@@ -179,7 +185,11 @@ fn exhaustive_suffixes(
                             &suffix_opening_layout(input_witness_len, None)?,
                         )?),
                         total_bytes: direct_bytes.checked_add(child.total_bytes).ok_or_else(
-                            || AkitaError::InvalidSetup("oracle proof size overflow".into()),
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "unpruned traversal proof size overflow".into(),
+                                )
+                            },
                         )?,
                         setup_field_elements: level_setup_field_elements(&params)?
                             .max(child.setup_field_elements),
@@ -205,9 +215,9 @@ pub(super) fn find_schedule(
     validate_policy(policy)?;
 
     let field_bits = policy.decomposition.field_bits();
-    let input_witness_len = 1usize
-        .checked_shl(key.num_vars() as u32)
-        .ok_or_else(|| AkitaError::InvalidSetup("oracle root witness too large".into()))?;
+    let input_witness_len = 1usize.checked_shl(key.num_vars() as u32).ok_or_else(|| {
+        AkitaError::InvalidSetup("unpruned traversal root witness too large".into())
+    })?;
     let root_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level: 0,
@@ -216,7 +226,7 @@ pub(super) fn find_schedule(
     let root_num_chunks = policy.chunks_at_level(0);
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
     let mut complete = Vec::new();
-    let ctx = OracleCtx {
+    let ctx = UnprunedCtx {
         policy,
         dimensions,
         ring_challenge_config: &ring_challenge_config,
@@ -258,29 +268,38 @@ pub(super) fn find_schedule(
                     root_num_chunks,
                 )?
                 .checked_mul(root_dimensions.d_a())
-                .ok_or_else(|| AkitaError::InvalidSetup("oracle root witness overflow".into()))?;
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("unpruned traversal root witness overflow".into())
+                })?;
                 if output_witness_len
                     .checked_mul(log_basis as usize)
-                    .ok_or_else(|| AkitaError::InvalidSetup("oracle bit length overflow".into()))?
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("unpruned traversal bit length overflow".into())
+                    })?
                     >= input_witness_len
                         .checked_mul(field_bits as usize)
                         .ok_or_else(|| {
-                            AkitaError::InvalidSetup("oracle input bit length overflow".into())
+                            AkitaError::InvalidSetup(
+                                "unpruned traversal input bit length overflow".into(),
+                            )
                         })?
                 {
                     continue;
                 }
-                let eor_bytes = extension_opening_reduction_level_bytes(
-                    field_bits * policy.chal_ext_degree as u32,
+                let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+                    policy.challenge_field_bits()?,
                     policy.claim_ext_degree,
                     0,
                     key,
                     input_witness_len,
                     root_dimensions.d_a(),
-                )?;
-                for suffix in exhaustive_suffixes(
+                )?
+                else {
+                    continue;
+                };
+                for suffix in enumerate_suffixes(
                     &ctx,
-                    OracleState {
+                    UnprunedState {
                         level: 1,
                         input_witness_len: output_witness_len,
                         current_log_basis: log_basis,
@@ -290,7 +309,7 @@ pub(super) fn find_schedule(
                     let child_is_terminal = suffix.folds.is_empty();
                     let root_bytes = level_proof_bytes(
                         field_bits,
-                        field_bits * policy.chal_ext_degree as u32,
+                        policy.challenge_field_bits()?,
                         &root_params,
                         suffix.first_fold_params(),
                         output_witness_len,
@@ -302,7 +321,9 @@ pub(super) fn find_schedule(
                     )?
                     .checked_add(eor_bytes)
                     .ok_or_else(|| {
-                        AkitaError::InvalidSetup("oracle root proof size overflow".into())
+                        AkitaError::InvalidSetup(
+                            "unpruned traversal root proof size overflow".into(),
+                        )
                     })?;
                     let mut folds = Vec::with_capacity(suffix.folds.len() + 1);
                     folds.push(CandidateFoldStep {
@@ -316,7 +337,11 @@ pub(super) fn find_schedule(
                     complete.push(ScheduleCandidate {
                         first_direct_setup_field_len: None,
                         total_bytes: root_bytes.checked_add(suffix.total_bytes).ok_or_else(
-                            || AkitaError::InvalidSetup("oracle proof size overflow".into()),
+                            || {
+                                AkitaError::InvalidSetup(
+                                    "unpruned traversal proof size overflow".into(),
+                                )
+                            },
                         )?,
                         setup_field_elements: level_setup_field_elements(&root_params)?
                             .max(suffix.setup_field_elements),
@@ -344,7 +369,7 @@ pub(super) fn find_schedule(
     scored.sort_by(|left, right| (&left.0, &left.1, &left.2).cmp(&(&right.0, &right.1, &right.2)));
     let Some((_, _, _, selected)) = scored.into_iter().next() else {
         return Err(AkitaError::UnsupportedSchedule(
-            "independent oracle found no complete schedule".into(),
+            "unpruned traversal found no complete schedule".into(),
         ));
     };
     materialize_candidate_schedule(

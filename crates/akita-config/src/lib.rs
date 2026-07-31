@@ -16,9 +16,9 @@ use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 #[cfg(test)]
 use akita_types::PolynomialGroupLayout;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommittedGroupParams,
-    DecompositionParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
-    SisModulusProfileId,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    CommittedGroupParams, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixCapacity, SisModulusProfileId,
 };
 
 /// Define a multi-chunk companion preset that delegates every layout-affecting
@@ -35,6 +35,8 @@ macro_rules! impl_multi_chunk_companion {
             type Field = <$base as $crate::CommitmentConfig>::Field;
             type ExtField = <$base as $crate::CommitmentConfig>::ExtField;
             const D: usize = <$base as $crate::CommitmentConfig>::D;
+            const RING_DIMENSION_CANDIDATES: &'static [akita_types::CommitmentRingDims] =
+                <$base as $crate::CommitmentConfig>::RING_DIMENSION_CANDIDATES;
             const EXT_DEGREE: usize = <$base as $crate::CommitmentConfig>::EXT_DEGREE;
 
             fn decomposition() -> akita_types::DecompositionParams {
@@ -128,8 +130,10 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         selection_policy: Cfg::selection_policy(),
         max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
+        ring_dimension: Cfg::D,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
+        ring_dimension_candidates: Cfg::ring_dimension_candidates(),
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -196,6 +200,17 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
 
     /// Ring degree used by `CyclotomicRing<F, D>`.
     const D: usize;
+
+    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
+    ///
+    /// Uniform presets use their setup-generation dimension for every role.
+    /// Adaptive presets override this with their full audited search domain.
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
+        &[CommitmentRingDims::uniform(Self::D)];
+
+    fn ring_dimension_candidates() -> &'static [CommitmentRingDims] {
+        Self::RING_DIMENSION_CANDIDATES
+    }
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;

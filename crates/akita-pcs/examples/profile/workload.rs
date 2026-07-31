@@ -759,33 +759,10 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         + AkitaSerialize
         + Valid,
 {
-    let mut rng = StdRng::seed_from_u64(0xbeef_cafe);
-    let total_field = (layout.num_live_blocks * layout.num_positions_per_block)
-        .checked_mul(D)
-        .expect("total field size overflow");
-    let onehot_k = onehot_k_for_num_vars(nv);
-    let total_chunks = total_field / onehot_k;
-    assert_eq!(
-        total_chunks * onehot_k,
-        total_field,
-        "onehot K must divide total field size"
-    );
-
-    let indices: Vec<Option<u8>> = (0..total_chunks)
-        .map(|_| Some(rng.gen_range(0..onehot_k) as u8))
-        .collect();
-    let onehot_poly = OneHotPoly::<FF, u8>::new(onehot_k, D, indices).unwrap();
+    let onehot_poly = make_profile_onehot_poly::<FF>(layout, 0xbeef_cafe);
+    let mut rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut rng);
-    let opening = if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&pt) {
-        Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
-            &onehot_poly,
-            &base_pt,
-            layout,
-            BasisMode::Lagrange,
-        ))
-    } else {
-        onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt)
-    };
+    let opening = onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(&onehot_poly, &pt);
     let t0 = Instant::now();
     let setup = AkitaCommitmentScheme::<Cfg>::setup_prover(nv, 1).unwrap();
     let setup_expand_secs = t0.elapsed().as_secs_f64();
@@ -867,25 +844,10 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         .collect();
     let mut point_rng = StdRng::seed_from_u64(0xfeed_face);
     let pt = random_claim_point::<FF, Cfg::ExtField>(nv, &mut point_rng);
-    let openings: Vec<Cfg::ExtField> =
-        if let Some(base_pt) = degree_one_claim_point_to_base::<FF, Cfg::ExtField>(&pt) {
-            polys
-                .iter()
-                .map(|poly| {
-                    Cfg::ExtField::lift_base(opening_from_poly::<_, D, _>(
-                        poly,
-                        &base_pt,
-                        layout,
-                        BasisMode::Lagrange,
-                    ))
-                })
-                .collect()
-        } else {
-            polys
-                .iter()
-                .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &pt))
-                .collect()
-        };
+    let openings: Vec<Cfg::ExtField> = polys
+        .iter()
+        .map(|poly| onehot_lagrange_opening::<FF, Cfg::ExtField, u8>(poly, &pt))
+        .collect();
     let poly_refs: Vec<&OneHotPoly<FF, u8>> = polys.iter().collect();
 
     let pools = ProfileThreadPools::get();

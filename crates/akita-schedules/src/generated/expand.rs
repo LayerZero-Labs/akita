@@ -883,18 +883,26 @@ mod tests {
     use super::*;
     use crate::{PlannerCostModelId, SelectionPolicyId};
     use akita_types::{
-        ChunkedWitnessCfg, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest,
+        ChunkedWitnessCfg, CommitmentRingDims, SisModulusProfileId, SisSecurityPolicyId,
+        SisTableDigest,
     };
 
     fn recursive_fp128_policy() -> PlannerPolicy {
+        static CANDIDATES: [CommitmentRingDims; 1] = [CommitmentRingDims {
+            inner: 64,
+            outer: 64,
+            opening: 64,
+        }];
         PlannerPolicy {
             cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
             selection_policy:
                 SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
             max_num_setup_field_elements: 1 << 26,
             min_offloaded_witness_contraction: 3,
+            ring_dimension: 64,
             uniform_ring_dimension: 64,
             setup_prefix_inner_ring_dimension: 128,
+            ring_dimension_candidates: &CANDIDATES,
             decomposition: DecompositionParams {
                 log_basis: 3,
                 log_commit_bound: 1,
