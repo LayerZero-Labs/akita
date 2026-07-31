@@ -166,14 +166,15 @@ compression shapes.
 ## Diagnostic Phase
 
 The diagnostic phase is opt-in through the `compression-diagnostics` feature.
-Its planner involvement is deliberately quarantined:
+Its parameter selection is diagnostics-local:
 
-- one standalone module validates the input bound and selects dimensions,
+- one private prover module validates the input bound and selects dimensions,
   widths, ranks, and map count;
+- one feature-gated backend extension owns diagnostic execution and cache
+  metrics, so ordinary digit-row backends and prepared setups remain unchanged;
 - schedule search, candidate derivation, suffix dynamic programming, generated
   schedule tables, catalog identity, and proof-size scoring are untouched;
-- the prover calls the standalone planner only after it has the real B/D
-  source lengths.
+- the selector runs only after the prover has the real B/D source lengths.
 
 During proving:
 
@@ -260,12 +261,13 @@ The diagnostic implementation must include:
   undersized setup prefixes;
 - exact-prefix compression-cache accounting, single-flight first use, and
   isolation from full-envelope both-transform cache slots;
-- planner tests that 1, 2, 4, and 8 KiB inputs use two maps;
-- planner tests that 16 KiB uses three maps and larger inputs are rejected;
+- diagnostic selector tests that 1, 2, 4, and 8 KiB inputs use two maps;
+- diagnostic selector tests that 16 KiB uses three maps and larger inputs are
+  rejected;
 - an end-to-end proof with diagnostics enabled that verifies with the current
   verifier;
 - an extension-field or mixed-dimension proof exercising the same shadow path;
-- default-feature compilation proving that the diagnostic dependency and hook
+- default-feature compilation proving that the diagnostic module and hook
   disappear from the normal build.
 
 Protocol-cutover tests will additionally need malformed planner-owned shape,

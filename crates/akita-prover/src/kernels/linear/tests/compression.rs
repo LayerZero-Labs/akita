@@ -1,5 +1,5 @@
 use super::schoolbook_digit_mat_vec;
-use crate::kernels::linear::compression_rows;
+use crate::kernels::linear::{mat_vec_mul_ntt_digits_i8, validate_compression_batch_shape};
 use akita_algebra::CyclotomicRing;
 use akita_field::{
     CanonicalField, FieldCore, Prime128OffsetA7F7, Prime32Offset99, Prime64Offset59,
@@ -35,7 +35,8 @@ fn assert_compression_batch<F: FieldCore + CanonicalField, const D: usize>() {
     .expect("compression NTT profile");
     let views = digit_vectors.iter().map(Vec::as_slice).collect::<Vec<_>>();
 
-    let actual = compression_rows::<F, D>(&slot, &views).expect("compression batch rows");
+    let actual = mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, column_count, &views, 1)
+        .expect("compression batch rows");
     let expected_matrix = vec![matrix];
     let expected = schoolbook_digit_mat_vec::<F, D>(&expected_matrix, &digit_vectors);
     assert_eq!(actual, expected);
@@ -63,8 +64,8 @@ fn compression_batch_rejects_mixed_shapes_and_non_binary_digits() {
         .expect("compression NTT profile");
     let short = [[0i8; D]; 3];
     let full = [[0i8; D]; 4];
-    assert!(compression_rows::<F, D>(&slot, &[&short, &full]).is_err());
+    assert!(validate_compression_batch_shape(&[&short, &full]).is_err());
 
     let outside_binary = [[2i8; D]; 4];
-    assert!(compression_rows::<F, D>(&slot, &[&outside_binary]).is_err());
+    assert!(mat_vec_mul_ntt_digits_i8::<F, D>(&slot, 1, 4, &[&outside_binary], 1).is_err());
 }

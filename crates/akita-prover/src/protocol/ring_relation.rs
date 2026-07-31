@@ -685,6 +685,7 @@ impl RingRelationProver {
             tracing::info!(
                 sources = report.sources,
                 maps = report.maps,
+                batch_count = report.batch_count,
                 source_bytes = report.source_bytes,
                 terminal_bytes = report.terminal_bytes,
                 cache_bytes_before = report.cache_bytes_before,
