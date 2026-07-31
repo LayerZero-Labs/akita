@@ -47,10 +47,10 @@ physical unit is
 and one shared `r_hat` quotient tail follows every unit. The logical orders are
 
 ```text
-z_hat[position][commit_digit][fold_digit]
-e_hat[claim][block_idx][opening_digit]
-t_hat[claim][block_idx][A_row][outer_digit]
-r_hat[relation_row][quotient_digit]
+z_hat[position][commit_digit][fold_digit][A_coefficient]
+e_hat[claim][block_idx][D_subcolumn][opening_digit][D_coefficient]
+t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
+r_hat[relation_row][quotient_digit][native_row_coefficient]
 ```
 
 The T digit is the outer commitment digit. The active
@@ -64,14 +64,15 @@ e_hat[claim][block_idx][D_subcolumn][opening_digit][D_coefficient]
 t_hat[claim][block_idx][A_row][B_subcolumn][outer_digit][B_coefficient]
 ```
 
-All live subcolumns precede carrier padding. When every role dimension equals
-the carrier dimension, the subcolumn axis has length one and the byte order is
-the same as the uniform layout.
+Only live subcolumns are stored. When every role dimension equals A, the
+subcolumn axis has length one and the byte order is the uniform layout.
 
 `WitnessLayout` is the range authority shared by planning, proving, setup,
 relation evaluation, recursive handoff, and verification. Units are ordered by
-relation group and then chunk. Each unit records its exact `global_block_start` and
-`num_live_blocks`.
+chunk and then authenticated relation group. Each unit records its exact
+`global_block_start`, `num_live_blocks`, and coefficient ranges. The one shared
+native quotient tail follows all units. Any successor alignment and Boolean
+padding is one zero suffix after the complete live prefix.
 
 ## Chunks and tensor challenges
 

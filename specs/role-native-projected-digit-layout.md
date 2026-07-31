@@ -1,4 +1,4 @@
-# Spec: Role Native Projected Digit Layout
+# Spec: Compact Role-Native Witness Layout
 
 | Field | Value |
 |---|---|
@@ -7,7 +7,7 @@
 | Revised | 2026-07-31 |
 | Status | active |
 | PR | #337 |
-| Supersedes | The coefficient-level E and T projection order left implicit by `digit-innermost-layout.md`, `setup-layout-repack.md`, `mixed-ring-dimension-per-level.md`, and `relation-range-image-sumcheck.md` |
+| Supersedes | Projected-digit and outgoing-witness storage rules in `digit-innermost-layout.md`, `mixed-ring-dimension-per-level.md`, `distributed-setup-offloading.md`, and `relation-range-image-sumcheck.md` |
 | Superseded by | |
 | Book chapter | how/proving/opening-points-layout.md; how/verifying/matrix_evaluation.md |
 
@@ -17,1060 +17,587 @@ The key words **MUST**, **MUST NOT**, **REQUIRED**, **SHALL**, **SHALL NOT**,
 when, and only when, they appear in all capitals, as described in RFC 2119 and
 RFC 8174.
 
-## Authority and scope
+## Authority
 
-This spec is the normative source for the coefficient-level order of projected
-E and T digits. It also owns the formulas that map those digits into B and D
-matrix columns and into the outgoing A carrier.
+This document is the normative source for all of the following:
 
-The related specs keep their existing authority:
+- persistent commitment-hint storage;
+- projected B and D digit order;
+- physical Z, E, T, and R witness coefficient order;
+- group and chunk nesting in the outgoing witness;
+- exact live witness length and its one zero suffix;
+- the common relation-coefficient block used by Stage 2 and Stage 3; and
+- the validation and performance requirements of those layouts.
 
-- [`digit-innermost-layout.md`](digit-innermost-layout.md) owns group order,
-  chunk ownership, witness segment order, and exact segment ranges.
-- [`setup-layout-repack.md`](setup-layout-repack.md) owns the overlapping packed
-  setup prefix and the A, B, and D role views of that prefix.
-- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md) owns
-  valid ring dimension tuples, setup envelope requirements, and planner policy.
-- [`relation-range-image-sumcheck.md`](relation-range-image-sumcheck.md) owns
-  Stage 2 relation, evaluation trace, and range-image sum-check structure.
+The related specs continue to own source-polynomial block order, transcript
+group authentication, relation algebra, setup-prefix packing, challenge
+sampling, and planner policy. If another live document describes an outgoing
+ring-element carrier, per-unit carrier padding, group-major witness units, or
+a different projected-digit order, this document takes precedence.
 
-If another live spec gives a different coefficient order for projected E or T
-digits, this spec takes precedence.
+## Decision
 
-## Summary
+The outgoing witness is one compact vector of field coefficients. It is not a
+vector of rings in a batch-wide dimension.
 
-E and T are semantic values in the A ring. B and D commitments consume those
-values through smaller native rings when `d_b < d_a` or `d_d < d_a`.
-
-When a B or D operation needs digits, the implementation **MUST** split an A
-ring into native role subrings before it applies the role gadget decomposition.
-It **MUST** store each native subring's digits together in that prepared digit
-stream.
-
-The canonical order is:
+For every chunk, the prover emits every group in authenticated relation order:
 
 ```text
-[semantic value][role subcolumn][digit][native ring coefficient]
+chunk 0: [group 0: Z | E | T] [group 1: Z | E | T] ...
+chunk 1: [group 0: Z | E | T] [group 1: Z | E | T] ...
+...
+shared:  [native R rows]
+suffix:  [zeros, if required by the successor Boolean domain]
 ```
 
-The role specific orders are:
+Every live segment uses its native ring dimension. No maximum A dimension is
+computed for witness storage. No live segment contains padding for a different
+group or role.
+
+E and T use the same split-before-decompose rule:
 
 ```text
-E: [claim][block][D subcolumn][opening digit][D coefficient]
-T: [claim][block][A row][B subcolumn][outer digit][B coefficient]
+[semantic value][native role subcolumn][digit][native coefficient]
 ```
 
-The implementation **MUST NOT** decompose an A ring into A-wide digit planes
-and then split each digit plane into smaller role rings. It **MUST NOT**
-transpose native role digits into digit-major carrier planes during witness
-emission.
+Uniform dimensions are the `q = 1` instance of this representation. They do
+not select another protocol path.
 
-## Goals
+This is a breaking cutover. Implementations **MUST NOT** retain a layout mode,
+compatibility decoder, conversion wrapper, or parallel uniform implementation.
 
-The cutover has these goals:
-
-- One projection and decomposition rule for both E and T.
-- One coefficient order for prepared digits, commitment kernels, witnesses,
-  relation evaluation, setup evaluation, and quotient computation.
-- A persistent commitment hint that stores semantic A ring values and does not
-  store their gadget decomposition.
-- Contiguous live role data followed by carrier padding within each semantic
-  value.
-- No transpose between native role storage and the outgoing witness.
-- The same proof bytes and hot loops as the current uniform layout when
-  `a = b = d = C`.
-- Structured mixed-dimension evaluation with no dense Cartesian weight table.
-
-## Non-goals
-
-This cutover does not change source block ownership, chunk ownership, witness
-segment order, matrix ranks, SIS bounds, or planner objectives.
-
-This cutover does not preserve mixed-dimension commitment bytes, proof bytes,
-hint bytes, or setup-prefix artifacts from the old order.
-
-This cutover does not add a layout mode or a compatibility decoder.
-
-## Ring notation
+## Notation
 
 Let
 
 \[
-R_m = F[X]/(X^m + 1).
+R_d = F[X]/(X^d+1).
 \]
 
-For one commitment group, define:
+Let groups be enumerated in authenticated relation order by positions
+`p = 0, ..., G - 1`. Let `g(p)` be the corresponding stable group index. At a
+root this is the final/new group first, followed by precommitted groups in their
+authenticated order.
+
+For group `g`, define:
 
 ```text
-a       A ring dimension
-b       B ring dimension
-d       D ring dimension
-C       outgoing batch carrier dimension
-H       number of claims in this group
-B       number of live source blocks in this group
-n_A     number of A matrix rows in this group
-delta_B number of outer digits used by T
-delta_D number of opening digits used by E
-beta_B  outer gadget basis
-beta_D  opening gadget basis
+a_g       A ring dimension
+b_g       B ring dimension
+d_g       D ring dimension
+H_g       number of claims
+F_g       total live source blocks
+M_g       positions per source block
+n_A,g     A matrix row count
+delta_Z,g inner/witness digit count
+delta_F,g fold digit count
+delta_B,g outer digit count
+delta_D,g opening digit count
+beta_B,g  outer gadget basis
+beta_D,g  opening gadget basis
 ```
 
-The validated geometry **MUST** satisfy:
+For the relation quotient, let rows be indexed by `rho`, let `r_rho` be the
+native ring dimension of row `rho`, and let `delta_R` be the quotient digit
+count. `RelationRhsLayout::row_ring_dims()` is the single source of truth for
+the ordered sequence `(r_rho)`.
+
+All role dimensions **MUST** be nonzero powers of two and **MUST** satisfy
 
 \[
-b\mid a,\qquad d\mid a,\qquad a\mid C.
+b_g\mid a_g,\qquad d_g\mid a_g.
 \]
 
-All supported dimensions are powers of two, so these divisibility conditions
-also give exact subcolumn counts:
+Define
 
 \[
-q_B=\frac{a}{b},\qquad q_D=\frac{a}{d},\qquad
-Q_B=\frac{C}{b},\qquad Q_D=\frac{C}{d}.
+q_{B,g}=a_g/b_g,\qquad q_{D,g}=a_g/d_g.
 \]
 
-Here `q_B` and `q_D` count live role subcolumns. `Q_B` and `Q_D` count role
-subcolumns in the outgoing carrier.
+There is no witness-storage quantity `C`, `max_g a_g`, `C/b_g`, or `C/d_g`.
 
-## Canonical split and decomposition
+## Role-native split and decomposition
 
-Let
-
-\[
-y(X)=\sum_{k=0}^{a-1}y_kX^k\in R_a
-\]
-
-and let `r` be either `b` or `d`. Define `q = a / r`. The native role
-subring at index `s` is:
+For `y in R_a` and a native role dimension `r | a`, define `q = a/r` and
 
 \[
-y_s(X)=\sum_{\kappa=0}^{r-1}y_{sr+\kappa}X^\kappa\in R_r,
+y_s(X)=\sum_{k=0}^{r-1} y_{sr+k}X^k\in R_r,
 \qquad 0\le s<q.
 \]
 
-The split is exact:
+Then
 
 \[
 y(X)=\sum_{s=0}^{q-1}X^{sr}y_s(X).
 \]
 
-Let the role use digit count `delta` and gadget basis `beta`. The balanced
-coefficient decomposition of each native role subring is:
+With gadget basis `beta` and `delta` digits, decompose each native subring:
 
 \[
-y_s(X)=\sum_{o=0}^{\delta-1}\beta^o\widehat y_{s,o}(X),
-\qquad \widehat y_{s,o}\in R_r.
+y_s(X)=\sum_{o=0}^{\delta-1}\beta^o\widehat y_{s,o}(X).
 \]
 
-Therefore:
+Therefore
 
 \[
 \boxed{
 y(X)=\sum_{s=0}^{q-1}\sum_{o=0}^{\delta-1}
 X^{sr}\beta^o\widehat y_{s,o}(X)
-}
+}.
 \]
 
-The decomposition is coefficientwise. Splitting before decomposition gives the
-same signed digits as decomposing the full A ring and then splitting its digit
-planes. The two methods differ only in physical order. The implementation
-**MUST** split before decomposition.
-
-The projected decomposition and recomposition operations **MUST** satisfy:
+The implementation **MUST** split into native role subrings before gadget
+decomposition. It **MUST** store `s` outside `o`:
 
 \[
-\operatorname{recompose}_r(\operatorname{decompose}_r(y))=y
+\operatorname{flat}(s,o,k)=((s\delta+o)r+k).
 \]
 
-for every valid A ring value and for both native roles. The decomposition
-**MUST** retain the existing balanced digit range and tie-breaking rule. This
-cutover changes storage order, not digit values.
+It **MUST NOT** produce A-wide digit planes and transpose them during witness
+emission. Recomposition, relation evaluation, setup evaluation, and commitment
+kernels **MUST** consume this same order.
 
-## Canonical flat order
+When `q = 1`, implementations **MUST** treat the projection as structural
+identity: no projection-power allocation, no multiplication by one, and no
+empty-factor traversal.
 
-Let `i` be the semantic value index within a setup role or witness unit. Let
-`s` be a role subcolumn, `o` a role digit, and `kappa` a coefficient in the
-native role ring.
+## Persistent commitment hints
 
-The native role digit stream **MUST** use:
+`AkitaCommitmentHint<F>` contains one A-native `RingVec<F>` per polynomial in
+claim order and one shared A dimension.
 
-\[
-\boxed{
-\operatorname{native\_offset}(i,s,o,\kappa)
-=(((i q+s)\delta+o)r+\kappa)
-}
-\]
-
-The native role matrix column **MUST** use:
-
-\[
-\boxed{
-j_R(i,s,o)=((i q+s)\delta+o)
-}
-\]
-
-For one semantic value, the order is:
-
-```text
-s = 0: digit 0, digit 1, ..., digit delta - 1
-s = 1: digit 0, digit 1, ..., digit delta - 1
-...
-s = q - 1: digit 0, digit 1, ..., digit delta - 1
-```
-
-The implementation **MUST NOT** use the following old order for projected E or
-T storage:
-
-```text
-digit 0: subcolumn 0, subcolumn 1, ...
-digit 1: subcolumn 0, subcolumn 1, ...
-```
-
-## Carrier order and padding
-
-`WitnessLayout` expresses E and T segment lengths in A carrier ring elements.
-This spec defines the coefficient order inside those ranges.
-
-Let `range_start` be the start of an E or T range in carrier ring elements.
-The coefficient address in the outgoing witness **MUST** be:
-
-\[
-\boxed{
-x_R(i,s,o,\kappa)
-=C\cdot\operatorname{range\_start}
-+(((iQ+s)\delta+o)r+\kappa)
-}
-\]
-
-The live subcolumns are `0 <= s < q`. The carrier padding subcolumns are
-`q <= s < Q`.
-
-Every coefficient in a padding subcolumn **MUST** be zero. The implementation
-**MUST** place all live subcolumns before all padding subcolumns for each
-semantic value. It **MUST NOT** place carrier padding between live digits.
-
-The coefficient count for one semantic value remains:
-
-\[
-Q\delta r=C\delta.
-\]
-
-The cutover therefore does not change E or T segment lengths.
-
-### Uniform specialization
-
-When `a = r = C`, both ratios are one. The address reduces to:
-
-\[
-x_R(i,0,o,\kappa)
-=C\cdot\operatorname{range\_start}+((i\delta+o)C+\kappa).
-\]
-
-This is the existing uniform byte order. A conforming implementation **MUST**
-preserve it exactly.
-
-## E layout
-
-Each semantic opening value is an A ring:
-
-\[
-e_{c,f}(X)\in R_a,
-\]
-
-where `c` is a claim and `f` is a live source block.
-
-The index ranges are `0 <= c < H` and `0 <= f < B`.
-
-The native D decomposition is:
-
-\[
-e_{c,f}(X)=
-\sum_{s=0}^{q_D-1}\sum_{o=0}^{\delta_D-1}
-X^{sd}\beta_D^o\widehat e_{c,f,s,o}(X),
-\qquad \widehat e_{c,f,s,o}\in R_d.
-\]
-
-For semantic setup storage, define:
-
-\[
-i_E(c,f)=f+B c,
-\]
-
-where `B` is the group's exact live block count. The physical D column is:
-
-\[
-\boxed{
-j_D(c,f,s,o)=((i_E(c,f)q_D+s)\delta_D+o)
-}
-\]
-
-For one witness unit, let `u` be the local block index and `F_u` the unit's
-block count. The local semantic index is:
-
-\[
-i_E^{unit}(c,u)=u+F_u c.
-\]
-
-The E coefficient address is:
-
-\[
-\boxed{
-x_E(c,u,s,o,\kappa)=
-C\cdot e_{start}
-+(((i_E^{unit}(c,u)Q_D+s)\delta_D+o)d+\kappa)
-}
-\]
-
-The prover currently receives each E value as a flat A-width coefficient
-block and already views it as `q_D` native D rings before decomposition. The
-cutover **MUST** preserve that native D order through D commitment, E storage,
-and witness emission. Witness emission **MUST NOT** rebuild one A-width plane
-per opening digit.
-
-## T layout
-
-Each semantic inner commitment row is an A ring:
-
-\[
-t_{c,f,i}(X)\in R_a,
-\]
-
-where `i` is an A matrix row.
-
-The index ranges are `0 <= c < H`, `0 <= f < B`, and `0 <= i < n_A`.
-
-The native B decomposition is:
-
-\[
-t_{c,f,i}(X)=
-\sum_{s=0}^{q_B-1}\sum_{o=0}^{\delta_B-1}
-X^{sb}\beta_B^o\widehat t_{c,f,i,s,o}(X),
-\qquad \widehat t_{c,f,i,s,o}\in R_b.
-\]
-
-For semantic setup storage, define:
-
-\[
-i_T(c,f,i)=i+n_A(f+B c).
-\]
-
-The physical B column is:
-
-\[
-\boxed{
-j_B(c,f,i,s,o)=((i_T(c,f,i)q_B+s)\delta_B+o)
-}
-\]
-
-For one witness unit, define:
-
-\[
-i_T^{unit}(c,u,i)=i+n_A(u+F_u c).
-\]
-
-The T coefficient address is:
-
-\[
-\boxed{
-x_T(c,u,i,s,o,\kappa)=
-C\cdot t_{start}
-+(((i_T^{unit}(c,u,i)Q_B+s)\delta_B+o)b+\kappa)
-}
-\]
-
-The term `outer digit` **MUST** refer to `num_digits_outer` and
-`log_basis_outer`. Code and documentation **MUST NOT** call a T digit an
-opening digit or call its count `depth_open`.
-
-The persistent commitment hint stores `t`, not `t_hat`. Commitment and proof
-preparation derive the B native decomposition above from the stored A rings.
-The derived digits are temporary. The B commitment, the B relation, and T
-witness emission consume them.
-
-## B and D commitment relations
-
-Let `D_{j,k}(X)` be an entry in the batch-shared D matrix over `R_d`. Let
-`J_D(g,c,f,s,o)` be the global D column defined in the multi-group section.
-The D commitment relation is:
-
-\[
-V_j(X)=\sum_{g,c,f,s,o}
-D_{j,J_D(g,c,f,s,o)}(X)\widehat e_{g,c,f,s,o}(X).
-\]
-
-Its ring relation is:
-
-\[
-\sum_{g,c,f,s,o}
-D_{j,J_D(g,c,f,s,o)}(X)\widehat e_{g,c,f,s,o}(X)-V_j(X)
-=(X^d+1)r_j^D(X).
-\]
-
-Each group owns its B matrix. Let `B^{(g)}_{j,k}(X)` be a group B matrix entry
-in `R_{b_g}`. The group B commitment relation is:
-
-\[
-U_{g,j}(X)=\sum_{c,f,i,s,o}
-B^{(g)}_{j,j_{B,g}(c,f,i,s,o)}(X)
-\widehat t_{g,c,f,i,s,o}(X).
-\]
-
-Its ring relation is:
-
-\[
-\sum_{c,f,i,s,o}
-B^{(g)}_{j,j_{B,g}(c,f,i,s,o)}(X)
-\widehat t_{g,c,f,i,s,o}(X)-U_{g,j}(X)
-=(X^{b_g}+1)r_{g,j}^B(X).
-\]
-
-Changing a role from the old order to `j_R` above is a column permutation. It
-does not change matrix width, matrix rank, digit bounds, SIS bounds, or setup
-capacity. Current D storage already follows the required physical order. B
-storage does not. The B cutover changes mixed-dimension commitment bytes.
-
-The B and D matrix multiplication kernels **MUST** consume the native role
-digit stream directly. They **MUST NOT** receive an A-wide digit stream and
-derive their column order by raw rechunking.
-
-## Consistency and A relations
-
-Every consistency relation use of E **MUST** recompose the semantic A ring by:
-
-\[
-\operatorname{recompose}_D(\widehat e)(X)=
-\sum_{s,o}X^{sd}\beta_D^o\widehat e_{s,o}(X).
-\]
-
-Every A relation use of T **MUST** recompose the semantic A ring by:
-
-\[
-\operatorname{recompose}_B(\widehat t)(X)=
-\sum_{s,o}X^{sb}\beta_B^o\widehat t_{s,o}(X).
-\]
-
-The existing folded Z terms are unchanged. In abstract form, the affected
-relations remain:
-
-\[
-\sum_{c,f}\rho_{c,f}\operatorname{recompose}_D
-(\widehat e_{c,f})(X)-Z_{cons}(X)
-=(X^a+1)r^{cons}(X),
-\]
-
-and
-
-\[
-\sum_{c,f}\rho_{c,f}\operatorname{recompose}_B
-(\widehat t_{c,f,i})(X)-Z_{A,i}(X)
-=(X^a+1)r_i^A(X).
-\]
-
-At the relation point `alpha`, the projection and gadget weight is:
-
-\[
-\boxed{
-\alpha^{sr}\beta^o
-}
-\]
-
-The layout changes which equality address receives that weight. It does not
-change the projection algebra.
-
-## Relation equality tensors
-
-For a role `R` with native dimension `r`, define the projected equality term:
-
-\[
-\operatorname{peq}_R(i,s,o,\kappa)=
-\alpha^{sr}\operatorname{eq}
-(\tau,x_R(i,s,o,\kappa)).
-\]
-
-The complete digit weight is:
-
-\[
-\beta^o\operatorname{peq}_R(i,s,o,\kappa).
-\]
-
-Relation construction and setup contribution **MUST** treat this as the tensor
-product of:
-
-```text
-semantic equality and challenge factors
-subcolumn projection powers alpha^(s * r)
-digit gadget powers beta^o
-native ring coefficient evaluation
-```
-
-The subcolumn and digit axes **MUST** use the same order on the setup side and
-the witness side. A structured evaluator **MUST NOT** transpose either axis or
-materialize a table whose size is the product of all logical factors.
-
-When `q = 1`, the evaluator **MUST NOT** allocate an alpha-power vector,
-evaluate a power-sequence MLE, or multiply by `alpha^0`. When `Q = 1`, it
-**MUST** borrow the unprojected contiguous equality window. When `q = 1 < Q`,
-it **MUST** address the live carrier spans directly while still omitting the
-unit projection factor.
-
-## Evaluation trace
-
-The evaluation trace consumes E coefficients from the outgoing witness. The
-new E order does not change the trace functional.
-
-Let claim `h` belong to group `g(h)`. Let its D dimension be `d_h`, its opening
-basis be `beta_{D,h}`, and its normalized claim coefficient be `theta_h`. Let
-`mu_{h,f}` be its block-opening weight at group-global block `f`, and let
-`I_h` be its source-inner trace vector of length `a_h`.
-
-Let a common coefficient block have size `c_0`, and let
-`l_{D,h} = d_h / c_0`. Write a native D coefficient as
-`v c_0 + kappa`, where `0 <= v < l_{D,h}` and `0 <= kappa < c_0`. The
-coefficient weight is:
-
-\[
-\Theta_{h,f,s,o,v,\kappa}=
-\theta_h\mu_{h,f}\beta_{D,h}^o
-I_h[sd_h+vc_0+\kappa].
-\]
-
-The implementation **MUST** contract the coefficient axis through partial
-evaluations of the form:
-
-\[
-P_{h,s,v}(r_\kappa)=
-\sum_{\kappa=0}^{c_0-1}
-\operatorname{eq}(r_\kappa,\kappa)
-I_h[sd_h+vc_0+\kappa].
-\]
-
-It **MUST NOT** recover the old digit-major layout by transposing E or by
-materializing a carrier-expanded trace table. The coefficient partials for one
-claim **MUST** cost `O(a_h)` and **MUST** be reused across its blocks and opening
-digits. Preparing live support **MUST** cost
-`O(H_g B_g q_{D,g} delta_{D,g})` for group `g`. Both costs **MUST** be
-independent of the carrier padding count `Q_{D,g} - q_{D,g}`.
-
-## Multi-group and multi-chunk rules
-
-For a witness unit, `u` is local to the unit. Setup columns use the global block
-index:
-
-\[
-f=\operatorname{global\_block\_start}+u.
-\]
-
-The semantic setup matrices **MUST NOT** contain chunk copies. Each witness
-unit **MUST** map its local block to the one global setup column defined above.
-
-Let `H_g` be the number of claims in group `g`. The number of semantic role
-values in that group is:
-
-\[
-N_{D,g}=H_gB_g,
-\qquad
-N_{B,g}=H_gB_gn_{A,g}.
-\]
-
-The batch-shared D matrix concatenates group columns. Its physical group width
-and prefix are:
-
-\[
-W_{D,g}=N_{D,g}q_{D,g}\delta_{D,g},
-\qquad
-p_{D,g}=\sum_{h<g}W_{D,h}.
-\]
-
-The global D matrix column **MUST** be:
-
-\[
-\boxed{J_D(g,c,f,s,o)=p_{D,g}+j_{D,g}(c,f,s,o)}
-\]
-
-The D prefix sum **MUST** follow authenticated relation group order.
-
-Each group owns a separate B matrix. Its physical width is:
-
-\[
-W_{B,g}=N_{B,g}q_{B,g}\delta_{B,g}.
-\]
-
-The B column **MUST** be the group-local `j_{B,g}` defined above. It **MUST**
-start at zero for each group. The implementation **MUST NOT** add a cross-group
-B column prefix.
-
-Chunk count **MUST NOT** appear in any semantic count, physical matrix width,
-or group prefix.
-
-For a group with `a < C`, only the first `q_R = a / r` role subcolumns are
-live. The remaining `Q_R - q_R` subcolumns are zero carrier padding. The
-implementation **MUST NOT** extend B or D setup width to cover those zero
-padding subcolumns.
-
-Group order and chunk order remain the order defined by `WitnessLayout`.
-
-## Storage and type contracts
-
-### Persistent T commitment hints
-
-`AkitaCommitmentHint<F>` **MUST** store the undecomposed inner commitment rows
-`t = A * s` as A ring elements. It **MUST NOT** store `DigitBlocks` or any other
-decomposition of those rows.
-
-One hint belongs to one commitment bundle. Its outer sequence **MUST** contain
-one `RingVec<F>` for each polynomial in claim order. Each `RingVec<F>` **MUST**
-declare ring dimension `d_a`. Its flat coefficients **MUST** use this order:
+For polynomial `h`, its row stores
 
 ```text
 [source block][A row][A coefficient]
 ```
 
-For one polynomial, the `RingVec<F>` **MUST** contain exactly
-`num_live_blocks * n_A` A ring elements. The public commitment parameters own
-the block and row counts. The hint **MUST NOT** add another block layout that
-can disagree with those parameters.
-
-The hint encoding **MUST** write the polynomial count, one shared `d_a`, and
-the coefficient count and coefficients for each polynomial. It **MUST NOT**
-write a ring dimension for each polynomial or write digit block metadata. A
-decoder **MUST** reject zero `d_a`, a coefficient count that is not divisible
-by `d_a`, inconsistent polynomial lengths, and any allocation above the
-repository limits. Before proof preparation, the prover **MUST** also check the
-polynomial count and the exact per-polynomial coefficient count against the
-public commitment parameters. The encoded coefficient count only frames the
-field vectors. It does not define the block layout.
-
-The coefficients are physically one flat field vector. A B operation **MAY**
-borrow each A row as `q_B` contiguous B subrings. It **MUST NOT** treat the B
-view as the persistent semantic type because multiplication in `R_a` and
-multiplication in `R_b` use different quotient rings.
-
-A setup prefix uses the same format with one polynomial. A recursive
-commitment cache **MUST** carry this same hint type. It **MUST NOT** introduce a
-digit form of the hint.
-
-The field element representation is intentional. Current schedules use
-three-bit outer digits but store each digit in an `i8`. A full-width coefficient
-therefore takes 11 digit bytes for a 32-bit field, 22 digit bytes for a 64-bit
-field, or 43 digit bytes for a 128-bit field. The existing field formats use 8,
-8, and 16 bytes respectively. Persisting the A ring is smaller for these
-schedules. It also removes digit-to-field recomposition from proof preparation.
-
-### Temporary T digit storage
-
-Commitment and proof preparation **MUST** derive B native digits from the
-stored A rings through the same canonical projected decomposition operation.
-The resulting `DigitBlocks` is temporary prepared data.
-
-For each logical source block, its plane count **MUST** be:
+and has coefficient length
 
 \[
-n_A q_B\delta_B.
+F_g n_{A,g} a_g.
 \]
 
-Its digit stride **MUST** equal `d_b`. The flat order within the block
-**MUST** be:
+All polynomial rows in one hint **MUST** have equal coefficient length and the
+same nonzero A dimension. The serialized form **MUST** be:
 
 ```text
-[A row][B subcolumn][outer digit]
+polynomial_count
+A_ring_dimension
+for each polynomial:
+    coefficient_count
+    coefficients in stored order
 ```
 
-The commitment path uses this stream to compute `u = B * t_hat`. Proof
-preparation computes it once and shares it between the B relation and T witness
-emission. No long-lived object **MAY** retain it as a second source of truth.
+The hint **MUST NOT** persist B digits, packed digits, per-block wrappers, or a
+recomposition cache. Proof preparation derives one temporary `t_hat` from the
+stored A rows. The A relation consumes the stored A rows directly.
 
-The ownership flow **MUST** be:
+Packed digits are not a persistent hint representation because their packing
+depends on the consuming kernel, basis, and native role dimension. Persisting
+them would duplicate the semantic source and create a format-specific
+conversion boundary.
 
-```text
-inner commitment produces t in A rings
-    -> projected decomposition borrows t as contiguous B subrings
-    -> B commitment consumes temporary t_hat
-    -> commitment hint takes ownership of t
+## Chunk partition
 
-proof preparation takes t from the hint
-    -> projected decomposition borrows t as contiguous B subrings
-    -> one prepared group owns temporary t_hat
-    -> B relation and T witness borrow that same t_hat
-    -> A relation quotient borrows t directly
-```
-
-The implementation **MUST NOT** copy `t` merely to preserve both the inner
-commitment output and the hint. It **MUST** borrow `t` for decomposition and
-then move it into the hint. Proof preparation **MUST NOT** retain both the hint
-and another copy of `t` after it has taken the rows from the hint.
-
-### E digit storage
-
-An E digit stream **MUST** store native D digit planes. Its digit stride
-**MUST** equal `d_d`.
-
-For each semantic E value, its plane count **MUST** be:
+Every group is partitioned into the same positive `W` chunk indices. For group
+`g`, chunk `c` owns the exact block interval
 
 \[
-q_D\delta_D.
+[S_{g,c},S_{g,c}+F_{g,c}),
 \]
 
-The flat order for that value **MUST** be:
-
-```text
-[D subcolumn][opening digit]
-```
-
-Block metadata **MUST** preserve semantic E value boundaries. It **MUST NOT**
-treat each D subcolumn as an unrelated semantic block.
-
-### Inner commitment output
-
-The inner A commitment operation produces recomposed A rows. The role
-transition that knows both `d_a` and `d_b` owns T decomposition.
-
-The output type for the inner A operation **MUST** store only the recomposed A
-rows and their A dimension. It **MUST NOT** require a decomposed digit stride
-to equal the A dimension.
-
-The codebase **MUST** have one canonical A-to-B projected decomposition
-operation. Dense, one-hot, sparse, recursive, and setup-prefix paths **MUST**
-call that operation. They **MUST NOT** keep backend-specific copies of the
-layout rule.
-
-The commitment boundary **MUST** move the inner A rows into the commitment
-hint. It **MAY** borrow those same rows while it derives the temporary B input.
-It **MUST NOT** decompose the rows merely to construct the hint.
-
-### Witness addresses
-
-E and T are no longer addressable as one carrier ring index per digit in the
-mixed case. An address API **MUST** return a checked coefficient offset or a
-checked contiguous native-role span.
-
-`e_index` and `t_index` style APIs that omit the role subcolumn **MUST NOT** be
-used as the physical mixed-dimension address authority.
-
-## Required implementation behavior
-
-The implementation **MUST** meet these requirements:
-
-1. The projected decomposer scans each semantic A row and emits native role
-   digits directly in canonical order.
-2. The B and D commitment kernels consume that output without a transpose.
-3. The commitment hint stores A native `t` rows and no T digits.
-4. Proof preparation derives T digits once from the hint. The B relation and T
-   witness emission share that derived stream.
-5. The A relation remains defined by the stated B recomposition formula. The
-   prover quotient may use stored `t` as its exact cached result. It does not
-   reconstruct hint storage from digits.
-6. E recomposition follows the same rule with D subrings.
-7. Witness emission copies each live native role run directly and writes zero
-   carrier padding only after the live run.
-8. Relation, setup, trace, quotient, recursive, and terminal consumers use the
-   same canonical address formulas.
-9. The old digit hint, hint recomposition helpers, digit-major projected order,
-   and conversion helpers that exist only to preserve them are deleted in the
-   same cutover.
-
-The implementation **MUST NOT** add a second runtime path selected by a broad
-mixed-versus-uniform dispatch boundary. It **MAY** use local compile-time
-specialization and local `q_R = 1` or `Q_R = 1` branches inside the canonical
-operations.
-
-## Complexity and performance requirements
-
-For `n` semantic A values and role digit count `delta`, projected decomposition
-and relation recomposition **MUST** use:
+where
 
 \[
-O(n a\delta)
+F_{g,c}=\lfloor F_g/W\rfloor+[c < F_g\bmod W]
 \]
 
-coefficient work. They **MUST NOT** add an `O(q)` copy of the full A digit
-stream.
+and `S_{g,c}` is the checked prefix sum of earlier chunk lengths. Each interval
+**MUST** be nonempty, intervals **MUST** be adjacent, and their union **MUST**
+be `[0,F_g)`.
 
-Witness emission **MUST** use work proportional to the live bytes plus the
-required zero padding. It **MUST NOT** allocate one temporary A carrier plane
-per digit.
+`ChunkedWitnessCfg` chooses `W`; it is not resolved address geometry.
+`WitnessLayout` owns the resolved block intervals and coefficient ranges.
 
-B and D matrix scans **MUST** remain row contiguous in native role rings.
+## Physical unit order
 
-The structured setup and relation evaluators **MUST** keep the subcolumn and
-digit factors as compact tensor axes. They **MUST NOT** allocate a dense table
-over groups, chunks, blocks, rows, subcolumns, digits, and coefficients.
-
-When `q_R = 1`, the canonical implementation **MUST** avoid:
-
-- multiplication by one for projection weights;
-- allocation of projection power vectors;
-- layout conversion;
-
-When `Q_R = q_R`, it **MUST** avoid carrier padding loops. When
-`a = b = d = C`, it **MUST** avoid any regression from the current uniform
-commitment and verifier kernels.
-
-### Performance acceptance protocol
-
-Performance comparisons **MUST** use the PR merge base as the baseline. Each
-comparison **MUST** build both revisions with the same Rust toolchain, release
-profile, feature set, and target CPU. It **MUST** alternate baseline and PR
-measurements on one machine after at least one unmeasured warmup for each
-revision.
-
-The focused comparison **MUST** cover `setup_index_weight` and
-`relation_evaluator` with these shapes:
-
-- uniform `a = b = d = C`;
-- B mixed and D uniform;
-- D mixed and B uniform;
-- B and D both mixed;
-- `a < C` carrier padding;
-- multiple groups and multiple chunks.
-
-It **MUST** also cover the uniform root commitment kernel and the end-to-end
-profile cases affected by the cutover. Each focused case **MUST** use at least
-ten measured samples and report the median.
-
-A case is a performance regression when the PR median is more than three
-percent slower than the baseline median. The cutover **MUST NOT** have a
-regression in any uniform or mixed focused case. Production mixed paths
-**MUST NOT** contain a layout conversion, a non-unit live stride, or a dense
-projected weight table.
-
-The three-sample CI profile comment is supporting evidence, not the only
-acceptance measurement. If it reports a slowdown greater than three percent,
-the implementation **MUST** run the focused comparison for that component and
-record the result in the PR. A reported regression **MUST NOT** be dismissed as
-noise without that comparison.
-
-## Serialization and protocol identity
-
-This is a breaking protocol cutover.
-
-Mixed-dimension B column labels and mixed-dimension E and T witness addresses
-change. Current D commitment storage already has the required subcolumn then
-digit order, so this cutover does not permute D commitment columns. The
-implementation **MUST** update every protocol epoch, fixture, setup-prefix
-artifact identity, and serialized hint expectation that depends on changed
-bytes.
-
-The implementation **MUST NOT** accept old digit hints or old mixed-dimension
-proof bytes.
-
-The schedule and instance descriptor already bind the role dimensions and
-digit bases. If the current protocol identity does not distinguish the old and
-new physical order, the cutover **MUST** change that identity once. It
-**MUST NOT** serialize a permanent layout mode.
-
-## Safety requirements
-
-Every verifier-reachable address calculation **MUST** check multiplication,
-addition, range length, and role divisibility before indexing or allocation.
-
-Malformed dimensions, block ownership, digit counts, or storage lengths
-**MUST** return `AkitaError`. Verifier-reachable code **MUST NOT** panic, use
-unchecked indexing, or allocate from an unchecked proof-controlled product.
-
-## Independent oracle
-
-The test suite **MUST** contain an independent dense oracle. The oracle **MUST**
-compute expected addresses from the boxed formulas in this spec. It **MUST NOT**
-call production address, tensor, or column helpers.
-
-For each case, the oracle **MUST** compare:
-
-- native E and T digit streams;
-- B and D commitment inputs;
-- outgoing witness bytes;
-- B and D setup columns;
-- consistency, A, B, and D relation evaluations;
-- direct and structured setup contributions;
-- evaluation trace weights;
-- quotient rows;
-- recursive handoff and terminal consumption.
-
-Tests **MUST** include:
-
-- uniform `a = b = d = C`;
-- mixed B only;
-- mixed D only;
-- both B and D mixed;
-- `a < C` in a multi-group carrier;
-- multiple claims and multiple live blocks;
-- multiple chunks with a nonzero global block start;
-- digit counts 1, 3, and a power of two;
-- direct and setup-offloaded verification;
-- malformed stride, ratio, padding, and block metadata.
-
-The uniform tests **MUST** assert byte equality against the pre-cutover uniform
-fixtures. Mixed tests **MUST** assert the new order explicitly rather than only
-checking prover and verifier agreement.
-
-## Acceptance criteria
-
-- [ ] This spec is the normative coefficient-level E and T layout contract.
-- [ ] E and T both split into native role rings before decomposition.
-- [ ] T hints store only A native `t` rings in
-      `[polynomial][block][A row][A coefficient]` order.
-- [ ] Commitment and proof preparation use the same canonical A-to-B
-      decomposition operation.
-- [ ] Proof preparation shares one temporary B native digit stream between the
-      B relation and T witness emission.
-- [ ] E storage uses one semantic value boundary with D subcolumns inside it.
-- [ ] B and D physical columns use `[semantic][subcolumn][digit]`.
-- [ ] Outgoing E and T use `[semantic][carrier subcolumn][digit][coefficient]`.
-- [ ] Live data precedes carrier padding for every semantic value.
-- [ ] No projected digit transpose remains in production code.
-- [ ] One canonical projected decomposition operation serves every source type.
-- [ ] No hint recomposition helper or persistent T digit cache remains.
-- [ ] Direct and structured setup evaluation use the same projected equality
-      tensors.
-- [ ] Evaluation trace coefficient partials cost `O(a_h)` per claim and do not
-      scan carrier padding.
-- [ ] `q_R = 1` paths allocate no projection powers and perform no projection
-      multiplication by one.
-- [ ] Uniform commitment bytes and witness bytes remain unchanged.
-- [ ] Uniform and mixed performance passes the defined acceptance protocol.
-- [ ] Mixed commitment, witness, relation, setup, trace, quotient, recursive,
-      and terminal paths match the independent dense oracle.
-- [ ] Old mixed layout helpers, fixtures, and compatibility paths are deleted.
-- [ ] Protocol identity and setup-prefix artifacts are updated once for the
-      breaking cutover.
-- [ ] Verifier-reachable malformed inputs return `AkitaError` without panic.
-- [ ] No mixed benchmark regression is caused by layout conversion, a non-unit
-      live stride, or a dense projected weight table.
-- [ ] Repository formatting, documentation guardrails, Clippy feature graphs,
-      and focused tests pass.
-
-## Implementation surface
-
-The cutover has the following required code changes.
-
-The hint type in `crates/akita-types/src/proof/hints.rs` **MUST** replace
-`Vec<DigitBlocks>` with `Vec<RingVec<F>>`. Its methods and serialization
-**MUST** describe semantic A rows. The marker for `F`, digit accessors, digit
-flattening, and old digit serialization **MUST** be deleted.
-
-The inner commitment result in `crates/akita-prover/src/lib.rs` **MUST** expose
-one movable A ring buffer in block order. The caller collects one such buffer
-for each polynomial. Existing backend implementations **MUST** construct this
-canonical result. They **MUST NOT** add another result type or a conversion
-wrapper. Any block access **MUST** be a slice of that buffer and use the public
-row count to find its bounds.
-
-Root commitment, recursive commitment, and setup prefix commitment **MUST**
-borrow the A rows to derive the temporary B digits. They **MUST** move those A
-rows into the hint after the B commitment has consumed the digits.
-
-Ring switch proof preparation **MUST** take the A rows from the hint. It
-**MUST** derive one B digit stream and place both values in the prepared group.
-The A relation quotient **MUST** use the A rows as the exact cached value of
-`recompose_B(t_hat)`. The relation definition and verifier **MUST** continue to
-use the recomposition formula in this spec. The B relation and T witness
-emission **MUST** use the prepared B digits. The consistency relation concerns
-E and is not a consumer of the T hint.
-
-`crates/akita-prover/src/compute/hint_recompose.rs` **MUST** be deleted. A
-recursive state **MUST** carry `AkitaCommitmentHint<F>` directly. The thin
-`RecursiveCommitmentHintCache` wrapper **MUST** be deleted.
-
-The complete review surface is:
+The `WitnessLayout::units()` sequence **MUST** use this nesting:
 
 ```text
-crates/akita-prover/src/kernels/linear/decompose.rs
-crates/akita-prover/src/compute/hint_recompose.rs  # delete
-crates/akita-prover/src/lib.rs
-crates/akita-prover/src/compute/operation_plans.rs
-crates/akita-prover/src/backend/
-crates/akita-prover/src/backend/recursive/hint.rs  # delete
-crates/akita-prover/src/api/commitment.rs
-crates/akita-prover/src/api/setup_prefix.rs
-crates/akita-prover/src/protocol/ring_relation.rs
-crates/akita-prover/src/protocol/ring_relation_witness.rs
-crates/akita-prover/src/protocol/ring_relation/relation_quotient.rs
-crates/akita-prover/src/protocol/ring_switch/commit.rs
-crates/akita-prover/src/protocol/ring_switch/coeffs.rs
-crates/akita-prover/src/protocol/ring_switch/relation_weights.rs
-crates/akita-prover/src/types/opening_data.rs
-crates/akita-types/src/proof/hints.rs
-crates/akita-types/src/proof/setup_prefix.rs
-crates/akita-types/src/proof/tail_segments.rs
-crates/akita-types/src/witness.rs
-crates/akita-types/src/setup_contribution/plan/
-crates/akita-types/src/trace_weight/
-crates/akita-setup/src/lib.rs
-crates/akita-verifier/src/protocol/ring_switch/
+for chunk c in 0..W:
+    for relation-order position p in 0..G:
+        emit unit (group = g(p), chunk = c)
 ```
 
-This list is a review guide. It is not permission to add forwarding wrappers or
-parallel layout authorities.
+The physical unit index is
 
-Tests **MUST** cover hint serialization, malformed dimensions and lengths, the
-exact polynomial and block order, setup prefix persistence, root and recursive
-commitment, and equality of the B commitment before and after the hint storage
-change when both sides use the new digit layout. Performance tests **MUST**
-measure the new hint byte size and confirm that proof preparation performs one
-A to B decomposition and no hint recomposition. The setup prefix artifact
-identity **MUST** change. This hint is prover data and is not part of proof
-bytes, so this storage change alone **MUST NOT** change the proof transcript.
+\[
+u(c,p)=cG+p.
+\]
 
-## Alternatives considered
+Groups **MUST NOT** be sorted by dimension. A group's units are generally
+strided by `G` in the unit table; callers that need all units of one group
+**MUST** select them by group index and preserve increasing chunk index.
 
-### Keep T digit first and change only E
+For `G = 1` or `W = 1`, chunk-major and group-major nesting coincide. The
+dominant single-final-group case therefore incurs no ordering penalty.
 
-This preserves the old projected digit order and makes B commitment migration
-smaller. It leaves two projection rules and keeps carrier padding between live
-T digits. It is rejected.
+## Exact coefficient ranges
 
-### Persist bit-packed T digits
+All `WitnessUnitLayout` ranges are ranges of field coefficients, not ranges of
+implicit ring slots.
 
-Three-bit packing would make the digit stream smaller than the current field
-serialization for some field profiles. It would still make the decomposition
-the persistent source of truth. Proof preparation would have to unpack the
-digits and recompose the A rings needed by the A relation quotient and other A
-ring prover work. It is rejected. Bit packing remains a possible encoding for
-proof digit segments, where the digits are the protocol data.
+For group `g` and chunk `c`, define:
 
-### Decompose A first, then transpose once
+\[
+\begin{aligned}
+L_Z(g) &= M_g\delta_{Z,g}\delta_{F,g}a_g,\\
+L_E(g,c) &= H_gF_{g,c}q_{D,g}\delta_{D,g}d_g
+          = H_gF_{g,c}\delta_{D,g}a_g,\\
+L_T(g,c) &= H_gF_{g,c}n_{A,g}q_{B,g}\delta_{B,g}b_g
+          = H_gF_{g,c}n_{A,g}\delta_{B,g}a_g.
+\end{aligned}
+\]
 
-This preserves the current A-wide decomposition kernel but adds a full digit
-transpose before B or D consumption. It adds memory traffic and a second
-physical order. It is rejected.
+Starting from `cursor = 0`, each physical unit receives adjacent nonempty
+ranges:
 
-### Keep one A carrier plane per digit
+```text
+z_range = cursor .. cursor + L_Z(g)
+e_range = z_range.end .. z_range.end + L_E(g,c)
+t_range = e_range.end .. e_range.end + L_T(g,c)
+cursor  = t_range.end
+```
 
-This keeps the old `e_index` and `t_index` model. In mixed multi-group layouts,
-it places padding between live digit runs and prevents setup and witness axes
-from sharing one contiguous tensor. It is rejected.
+Every chunk contains a complete copy of group `g`'s Z segment. E and T contain
+only the source blocks owned by that chunk.
 
-### Add separate uniform and mixed implementations
+### Z order
 
-This can preserve current uniform code without changing its local types. It
-creates two protocol implementations that can drift. It is rejected. The
-canonical implementation **MAY** still specialize local `q_R = 1` and `Q_R = 1`
-inner loops.
+Z uses
 
-## Documentation updates
+```text
+[position][inner digit][fold digit][A coefficient]
+```
 
-The implementation PR **MUST** keep these documents aligned:
+For `0 <= k < a_g`,
 
-- [`digit-innermost-layout.md`](digit-innermost-layout.md), for logical witness
-  ownership and segment order;
-- [`setup-layout-repack.md`](setup-layout-repack.md), for semantic and physical
-  role columns;
-- [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md), for
-  projection geometry and performance claims;
-- [`relation-range-image-sumcheck.md`](relation-range-image-sumcheck.md), for
-  Stage 2 relation and evaluation trace structure;
-- [`../book/src/how/proving/opening-points-layout.md`](../book/src/how/proving/opening-points-layout.md),
-  for the narrative witness order;
-- [`../book/src/how/verifying/matrix_evaluation.md`](../book/src/how/verifying/matrix_evaluation.md),
-  for projected relation and setup evaluation.
+\[
+j_Z=Z_{g,c}+((p\delta_{Z,g}+z)\delta_{F,g}+f)a_g+k.
+\]
 
-After implementation is stable and the book contains the durable contract,
-this spec **SHOULD** be marked implemented and then archived under the normal
-spec lifecycle.
+The fold digit and then the native coefficient are contiguous. No A padding
+follows a Z value.
+
+### E order
+
+E uses
+
+```text
+[claim][local block][D subcolumn][opening digit][D coefficient]
+```
+
+Let `ell = global_block - S_g,c`. For `0 <= k < d_g`,
+
+\[
+j_E=E_{g,c}+
+(((hF_{g,c}+\ell)q_{D,g}+s)\delta_{D,g}+o)d_g+k.
+\]
+
+The valid subcolumns are exactly `0 <= s < q_D,g`. No other subcolumns exist.
+
+### T order
+
+T uses
+
+```text
+[claim][local block][A row][B subcolumn][outer digit][B coefficient]
+```
+
+For `0 <= k < b_g`,
+
+\[
+j_T=T_{g,c}+
+((((hF_{g,c}+\ell)n_{A,g}+i)q_{B,g}+s)
+\delta_{B,g}+o)b_g+k.
+\]
+
+The valid subcolumns are exactly `0 <= s < q_B,g`. No other subcolumns exist.
+
+## Native quotient tail
+
+After the final Z/E/T unit, the witness contains one shared R tail. Relation
+rows use the canonical order
+
+```text
+[consistency_g | A_g | B_g | B_inner_g] for each relation-order group
+[shared D rows]
+```
+
+For row `rho`, allocate an adjacent range of length `delta_R * r_rho`. Within
+that row the order is
+
+```text
+[quotient digit][native row coefficient]
+```
+
+and
+
+\[
+j_R=R_\rho+o r_\rho+k.
+\]
+
+The exact live R length is
+
+\[
+L_R=\delta_R\sum_\rho r_\rho.
+\]
+
+`WitnessLayout` **MUST** retain enough checked row-range information to answer
+an R coefficient address without assuming a uniform row stride.
+`relation_rows * delta_R` is not a valid storage length for mixed native rows.
+
+## Complete live length and zero suffix
+
+The exact live coefficient length is
+
+\[
+L=\sum_{c=0}^{W-1}\sum_{p=0}^{G-1}
+(L_Z(g(p))+L_E(g(p),c)+L_T(g(p),c))+L_R.
+\]
+
+Let `d_next` be the successor commitment's A ring dimension. Define
+
+\[
+N_{next}=\left\lceil L/d_{next}\right\rceil,
+\qquad
+N_{cube}=2^{\lceil\log_2 N_{next}\rceil},
+\qquad
+P=N_{cube}d_{next}.
+\]
+
+The committed and Stage-2 multilinear source is the coefficient vector of
+length `P` formed by the exact live prefix `[0,L)` followed by one zero suffix
+`[L,P)`. This suffix simultaneously supplies any partial successor ring and
+the Boolean-domain padding. There **MUST NOT** be zero gaps inside `[0,L)`.
+
+The prover **SHOULD** avoid materializing the suffix when a downstream kernel
+accepts an exact live prefix plus an implicit-zero domain. Serialization and
+commitment semantics are nevertheless defined by the length-`P` vector.
+
+## Common relation coefficient block
+
+Let `D_all` contain every `a_g`, `b_g`, `d_g`, and every quotient row dimension
+`r_rho`. Define
+
+\[
+m=\min D_{all}.
+\]
+
+Because all supported dimensions are powers of two, `m` divides every member
+of `D_all`. Each Z, E, T, and R segment length is therefore a multiple of `m`.
+Since the first segment starts at zero and every next segment starts at the
+previous end, every live segment base is `m`-aligned without sorting or
+padding.
+
+`RelationAddressGeometry` **MUST** own:
+
+- `m`;
+- exact live coefficient length `L`;
+- committed coefficient length `P`;
+- the checked Boolean domain over `P`; and
+- per-role lane counts `d_role / m`.
+
+It **MUST NOT** own a batch carrier dimension or derive `L` by multiplying a
+ring-slot count by `max_g a_g`.
+
+For any live coefficient address `j`, write
+
+\[
+j=m\lambda+\kappa,
+\qquad 0\le\kappa<m.
+\]
+
+At relation point `(r_low,r_high)`, its equality weight factorizes as
+
+\[
+\operatorname{eq}(j,r)
+=\operatorname{eq}(\kappa,r_{low})
+ \operatorname{eq}(\lambda,r_{high}).
+\]
+
+A native role ring of dimension `r` occupies `r/m` adjacent high-coordinate
+lanes. This is the only mixed-dimension difference in flat relation addressing.
+No transpose, carry split, dimension sort, or dense fallback is required.
+
+## Relation algebra is unchanged
+
+Compact storage changes addresses, not equations. For each native relation row
+of dimension `r_rho`, the prover and verifier still enforce
+
+\[
+M_\rho(\widehat z,\widehat e,\widehat t)
+=y_\rho+(X^{r_\rho}+1)\widehat r_\rho.
+\]
+
+E and T contributions **MUST** be recomposed at their A semantics with
+
+\[
+\sum_s\sum_o X^{s d_g}\beta_{D,g}^o\widehat e_{s,o}
+\quad\text{and}\quad
+\sum_s\sum_o X^{s b_g}\beta_{B,g}^o\widehat t_{s,o}.
+\]
+
+The consistency and A rows consume A-native values. B rows consume B-native T
+digits. Shared D rows consume D-native E digits. Alpha powers for projection
+belong to the subcolumn tensor factor `alpha^(s r)`; gadget powers belong to
+the digit factor `beta^o`. Moving from a larger to a smaller native ring shifts
+which equality coordinates and alpha powers are explicit, but does not create
+a different relation.
+
+## Setup and evaluation-trace columns
+
+Setup B and D columns **MUST** use the same semantic axes as witness storage:
+
+\[
+\begin{aligned}
+\operatorname{col}_D(h,b,s,o)
+  &=(((hF_g+b)q_{D,g}+s)\delta_{D,g}+o),\\
+\operatorname{col}_B(h,b,i,s,o)
+  &=((((hF_g+b)n_{A,g}+i)q_{B,g}+s)\delta_{B,g}+o).
+\end{aligned}
+\]
+
+Chunks map local block `ell` back to global block `S_g,c + ell`; setup
+matrices are not copied per chunk. Group offsets use checked prefix sums in
+authenticated relation order.
+
+The evaluation trace **MUST** address E with the same E formula. It may fold
+contiguous coefficient runs or factor the common block, but it **MUST NOT**
+materialize padded projected planes. For `q_D,g = 1`, it **MUST** use the
+contiguous identity case without projection powers or multiplication by one.
+
+## Single sources of truth
+
+The implementation **MUST** evolve the existing authorities:
+
+- `WitnessLayout` owns chunk-major units and all exact coefficient ranges;
+- `WitnessUnitLayout` owns Z/E/T address validation;
+- `RelationRhsLayout::row_ring_dims()` owns quotient row dimensions and order;
+- `RelationAddressGeometry` owns the common block and complete flat domain;
+- the existing projected-decomposition kernel owns split-before-decompose; and
+- `AkitaCommitmentHint` owns persistent A-native hint rows.
+
+Code **MUST NOT** introduce a second compact layout type, a mixed-only witness
+type, a uniform wrapper, a `_for_level` forwarding helper, or duplicated length
+arithmetic in planner, prover, setup, and verifier code. Those consumers call
+the canonical authorities directly.
+
+`RelationRangeImagePlan` **MUST NOT** encode each group's units as one
+contiguous `Range<usize>`. It **MAY** store the authenticated group order and
+derive unit index `cG+p`, or store validated per-group unit indices. Either
+representation **MUST** preserve chunk-major physical order.
+
+## Validation
+
+At a trusted schedule or verifier boundary, construction **MUST** reject:
+
+- zero, non-power-of-two, or non-dividing role dimensions;
+- an empty group, chunk, segment, or quotient depth;
+- chunk count above the repository cap or above any group's live block count;
+- units not in exact chunk-major/authenticated-group order;
+- chunk block ranges that overlap, gap, reorder, or fail to cover `[0,F_g)`;
+- a Z/E/T range whose length differs from the formulas above;
+- an R row range whose length differs from `delta_R * r_rho`;
+- any internal range gap or overlap;
+- a live length, padding length, or address computation that overflows;
+- a committed domain shorter than `L`, not divisible by `d_next`, or not a
+  power-of-two number of successor rings; and
+- any prover-supplied index outside its checked semantic range.
+
+Verifier-reachable code **MUST** return `AkitaError` or `SerializationError`.
+It **MUST NOT** panic, assert, unwrap, index unchecked, or allocate from an
+unvalidated proof-controlled size.
+
+## Performance requirements
+
+The compact representation is an optimization contract, not only a byte
+contract.
+
+- Witness emission **MUST** copy native contiguous coefficient runs directly.
+- No Z/E/T emitter may zero-fill per-role or per-group padding.
+- No relation, setup, trace, or commitment consumer may transpose an entire
+  projected segment.
+- Mixed dimensions **SHOULD** use common-block tensors and batched affine
+  recurrences rather than one scalar equality expansion per coefficient.
+- The `q = 1` specialization **MUST** avoid projection allocation and
+  multiplication by one inside the shared operation.
+- The single-group path **MUST** retain contiguous sequential units and must not
+  pay for group lookup or gather buffers in its hot loop.
+- Recursive setup offloading **MUST** preserve chunk ownership: one machine's
+  complete multi-group chunk is contiguous, while the setup prefix remains a
+  shared semantic matrix rather than a chunk copy.
+
+Performance acceptance is relative to PR 337's merge base `a0b436dc5`, not to
+an intermediate commit on the branch. The benchmark matrix **MUST** include:
+
+- uniform single-group single-chunk;
+- uniform single-group multi-chunk;
+- mixed single-group;
+- mixed multi-group single-chunk;
+- mixed multi-group multi-chunk; and
+- recursive setup offloading with multi-group multi-chunk geometry.
+
+Uniform single-group performance **MUST NOT** materially regress. Any mixed
+regression **MUST** be explained by measured arithmetic or memory work, not by
+layout conversion, padding, or a broad dispatch boundary.
+
+## Required tests
+
+Independent address-oracle tests **MUST** enumerate Z, E, T, and R coefficients
+from the formulas in this document and compare them with `WitnessLayout`.
+Coverage **MUST** cross:
+
+- `G in {1, 2, 3}`;
+- `W in {1, 2, 4, 8}` where block counts permit;
+- uniform and mixed A/B/D dimensions;
+- final A smaller than a precommitted A;
+- unequal group block counts and claim counts;
+- `q_B = 1`, `q_D = 1`, and both greater than one;
+- native quotient rows of at least two dimensions;
+- exact successor alignment and nontrivial Boolean suffix padding; and
+- malformed ranges, dimensions, chunk partitions, and point lengths.
+
+Algebra tests **MUST** compare native split/decompose/recompose against a dense
+A-ring oracle for E and T. Relation, setup contribution, evaluation trace, and
+Stage 2 tests **MUST** compare compact mixed layouts with dense coefficient
+oracles. Serialization tests **MUST** pin the A-native hint format.
+
+An implementation slice is complete only after formatting, repository
+guardrails, all three release Clippy feature graphs, the CI Nextest target set,
+and the benchmark matrix pass.
+
+## Required deletion surface
+
+The cutover **MUST** delete or evolve away:
+
+- batch `max A` witness carrier computation;
+- `carrier_ring_dimension` accessors and fields in relation geometry;
+- carrier-scaled `total_len` and outgoing-source-length formulas;
+- carrier subcolumn counts and live-versus-padding subcolumn branches;
+- group-major unit construction and contiguous per-group `unit_range` metadata;
+- uniform-stride R indexing;
+- padded projected plane construction or zero filling;
+- recomposition and recursive hint wrappers; and
+- stale docs or tests that present any of those as current behavior.
 
 ## References
 
-- [BCP 14 and RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
+- [RFC 2119](https://www.rfc-editor.org/rfc/rfc2119)
 - [RFC 8174](https://www.rfc-editor.org/rfc/rfc8174)
 - [`digit-innermost-layout.md`](digit-innermost-layout.md)
-- [`setup-layout-repack.md`](setup-layout-repack.md)
 - [`mixed-ring-dimension-per-level.md`](mixed-ring-dimension-per-level.md)
+- [`distributed-setup-offloading.md`](distributed-setup-offloading.md)
+- [`relation-range-image-sumcheck.md`](relation-range-image-sumcheck.md)
+- [`setup-layout-repack.md`](setup-layout-repack.md)

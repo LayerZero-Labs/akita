@@ -428,7 +428,7 @@ exactly:
 - opening-digit gadget weights and one precomputed inner-trace row; and
 - one `EvaluationTraceSegment` per witness chunk, recording the flat physical
   coefficient start, group-global block start, exact live-block count, and the
-  checked D projection geometry needed to skip carrier padding.
+  checked native D projection geometry.
 
 The verifier receives its own minimal prepared group descriptors from the same checked
 claim coefficients, opening points, group/chunk ownership, basis, and source dimensions.
@@ -475,10 +475,12 @@ unscheduled production key exists.
 Within the scheduled shapes above, the canonical layout is supplied by `WitnessLayout`:
 
 ```text
-for group in opening_batch.root_group_order():
-  for unit in witness_layout.units_for_group(group):
+for chunk in 0..num_chunks:
+  for group in opening_batch.root_group_order():
+    unit = witness_layout.unit(group, chunk)
     [z(group, chunk) | e(group, chunk) | t(group, chunk)]
-[shared quotient r suffix]
+[shared native quotient r rows]
+[one zero suffix for successor alignment and Boolean padding]
 ```
 
 Each `WitnessUnitLayout` owns a group id, chunk id, global block range, and exact z/e/t
@@ -501,8 +503,7 @@ The coefficient order inside projected E and T ranges is defined by
 - The shared quotient-R suffix is one ordinary relation segment; it is not replicated by
   the number of groups or chunks.
 - Boolean-domain padding remains one zero suffix after the physical witness.
-  Role carrier padding remains inside each projected E or T semantic value as
-  defined by the role native projection spec. It is not setup-backed data.
+  There is no role-local or group-local padding inside the live prefix.
 
 ### Group-specific inputs that require preparation
 
@@ -528,17 +529,15 @@ a unit with global block start `B`, `F` local blocks, local block `j`, claim
 
 ```text
 q_D = d_a / d_d
-Q_D = carrier_dimension / d_d
 
 unit.e_coefficient_start
-  + ((((c * F + j) * Q_D + s) * depth_open + o) * d_d + kappa),
+  + ((((c * F + j) * q_D + s) * depth_open + o) * d_d + kappa),
 
 global_block = B + j.
 ```
 
-Only `0 <= s < q_D` is live. The subcolumns `q_D <= s < Q_D` are zero
-carrier padding. The role native projection spec defines the exact trace
-contraction formula.
+Exactly `0 <= s < q_D` exists. The role-native layout spec defines the exact
+trace contraction formula.
 
 The evaluation trace uses `block_opening_weight(global_block)`. It must not reset the
 block index to zero at each chunk. E and T supports are split across units; Z is a separate
@@ -548,11 +547,11 @@ attribution must preserve those distinctions.
 ### Evaluation trace over the cross-product
 
 Each `EvaluationTraceTerm` owns its normalized group and claim coefficient,
-source ring dimension, D ring dimension, live and carrier subcolumn counts,
-digit gadget, inner trace vectors, and one physical E segment per relevant
+source ring dimension, D ring dimension, live subcolumn count, digit gadget,
+inner trace vectors, and one physical E segment per relevant
 witness unit. A segment records its flat physical coefficient start and global
 block start and count. The prepared trace walks the native D runs in the order
-`[block][D subcolumn][opening digit][D coefficient]` and skips carrier padding.
+`[block][D subcolumn][opening digit][D coefficient]` with no internal padding.
 This expresses multiple groups and chunks without `TraceTermBatch`,
 `dense_evals`, a transpose, or a remapped table.
 

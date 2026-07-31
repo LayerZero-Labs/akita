@@ -65,7 +65,7 @@ subwindows, with a checked work cap at the verifier boundary.
 The A, B, and D setup contributions use the same group and chunk ranges. D group
 offsets follow checked relation-group prefix sums. `SetupProjectionGeometry`
 owns mixed-ring projection, so verifier evaluation does not maintain a parallel
-layout carrier for setup columns.
+setup-column layout.
 
 The active
 [`role-native-projected-digit-layout`](../../../specs/role-native-projected-digit-layout.md)
@@ -80,11 +80,10 @@ At the ring evaluation point `alpha`, a role subcolumn `s` of dimension `r`
 has weight `alpha^(s * r)`. The verifier includes this power in the projected
 equality tensor and applies the role gadget power on the digit axis.
 
-When the live projection ratio is one, the verifier does not allocate
-projection powers or multiply by one. It uses the unprojected contiguous
-equality window directly when the role also fills the carrier. If the carrier
-is larger, it addresses the live carrier spans directly and still omits the
-unit projection factor.
+When the projection ratio is one, the verifier does not allocate projection
+powers or multiply by one. It uses the unprojected contiguous equality window
+directly. Mixed groups use exact coefficient ranges and the shared minimum
+relation block; there are no carrier spans or per-role padding to scan.
 
 ## Safety contract
 

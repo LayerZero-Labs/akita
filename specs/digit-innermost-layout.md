@@ -14,9 +14,12 @@
 This spec follows the lifecycle in [`PRUNING.md`](PRUNING.md). It replaces the first version of this file. That version used a power of two block count, a compact position count, and a second virtual opening address. This version reverses those choices.
 
 [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md)
-is authoritative for the coefficient order inside projected E and T segments.
-This spec remains authoritative for source order, group and chunk ownership,
-segment order, and exact segment ranges.
+is authoritative for the physical outgoing witness: coefficient ranges,
+projected E/T order, native quotient rows, chunk-major unit nesting, and final
+zero suffix. This spec remains authoritative for source-polynomial block order,
+digit-innermost semantics, and challenge ownership. Any ring-slot or
+group-major witness formula below is superseded by that compact coefficient
+contract.
 
 ## Summary
 
@@ -293,28 +296,31 @@ It may store role dimensions, projection ratios, required setup footprint, round
 
 ## Physical witness order
 
-For each group in relation order, emit each chunk in chunk order.
+The compact coefficient layout is normative in
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
+For each chunk in chunk order, emit each group in authenticated relation order.
 
 ```text
-group 0
-  chunk 0: [ z_00 | e_00 | t_00 ]
-  chunk 1: [ z_01 | e_01 | t_01 ]
+chunk 0
+  group 0: [ z_00 | e_00 | t_00 ]
+  group 1: [ z_10 | e_10 | t_10 ]
 
-group 1
-  chunk 0: [ z_10 | e_10 | t_10 ]
-  chunk 1: [ z_11 | e_11 | t_11 ]
+chunk 1
+  group 0: [ z_01 | e_01 | t_01 ]
+  group 1: [ z_11 | e_11 | t_11 ]
 
 shared:    [ r ]
 ```
 
-For one unit, let `s_j` be its `global_block_start` and let `F_j` be its `num_live_blocks`.
+For one unit, let `s_j` be its `global_block_start` and let `F_j` be its
+`num_live_blocks`. All following ranges are field-coefficient ranges.
 
 Its exact segment lengths are:
 
 ```text
-Z_g  = M_g * delta_c_g * delta_f_g
-E_gj = C_g * F_j * delta_o_g
-T_gj = C_g * F_j * n_A_g * delta_c_g
+Z_g  = M_g * delta_c_g * delta_f_g * a_g
+E_gj = C_g * F_j * delta_o_g * a_g
+T_gj = C_g * F_j * n_A_g * delta_c_g * a_g
 ```
 
 Resolve each unit from one checked cursor.
@@ -326,10 +332,11 @@ t_range = e_range.end .. e_range.end + T_gj
 cursor  = t_range.end
 ```
 
-After the final unit:
+After the final unit, R stores each relation row in its native dimension:
 
 ```text
-r_range = cursor .. cursor + relation_rows * delta_r
+r_len   = delta_r * sum(row_ring_dims)
+r_range = cursor .. cursor + r_len
 ```
 
 No caller may recompute these bases from a uniform stride.
@@ -339,14 +346,14 @@ No caller may recompute these bases from a uniform stride.
 `z_hat` has axes:
 
 ```text
-[position][commit digit][fold digit]
+[position][commit digit][fold digit][A coefficient]
 ```
 
 The fold digit is innermost.
 
 ```text
-z_index(position, d_c, d_f)
-    = z_start + d_f + delta_f * (d_c + delta_c * position)
+z_index(position, d_c, d_f, k)
+    = z_start + k + a_g * (d_f + delta_f * (d_c + delta_c * position))
 ```
 
 Every chunk for the group contains a complete copy of `z_hat_g`.
@@ -356,7 +363,7 @@ Every chunk for the group contains a complete copy of `z_hat_g`.
 `e_hat` has axes:
 
 ```text
-[claim][local live block index][opening digit]
+[claim][local live block index][D subcolumn][opening digit][D coefficient]
 ```
 
 The opening digit is innermost.
@@ -364,49 +371,40 @@ The opening digit is innermost.
 ```text
 u = global_block_index - s_j
 
-e_index(c, u, d_o)
-    = e_start + d_o + delta_o * (u + F_j * c)
+e_index(c, u, s, d_o, k)
+    = e_start + k
+      + d_g * (d_o + delta_o * (s + q_D,g * (u + F_j * c)))
 ```
-
-For mixed D dimensions, this ring index does not define the coefficient order
-inside the E range. The coefficient order is
-`[D subcolumn][opening digit][D coefficient]` as required by the role native
-projection spec.
 
 ### `t_hat`
 
 `t_hat` has axes:
 
 ```text
-[claim][local live block index][A row][outer digit]
+[claim][local live block index][A row][B subcolumn][outer digit][B coefficient]
 ```
 
-The outer digit is innermost in this logical carrier-ring view.
+The native coefficient is innermost, followed by the outer digit.
 
 ```text
-t_index(c, u, a, d_c)
-    = t_start + d_c
-      + delta_c * (a + n_A * (u + F_j * c))
+t_index(c, u, a, s, d_c, k)
+    = t_start + k
+      + b_g * (d_c + delta_c * (s + q_B,g * (a + n_A * (u + F_j * c))))
 ```
-
-For mixed B dimensions, this ring index does not define the coefficient order
-inside the T range. The coefficient order is
-`[A row][B subcolumn][outer digit][B coefficient]` as required by the role
-native projection spec.
 
 ### `r_hat`
 
 `r_hat` has axes:
 
 ```text
-[relation row][quotient digit]
+[relation row][quotient digit][native row coefficient]
 ```
 
 The quotient digit is innermost.
 
 ```text
-r_index(row, d_r)
-    = r_start + d_r + delta_r * row
+r_index(row, d_r, k)
+    = row_start[row] + k + row_ring_dim[row] * d_r
 ```
 
 There is one `r_hat` tail for the complete relation. It is not copied per group or per machine.

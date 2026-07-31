@@ -41,7 +41,7 @@ experiment:
 - **Across levels:** a large-ring leading band can hand off to a smaller-ring
   recursive suffix.
 - **Within a level:** the A, B, and D commitment matrices can use distinct
-  dimensions `d_a/d_b/d_d`, subject to the A-carrier constraints.
+  dimensions `d_a/d_b/d_d`, subject to A-to-role projection divisibility.
 
 The protocol, setup-contribution, quotient, direct verifier, recursive
 verifier, and multi-group paths all understand this geometry. The offline
@@ -112,9 +112,9 @@ Use these terms in new prose:
 Do not call a transition a “role switch.” The roles are fixed; only their
 dimensions change.
 
-### A is the carrier
+### A is the projection source
 
-`CommitmentRingDims::validate_a_carrier` enforces:
+The canonical role-dimension validator enforces:
 
 ```text
 d_b divides d_a
@@ -148,17 +148,20 @@ The setup is generated at `CommitmentConfig::D`. Every scheduled matrix
 dimension must be supported by field dispatch and divide the generation
 dimension. `validate_schedule_ring_dims` is the schedule boundary check.
 
-### One outgoing carrier per multi-group level
+### One compact outgoing witness per multi-group level
 
 In a multi-group level:
 
 - every group owns native A and B matrix dimensions;
 - the consuming level owns one shared D dimension;
-- the outgoing relation witness carrier is batch-owned and has dimension
-  `max_g d_{a,g}`.
+- every Z/E/T segment is stored at its group's exact native coefficient width;
+- quotient rows are stored at their exact native row dimensions; and
+- only the complete live coefficient vector is zero-extended for the successor
+  commitment and Boolean domain.
 
-The final group is not automatically the carrier owner. Reordering groups must
-not change the carrier dimension.
+There is no batch ring dimension derived from `max_g d_a,g`. Physical units are
+chunk-major with authenticated group order inside each chunk, as specified by
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
 
 ## Planner integration proposal
 
@@ -343,7 +346,7 @@ normative:
 - `b_candidates` and `d_candidates` are independently audited role domains.
 - Candidate lists are sorted, unique, non-empty, and catalog-identity-bound.
 - The planner enumerates the Cartesian product and keeps only tuples satisfying
-  `CommitmentRingDims::validate_a_carrier`.
+  the canonical A-to-role divisibility validation.
 - B and D remain independent; the planner must not impose `d_b == d_d` or an
   ordering between them.
 - Terminal candidates use the A domain because a terminal has only the inner
@@ -424,14 +427,14 @@ candidate in this order:
 2. Derive root or recursive block geometry using `d_a`.
 3. Derive A's native decomposed width, A collision bucket, and minimum secure
    rank at `d_a`.
-4. Derive B's native A-carrier width, then project it to physical B columns:
+4. Derive B's native A-source width, then project it to physical B columns:
 
    ```text
    physical_B_width = native_B_width * (d_a / d_b)
    ```
 
 5. Derive B's collision bucket and minimum secure rank at `d_b`.
-6. Derive D's physical width from every native A-carrier segment. For a
+6. Derive D's physical width from every native A-source segment. For a
    scalar level:
 
    ```text
@@ -449,12 +452,13 @@ candidate in this order:
 7. Derive D's collision bucket and minimum secure rank at `d_d`.
 8. Build the final role-typed matrix parameters directly.
 9. Derive fold bounds and exact proof components from those final parameters.
-10. Derive the exact outgoing witness in the relation carrier:
+10. Derive the exact compact outgoing witness in coefficients:
 
     ```text
-    scalar carrier = d_a
-    multi-group carrier = max_g d_a[g]
-    outgoing_field_len = outgoing_ring_elements * carrier
+    live = sum_chunk_group(Z_coeffs + E_coeffs + T_coeffs)
+           + sum_relation_rows(quotient_depth * native_row_dim)
+    committed = successor_A_dim
+                * next_power_of_two(ceil(live / successor_A_dim))
     ```
 
 11. Compute the candidate's physical setup field-element footprint.
@@ -633,16 +637,19 @@ For each candidate final-group tuple:
 
 - final A/B use the selected `d_a/d_b`;
 - the root owns one shared selected `d_d`;
-- shared D must fit every group's A carrier;
+- shared D must divide every group's A projection source;
 - each precommitted D segment is projected from that group's native A into the
   shared `d_d`;
-- the outgoing carrier is the maximum A dimension across all groups;
+- the outgoing witness uses exact group-native coefficient segments and native
+  quotient rows;
 - physical setup cost includes every frozen and final A/B matrix plus shared D;
 - key identity continues to include exact frozen precommit descriptors.
 
 The planner must replace current uses of `policy.ring_dimension` in
-`d_segment_width` and carrier sizing with the selected shared D and the
-canonical maximum group carrier. Group order must not influence the result.
+`d_segment_width` with the selected shared D. Outgoing sizing must call the
+compact `WitnessLayout` and successor-domain geometry rather than recomputing
+ring slots. Authenticated order fixes bytes; changing stable group identifiers
+without changing that order must not change the length.
 
 ### Generated catalog and replay changes
 
@@ -662,7 +669,8 @@ runtime expansion:
 3. derives A width/rank at stored `d_a`;
 4. projects B width and derives its rank at stored `d_b`;
 5. projects all D segments and derives its rank at stored `d_d`;
-6. derives outgoing witness length in the selected carrier;
+6. derives exact live and committed outgoing coefficient lengths from the
+   canonical compact layout;
 7. recomputes physical setup field elements and exact proof bytes;
 8. rejects any mismatch with the generated topology or policy.
 
@@ -716,7 +724,7 @@ The planner must be independent of hash-map iteration and thread scheduling:
 - canonicalize candidate domains by sorting and deduplicating explicit
   `(d_a, d_b, d_d)` tuples (`RingDimensionSearchDomain::new`); equivalent
   reordered or duplicated input shares one value identity;
-- reject empty domains and tuples that fail A-carrier validation or that are
+- reject empty domains and tuples that fail A-to-role divisibility validation or that are
   not divisors of the setup-generation dimension;
 - enumerate bases, dimensions, and splits in a documented order;
 - store frontiers in ordered collections or sort before selection/emission;
@@ -876,7 +884,7 @@ The planner integration is complete only when all of these hold:
 3. L0 and L1 can select different A/B/D dimensions; every later fold and the
    terminal use D64.
 4. B and D can be selected independently and their widths include exact
-   A-carrier projection ratios.
+   A-to-role projection ratios.
 5. Every selected role key is covered by the canonical SIS table at its exact
    width and coefficient bucket.
 6. Planner, generated-row replay, setup allocation, and
@@ -900,7 +908,7 @@ The planner integration is complete only when all of these hold:
 | Test | Required assertion |
 |---|---|
 | Candidate-domain validation | Sorted unique powers of two; setup D divisible by every role candidate; uniform D64 present; no component below D64 |
-| Role-width unit tests | B/D widths equal native width times exact carrier/role ratio |
+| Role-width unit tests | B/D widths equal native width times exact A-source/role ratio |
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
 | Small exhaustive oracle | Constrained L0/L1 frontier and selected schedule match brute-force enumeration |
 | Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
@@ -985,9 +993,9 @@ Exact root matrix input widths:
 | D | 131,072 | 528,384 | 352,256 |
 
 The F widths are the key correction from the latest scheduler work. A D512
-carrier with D128 B/D matrices has four physical subcolumns per native column.
+A source with D128 B/D matrices has four physical subcolumns per native column.
 Scaling matrices inherited from the D256 seed geometry undercounted these
-widths; deriving them from the final D512 carrier produces `704,512` for both B
+widths; deriving them from the final D512 A source produces `704,512` for both B
 and D.
 
 ## Schedule construction
@@ -1041,7 +1049,7 @@ per_matrix_ring_dims_root_schedule::<Env>(
 Construction:
 
 1. Plan a uniform `Env` root.
-2. Rebuild B and D from the final A-carrier geometry.
+2. Rebuild B and D from the final A-source projection geometry.
 3. Recompute the root's exact outgoing witness length.
 4. Replan the **complete** uniform-`Env` suffix from that boundary.
 5. Derive the setup envelope from the completed mixed schedule.
@@ -1114,7 +1122,7 @@ ThreeBandRingDimensionTransitionConfig<
 5. reconstructs each matrix with `try_new_with_min_rank`.
 
 Do not reintroduce independent “retarget B,” “retarget D,” or width-scaling
-helpers. The final A carrier is the source of truth.
+helpers. The final A dimension is the projection source of truth.
 
 ## Protocol support
 
@@ -1125,8 +1133,8 @@ handled by the regular prover and verifier.
 
 `RelationAddressGeometry` owns:
 
-- the batch carrier dimension;
-- the common relation-witness coefficient count;
+- the exact live and committed coefficient lengths;
+- the common relation-witness coefficient block;
 - relation-lane capacity and variable count;
 - the split between low coefficient variables and lane/column variables.
 
@@ -1169,9 +1177,8 @@ For mixed dimensions, relation lanes use:
 
 ```text
 common base       = common relation-witness coefficient count
-carrier lanes     = carrier D / common base
 role lanes        = role D / common base
-role subcolumns   = carrier lanes / role lanes
+role subcolumns   = A-source D / role D
 lane alpha weight = alpha^(common base * lane)
 ```
 
@@ -1181,19 +1188,19 @@ their lanes across physical subcolumns.
 The subcolumn axis precedes the digit axis. Projection powers
 `alpha^(role subcolumn * role dimension)` are part of the projected equality
 tensor. Using the notation from the role native projected digit layout spec,
-`q_R = 1` omits that tensor factor and every multiplication by one. `Q_R = 1`
-also gives one contiguous equality window. When `q_R = 1 < Q_R`, the plan
-addresses the live carrier spans directly without restoring the unit factor.
+`q_R = 1` omits that tensor factor and every multiplication by one. All live
+segments are exact coefficient intervals, so there is no padded subcolumn
+factor to skip.
 
 ### Direct verifier
 
 The direct verifier uses one canonical projected digit plan. The plan may use
-local compile-time specialization when `q_R = 1` or `Q_R = 1`. It **MUST NOT**
+local compile-time specialization when `q_R = 1`. It **MUST NOT**
 select a second relation implementation at a broad uniform-versus-mixed
 dispatch boundary.
 
-For `Q_R = 1`, the plan uses the existing contiguous equality and setup
-kernels. For `q_R = 1`, it does not allocate projection powers, evaluate a
+For `q_R = 1`, the plan uses the existing contiguous equality and setup
+kernels. It does not allocate projection powers, evaluate a
 projection power MLE, or multiply by one. Other shapes use the same plan with
 explicit compact subcolumn tensor axes.
 
@@ -1208,7 +1215,7 @@ The performance restorations at `2205555a6` and `2f0c35b66` are intentional:
 
 - keep one-lane deferred structured E/T/Z evaluation on its contiguous kernel;
 - keep uniform Stage-3 setup-index evaluation succinct;
-- reuse one carrier alpha-power table across uniform root groups;
+- reuse one alpha-power table across uniform root groups;
 - skip alpha-power generation for a one-lane projection;
 - materialize uniform A weights into a preallocated slice;
 - dispatch the uniform group evaluator at compile-time D.
@@ -1234,8 +1241,9 @@ group's A dimension is invalid because coefficient partitioning between
 `F[X]/(X^128 + 1)` and `F[X]/(X^64 + 1)` is not a ring homomorphism in odd
 characteristic.
 
-T and Z are serialized through the batch carrier only after native group
-relations are formed. Carrier padding is a storage boundary, not arithmetic.
+T and Z are serialized directly in exact group-native coefficient ranges after
+native group relations are formed. Only the complete live witness receives one
+successor-domain zero suffix.
 
 ## Review of the 2026-07-28 pulled commits
 
@@ -1252,7 +1260,7 @@ Changes:
   `plan_optimal_suffix`.
 - Replaced separate B/D retarget helpers with
   `retarget_commitment_matrices`.
-- Made width derivation use the final A carrier.
+- Made width derivation use the final A projection source.
 - Recomputed outgoing witness lengths after each retargeted level.
 - Replanned C/D's complete D128 suffix.
 - Replanned E/F's middle and D64 continuations at their exact boundaries.
@@ -1336,7 +1344,8 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 - verifier ring-switch tests check prepared relation geometry and deferred
   mixed setup claims.
 - multi-group parameter tests check group-local dimensions, row offsets,
-  carrier independence from group order, and descending group A dimensions.
+  compact-length independence from stable group identifiers, and descending
+  group A dimensions.
 - recursive and distributed setup-offload E2Es cover the deferred verifier
   path under their production feature guards.
 - setup-prefix selection tests reject insufficient natural and padded capacity,

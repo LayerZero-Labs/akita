@@ -92,10 +92,13 @@ batch — exactly as the generated table
   block geometry differs, because a chunked consuming fold requires
   `num_live_blocks >= num_chunks`.
 - **Every group is chunked the same way.** The canonical `WitnessLayout` is
-  group-major / chunk-minor: at a chunked fold, the main witness group **and**
-  every precommitted group (including the carried setup-prefix group) get
-  `num_chunks` units. The shared `r̂` tail keeps the single-machine relation-row
-  count (`num_commitments = 1`); it does not scale with `num_chunks`.
+  chunk-major with authenticated group order inside each chunk: at a chunked
+  fold, the main witness group **and** every precommitted group (including the
+  carried setup-prefix group) get `num_chunks` units. One machine's complete
+  multi-group chunk is therefore contiguous. The shared native `r̂` tail keeps
+  the single-machine relation-row count (`num_commitments = 1`); it does not
+  scale with `num_chunks`. Exact coefficient ranges are specified by
+  [`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md).
 - **No verifier panics.** Every new rejection path (wrong slot, chunk/blocks
   mismatch, mode/successor mismatch) returns `AkitaError` /
   `SerializationError`, per the verifier no-panic contract.
