@@ -2,15 +2,15 @@
 
 | Field | Value |
 |---|---|
-| Status | Direct scalar mixed-D planner search implemented offline; catalog/runtime and recursive-setup integration pending |
-| Review snapshot | 2026-07-28, planner reviewed on `main` at `af770e129` |
+| Status | Bounded direct scalar mixed-D search and one fp128 one-hot generated/runtime catalog implemented; broader topology pending |
+| Review snapshot | 2026-07-31, PR #334 reviewed through `a0b436dc5` plus the fixes recorded below |
 | Benchmark snapshot | 2026-07-28, release build of `25a1e94a6` |
 | Recursive benchmark snapshot | 2026-07-28, working tree based on `af770e1296` |
 | Primary workload | fp128 one-hot, `nv = 36`, `np = 1` |
-| Primary profile mode | `onehot_fp128_d64_root_d128` |
+| Primary profile mode | `onehot_fp128_mixed_dim` |
 | Related spec | `specs/runtime-ring-cutover.md` |
 | Current synthetic implementation | `crates/akita-pcs/src/test_support.rs` |
-| Proposed planner implementation | `crates/akita-planner/src/schedule_params/` |
+| Planner implementation | `crates/akita-planner/src/schedule_params/` |
 
 ## Purpose of this document
 
@@ -45,10 +45,11 @@ experiment:
 The protocol, setup-contribution, quotient, direct verifier, recursive
 verifier, and multi-group paths all understand this geometry. The offline
 planner now has an opt-in direct scalar search over explicit per-matrix
-dimension tuples. Shipped catalogs, generated-row replay, multi-group root
-search, and recursive setup offload do **not** yet use that search. The
-benchmark profiles in this document remain synthetic schedules built in
-`akita-pcs` test support.
+dimension tuples. One generated fp128 one-hot family now records and replays a
+planner-selected mixed schedule at runtime. Multi-group root search and
+recursive setup offload remain outside the mixed search. The older transition
+profiles in this document are synthetic schedules built in `akita-pcs` test
+support and are labeled as such.
 
 The proposed next step is to make dimension choice part of the offline planner.
 The requested selection order is:
@@ -59,9 +60,10 @@ The requested selection order is:
 3. deterministic canonical tie-break only.
 ```
 
-This policy is implemented by the offline direct scalar entry point. It is not
-yet catalog-bound or available in runtime resolution; prover and verifier
-remain catalog-only and never run the planner.
+This policy is implemented by the offline direct scalar entry point and bound
+to the generated mixed catalog as
+`MinSetupMatrixFieldElementsThenProofPayload`. Prover and verifier remain
+catalog-only and never run the planner.
 
 The currently preferred measured design remains:
 
@@ -489,13 +491,18 @@ Each suffix state must therefore retain the nondominated frontier of:
 (max_setup_matrix_field_elements, exact_proof_payload_bytes)
 ```
 
-Candidate X dominates Y only when:
+Within one exact parent-visible first-step partition, candidate X can safely
+prune Y only when:
 
 ```text
 X.setup <= Y.setup
-X.proof <= Y.proof
-and at least one inequality is strict
+X.proof < Y.proof
 ```
+
+A setup-only improvement is not sufficient: a larger parent can mask both
+setup footprints, leaving an exact cost tie whose canonical descriptor still
+has to be compared. This proof-strict rule is intentionally narrower than an
+ordinary two-objective Pareto frontier.
 
 Parent proof pricing depends on the exact first child fold (outgoing
 commitment, terminal binding, and optional Stage 3). Safe pruning must be
@@ -568,7 +575,7 @@ The current benchmark makes the requested policy's result concrete:
 
 Under an unrestricted choice among only these seven predefined schedules,
 `(setup field elements, proof bytes)` selects A′: it ties B/E/D on setup and
-has the smallest proof among them. That historical comparison is not an oracle
+has the smallest proof among them. That historical comparison is not a correctness reference
 for the approved planner domain. The planner additionally enforces
 component-wise descent and returns to D64 at L2. It also searches block splits
 that do not necessarily reproduce any predefined profile.
@@ -637,7 +644,7 @@ The planner must replace current uses of `policy.ring_dimension` in
 `d_segment_width` and carrier sizing with the selected shared D and the
 canonical maximum group carrier. Group order must not influence the result.
 
-### Generated catalog and replay changes
+### Generated catalog and replay integration
 
 Generated rows already record:
 
@@ -662,7 +669,7 @@ runtime expansion:
 Remove the current checks that require every stored A/terminal dimension to
 equal one scalar policy D. Do not add a second mixed-D expansion path.
 
-Catalog identity must bind:
+Catalog identity now binds:
 
 - setup generation dimension;
 - ordered A/B/D candidate domains;
@@ -674,8 +681,10 @@ Catalog identity must bind:
   inputs;
 - dimensions actually used by emitted entries.
 
-Changing the search domain must invalidate the catalog even if the winning
-rows happen to remain byte-identical.
+Changing the search domain invalidates the catalog even if the winning rows
+remain byte-identical. Validation also checks that every emitted root and
+recursive A/B/D tuple belongs to the bound domain, and challenge-hook coverage
+is recomputed over every admitted A dimension.
 
 ### Setup/config cutover
 
@@ -741,7 +750,7 @@ byte-identical.
    unit.
 2. Add the new cost/selection identity without changing existing policy IDs.
 3. Separate setup-generation dimension from candidate dimensions.
-4. Bind candidate domains and challenge coverage into catalog identity.
+4. Bind candidate domains and challenge coverage into catalog identity. ✅
 5. Merge D512 A coverage into one canonical SIS table digest before admitting
    D512.
 
@@ -754,13 +763,13 @@ byte-identical.
 4. Enforce component-wise non-increasing transitions and a uniform-D64 L2+
    suffix.
 5. Retain the unpruned L0/L1 frontier; do not apply rank-one dimension caps
-   until an equivalence key is proved against the exhaustive oracle.
+   until an equivalence key is proved against the unpruned reference traversal.
 6. Retain edge-safe setup/proof frontiers across the mixed boundary, then
    reuse the existing uniform-D64 split search.
 7. Select by setup field elements, then proof bytes, then descriptor bytes.
 8. Keep recursive setup families on singleton D64.
 
-#### Cut 2: catalog replay and shipped adaptive family
+#### Cut 2: catalog replay and shipped adaptive family (implemented for fp128 one-hot)
 
 1. Make the canonical generated-entry walker replay per-matrix/per-level
    dimensions.
@@ -795,8 +804,12 @@ preserving all generated catalogs:
   descending tuples;
 - dimensions are uniform D64 from L2 through the terminal;
 - rank-one dimension pruning is disabled in the authoritative mixed search;
-  the selected production result is checked against a test-only brute-force
-  enumerator that does not call the production search or frontier code;
+  a test-only unpruned traversal checks the production frontier and canonical
+  selection while deliberately sharing canonical candidate construction and
+  pricing primitives;
+- hand-calculated regressions independently pin exact field-element setup
+  rounding, candidate-local EOR pricing, unsupported SIS-cell skipping, and
+  complete-schedule descriptor ties;
 - the dedicated mixed-search memo includes the parent dimension ceiling, while
   L2+ states canonicalize to D64 and reuse the fixed planner's split policy;
 - mixed-boundary states retain the required setup/proof alternatives per exact
@@ -848,7 +861,8 @@ The speedup comes from policy, not approximate pruning: mixed dimensions and
 exhaustive split enumeration stop after L1, monotonicity removes upward
 transitions, and the complete D64 suffix reuses the existing fixed planner
 split derivation. Rank-one dimension caps are intentionally absent from the
-authoritative search until an equivalence key is oracle-validated.
+authoritative search until an equivalence key is proved and checked against the
+unpruned traversal.
 
 For the PR recursive multi-group shape, the new entry point returns the
 expected unsupported-policy error because mixed recursive setup is a later
@@ -864,8 +878,9 @@ The planner integration is complete only when all of these hold:
 1. Existing `find_schedule` reproduces uniform schedules, estimates, and
    generated/runtime descriptor bytes; the opt-in mixed entry point requires
    uniform D64 in its domain.
-2. An exhaustive small-domain oracle agrees with the constrained L0/L1 search
-   and selected score.
+2. A small-domain unpruned traversal agrees with the constrained L0/L1 search
+   and selected score; independently calculated tests cover the concrete
+   formulas that traversal shares with production.
 3. L0 and L1 can select different A/B/D dimensions; every later fold and the
    terminal use D64.
 4. B and D can be selected independently and their widths include exact
@@ -895,7 +910,8 @@ The planner integration is complete only when all of these hold:
 | Candidate-domain validation | Sorted unique powers of two; setup D divisible by every role candidate; uniform D64 present; no component below D64 |
 | Role-width unit tests | B/D widths equal native width times exact carrier/role ratio |
 | SIS admission tests | Unsupported role/dimension/bucket/width is candidate infeasibility; malformed policy is an error |
-| Small exhaustive oracle | Constrained L0/L1 frontier and selected schedule match brute-force enumeration |
+| Unpruned reference traversal | Constrained L0/L1 frontier and selected schedule match the same canonical candidate set without production pruning |
+| Independent formula regressions | Hand-calculated setup rounding, EOR feasibility, SIS-cell skipping, and complete-schedule descriptor ties match the implementation |
 | Parent-envelope counterexample | The DP retains the lower-proof child after a larger parent setup masks child setup differences |
 | Transition tests | A/B/D are component-wise non-increasing; L2+ is exactly D64 |
 | Deterministic tie-break | Exact-cost ties resolve by full canonical schedule descriptor bytes |
@@ -916,7 +932,8 @@ two catalog-bound constraints:
 2. dimensions never increase and L2+ is uniform D64.
 
 Rank-one pruning is intentionally absent from this cut. Reintroduce it only
-after an independent exhaustive oracle agrees on a proved equivalence key.
+after proving an equivalence key and checking it against the unpruned
+traversal.
 
 Measured verifier latency remains a possible later objective. It requires a
 versioned deterministic work model; host timings are not planner inputs.
@@ -1320,7 +1337,7 @@ per-matrix coverage is `per_matrix_ring_dims_root_e2e.rs`.
 
 ### Lower-level coverage
 
-- planner tests compare the mixed Pareto frontier with exhaustive enumeration,
+- planner tests compare the mixed Pareto frontier with an unpruned traversal,
   show that a lower D256 A rank can reduce B width even after both B matrices
   reach rank one, preserve a lower-proof child when a larger parent setup masks
   child setup differences, and require descriptor-identical concurrent
@@ -1756,11 +1773,12 @@ back.
 
 ## Known limits and next work
 
-### P0: native per-matrix root planning
+### P0: broaden cataloged mixed planning
 
-Implement the planner integration proposal above through Cut 2. Remove the
-D512 D256-promotion heuristic only after the native planner reproduces or
-improves its geometry.
+The direct scalar fp128 one-hot family completes the bounded Cut 2 path. The
+next planner work is multi-group and recursive-setup admission under separately
+specified objectives. Remove the D512 D256-promotion heuristic only after the
+native planner reproduces or improves its geometry.
 
 ### P1: production heterogeneous-group admission
 

@@ -42,7 +42,9 @@ use akita_field::AkitaError;
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
-use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
+use akita_types::{
+    AkitaScheduleLookupKey, CommitmentRingDims, FoldSchedule, PolynomialGroupLayout,
+};
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;
@@ -214,6 +216,45 @@ fn catalog_identity_rejects_planner_policy_changes() {
     let mut mutated = catalog;
     mutated.identity.min_offloaded_witness_contraction += 1;
     assert_rejected("offloaded witness contraction", mutated);
+}
+
+#[cfg(feature = "all-schedules")]
+#[test]
+fn mixed_catalog_identity_binds_nonwinning_candidate_tuples() {
+    static WITHOUT_NONWINNER: &[CommitmentRingDims] = &[
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
+
+    let policy = policy_of::<fp128::MixedDimFp128OneHot>();
+    let catalog = fp128::MixedDimFp128OneHot::schedule_catalog().expect("mixed catalog");
+    assert!(catalog.entries.iter().all(|entry| entry
+        .root
+        .final_group
+        .commitment
+        .inner_commit_matrix
+        .ring_dimension
+        != 128));
+
+    let mut mutated = catalog;
+    mutated.identity.ring_dimension_candidates = WITHOUT_NONWINNER;
+    let error = validate_catalog_identity(
+        &mutated,
+        &policy,
+        fp128::MixedDimFp128OneHot::ring_challenge_config,
+        fp128::MixedDimFp128OneHot::fold_challenge_shape_at_level,
+    )
+    .expect_err("removing an admitted nonwinner must invalidate the catalog");
+    assert!(error.to_string().contains("catalog identity mismatch"));
 }
 
 #[cfg(feature = "all-schedules")]
