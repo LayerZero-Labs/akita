@@ -198,28 +198,26 @@ fn cache_file_name<Cfg: CommitmentConfig>(
     // `digest_effective_schedule`. Akita is still in development, so the cache
     // namespace remains v1; the digest prevents incompatible schedules from
     // aliasing within that namespace.
-    let raw_schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        schedule_lookup_key,
-        Cfg::group_source(),
-    )) {
-        Ok(schedule) => {
-            let digest = digest_effective_schedule(&schedule);
-            let mut hex = String::with_capacity(digest.len() * 2);
-            for byte in digest {
-                let _ = write!(hex, "{byte:02x}");
+    let raw_schedule =
+        match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_lookup_key)) {
+            Ok(schedule) => {
+                let digest = digest_effective_schedule(&schedule);
+                let mut hex = String::with_capacity(digest.len() * 2);
+                for byte in digest {
+                    let _ = write!(hex, "{byte:02x}");
+                }
+                format!(
+                    "planner_v1_nv{}_batch{}_{hex}",
+                    schedule_lookup_key.num_vars(),
+                    schedule_lookup_key.num_polynomials(),
+                )
             }
-            format!(
-                "planner_v1_nv{}_batch{}_{hex}",
+            Err(_) => format!(
+                "miss_nv{}_batch{}",
                 schedule_lookup_key.num_vars(),
                 schedule_lookup_key.num_polynomials(),
-            )
-        }
-        Err(_) => format!(
-            "miss_nv{}_batch{}",
-            schedule_lookup_key.num_vars(),
-            schedule_lookup_key.num_polynomials(),
-        ),
-    };
+            ),
+        };
     let schedule = raw_schedule
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
@@ -608,11 +606,11 @@ mod tests {
                         num_digits_outer: 1,
                         outer_commit_matrix,
                     },
-                    source: Cfg::group_source(),
                     log_basis_open: 1,
                     fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
                     num_digits_open: 1,
                     num_digits_fold: 1,
+                    fold_witness_linf_cap: 1,
                 };
                 let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
                 // One block of zero planes at the setup ring dimension.

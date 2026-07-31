@@ -180,14 +180,7 @@ where
         &akita_types::OpeningClaimsLayout::new(poly_nv, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    // One-hot presets carry an explicit sparse-binary K; there is no dense or
-    // implicit fallback value.
-    let k = match layout.source.encoding() {
-        akita_types::GroupSourceEncoding::SparseBinary { chunk_size } => chunk_size,
-        akita_types::GroupSourceEncoding::Bounded { .. } => {
-            panic!("one-hot e2e requires a sparse-binary source")
-        }
-    };
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(
         total_ring * D,
@@ -384,10 +377,7 @@ fn run_onehot_batched_e2e<Cfg, const D: usize>(
     let layout =
         akita_config::test_support::akita_batched_root_layout::<Cfg>(poly_nv, commit_batch)
             .expect("batched layout");
-    let k = layout
-        .source
-        .sparse_chunk_size()
-        .expect("batched one-hot layout must carry an explicit K");
+    let k = 256;
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
     assert_eq!(total_ring * D, 1usize << poly_nv);
     let total_chunks = total_ring * D / k;

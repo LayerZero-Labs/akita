@@ -45,7 +45,6 @@ fn run_dense_mode<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField = F>
     let layout = resolve_layout::<F, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::group_source(),
     ))
     .expect("schedule plan");
     tracing::info!("{}", title);
@@ -83,7 +82,6 @@ fn run_dense_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let layout = resolve_layout::<FF, Cfg>(nv);
     let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::group_source(),
     ))
     .expect("schedule plan");
     tracing::info!("{}", title);
@@ -133,18 +131,14 @@ fn run_onehot_mode_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         }
         let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
-            Cfg::group_source(),
         ))
         .expect("schedule plan");
         print_layout(&layout, 1, Cfg::decomposition().field_bits());
         run_onehot::<FF, D, Cfg>(label, nv, &layout, Some(&plan), true);
     } else {
         let schedule_key = PolynomialGroupLayout::new(nv, num_polys);
-        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-            schedule_key,
-            Cfg::group_source(),
-        ))
-        .expect("schedule plan");
+        let plan = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(schedule_key))
+            .expect("schedule plan");
         let layout = akita_batched_root_layout::<Cfg>(nv, num_polys).expect("layout");
         let required_vars =
             layout.position_index_bits() + layout.block_index_bits() + D.trailing_zeros() as usize;
@@ -723,7 +717,6 @@ where
     }
     let plan = Cfg::<Root>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::<Root>::group_source(),
     ))
     .expect("three-band schedule plan");
     print_layout(&layout, 1, Cfg::<Root>::decomposition().field_bits());
@@ -766,7 +759,6 @@ fn run_ring_dimension_transition_impl<const ROOT_D_RING_DIM: usize>(nv: usize) {
     }
     let plan = Cfg::<ROOT_D_RING_DIM>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::<ROOT_D_RING_DIM>::group_source(),
     ))
     .expect("ring-dimension transition schedule");
     print_layout(
@@ -800,7 +792,6 @@ fn run_per_matrix_ring_dims_root<const B_RING_DIM: usize, const D_RING_DIM: usiz
     }
     let plan = Cfg::<B_RING_DIM, D_RING_DIM>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::<B_RING_DIM, D_RING_DIM>::group_source(),
     ))
     .expect("per-matrix ring-dimension root schedule");
     print_layout(
@@ -835,7 +826,6 @@ where
     }
     let plan = Cfg::<Env, SWITCH_AT_FOLD>::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(nv),
-        Cfg::<Env, SWITCH_AT_FOLD>::group_source(),
     ))
     .expect("mixed-D schedule plan");
     print_layout(

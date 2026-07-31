@@ -9,8 +9,8 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{setup::MAX_SETUP_MATRIX_FIELD_ELEMENTS, AkitaCommitmentHint, RingVec};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, CommittedGroupProfile, GroupSource, InnerCommitMatrixParams,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
+    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -427,6 +427,9 @@ fn serialize_precommitted_level_params<W: Write>(
     params
         .num_digits_fold
         .serialize_with_mode(&mut writer, compress)?;
+    params
+        .fold_witness_linf_cap
+        .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
 
@@ -452,11 +455,6 @@ fn deserialize_precommitted_level_params<R: Read>(
     let num_digits_inner = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let inner_commit_matrix: InnerCommitMatrixParams =
         deserialize_commit_matrix(&mut reader, compress, validate)?;
-    // `source` is planner/prover staging metadata, not part of the verifier's
-    // accepted profile or wire identity. Decoded verifier-visible parameters
-    // receive a conservative non-semantic placeholder; verifier validation,
-    // sizing, and security pricing must use only the exact serialized facts.
-    let source = GroupSource::bounded(inner_commit_matrix.sis_modulus_profile().field_bits());
     let log_basis_outer = u32::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_outer = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let outer_commit_matrix: OuterCommitMatrixParams =
@@ -466,6 +464,7 @@ fn deserialize_precommitted_level_params<R: Read>(
     let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let fold_witness_linf_cap = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
         layout: CommittedGroupProfile {
             version,
@@ -480,7 +479,6 @@ fn deserialize_precommitted_level_params<R: Read>(
             num_digits_outer,
             outer_commit_matrix,
         },
-        source,
         log_basis_open,
         fold_challenge_config: akita_challenges::SparseChallengeConfig {
             count_pm1: challenge_count_pm1,
@@ -488,6 +486,7 @@ fn deserialize_precommitted_level_params<R: Read>(
         },
         num_digits_open,
         num_digits_fold,
+        fold_witness_linf_cap,
     })
 }
 
@@ -528,6 +527,7 @@ fn precommitted_level_params_serialized_size(
             .serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
         + params.num_digits_fold.serialized_size(compress)
+        + params.fold_witness_linf_cap.serialized_size(compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -1316,11 +1316,11 @@ pub fn setup_prefix_precommitted_params(
                     num_digits_outer: prefix_params.num_digits_outer,
                     outer_commit_matrix,
                 },
-                source: GroupSource::from_commitment(prefix_params),
                 log_basis_open: prefix_params.log_basis_open,
                 fold_challenge_config: prefix_params.fold_challenge_config,
                 num_digits_open: prefix_params.num_digits_open,
                 num_digits_fold: prefix_params.num_digits_fold,
+                fold_witness_linf_cap: prefix_params.fold_witness_linf_cap,
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {

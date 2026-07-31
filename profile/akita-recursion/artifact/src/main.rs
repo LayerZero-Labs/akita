@@ -327,7 +327,6 @@ fn run() -> Result<(), String> {
         PolynomialGroupClaims::new(opening_point.clone(), openings.to_vec(), commitment.clone())
             .map_err(|err| format!("invalid prover opening group: {err}"))?;
     let prove_input = ProverOpeningData::new(
-        schedule_selection,
         OpeningClaims::from_groups(vec![prove_group])
             .map_err(|err| format!("invalid prover opening claims: {err}"))?,
         vec![hint],
@@ -336,7 +335,7 @@ fn run() -> Result<(), String> {
     .map_err(|err| format!("invalid prover opening data: {err}"))?;
     let proof = AkitaCommitmentScheme::<Cfg>::batched_prove(
         &prover_setup,
-        prove_input,
+        (schedule_selection, prove_input),
         &stack,
         &mut prover_transcript,
         BasisMode::Lagrange,

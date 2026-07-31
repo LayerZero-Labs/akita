@@ -16,7 +16,6 @@ use akita_types::{ntt_cache_requires_i16_tail, AkitaScheduleLookupKey, Polynomia
 fn setup_levels_are_exactly_root_and_recursive_folds() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(30),
-        fp128::D64Dense::group_source(),
     ))
     .expect("generated fp128 schedule");
     let setup_levels = setup_level_params_from_schedule(&schedule);
@@ -32,7 +31,6 @@ fn setup_levels_are_exactly_root_and_recursive_folds() {
 fn generated_schedule_has_explicit_terminal_inner_only_topology() {
     let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(32),
-        fp128::D64OneHot::group_source(),
     ))
     .expect("generated one-hot schedule");
     schedule.validate_structure().expect("typed topology");
@@ -52,7 +50,6 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 fn setup_envelope_includes_terminal_inner_matrix() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
-        fp128::D64Dense::group_source(),
     ))
     .expect("generated fp128 schedule");
     let envelope =
@@ -81,7 +78,7 @@ fn assert_every_table_terminal_uses_i16_tail<Cfg: CommitmentConfig, const D: usi
         let key = entry.root.final_group.layout;
         let schedule = schedule_from_entry(
             entry,
-            &AkitaScheduleLookupKey::single(key, Cfg::group_source()),
+            &AkitaScheduleLookupKey::single(key),
             &policy,
             Cfg::ring_challenge_config,
             Cfg::fold_challenge_shape_at_level,
@@ -122,69 +119,12 @@ fn generated_q32_terminals_require_the_i16_tail() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn d64_onehot_k16_uses_the_canonical_chunk_policy_without_a_catalog() {
-    assert_eq!(
-        fp128::D64OneHotK16::group_source().encoding(),
-        akita_types::GroupSourceEncoding::SparseBinary { chunk_size: 16 }
-    );
-    assert!(fp128::D64OneHotK16::schedule_catalog().is_none());
-}
-
-fn assert_onehot_k<Cfg: CommitmentConfig>(chunk_size: usize) {
-    assert_eq!(
-        Cfg::group_source().encoding(),
-        akita_types::GroupSourceEncoding::SparseBinary { chunk_size }
-    );
-}
-
-#[test]
-fn onehot_presets_use_the_profiled_k256_chunk_contract() {
-    assert_onehot_k::<fp128::D64OneHot>(256);
-    assert_onehot_k::<fp128::D128OneHot>(256);
-    assert_onehot_k::<fp128::D256OneHot>(256);
-    assert_onehot_k::<fp128::D512OneHot>(256);
-    assert_onehot_k::<fp32::D64OneHot>(256);
-    assert_onehot_k::<fp32::D128OneHot>(256);
-    assert_onehot_k::<fp32::D256OneHot>(256);
-    assert_onehot_k::<fp64::D64OneHot>(256);
-    assert_onehot_k::<fp64::D128OneHot>(256);
-    assert_onehot_k::<fp64::D256OneHot>(256);
-}
-
-#[test]
-fn dense_presets_use_bounded_sources_without_a_onehot_chunk_size() {
-    assert_eq!(
-        fp128::D64Dense::group_source().encoding(),
-        akita_types::GroupSourceEncoding::Bounded {
-            coefficient_bits: 128
-        }
-    );
-    assert_eq!(
-        fp32::D128Dense::group_source().encoding(),
-        akita_types::GroupSourceEncoding::Bounded {
-            coefficient_bits: 32
-        }
-    );
-    assert_eq!(
-        fp64::D128Dense::group_source().encoding(),
-        akita_types::GroupSourceEncoding::Bounded {
-            coefficient_bits: 64
-        }
-    );
-}
-
-#[cfg(feature = "schedules-default")]
-#[test]
-fn fp128_d128_onehot_catalog_is_generated_for_k256() {
+fn fp128_d128_onehot_catalog_binds_numeric_root_norms() {
     let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
     assert_eq!(
-        table.identity.root_source_encoding,
-        akita_types::GroupSourceEncoding::SparseBinary { chunk_size: 256 }
+        table.identity.root_fold_witness_norms,
+        fp128::D128OneHot::root_fold_witness_norms()
     );
-    assert!(table
-        .entries
-        .iter()
-        .all(|entry| { entry.root.final_group.source == fp128::D128OneHot::group_source() }));
     let first = table
         .entries
         .first()
@@ -192,13 +132,9 @@ fn fp128_d128_onehot_catalog_is_generated_for_k256() {
     let schedule = fp128::D128OneHot::runtime_schedule(first.to_runtime_lookup_key())
         .expect("resolve D128 one-hot row");
     let root = &schedule.root.params.final_group.commitment;
-    assert_eq!(root.source.sparse_chunk_size(), Some(256));
     assert_eq!(
-        root.fold_witness_norms()
-            .expect("valid root source")
-            .l1_norm(),
-        1,
-        "K=256 at D=128 must price one nonzero per ring element, not the conservative K=1 bound"
+        root.fold_witness_linf_cap, first.root.final_group.fold_witness_linf_cap,
+        "generated rows freeze the exact fold cap used at runtime"
     );
 }
 

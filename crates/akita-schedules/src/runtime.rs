@@ -83,11 +83,8 @@ pub struct PlannerPolicy {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    /// Default root source's certified encoding.
-    ///
-    /// This is a discriminated planner/catalog fact: bounded sources carry no
-    /// sparse chunk size, while sparse-binary sources carry an explicit `K`.
-    pub root_source_encoding: akita_types::GroupSourceEncoding,
+    /// Numeric honest root-witness estimate used only by offline planning.
+    pub root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -96,11 +93,13 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
-    /// Root-source-specialized policy for offline scalar/precommit planning.
-    pub fn with_group_source(self, source: akita_types::GroupSource) -> Self {
+    /// Root-witness-specialized policy for offline scalar/precommit planning.
+    pub fn with_root_fold_witness_norms(
+        self,
+        root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
+    ) -> Self {
         Self {
-            decomposition: source.decomposition(self.decomposition),
-            root_source_encoding: source.encoding(),
+            root_fold_witness_norms,
             ..self
         }
     }
@@ -158,6 +157,7 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    policy.root_fold_witness_norms.validate()?;
     let expected_selection_policy = if policy.recursive_setup_planning {
         SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
     } else {

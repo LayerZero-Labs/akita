@@ -15,7 +15,6 @@ fn d64_onehot_schedule_stays_within_basis_envelope() {
     for &nv in BASIS_ENVELOPE_NUM_VARS {
         let schedule = match Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(nv),
-            Cfg::group_source(),
         )) {
             Ok(schedule) => schedule,
             Err(_) => continue,

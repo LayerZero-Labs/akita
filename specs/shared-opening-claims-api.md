@@ -18,8 +18,12 @@
 
 > **Profile-key supersession (2026-07-30).** Scalar and grouped opening
 > statements use self-describing commitments plus an exact schedule-row
-> selection. Source-provider identity is not public schedule input. See
-> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> selection. Private polynomial representation is not public schedule input.
+>
+> **Prover-contract supersession (2026-07-31).** Concrete polynomial shape is
+> an implicit caller contract. `ProverOpeningData` keeps only intrinsic
+> construction and alignment checks; proving does not run a separate semantic
+> source or shape validation pass.
 
 
 
@@ -665,7 +669,7 @@ There is **no** `group_point_vars` on `OpeningClaimsLayout`.
 
 - [ ] `OpeningClaims`, `PolynomialGroupClaims`, `OpeningClaimsLayout`, and `PolynomialGroupLayout` in `akita-types/src/opening_claims.rs`, all with private fields + constructor/accessor APIs (except `Copy` schedule-visible fields on `PolynomialGroupLayout`).
 - [ ] `OpeningClaims` exposes `check()` and `validate(&AkitaSetupSeed)` (returns `()`); structural views come from `layout()`.
-- [ ] `ProverOpeningData` in `akita-prover/src/types/` with private fields, `new(...)`, accessors, and `validate::<PolyF>()` (alignment + poly-shape; no limits arg).
+- [ ] `ProverOpeningData` in `akita-prover/src/types/` with private fields, `new(...)`, accessors, and intrinsic alignment checks.
 - [ ] Exactly five opening-claims types ship; `OpeningBatchLimits` and all other intermediate/bridge types are removed.
 - [ ] Batch-level count API is `num_total_polynomials()` **only** — no `num_claims()` or `num_polynomials()` on `OpeningClaims`.
 - [ ] `OpeningClaimsLayout` has no batch-level `num_vars`; exposes `max_num_vars()` and `groups()`.
@@ -873,11 +877,6 @@ impl<'a, PointF, P, CommitF, const D: usize> ProverOpeningData<'a, PointF, P, Co
         polynomials: Vec<&'a [&'a P]>,
     ) -> Result<Self, AkitaError>;
 
-    pub fn validate<PolyF>(&self) -> Result<(), AkitaError>
-    where
-        PolyF: FieldCore,
-        P: RootPolyShape<PolyF, D> + RootOpeningSource<PolyF, D>;
-
     pub fn num_vars<PolyF>(&self) -> Result<usize, AkitaError>
     where P: RootPolyShape<PolyF, D>;
 
@@ -969,7 +968,6 @@ let target = batched_eval_target_from_layout(&layout, &row_coefficients, &openin
 
 ```rust
 pub fn batched_prove(..., prover: ProverOpeningData<'a, ...>, ...) -> ... {
-    prover.validate::<Cfg::Field>()?;
     let opening_claims = prover.opening_claims();
     // Pass the whole claims object — not opening_claims.point() + group_sizes().
     validate_batched_inputs(expanded.as_ref(), opening_claims, true)?;

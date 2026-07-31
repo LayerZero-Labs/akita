@@ -269,7 +269,10 @@ mod fold_grind_nonce_tests {
         )
         .with_decomp(16, 64, 2, 2, 2)
         .expect("level params")
-        .with_fold_challenge_shape(fold_shape)
+        .with_fold_challenge_shape(
+            fold_shape,
+            akita_types::sis::FoldWitnessNorms::bounded(3, 64),
+        )
         .expect("fold challenge shape")
     }
 

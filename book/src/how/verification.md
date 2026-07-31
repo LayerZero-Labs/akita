@@ -73,9 +73,10 @@ replay, it:
 6. checks that the schedule fits the setup envelope; and only then
 7. binds the instance descriptor and replays the proof.
 
-Provider registrations and honest-prover source models are absent from this
-path. The public catalog identity is derived from source-free expanded rows;
-source encodings remain only in generated lookup and policy validation.
+Private polynomial representations and honest-prover witness models are absent
+from this path. The public selection is one digest of the exact ordered
+profiles and expanded row. Catalog policy metadata is validated internally
+before that digest is admitted.
 
 ## The verifier no-panic contract
 

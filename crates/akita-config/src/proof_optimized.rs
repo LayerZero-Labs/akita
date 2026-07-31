@@ -28,7 +28,8 @@ pub(crate) const PROOF_OPTIMIZED_LOG_BASIS_MAX: u32 = 6;
 /// Explicit sparse-binary chunk size used by standard one-hot presets.
 ///
 /// Smaller/nonstandard chunking is represented by a separately named preset
-/// or an explicit provider; it is never inferred as a fallback.
+/// or application polynomial representation; it is never inferred as a
+/// fallback.
 pub const STANDARD_ONEHOT_CHUNK_SIZE: usize = 256;
 
 /// Bound setup preprocessing work before schedule resolution.
@@ -58,7 +59,7 @@ pub(crate) fn proof_optimized_ring_challenge_config(
     Ok(cfg)
 }
 
-pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
+pub(crate) fn proof_optimized_schedule_key(
     layout: &OpeningClaimsLayout,
 ) -> Result<AkitaScheduleLookupKey, AkitaError> {
     layout.check()?;
@@ -68,10 +69,7 @@ pub(crate) fn proof_optimized_schedule_key<Cfg: CommitmentConfig>(
             "grouped schedule selection requires exact committed-group descriptors".to_string(),
         ));
     }
-    Ok(AkitaScheduleLookupKey::single(
-        final_group,
-        Cfg::group_source(),
-    ))
+    Ok(AkitaScheduleLookupKey::single(final_group))
 }
 
 // ---------------------------------------------------------------------------
@@ -144,18 +142,11 @@ fn proof_optimized_max_setup_matrix_size_uncached<Cfg: CommitmentConfig>(
             }
             let key = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                final_source: entry.root.final_group.source,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
                     .map(|group| group.descriptor)
-                    .collect(),
-                precommitted_sources: entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .map(|group| group.source)
                     .collect(),
             };
             if !key.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
@@ -402,13 +393,13 @@ macro_rules! impl_proof_optimized_preset {
             }
         }
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $group_source:expr) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $group_source, none);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, none);
     };
-    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, source = $group_source:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
-        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $group_source, table, $feat, $family_name, $table);
+    ($cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, fold_norms = $fold_norms:expr, schedules = ($feat:literal, $family_name:literal, $table:ident)) => {
+        impl_proof_optimized_preset!(@core $cfg, $field, $ext_field, $family, $d, $field_bits, $log_commit_bound, $fold_norms, table, $feat, $family_name, $table);
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $group_source:expr, none) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, none) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -453,14 +444,14 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn group_source() -> akita_types::GroupSource {
-                $group_source
+            fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+                $fold_norms
             }
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
             }
@@ -468,7 +459,7 @@ macro_rules! impl_proof_optimized_preset {
             impl_proof_optimized_preset!(@schedule_catalog none);
         }
     };
-    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $group_source:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
+    (@core $cfg:ident, $field:ty, $ext_field:ty, $family:expr, $d:expr, $field_bits:expr, $log_commit_bound:expr, $fold_norms:expr, table, $feat:literal, $family_name:literal, $table:ident) => {
         impl $crate::CommitmentConfig for $cfg {
             type Field = $field;
             type ExtField = $ext_field;
@@ -513,14 +504,14 @@ macro_rules! impl_proof_optimized_preset {
                 )
             }
 
-            fn group_source() -> akita_types::GroupSource {
-                $group_source
+            fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+                $fold_norms
             }
 
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key::<Self>(
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
                     layout,
                 )?)
             }

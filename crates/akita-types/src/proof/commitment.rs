@@ -6,10 +6,7 @@ use crate::sis::{
     SisSecurityPolicyId, SisTableDigest,
 };
 use crate::transcript::AppendToTranscript;
-use crate::{
-    detect_field_modulus, CommittedGroupProfile, GroupSource, GroupSourceEncoding,
-    GroupSourceRegistration, PolynomialGroupLayout,
-};
+use crate::{detect_field_modulus, CommittedGroupProfile, PolynomialGroupLayout};
 
 type MatrixFields = (
     SisSecurityPolicyId,
@@ -35,129 +32,6 @@ pub struct AkitaCommitment(pub u128);
 /// Minimal proof wrapper used by protocol trait stubs and tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct DummyProof(pub u128);
-
-impl Valid for GroupSource {
-    fn check(&self) -> Result<(), SerializationError> {
-        self.validate(128)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-}
-
-impl Valid for GroupSourceEncoding {
-    fn check(&self) -> Result<(), SerializationError> {
-        GroupSource::from_encoding(*self)
-            .validate(128)
-            .map_err(|err| SerializationError::InvalidData(err.to_string()))
-    }
-}
-
-impl AkitaSerialize for GroupSourceEncoding {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.check()?;
-        let (tag, value) = match *self {
-            Self::Bounded { coefficient_bits } => (0u8, u64::from(coefficient_bits)),
-            Self::SparseBinary { chunk_size } => (
-                1u8,
-                u64::try_from(chunk_size).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "sparse-binary chunk size exceeds u64".to_string(),
-                    )
-                })?,
-            ),
-        };
-        tag.serialize_with_mode(&mut writer, Compress::No)?;
-        value.serialize_with_mode(&mut writer, Compress::No)
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        Self::SERIALIZED_SIZE
-    }
-}
-
-impl AkitaDeserialize for GroupSourceEncoding {
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        _compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let tag = u8::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let value = u64::deserialize_with_mode(&mut reader, Compress::No, Validate::Yes, &())?;
-        let encoding = match tag {
-            0 => Self::Bounded {
-                coefficient_bits: u32::try_from(value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "bounded coefficient width exceeds u32".to_string(),
-                    )
-                })?,
-            },
-            1 => Self::SparseBinary {
-                chunk_size: usize::try_from(value).map_err(|_| {
-                    SerializationError::InvalidData(
-                        "sparse-binary chunk size exceeds usize".to_string(),
-                    )
-                })?,
-            },
-            _ => {
-                return Err(SerializationError::InvalidData(
-                    "unknown group-source encoding tag".to_string(),
-                ))
-            }
-        };
-        if matches!(validate, Validate::Yes) {
-            encoding.check()?;
-        }
-        Ok(encoding)
-    }
-}
-
-impl AkitaSerialize for GroupSource {
-    fn serialize_with_mode<W: Write>(
-        &self,
-        mut writer: W,
-        _compress: Compress,
-    ) -> Result<(), SerializationError> {
-        self.check()?;
-        let registration = self.registration();
-        writer.write_all(&registration.type_id())?;
-        writer.write_all(&registration.parameters())?;
-        self.encoding()
-            .serialize_with_mode(&mut writer, Compress::No)
-    }
-
-    fn serialized_size(&self, _compress: Compress) -> usize {
-        Self::SERIALIZED_SIZE
-    }
-}
-
-impl AkitaDeserialize for GroupSource {
-    type Context = ();
-
-    fn deserialize_with_mode<R: Read>(
-        mut reader: R,
-        _compress: Compress,
-        validate: Validate,
-        _ctx: &(),
-    ) -> Result<Self, SerializationError> {
-        let mut type_id = [0u8; 16];
-        let mut parameters = [0u8; 16];
-        reader.read_exact(&mut type_id)?;
-        reader.read_exact(&mut parameters)?;
-        let encoding =
-            GroupSourceEncoding::deserialize_with_mode(&mut reader, Compress::No, validate, &())?;
-        let source = Self::registered(GroupSourceRegistration::new(type_id, parameters), encoding);
-        if matches!(validate, Validate::Yes) {
-            source.check()?;
-        }
-        Ok(source)
-    }
-}
 
 impl Valid for AkitaCommitment {
     fn check(&self) -> Result<(), SerializationError> {

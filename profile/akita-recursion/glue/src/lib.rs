@@ -510,7 +510,7 @@ mod tests {
     use akita_field::Prime128Offset275;
     use akita_types::{
         derive_public_matrix_flat, sample_public_matrix_seed, setup_prefix_slot_id,
-        CommittedGroupProfile, GroupSource, InnerCommitMatrixParams, OuterCommitMatrixParams,
+        CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
         PolynomialGroupLayout, PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment,
         SetupPrefixVerifierSlot, SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
         DEFAULT_SIS_SECURITY_POLICY,
@@ -568,11 +568,11 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            source: GroupSource::bounded(128),
             log_basis_open: 1,
             fold_challenge_config: SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
             num_digits_fold: 1,
+            fold_witness_linf_cap: 1,
         }
     }
 

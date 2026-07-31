@@ -68,8 +68,8 @@ macro_rules! impl_multi_chunk_companion {
             fn basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::basis_range()
             }
-            fn group_source() -> akita_types::GroupSource {
-                <$base as $crate::CommitmentConfig>::group_source()
+            fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+                <$base as $crate::CommitmentConfig>::root_fold_witness_norms()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -88,9 +88,9 @@ macro_rules! impl_multi_chunk_companion {
             fn get_params_for_prove(
                 layout: &akita_types::OpeningClaimsLayout,
             ) -> Result<akita_types::FoldSchedule, akita_field::AkitaError> {
-                Self::runtime_schedule(
-                    $crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-                )
+                Self::runtime_schedule($crate::proof_optimized::proof_optimized_schedule_key(
+                    layout,
+                )?)
             }
         }
     };
@@ -138,7 +138,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        root_source_encoding: Cfg::group_source().encoding(),
+        root_fold_witness_norms: Cfg::root_fold_witness_norms(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
@@ -270,13 +270,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// Default group source contract selected by this preset.
-    ///
-    /// This is a discriminated planning/prover contract: dense presets return a
-    /// bounded source with no one-hot `K`, while one-hot presets return a sparse
-    /// source with an explicit chunk size. It is not part of
-    /// `CommittedGroupProfile` or verifier-facing identity.
-    fn group_source() -> akita_types::GroupSource;
+    /// Numeric honest root-witness estimate used only during offline planning.
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms;
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -350,9 +345,7 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
         akita_schedules::select_generated_schedule_row_for_profiles(
             &AkitaScheduleLookupKey {
                 final_group: profiles.final_group.group,
-                final_source: Self::group_source(),
                 precommitteds: profiles.precommitteds.clone(),
-                precommitted_sources: Vec::new(),
             },
             profiles,
             &policy_of::<Self>(),
@@ -460,16 +453,13 @@ mod tests {
             (3, 3)
         }
 
-        fn group_source() -> akita_types::GroupSource {
-            akita_types::GroupSource::bounded(8)
+        fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+            akita_types::sis::FoldWitnessNorms::bounded(8, Self::D)
         }
 
         fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
             layout.check()?;
-            let key = AkitaScheduleLookupKey::single(
-                layout.root_final_group_layout()?,
-                Self::group_source(),
-            );
+            let key = AkitaScheduleLookupKey::single(layout.root_final_group_layout()?);
             Self::runtime_schedule(key)
         }
     }
@@ -611,7 +601,6 @@ mod fp128_policy_tests {
         for &num_vars in num_vars_values {
             let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
                 PolynomialGroupLayout::singleton(num_vars),
-                Cfg::group_source(),
             ))
             .unwrap();
             assert_schedule_stays_within_audited_sis_widths(&schedule, num_vars);
@@ -726,7 +715,8 @@ mod precommit_tests {
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();
         let planned = akita_planner::find_group_batch_schedule(
-            &AkitaScheduleLookupKey::single(group, fp128::D64OneHot::group_source()),
+            &AkitaScheduleLookupKey::single(group),
+            &[],
             &policy,
             fp128::D64OneHot::ring_challenge_config,
             fp128::D64OneHot::fold_challenge_shape_at_level,

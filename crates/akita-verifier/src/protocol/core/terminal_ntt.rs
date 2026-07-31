@@ -243,11 +243,8 @@ mod tests {
     #[test]
     fn schedule_warm_builds_terminal_cache_once_before_arithmetic() {
         let group = PolynomialGroupLayout::new(15, 1);
-        let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
-            group,
-            D64OneHot::group_source(),
-        ))
-        .expect("D64 schedule");
+        let schedule = D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(group))
+            .expect("D64 schedule");
         let params = &schedule.terminal.params.witness;
         let prefix_len = params
             .inner_commit_matrix

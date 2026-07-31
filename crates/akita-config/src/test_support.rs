@@ -49,10 +49,7 @@ where
     Cfg: CommitmentConfig,
 {
     let lookup_key = PolynomialGroupLayout::new(num_vars, num_polynomials);
-    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
-        lookup_key,
-        Cfg::group_source(),
-    ))?;
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(lookup_key))?;
     let layout = schedule.root.params.final_group.commitment.clone();
     tracing::info!(
         num_vars,

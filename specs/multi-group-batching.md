@@ -24,14 +24,11 @@
 > Multi-group and multi-chunk witnesses now use the canonical product
 > `WitnessLayout`, with one shared quotient tail.
 
-> **Open-provider/profile supersession (2026-07-30).** All source taxonomies,
-> source-bearing schedule keys, layout-only `commit_final_group` inputs, and
-> rejection of self-describing committed groups in this record are superseded by
-> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
-> A source is an open prover/planner provider. Public commitments carry exact
-> A/B profiles, and one batch-level selection identifies the approved schedule
-> row. Historical `RootSource` and `GroupSource` passages below are not
-> normative.
+> **Profile/selection supersession (2026-07-31).** Source taxonomies and
+> source-bearing schedule keys in this record are obsolete. Public commitments
+> carry exact A/B profiles, runtime lookup uses the final group layout plus
+> ordered precommitted profiles, and one batch-level selection identifies the
+> exact generated row. Polynomial representation is private prover material.
 
 > **Topology/API supersession (PR #311).** The implementation is folded-only:
 > `Schedule` is structural `folds + terminal`, every supported proof has at
@@ -47,7 +44,7 @@ object. This spec defines the first production model for batching several
 commitment groups in one root proof. The first supported shape is deliberately
 narrow:
 
-- the root schedule explicitly selects dense or one-hot source bounds;
+- the root schedule freezes exact fold digits and coefficient caps;
 - the final group defines the newly committed source arity, while the maximum
   arity across all groups defines the shared opening/EOR domain;
 - all groups are opened at one shared point;
@@ -573,7 +570,8 @@ For a group committed before the final multi-group proof is known:
    ```
    The planner keeps its normal proof-size and weak-binding-aware objective; it
    does not switch to a separate "minimize `t_hat_g`" objective.
-3. Preserve the group-selected dense or one-hot `GroupSource` contract.
+3. Preserve the exact committed profile and supply numeric honest-witness
+   norms only to offline planning.
 4. Freeze the fields that determine the committed `t_hat_g` shape:
    ```text
    key, position_index_bits, block_index_bits,
@@ -749,7 +747,7 @@ fn batched_verify<T: Transcript<F>>(
 
 fn batched_prove<'a, T, P, B>(
     setup: &Self::ProverSetup,
-    claims: ProverOpeningData<'a, Self::ExtField, P, F, D>,
+    opening: SelectedProverOpeningData<'a, Self::ExtField, P, F>,
     stacks: &'a impl LevelProveStacks<'a, F, D, Commit = B, Opening = B, Tensor = B, RingSwitch = B>,
     transcript: &mut T,
     basis: BasisMode,
@@ -1127,7 +1125,8 @@ unless the caller explicitly needs separate commitment objects.
 At conservative precommit time:
 
 - the group must be nonempty;
-- the group source must satisfy its explicit `GroupSource` contract;
+- the caller is responsible for supplying polynomial material with the claimed
+  group shape;
 - `log_basis` must be `min_basis(Cfg)`;
 - the `CommittedGroupProfile` must be derived by the proof-optimized planner
   with `basis_range = (min_basis(Cfg), min_basis(Cfg))`;
@@ -1151,39 +1150,38 @@ At Phase 1 multi-group schedule lookup time:
   terminal root folds remain rejected until the terminal witness layout is
   implemented.
 
-At current `commit_final_group` time, as superseded by the heterogeneous-source
-cutover:
+At current `commit_final_group` time:
 
 - `precommitteds` must be a nonempty list of well-formed
   `CommittedGroupProfile`s returned by the actual earlier commits;
 - the full `AkitaScheduleLookupKey` must be derivable from those exact ordered
-  descriptors, the final group layout, and the final source;
+  descriptors and the final group layout;
 - each precommitted group must keep its `CommittedGroupProfile` `m`, `r`,
   `log_basis`, `n_a`, and B width;
 - each precommitted group must use the frozen conservative B row count in the
   multi-group root relation;
 - the final multi-group root schedule must fit setup capacity;
-- the last group commitment must match the final group's params.
+- the last group commitment must match the final group's params;
+- the call returns the exact `OpeningScheduleSelection` together with the
+  commitment and hint.
 
 At current prove time:
 
-- `ProverOpeningData` / `OpeningClaimsLayout` must be internally consistent.
+- `ProverOpeningData` performs only intrinsic construction and alignment checks.
+- Concrete prover polynomial shape is an implicit caller contract. Akita does
+  not validate a semantic source taxonomy before proving; bad material yields
+  a completeness failure.
 - `G > 1` supports `SetupContributionMode::Recursive` when the folded root can
   hand off to a singleton recursive suffix.
 - Tiered multi-group proofs reject with `AkitaError::InvalidSetup`.
-- `GroupSource::OneHot` requires every polynomial to carry the group's chunk
-  size. `GroupSource::Dense` uses its checked dense bound and may use dense or
-  sparse prover storage.
 
 At current verify time:
 
 - `OpeningClaims` must be internally consistent.
 - `G > 1` with recursive setup contribution verifies against the combined
   setup-index weight vector.
-- The reconstructed schedule source must match the root commitment bounds.
-  Generated schedules additionally validate the stored source against the
-  catalog policy while resolving the schedule. This separation permits a
-  mixed envelope/final configuration to select the final policy's root source.
+- The exact row selection must resolve to the ordered public commitment
+  profiles and frozen verifier schedule.
 
 - The verifier must reconstruct the `AkitaScheduleLookupKey` from the public
   opening batch, setup, and config policy.

@@ -89,8 +89,8 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Envelope::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Envelope::root_fold_witness_norms()
     }
 
     fn get_params_for_prove(
@@ -287,7 +287,6 @@ fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
 
     let schedule = TablelessMixedD::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
-        TablelessMixedD::group_source(),
     ))
     .expect("tableless mixed-D schedule");
     let required = setup_matrix_envelope_for_schedule(&schedule, TablelessMixedD::D)
@@ -558,13 +557,11 @@ fn mixed_d_schedule_with_non_dividing_level_dim_is_rejected() {
         )
         .expect("prover claims group")])
         .expect("prover claims");
-        let prover_data = ProverOpeningData::new(
+        let prover_data = (
             unresolved_selection,
-            prover_claims,
-            vec![hint],
-            vec![&poly_refs],
-        )
-        .expect("prover opening data");
+            ProverOpeningData::new(prover_claims, vec![hint], vec![&poly_refs])
+                .expect("prover opening data"),
+        );
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         BadScheme::batched_prove(
             &setup,

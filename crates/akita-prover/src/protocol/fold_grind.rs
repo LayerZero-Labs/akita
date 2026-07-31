@@ -620,22 +620,8 @@ where
                 "fold grind group descriptor is malformed".to_string(),
             ));
         }
-        let challenge = akita_types::sis::FoldChallengeNorms::new(
-            &group.params.fold_challenge_config(),
-            group.params.fold_challenge_shape(),
-        );
-        let cap_config = root_lp.fold_witness_linf_cap_config_for_params(group.params)?;
-        let witness_norms = root_lp.fold_witness_norms_for_params(group.params)?;
-        let sizing_claims = tail_t_vectors.unwrap_or(group.group.num_polynomials());
-        let (delta_fold, witness_linf_cap) = akita_types::sis::fold_witness_digit_plan(
-            group.params.num_live_blocks(),
-            sizing_claims,
-            root_lp.field_bits_for_cache(),
-            group.params.log_basis_open(),
-            challenge,
-            witness_norms,
-            &cap_config,
-        )?;
+        let delta_fold = group.params.num_digits_fold();
+        let witness_linf_cap = group.params.fold_witness_linf_cap();
         let (digit_negative_abs_bound, digit_positive_bound) =
             akita_types::sis::fold_witness_representable_linf_bounds(
                 group.params.log_basis_open(),

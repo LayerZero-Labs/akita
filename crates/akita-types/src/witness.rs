@@ -743,7 +743,7 @@ mod tests {
         )
         .with_decomp(4, 25, 1, 2, 2)
         .expect("test params")
-        .with_fold_linf_cap_config(32, 2)
+        .with_fold_plan(32, 2, crate::sis::FoldWitnessNorms::bounded(2, 32))
         .expect("test fold row");
         let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
         let layout =

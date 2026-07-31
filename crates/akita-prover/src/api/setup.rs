@@ -342,11 +342,11 @@ mod tests {
                 num_digits_outer: 1,
                 outer_commit_matrix,
             },
-            source: akita_types::GroupSource::bounded(128),
             log_basis_open: 1,
             fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
             num_digits_open: 1,
             num_digits_fold: 1,
+            fold_witness_linf_cap: 1,
         };
         setup
             .prefix_slots

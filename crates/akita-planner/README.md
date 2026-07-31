@@ -19,7 +19,8 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 
 ## Inputs And Outputs
 
-The public search entry point is `find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+The public search entry point is
+`find_group_batch_schedule(&key, &precommitted_fold_witness_norms, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and
@@ -180,9 +181,9 @@ The planner owns the generated schedule-table representation and expansion
 logic. Generated table data is emitted into the `akita-schedules` crate during
 local/CI bootstrap. Compact entries mirror the protocol topology:
 
-- `GeneratedRootFold` records the root source, root-only challenge form,
-  ordered precommitted groups, final-group commitment, open matrix, and witness
-  partition.
+- `GeneratedRootFold` records the root-only challenge form, exact fold digits
+  and cap, ordered precommitted groups, final-group commitment, open matrix,
+  and witness partition.
 - `GeneratedRecursiveFold` records the recursive witness commitment, open
   matrix, optional incoming setup prefix, and witness partition.
 - `GeneratedTerminalFold` records only source geometry and the inner matrix

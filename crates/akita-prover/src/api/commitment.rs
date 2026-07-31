@@ -1,6 +1,5 @@
 //! Prover-owned commitment kernels.
 
-use crate::api::WholeGroupSourceProvider;
 use crate::compute::{
     tensor_root_projection, CommitInnerPlan, OperationCtx, RootCommitKernel, RootCommitSource,
     RootPolyMeta, RuntimeCommitBackendFor, RuntimeRootCommitBackend, RuntimeRootCommitPoly,
@@ -16,7 +15,7 @@ use akita_types::{
     dispatch_for_field, root_tensor_projection_enabled, validate_role_dims,
     validate_role_dims_for_field, AkitaCommitmentHint, AkitaExpandedSetup, AkitaScheduleLookupKey,
     Commitment, CommittedGroup, CommittedGroupParams, CommittedGroupProfile, DigitBlocks,
-    FpExtEncoding, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
+    FpExtEncoding, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
 };
 
 /// Commitment output plus prover-side hint for one committed polynomial bundle.
@@ -28,6 +27,14 @@ pub type CommitmentWithHint<F> = (Commitment<F>, AkitaCommitmentHint<F>);
 
 /// Frozen layout, commitment rows, and prover hint for one standalone group.
 pub type CommittedGroupWithHint<F> = (CommittedGroup<F>, AkitaCommitmentHint<F>);
+
+/// Final committed group, prover hint, and the exact generated row selected for
+/// the complete ordered commitment batch.
+pub type FinalCommittedGroupWithHint<F> = (
+    CommittedGroup<F>,
+    AkitaCommitmentHint<F>,
+    OpeningScheduleSelection,
+);
 
 pub(crate) fn commit_inner_block_digit_count(
     n_a: usize,
@@ -256,24 +263,6 @@ where
     OpeningClaimsLayout::new(num_vars, polys.len())
 }
 
-pub(crate) fn validate_source_contract<F, P>(
-    polys: &[P],
-    source: GroupSource,
-) -> Result<(), AkitaError>
-where
-    F: FieldCore,
-    P: RootPolyMeta<F>,
-{
-    for (poly_idx, poly) in polys.iter().enumerate() {
-        poly.validate_group_source(source).map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "polynomial {poly_idx} does not satisfy source registration: {err}"
-            ))
-        })?;
-    }
-    Ok(())
-}
-
 fn checked_commit_b_input_len(total_polys: usize, per_poly: usize) -> Result<usize, AkitaError> {
     total_polys.checked_mul(per_poly).ok_or_else(|| {
         AkitaError::InvalidInput(format!(
@@ -451,7 +440,6 @@ where
 {
     prepare_commit_inputs::<F, P>(polys, expanded)?;
     validate_commit_level_params::<F>(params, expanded)?;
-    validate_source_contract::<F, P>(polys, params.source)?;
     commit_with_validated_params::<F, P, B>(polys, ctx, params)
 }
 
@@ -523,7 +511,6 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     let (commitment, hint) =
         if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
             // A-role tensor-projection operation at the prove schedule's root fold
@@ -610,7 +597,7 @@ where
     ))
 }
 
-/// Commit one provider-validated standalone group with the exact fixed-root layout.
+/// Commit one standalone group with the exact fixed-root layout.
 ///
 /// Grouped proving is still guarded until the opening phase lands; this API only
 /// produces the precommit metadata and commitment object required by that later
@@ -618,13 +605,12 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error if provider validation fails, the group is unsupported by
-/// the setup, or no exact generated row supports it.
-pub fn commit_group<Cfg, P, B, S>(
+/// Returns an error if the group is unsupported by the setup or no exact
+/// generated row supports it.
+pub fn commit_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
-    provider: &S,
 ) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -633,15 +619,11 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
-    S: WholeGroupSourceProvider<Cfg::Field, P>,
 {
-    let prepared_group = provider.prepare_group(polys)?;
-    let polys = prepared_group.polynomials();
-    let source = prepared_group.planning_source();
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let key = validate_group_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
-    let params = akita_config::committed_group_params::<Cfg>(&key, source)?;
+    let params = akita_config::committed_group_params::<Cfg>(&key)?;
     validate_commit_level_params::<Cfg::Field>(&params, expanded)?;
     let (commitment, hint) =
         if should_transform_group_commitment::<Cfg>(&key, params.role_dims().d_a()) {
@@ -669,7 +651,6 @@ fn final_group_key_from_polys<Cfg, P>(
     polys: &[P],
     setup: &AkitaExpandedSetup<Cfg::Field>,
     precommitteds: Vec<CommittedGroupProfile>,
-    final_source: GroupSource,
 ) -> Result<AkitaScheduleLookupKey, AkitaError>
 where
     Cfg: CommitmentConfig,
@@ -681,17 +662,11 @@ where
             "commit_final_group requires at least one precommitted group".to_string(),
         ));
     }
-    final_source.validate(Cfg::decomposition().field_bits())?;
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(
             opening_batch.max_num_vars(),
             opening_batch.num_total_polynomials(),
         ),
-        final_source,
-        // Generated lookup is profile-exact for already-committed groups.
-        // Never synthesize their honest provider models from the final
-        // provider; dynamic planning must receive those models explicitly.
-        precommitted_sources: Vec::new(),
         precommitteds,
     };
     key.validate(Cfg::decomposition().field_bits())?;
@@ -726,13 +701,12 @@ where
 ///
 /// Returns an error if input validation, multi-group parameter selection, or
 /// commitment execution fails.
-pub fn commit_final_group<Cfg, P, B, S>(
+pub fn commit_final_group<Cfg, P, B>(
     polys: &[P],
     expanded: &AkitaExpandedSetup<Cfg::Field>,
     stack: &UniformProverStack<'_, Cfg::Field, B>,
     precommitteds: Vec<CommittedGroupProfile>,
-    final_provider: &S,
-) -> Result<CommittedGroupWithHint<Cfg::Field>, AkitaError>
+) -> Result<FinalCommittedGroupWithHint<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
     Cfg::Field: FieldCore + CanonicalField + RandomSampling + FromPrimitiveInt + HasWide + 'static,
@@ -740,15 +714,11 @@ where
     Cfg::ExtField: FpExtEncoding<Cfg::Field>,
     P: RuntimeRootCommitPoly<Cfg::Field>,
     B: RuntimeRootCommitBackend<Cfg::Field, P, Cfg::ExtField>,
-    S: WholeGroupSourceProvider<Cfg::Field, P>,
 {
-    let prepared_group = final_provider.prepare_group(polys)?;
-    let polys = prepared_group.polynomials();
-    let final_source = prepared_group.planning_source();
     let commit_ctx = stack.commit();
     let tensor_ctx = stack.tensor();
     let schedule_key =
-        final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds, final_source)?;
+        final_group_key_from_polys::<Cfg, P>(polys, expanded, precommitteds.clone())?;
     let schedule = Cfg::runtime_schedule(schedule_key.clone())?;
     let opening_layout = schedule_key.opening_layout()?;
     ensure_schedule_fits_setup::<Cfg>(expanded, &schedule, &opening_layout)?;
@@ -772,7 +742,12 @@ where
             commit_with_validated_params::<Cfg::Field, P, B>(polys, commit_ctx, &params)
         }?;
     let descriptor = CommittedGroupProfile::from_params(schedule_key.final_group, &params);
-    Ok((CommittedGroup::new(descriptor, commitment), hint))
+    let batch_profile = akita_types::CommittedGroupBatchProfile {
+        final_group: descriptor,
+        precommitteds,
+    };
+    let selection = Cfg::select_schedule_for_profiles(&batch_profile)?.selection();
+    Ok((CommittedGroup::new(descriptor, commitment), hint, selection))
 }
 
 /// Commit one polynomial bundle under config `Cfg`.
@@ -802,7 +777,6 @@ where
     let tensor_ctx = stack.tensor();
     let opening_batch = prepare_batched_commit_inputs::<Cfg::Field, P>(polys, expanded)?;
     let params = Cfg::get_params_for_batched_commitment(&opening_batch)?;
-    validate_source_contract::<Cfg::Field, P>(polys, params.source)?;
     let (commitment, hint) =
         if let Some(transform_ring_d) = root_transform_ring_dim::<Cfg>(&opening_batch)? {
             // A-role tensor-projection operation at the prove schedule's root fold
@@ -856,7 +830,6 @@ where
 {
     prepare_batched_commit_inputs::<F, P>(polys, expanded)?;
     validate_commit_level_params::<F>(params, expanded)?;
-    validate_source_contract::<F, P>(polys, params.source)?;
     commit_with_validated_params::<F, P, B>(polys, ctx, params)
 }
 
@@ -864,8 +837,7 @@ where
 mod tests {
     use super::*;
     use crate::kernels::linear::check_decomposed_rows_i8_match;
-    use crate::DensePoly;
-    use crate::{AkitaProverSetup, MultilinearPolynomial, OneHotPoly};
+    use crate::AkitaProverSetup;
     use akita_algebra::CyclotomicRing;
     use akita_challenges::SparseChallengeConfig;
     use akita_field::Fp64;
@@ -1008,89 +980,6 @@ mod tests {
             checked_commit_b_input_len(usize::MAX, 2),
             Err(AkitaError::InvalidInput(_))
         ));
-    }
-
-    #[test]
-    fn onehot_chunk_size_validator_rejects_mismatched_k() {
-        let params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            D,
-            2,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::pm1_only(1),
-        )
-        .with_source(akita_types::GroupSource::one_hot(256));
-        let wrong = OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap();
-        let ok = OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap();
-        let dense =
-            DensePoly::<F>::from_field_evals(D.trailing_zeros() as usize, D, &vec![F::one(); D])
-                .expect("dense polynomial");
-
-        assert!(matches!(
-            validate_source_contract::<F, _>(&[wrong], params.source),
-            Err(AkitaError::InvalidInput(_))
-        ));
-        assert!(matches!(
-            validate_source_contract::<F, _>(&[dense], params.source),
-            Err(AkitaError::InvalidInput(_))
-        ));
-        validate_source_contract::<F, _>(&[ok], params.source)
-            .expect("matching onehot_k should be accepted");
-    }
-
-    #[test]
-    fn validate_onehot_chunk_size_rejects_wrapped_onehot_mismatch() {
-        let params = CommittedGroupParams::params_only(
-            SisModulusProfileId::Q32Offset99,
-            D,
-            2,
-            1,
-            1,
-            1,
-            SparseChallengeConfig::pm1_only(1),
-        )
-        .with_source(akita_types::GroupSource::one_hot(256));
-        let wrong_wrapped = MultilinearPolynomial::<F, u16>::onehot(
-            OneHotPoly::<F, u16>::new(64, D, vec![Some(1), None]).unwrap(),
-        );
-        let ok_wrapped = MultilinearPolynomial::<F, u16>::onehot(
-            OneHotPoly::<F, u16>::new(256, D, vec![Some(1), None]).unwrap(),
-        );
-
-        assert!(matches!(
-            validate_source_contract::<F, _>(&[wrong_wrapped], params.source),
-            Err(AkitaError::InvalidInput(_))
-        ));
-        validate_source_contract::<F, _>(&[ok_wrapped], params.source)
-            .expect("matching wrapped onehot_k should be accepted");
-    }
-
-    #[test]
-    fn dense_source_validator_enforces_declared_coefficient_bits() {
-        let num_vars = D.trailing_zeros() as usize;
-        let within = DensePoly::<F>::from_field_evals(num_vars, D, &vec![F::from_u64(255); D])
-            .expect("bounded dense polynomial");
-        let above = DensePoly::<F>::from_field_evals(num_vars, D, &vec![F::from_u64(256); D])
-            .expect("out-of-bound dense polynomial");
-        let source = GroupSource::bounded(8);
-
-        validate_source_contract::<F, _>(std::slice::from_ref(&within), source)
-            .expect("8-bit coefficients satisfy the dense contract");
-        assert!(matches!(
-            validate_source_contract::<F, _>(&[above], source),
-            Err(AkitaError::InvalidInput(_))
-        ));
-
-        let downstream = GroupSource::registered(
-            akita_types::GroupSourceRegistration::new(*b"downstream/test\0", [9; 16]),
-            akita_types::GroupSourceEncoding::Bounded {
-                coefficient_bits: 8,
-            },
-        );
-        validate_source_contract::<F, _>(std::slice::from_ref(&within), downstream)
-            .expect("provider registration does not change the accepted profile");
     }
 
     #[test]

@@ -14,7 +14,7 @@ pub use akita_types::{
 };
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,
-    ring_challenge_config_digest, selection_catalog_identity, validate_catalog_identity,
+    ring_challenge_config_digest, validate_catalog_identity,
 };
 pub use generated::*;
 pub use resolve::{

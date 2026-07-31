@@ -174,7 +174,6 @@ fn assert_fold_protocol_epoch(expected: &FoldProtocolEpoch) {
 
     let schedule = OneHotCfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::new(expected.num_vars, 1),
-        OneHotCfg::group_source(),
     ))
     .expect("generated schedule");
     assert_eq!(

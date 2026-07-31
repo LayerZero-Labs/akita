@@ -129,16 +129,13 @@ pub use schedule::{
     intermediate_w_ring_element_count_with_counts,
     intermediate_w_ring_element_count_with_counts_bits, r_decomp_levels, root_input_witness_len,
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupBatchProfile, CommittedGroupProfile,
-    FoldSchedule, FoldScheduleEstimate, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
-    NextWitnessBindingPolicy, PlannedFoldSchedule, RecursiveFoldParams, RecursiveFoldStep,
-    RegisteredGroupSource, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseLinfPolicy, WitnessPartition,
+    FoldSchedule, FoldScheduleEstimate, NextWitnessBindingPolicy, PlannedFoldSchedule,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
+    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, TerminalCommittedGroupParams,
+    TerminalFoldParams, TerminalFoldStep, TerminalResponseLinfPolicy, WitnessPartition,
     TERMINAL_RESPONSE_MIN_TARGET_RETAIN_DEN, TERMINAL_RESPONSE_MIN_TARGET_RETAIN_NUM,
 };
-pub use schedule_selection::{
-    schedule_row_digest, CatalogIdentity, OpeningScheduleSelection, ScheduleRowDigest,
-};
+pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
     ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
     SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,

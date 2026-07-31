@@ -145,13 +145,6 @@ where
             Self::OneHot(poly) => RootPolyMeta::num_vars(poly),
         }
     }
-
-    fn validate_group_source(&self, source: akita_types::GroupSource) -> Result<(), AkitaError> {
-        match self {
-            Self::Dense(poly) => RootPolyMeta::validate_group_source(poly, source),
-            Self::OneHot(poly) => RootPolyMeta::validate_group_source(poly, source),
-        }
-    }
 }
 
 impl<F, const D: usize, I> RootPolyShape<F, D> for MultilinearPolynomial<F, I>

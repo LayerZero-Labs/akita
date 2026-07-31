@@ -23,9 +23,7 @@ fn run_single_onehot_tensor(nv: usize) {
             &akita_types::OpeningClaimsLayout::new(nv, 1).expect("singleton opening batch"),
         )
         .expect("layout");
-        let tensor_k = D64OneHotTensor::group_source()
-            .sparse_chunk_size()
-            .expect("tensor one-hot config");
+        let tensor_k = 256;
         let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
         assert_eq!(total_ring * TENSOR_D, 1usize << nv);
         let num_onehot_chunks = (1usize << nv) / tensor_k;

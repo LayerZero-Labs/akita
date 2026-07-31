@@ -1,8 +1,8 @@
 //! Fixed-width generated-schedule selection identities.
 //!
 //! These values are public protocol inputs. They intentionally contain no
-//! prover provider/source registration: a row is identified only by its
-//! ordered exact committed profiles and the expanded verifier schedule.
+//! prover representation metadata: a row is identified only by its ordered
+//! exact committed profiles and the expanded verifier schedule.
 
 use crate::descriptor_bytes::push_usize;
 use crate::instance_descriptor::digest_descriptor_bytes;
@@ -14,23 +14,6 @@ use akita_serialization::{
 use std::io::{Read, Write};
 
 const SCHEDULE_ROW_DOMAIN_V1: &[u8] = b"akita/schedule-row/v1";
-
-/// Cryptographic identity of one enabled generated schedule catalog.
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub struct CatalogIdentity([u8; 32]);
-
-impl CatalogIdentity {
-    /// Build an identity from its fixed-width digest bytes.
-    pub const fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    /// Borrow the fixed-width digest bytes.
-    pub const fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
 
 /// Cryptographic identity of one complete expanded schedule row.
 #[repr(transparent)]
@@ -52,8 +35,6 @@ impl ScheduleRowDigest {
 /// Public batch-level selection of one verifier-approved generated row.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct OpeningScheduleSelection {
-    /// Exact configured catalog identity.
-    pub catalog_identity: CatalogIdentity,
     /// Complete expanded row identity.
     pub row_digest: ScheduleRowDigest,
 }
@@ -140,12 +121,10 @@ macro_rules! impl_fixed_digest_wire {
     };
 }
 
-impl_fixed_digest_wire!(CatalogIdentity);
 impl_fixed_digest_wire!(ScheduleRowDigest);
 
 impl Valid for OpeningScheduleSelection {
     fn check(&self) -> Result<(), SerializationError> {
-        self.catalog_identity.check()?;
         self.row_digest.check()
     }
 }
@@ -156,13 +135,11 @@ impl AkitaSerialize for OpeningScheduleSelection {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.catalog_identity
-            .serialize_with_mode(&mut writer, compress)?;
         self.row_digest.serialize_with_mode(&mut writer, compress)
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.catalog_identity.serialized_size(compress) + self.row_digest.serialized_size(compress)
+        self.row_digest.serialized_size(compress)
     }
 }
 
@@ -176,12 +153,6 @@ impl AkitaDeserialize for OpeningScheduleSelection {
         _ctx: &Self::Context,
     ) -> Result<Self, SerializationError> {
         let value = Self {
-            catalog_identity: CatalogIdentity::deserialize_with_mode(
-                &mut reader,
-                compress,
-                validate,
-                &(),
-            )?,
             row_digest: ScheduleRowDigest::deserialize_with_mode(
                 &mut reader,
                 compress,
@@ -201,16 +172,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn schedule_selection_round_trips_as_exactly_sixty_four_bytes() {
+    fn schedule_selection_round_trips_as_exactly_thirty_two_bytes() {
         let selection = OpeningScheduleSelection {
-            catalog_identity: CatalogIdentity::from_bytes([0x11; 32]),
             row_digest: ScheduleRowDigest::from_bytes([0x22; 32]),
         };
         let mut bytes = Vec::new();
         selection
             .serialize_uncompressed(&mut bytes)
             .expect("serialize selection");
-        assert_eq!(bytes.len(), 64);
+        assert_eq!(bytes.len(), 32);
         let decoded = OpeningScheduleSelection::deserialize_uncompressed(bytes.as_slice(), &())
             .expect("deserialize selection");
         assert_eq!(decoded, selection);

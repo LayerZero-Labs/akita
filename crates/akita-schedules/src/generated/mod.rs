@@ -45,16 +45,18 @@ pub enum GeneratedRootFinalChallenge {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootFinalGroup {
     pub layout: akita_types::PolynomialGroupLayout,
-    pub source: akita_types::GroupSource,
     pub challenge: GeneratedRootFinalChallenge,
+    pub num_digits_inner: u32,
+    pub num_digits_fold: u32,
+    pub fold_witness_linf_cap: u128,
     pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
-    pub source: akita_types::GroupSource,
     pub num_digits_fold: u32,
+    pub fold_witness_linf_cap: u128,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -105,18 +107,11 @@ impl GeneratedFoldScheduleEntry {
     pub fn to_runtime_lookup_key(self) -> akita_types::AkitaScheduleLookupKey {
         akita_types::AkitaScheduleLookupKey {
             final_group: self.root.final_group.layout,
-            final_source: self.root.final_group.source,
             precommitteds: self
                 .root
                 .precommitted_groups
                 .iter()
                 .map(|group| group.descriptor)
-                .collect(),
-            precommitted_sources: self
-                .root
-                .precommitted_groups
-                .iter()
-                .map(|group| group.source)
                 .collect(),
         }
     }
@@ -139,7 +134,7 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub root_source_encoding: akita_types::GroupSourceEncoding,
+    pub root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
@@ -167,8 +162,8 @@ pub use crate::{
     SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
-    CommittedGroupProfile, GroupSource, GroupSourceEncoding, GroupSourceRegistration,
-    InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
+    sis::FoldWitnessNorms, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
+    PolynomialGroupLayout,
 };
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};
@@ -221,13 +216,6 @@ pub fn generated_schedule_key_cmp(
         .cmp(&right_main)
         .then_with(|| {
             left.root
-                .final_group
-                .source
-                .encoding()
-                .cmp(&right.root.final_group.source.encoding())
-        })
-        .then_with(|| {
-            left.root
                 .precommitted_groups
                 .len()
                 .cmp(&right.root.precommitted_groups.len())
@@ -261,14 +249,6 @@ pub fn generated_schedule_key_cmp_runtime(
     );
     left_main
         .cmp(&right_main)
-        .then_with(|| {
-            generated
-                .root
-                .final_group
-                .source
-                .encoding()
-                .cmp(&runtime.final_source.encoding())
-        })
         .then_with(|| {
             generated
                 .root
@@ -307,11 +287,6 @@ pub fn runtime_schedule_key_cmp(
     );
     left_main
         .cmp(&right_main)
-        .then_with(|| {
-            left.final_source
-                .encoding()
-                .cmp(&right.final_source.encoding())
-        })
         .then_with(|| left.precommitteds.len().cmp(&right.precommitteds.len()))
         .then_with(|| {
             left.precommitteds
@@ -330,7 +305,6 @@ fn schedule_key_eq(
     key: &akita_types::AkitaScheduleLookupKey,
 ) -> bool {
     generated.root.final_group.layout == key.final_group
-        && generated.root.final_group.source.encoding() == key.final_source.encoding()
         && generated.root.precommitted_groups.len() == key.precommitteds.len()
         && generated
             .root

@@ -5,7 +5,10 @@ use akita_config::proof_optimized::fp128;
 use akita_config::CommitmentConfig;
 use akita_field::{CanonicalField, FieldCore};
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData};
+use akita_prover::{
+    ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData,
+    SelectedProverOpeningData,
+};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
     AkitaCommitmentHint, BasisMode, CommittedGroup, CommittedGroupBatchProfile,
@@ -48,7 +51,7 @@ fn prover_claims<'a, P, CommitF: FieldCore>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<CommitF>,
     hint: AkitaCommitmentHint<CommitF>,
-) -> ProverOpeningData<'a, F, akita_prover::PreparedProverGroup<'a, P>, CommitF>
+) -> SelectedProverOpeningData<'a, F, akita_prover::PreparedProverGroup<'a, P>, CommitF>
 where
     P: akita_prover::RootPolyMeta<CommitF>,
 {
@@ -59,8 +62,11 @@ where
     )
     .expect("valid prover claims group");
     let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
-    ProverOpeningData::new(selection, opening_claims, vec![hint], vec![polynomials])
-        .expect("valid prover opening data")
+    (
+        selection,
+        ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+            .expect("valid prover opening data"),
+    )
 }
 
 fn verifier_claims<'a>(
@@ -251,9 +257,7 @@ fn bench_onehot_phases<const D: usize, Cfg: CommitmentConfig<Field = F, ExtField
     )
     .expect("benchmark layout");
     let total_ring = layout.num_live_blocks * layout.num_positions_per_block;
-    let onehot_k = Cfg::group_source()
-        .sparse_chunk_size()
-        .expect("one-hot benchmark config");
+    let onehot_k = 256;
     let total_field = total_ring * D;
     assert_eq!(total_field % onehot_k, 0);
     let total_chunks = total_field / onehot_k;

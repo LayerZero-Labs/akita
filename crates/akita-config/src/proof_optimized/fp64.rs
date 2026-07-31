@@ -39,7 +39,7 @@ impl_proof_optimized_preset!(
     64,
     64,
     64,
-    source = akita_types::GroupSource::bounded(64)
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 64)
 );
 impl_proof_optimized_preset!(
     D64OneHot,
@@ -49,7 +49,7 @@ impl_proof_optimized_preset!(
     64,
     64,
     1,
-    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE)
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
 );
 impl_proof_optimized_preset!(
     D128Dense,
@@ -59,7 +59,7 @@ impl_proof_optimized_preset!(
     128,
     64,
     64,
-    source = akita_types::GroupSource::bounded(64),
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 128),
     schedules = (
         "schedules-fp64-d128-dense",
         "fp64_d128_dense",
@@ -74,7 +74,7 @@ impl_proof_optimized_preset!(
     128,
     64,
     1,
-    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE),
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp64-d128-onehot",
         "fp64_d128_onehot",
@@ -89,7 +89,7 @@ impl_proof_optimized_preset!(
     256,
     64,
     64,
-    source = akita_types::GroupSource::bounded(64)
+    fold_norms = akita_types::sis::FoldWitnessNorms::bounded(3, 256)
 );
 impl_proof_optimized_preset!(
     D256OneHot,
@@ -99,7 +99,7 @@ impl_proof_optimized_preset!(
     256,
     64,
     1,
-    source = akita_types::GroupSource::one_hot(STANDARD_ONEHOT_CHUNK_SIZE),
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
     schedules = (
         "schedules-fp64-d256-onehot",
         "fp64_d256_onehot",

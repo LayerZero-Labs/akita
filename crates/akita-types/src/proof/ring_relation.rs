@@ -509,7 +509,11 @@ mod tests {
         )
         .with_decomp(4, 8, 1, 2, 2)
         .expect("test params")
-        .with_fold_linf_cap_config(F::modulus_bits(), num_fold_claims)
+        .with_fold_plan(
+            F::modulus_bits(),
+            num_fold_claims,
+            crate::sis::FoldWitnessNorms::bounded(2, D),
+        )
         .expect("test fold row")
     }
 
@@ -570,7 +574,11 @@ mod tests {
         )
         .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
         .expect("test params")
-        .with_fold_linf_cap_config(F::modulus_bits(), num_fold_claims)
+        .with_fold_plan(
+            F::modulus_bits(),
+            num_fold_claims,
+            crate::sis::FoldWitnessNorms::bounded(2, D),
+        )
         .expect("test fold row")
     }
 
@@ -808,11 +816,11 @@ mod tests {
                 PolynomialGroupLayout::new(4, 1),
                 &precommit_lp,
             ),
-            source: precommit_lp.source,
             log_basis_open: precommit_lp.log_basis_open,
             fold_challenge_config: precommit_lp.fold_challenge_config,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold: precommit_lp.num_digits_fold,
+            fold_witness_linf_cap: precommit_lp.fold_witness_linf_cap,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];

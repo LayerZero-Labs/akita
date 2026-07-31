@@ -20,15 +20,17 @@ use std::{
 use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
+use akita_types::sis::FoldWitnessNorms;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
-    FoldSchedule, GroupSource, OpeningClaimsLayout, PolynomialGroupLayout,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout,
 };
 
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::{policy_of, tensor_verifier, CommitmentConfig, RecursiveCommitmentConfig};
 
-type RegenScheduleCacheMap = HashMap<(TypeId, AkitaScheduleLookupKey), FoldSchedule>;
+type RegenScheduleCacheMap =
+    HashMap<(TypeId, AkitaScheduleLookupKey, Vec<FoldWitnessNorms>), FoldSchedule>;
 type RegenScheduleCache = LazyLock<Mutex<RegenScheduleCacheMap>>;
 type RegenScheduleCacheGuard = MutexGuard<'static, RegenScheduleCacheMap>;
 
@@ -80,14 +82,19 @@ pub struct GeneratedFamily {
     /// Opening-batch sizes (`num_polys`) enumerated for this family.
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any generated table
-    /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
+    /// (`find_group_batch_schedule(&single_key, &[], &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any generated table.
-    pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
+    pub regen_group_batch:
+        fn(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>) -> Result<FoldSchedule, AkitaError>,
     /// Whether this family emits multi-group-root rows in its generated table.
     pub emit_group_batch: bool,
     /// Grouped-root keys enumerated for this generated family.
-    pub group_batch_keys: fn(&GeneratedFamily) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError>,
+    #[allow(clippy::type_complexity)]
+    pub group_batch_keys:
+        fn(
+            &GeneratedFamily,
+        ) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError>,
     /// `Cfg::runtime_schedule(key)` — strict table-backed runtime resolution.
     /// Used by diagnostic comparisons against the generated table.
     pub table_backed: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
@@ -139,9 +146,11 @@ pub fn emitted_scalar_keys(
 
 fn plan_regen<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: &[FoldWitnessNorms],
 ) -> Result<FoldSchedule, AkitaError> {
     let planned = find_group_batch_schedule(
         key,
+        precommitted_fold_witness_norms,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -152,19 +161,24 @@ fn plan_regen<Cfg: CommitmentConfig>(
 
 /// Pure DP regeneration for `Cfg` — never consults the generated table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key, Cfg::group_source()))
+    plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     key: AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: Vec<FoldWitnessNorms>,
 ) -> Result<FoldSchedule, AkitaError> {
-    let cache_key = (TypeId::of::<Cfg>(), key.clone());
+    let cache_key = (
+        TypeId::of::<Cfg>(),
+        key.clone(),
+        precommitted_fold_witness_norms.clone(),
+    );
     if let Some(schedule) = lock_regen_schedule_cache()?.get(&cache_key).cloned() {
         return Ok(schedule);
     }
 
-    let schedule = plan_regen::<Cfg>(&key)?;
+    let schedule = plan_regen::<Cfg>(&key, &precommitted_fold_witness_norms)?;
     lock_regen_schedule_cache()?.insert(cache_key, schedule.clone());
     Ok(schedule)
 }
@@ -174,7 +188,7 @@ fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
 fn table_backed<Cfg: CommitmentConfig>(
     key: PolynomialGroupLayout,
 ) -> Result<FoldSchedule, AkitaError> {
-    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key, Cfg::group_source()))
+    Cfg::runtime_schedule(AkitaScheduleLookupKey::single(key))
 }
 
 fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
@@ -182,16 +196,16 @@ fn family_policy<Cfg: CommitmentConfig>() -> PlannerPolicy {
 }
 
 fn supported_group_batch_key<Cfg: CommitmentConfig + 'static>(
-    candidate: AkitaScheduleLookupKey,
-) -> Option<AkitaScheduleLookupKey> {
-    regen_group_batch::<Cfg>(candidate.clone())
+    candidate: (AkitaScheduleLookupKey, Vec<FoldWitnessNorms>),
+) -> Option<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)> {
+    regen_group_batch::<Cfg>(candidate.0.clone(), candidate.1.clone())
         .is_ok()
         .then_some(candidate)
 }
 
 fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
-    candidates: Vec<AkitaScheduleLookupKey>,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+    candidates: Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>,
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     let workers = std::thread::available_parallelism()
         .map(|count| count.get())
         .unwrap_or(1)
@@ -237,7 +251,7 @@ fn supported_group_batch_keys<Cfg: CommitmentConfig + 'static>(
 
 fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     family: &GeneratedFamily,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     if !family.emit_group_batch {
         return Ok(Vec::new());
     }
@@ -263,19 +277,22 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
             for &precommitted_num_polynomials in DEFAULT_GROUP_BATCH_PRECOMMIT_NUM_POLYNOMIALS {
                 let precommitted_group =
                     PolynomialGroupLayout::new(pre_num_vars, precommitted_num_polynomials);
-                let Ok(params) =
-                    planner_committed_group_params::<Cfg>(&precommitted_group, Cfg::group_source())
-                else {
+                let Ok(params) = planner_committed_group_params::<Cfg>(
+                    &precommitted_group,
+                    Cfg::decomposition().log_commit_bound,
+                    Cfg::root_fold_witness_norms(),
+                ) else {
                     continue;
                 };
                 let precommitted = CommittedGroupProfile::from_params(precommitted_group, &params);
                 for num_precommitted in 1..=DEFAULT_GROUP_BATCH_MAX_PRECOMMITTED_GROUPS {
-                    let candidate = AkitaScheduleLookupKey {
-                        final_group: main,
-                        final_source: Cfg::group_source(),
-                        precommitteds: vec![precommitted; num_precommitted],
-                        precommitted_sources: vec![Cfg::group_source(); num_precommitted],
-                    };
+                    let candidate = (
+                        AkitaScheduleLookupKey {
+                            final_group: main,
+                            precommitteds: vec![precommitted; num_precommitted],
+                        },
+                        vec![Cfg::root_fold_witness_norms(); num_precommitted],
+                    );
                     candidates.push(candidate);
                 }
             }
@@ -283,12 +300,12 @@ fn group_batch_keys<Cfg: CommitmentConfig + 'static>(
     }
     candidates.extend(direct_profile_group_batch_keys_for_cfg::<Cfg>()?);
     let mut keys = supported_group_batch_keys::<Cfg>(candidates)?;
-    keys.sort_by(runtime_schedule_key_cmp);
+    keys.sort_by(|left, right| runtime_schedule_key_cmp(&left.0, &right.0));
     Ok(keys)
 }
 
 fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     if std::any::TypeId::of::<Cfg>() == std::any::TypeId::of::<fp128::D64OneHot>() {
         let mut keys = recursive_d64_onehot_profile_keys::<fp128::D64OneHot>()?;
         keys.push(heterogeneous_d64_onehot_catalog_key::<fp128::D64OneHot>()?);
@@ -302,12 +319,12 @@ fn direct_profile_group_batch_keys_for_cfg<Cfg: CommitmentConfig + 'static>(
 
 fn recursive_profile_group_batch_keys<Cfg: CommitmentConfig + 'static>(
     _family: &GeneratedFamily,
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()
 }
 
 fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 'static>(
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     if std::any::TypeId::of::<Cfg>()
         == std::any::TypeId::of::<RecursiveCommitmentConfig<fp128::D64OneHot>>()
     {
@@ -322,50 +339,60 @@ fn recursive_profile_group_batch_keys_for_recursive_cfg<Cfg: CommitmentConfig + 
 }
 
 fn recursive_d64_onehot_profile_keys<BaseCfg: CommitmentConfig>(
-) -> Result<Vec<AkitaScheduleLookupKey>, AkitaError> {
+) -> Result<Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>, AkitaError> {
     let precommitted_group = PolynomialGroupLayout::new(16, 1);
-    let precommitted_params =
-        planner_committed_group_params::<BaseCfg>(&precommitted_group, BaseCfg::group_source())?;
+    let precommitted_params = planner_committed_group_params::<BaseCfg>(
+        &precommitted_group,
+        BaseCfg::decomposition().log_commit_bound,
+        BaseCfg::root_fold_witness_norms(),
+    )?;
     let precommitted = CommittedGroupProfile::from_params(precommitted_group, &precommitted_params);
-    Ok(vec![AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(32, 2),
-        final_source: BaseCfg::group_source(),
-        precommitteds: vec![precommitted, precommitted],
-        precommitted_sources: vec![BaseCfg::group_source(), BaseCfg::group_source()],
-    }])
+    Ok(vec![(
+        AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(32, 2),
+            precommitteds: vec![precommitted, precommitted],
+        },
+        vec![
+            BaseCfg::root_fold_witness_norms(),
+            BaseCfg::root_fold_witness_norms(),
+        ],
+    )])
 }
 
 fn heterogeneous_d64_onehot_catalog_key<Cfg: CommitmentConfig>(
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
+) -> Result<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>), AkitaError> {
     let onehot_group = PolynomialGroupLayout::new(14, 1);
     let dense_group = PolynomialGroupLayout::new(15, 2);
-    let onehot_source = GroupSource::one_hot(16);
-    let dense_source = GroupSource::bounded(32);
-    let onehot_params = planner_committed_group_params::<Cfg>(&onehot_group, onehot_source)?;
-    let dense_params = planner_committed_group_params::<Cfg>(&dense_group, dense_source)?;
-    Ok(AkitaScheduleLookupKey {
-        final_group: PolynomialGroupLayout::new(16, 1),
-        final_source: GroupSource::one_hot(
-            akita_config::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE,
-        ),
-        precommitteds: vec![
-            CommittedGroupProfile::from_params(onehot_group, &onehot_params),
-            CommittedGroupProfile::from_params(dense_group, &dense_params),
-        ],
-        precommitted_sources: vec![onehot_source, dense_source],
-    })
+    let onehot_norms = FoldWitnessNorms::new(1, 4);
+    let dense_norms = FoldWitnessNorms::bounded(3, Cfg::D);
+    let onehot_params = planner_committed_group_params::<Cfg>(&onehot_group, 1, onehot_norms)?;
+    let dense_params = planner_committed_group_params::<Cfg>(&dense_group, 32, dense_norms)?;
+    Ok((
+        AkitaScheduleLookupKey {
+            final_group: PolynomialGroupLayout::new(16, 1),
+            precommitteds: vec![
+                CommittedGroupProfile::from_params(onehot_group, &onehot_params),
+                CommittedGroupProfile::from_params(dense_group, &dense_params),
+            ],
+        },
+        vec![onehot_norms, dense_norms],
+    ))
 }
 
 fn planner_committed_group_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-    source: GroupSource,
+    log_commit_bound: u32,
+    fold_witness_norms: FoldWitnessNorms,
 ) -> Result<CommittedGroupParams, AkitaError> {
     key.validate()?;
     let mut policy = policy_of::<Cfg>().direct_only();
+    policy.decomposition.log_commit_bound = log_commit_bound;
+    policy.root_fold_witness_norms = fold_witness_norms;
     policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
     let planned = find_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(*key, source),
+        &AkitaScheduleLookupKey::single(*key),
+        &[],
         &policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -403,18 +430,11 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
             }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                final_source: entry.root.final_group.source,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
                     .map(|group| group.descriptor)
-                    .collect(),
-                precommitted_sources: entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .map(|group| group.source)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
@@ -428,7 +448,7 @@ pub fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfig>(
     // recursive adapter and its multi-chunk (distributed-prover) companion share
     // the same profiling key shape; they differ only in the chunked witness
     // layout the policy prices.
-    for candidate in recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()? {
+    for (candidate, _) in recursive_profile_group_batch_keys_for_recursive_cfg::<Cfg>()? {
         if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
             push_unique_schedule_key(&mut keys, candidate);
         }

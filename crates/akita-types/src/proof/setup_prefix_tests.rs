@@ -1,12 +1,9 @@
 use super::*;
 use crate::{
-    CommittedGroupParams, CommittedGroupProfile, GroupSource, GroupSourceRegistration,
-    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
-    SisModulusProfileId,
+    CommittedGroupParams, CommittedGroupProfile, OpeningClaimsLayout, OuterCommitMatrixParams,
+    PolynomialGroupLayout, PrecommittedLevelParams, SisModulusProfileId,
 };
 use akita_challenges::SparseChallengeConfig;
-use std::collections::BTreeMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 fn sample_level_params() -> CommittedGroupParams {
     CommittedGroupParams::params_only(
@@ -35,53 +32,6 @@ fn prefix_eligible_level_params() -> CommittedGroupParams {
     )
     .with_decomp(2, 3, field_element_digits, 2, 2)
     .expect("prefix eligible level params")
-}
-
-fn valid_setup_prefix_params() -> PrecommittedLevelParams {
-    let inner_commit_matrix = crate::InnerCommitMatrixParams::try_new_with_min_rank(
-        crate::SisTableKey {
-            policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: crate::SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q32Offset99,
-            role: crate::sis::SisMatrixRole::Inner,
-            ring_dimension: 64,
-            coeff_linf_bound: 131_071,
-        },
-        1,
-    )
-    .expect("audited prefix A matrix");
-    let outer_commit_matrix = OuterCommitMatrixParams::try_new_with_min_rank(
-        crate::SisTableKey {
-            policy: crate::sis::DEFAULT_SIS_SECURITY_POLICY,
-            table_digest: crate::SisTableDigest::CURRENT,
-            modulus_profile: SisModulusProfileId::Q32Offset99,
-            role: crate::sis::SisMatrixRole::Outer,
-            ring_dimension: 64,
-            coeff_linf_bound: 3,
-        },
-        inner_commit_matrix.output_rank(),
-    )
-    .expect("audited prefix B matrix");
-    PrecommittedLevelParams {
-        layout: CommittedGroupProfile {
-            version: CommittedGroupProfile::VERSION,
-            group: PolynomialGroupLayout::singleton(6),
-            num_live_ring_elements_per_claim: 1,
-            num_positions_per_block: 1,
-            num_live_blocks: 1,
-            log_basis_inner: 1,
-            num_digits_inner: 1,
-            inner_commit_matrix,
-            log_basis_outer: 1,
-            num_digits_outer: 1,
-            outer_commit_matrix,
-        },
-        source: GroupSource::bounded(32),
-        log_basis_open: 1,
-        fold_challenge_config: SparseChallengeConfig::pm1_only(0),
-        num_digits_open: 1,
-        num_digits_fold: 1,
-    }
 }
 
 #[test]
@@ -199,11 +149,11 @@ fn precommitted_group(
 ) -> PrecommittedLevelParams {
     PrecommittedLevelParams {
         layout: CommittedGroupProfile::from_params(group, params),
-        source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
         num_digits_fold: params.num_digits_fold,
+        fold_witness_linf_cap: params.fold_witness_linf_cap,
     }
 }
 
@@ -393,77 +343,6 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
         .to_string()
         .contains("required setup prefix slot is missing from registry"));
     let _ = F::zero();
-}
-
-#[test]
-fn setup_prefix_slot_identity_erases_provider_registration() {
-    let commitment_params = valid_setup_prefix_params();
-    let builtin = setup_prefix_slot_id(64, 1, commitment_params);
-    let mut downstream = builtin.clone();
-    downstream.commitment_params.source = GroupSource::registered(
-        GroupSourceRegistration::new(*b"downstream/test\0", [7; 16]),
-        GroupSource::one_hot(16).encoding(),
-    );
-    downstream
-        .check()
-        .expect("provider metadata is outside verifier acceptance");
-
-    assert_ne!(
-        builtin.commitment_params.source,
-        downstream.commitment_params.source
-    );
-    assert_eq!(builtin, downstream);
-    assert_eq!(builtin.cmp(&downstream), Ordering::Equal);
-
-    let hash = |id: &SetupPrefixSlotId| {
-        let mut hasher = DefaultHasher::new();
-        id.hash(&mut hasher);
-        hasher.finish()
-    };
-    assert_eq!(hash(&builtin), hash(&downstream));
-
-    let mut builtin_bytes = Vec::new();
-    builtin
-        .serialize_with_mode(&mut builtin_bytes, Compress::Yes)
-        .expect("serialize built-in provider");
-    let mut downstream_bytes = Vec::new();
-    downstream
-        .serialize_with_mode(&mut downstream_bytes, Compress::Yes)
-        .expect("serialize downstream provider");
-    assert_eq!(builtin_bytes, downstream_bytes);
-
-    let decoded = SetupPrefixSlotId::deserialize_with_mode(
-        downstream_bytes.as_slice(),
-        Compress::Yes,
-        Validate::Yes,
-        &(),
-    )
-    .expect("deserialize provider-independent slot id");
-    assert_eq!(decoded, builtin);
-    assert_eq!(decoded, downstream);
-    assert_eq!(
-        decoded.commitment_params.source,
-        GroupSource::bounded(32),
-        "wire decode uses a non-semantic conservative staging placeholder"
-    );
-
-    let mut map = BTreeMap::new();
-    assert_eq!(map.insert(builtin, 1), None);
-    assert_eq!(map.insert(downstream, 2), Some(1));
-    assert_eq!(map.len(), 1);
-}
-
-#[test]
-fn setup_prefix_slot_acceptance_ignores_staging_source_contract() {
-    let mut commitment_params = valid_setup_prefix_params();
-    commitment_params.source = GroupSource::bounded(33);
-    commitment_params
-        .validate()
-        .expect("staging source is not verifier input");
-
-    let id = setup_prefix_slot_id(64, 1, commitment_params);
-    id.serialize_with_mode(Vec::new(), Compress::Yes)
-        .expect("staging source is not serialized");
 }
 
 #[test]

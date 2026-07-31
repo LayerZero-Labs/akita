@@ -12,10 +12,7 @@ use std::sync::{LazyLock, Mutex};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::instance_descriptor::AKITA_INSTANCE_DESCRIPTOR_VERSION;
-use akita_types::{
-    AkitaScheduleInputs, CatalogIdentity, CommittedGroupProfile, PolynomialGroupLayout,
-    ScheduleRowDigest,
-};
+use akita_types::{AkitaScheduleInputs, CommittedGroupProfile, PolynomialGroupLayout};
 
 use crate::generated::{
     generated_schedule_key_cmp, GeneratedBlockGeometry, GeneratedCommittedGroup,
@@ -26,8 +23,6 @@ use crate::PlannerPolicy;
 
 static VALIDATED_CATALOGS: LazyLock<Mutex<HashSet<CatalogValidationCacheKey>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
-
-const SCHEDULE_CATALOG_DOMAIN_V1: &[u8] = b"akita/schedule-catalog/v1";
 
 fn lock_validated_catalogs(
 ) -> Result<std::sync::MutexGuard<'static, HashSet<CatalogValidationCacheKey>>, AkitaError> {
@@ -58,7 +53,7 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
-    write_source_encoding(&mut h, policy.root_source_encoding);
+    write_witness_norms(&mut h, policy.root_fold_witness_norms);
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
@@ -87,7 +82,7 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
-    write_source_encoding(&mut h, identity.root_source_encoding);
+    write_witness_norms(&mut h, identity.root_fold_witness_norms);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
@@ -113,113 +108,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     let digest = h.finish();
     out[..8].copy_from_slice(&digest.to_le_bytes());
     out
-}
-
-/// Cryptographic public identity of one generated catalog and its exact rows.
-///
-/// Row digests are sorted before hashing so generated source-file ordering is
-/// not protocol identity. Provider/source policy is deliberately absent: any
-/// provider that lowers to the same exact profiles and expanded rows reuses
-/// the same catalog identity.
-pub fn selection_catalog_identity(
-    identity: &GeneratedScheduleCatalogIdentity,
-    row_digests: &[ScheduleRowDigest],
-) -> Result<CatalogIdentity, AkitaError> {
-    fn push_usize(bytes: &mut Vec<u8>, value: usize, field: &str) -> Result<(), AkitaError> {
-        let value = u64::try_from(value).map_err(|_| {
-            AkitaError::InvalidSetup(format!("catalog identity {field} does not fit u64"))
-        })?;
-        bytes.extend_from_slice(&value.to_le_bytes());
-        Ok(())
-    }
-
-    let mut rows = row_digests.to_vec();
-    rows.sort_unstable();
-    for pair in rows.windows(2) {
-        if pair[0] == pair[1] {
-            return Err(AkitaError::InvalidSetup(
-                "schedule catalog contains duplicate full-row identities".to_string(),
-            ));
-        }
-    }
-
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(SCHEDULE_CATALOG_DOMAIN_V1);
-    bytes.push(1);
-    push_usize(&mut bytes, identity.family_name.len(), "family name length")?;
-    bytes.extend_from_slice(identity.family_name.as_bytes());
-    bytes.extend_from_slice(&identity.protocol_epoch.to_le_bytes());
-    bytes.extend_from_slice(&identity.cost_model.tag().to_le_bytes());
-    bytes.extend_from_slice(&identity.selection_policy.tag().to_le_bytes());
-    push_usize(
-        &mut bytes,
-        identity.max_setup_envelope_field_elements,
-        "setup envelope",
-    )?;
-    push_usize(
-        &mut bytes,
-        identity.min_offloaded_witness_contraction,
-        "offload contraction",
-    )?;
-    bytes.push(sis_modulus_profile_tag(identity.sis_modulus_profile) as u8);
-    bytes.push(identity.sis_security_policy.tag());
-    bytes.extend_from_slice(&identity.sis_table_digest.0);
-    push_usize(&mut bytes, identity.ring_dimension, "ring dimension")?;
-    bytes.extend_from_slice(&identity.decomposition.log_basis.to_le_bytes());
-    bytes.extend_from_slice(&identity.decomposition.log_commit_bound.to_le_bytes());
-    match identity.decomposition.log_open_bound {
-        Some(value) => {
-            bytes.push(1);
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-        None => bytes.push(0),
-    }
-    bytes.extend_from_slice(&identity.ring_subfield_norm_bound.to_le_bytes());
-    push_usize(
-        &mut bytes,
-        identity.claim_ext_degree,
-        "claim extension degree",
-    )?;
-    push_usize(
-        &mut bytes,
-        identity.chal_ext_degree,
-        "challenge extension degree",
-    )?;
-    bytes.extend_from_slice(&identity.basis_range.0.to_le_bytes());
-    bytes.extend_from_slice(&identity.basis_range.1.to_le_bytes());
-    push_usize(
-        &mut bytes,
-        identity.witness_chunk.num_chunks,
-        "witness chunk count",
-    )?;
-    push_usize(
-        &mut bytes,
-        identity.witness_chunk.num_activated_levels,
-        "witness chunk activation depth",
-    )?;
-    bytes.push(u8::from(identity.recursive_setup_planning));
-    match identity.root_fold_shape {
-        TensorChallengeShape::Flat => bytes.push(0),
-        TensorChallengeShape::Tensor { fold_low_len } => {
-            bytes.push(1);
-            push_usize(&mut bytes, fold_low_len, "root tensor low length")?;
-        }
-    }
-    push_usize(
-        &mut bytes,
-        identity.ring_dimensions.len(),
-        "ring-dimension count",
-    )?;
-    for &dimension in identity.ring_dimensions {
-        push_usize(&mut bytes, dimension, "catalog ring dimension")?;
-    }
-    push_usize(&mut bytes, rows.len(), "row count")?;
-    for row in rows {
-        bytes.extend_from_slice(row.as_bytes());
-    }
-    Ok(CatalogIdentity::from_bytes(
-        akita_types::instance_descriptor::digest_descriptor_bytes(&bytes),
-    ))
 }
 
 fn sis_modulus_profile_tag(family: akita_types::SisModulusProfileId) -> u64 {
@@ -253,7 +141,7 @@ struct CatalogIdentityExpectation {
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
-    root_source_encoding: akita_types::GroupSourceEncoding,
+    root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -283,7 +171,7 @@ impl CatalogIdentityExpectation {
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
-            root_source_encoding: identity.root_source_encoding,
+            root_fold_witness_norms: identity.root_fold_witness_norms,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -327,7 +215,7 @@ fn catalog_identity_expectation(
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
-        root_source_encoding: policy.root_source_encoding,
+        root_fold_witness_norms: policy.root_fold_witness_norms,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -371,7 +259,7 @@ pub fn expected_catalog_identity(
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
-        root_source_encoding: expected.root_source_encoding,
+        root_fold_witness_norms: expected.root_fold_witness_norms,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -585,12 +473,16 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
     let mut h = Fnv64::new();
     for entry in entries {
         write_generated_schedule_key(&mut h, entry.root.final_group.layout);
-        write_generated_source(&mut h, entry.root.final_group.source);
         write_generated_group(&mut h, entry.root.final_group.commitment);
+        h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
+        h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
+        h.write_bytes(&entry.root.final_group.fold_witness_linf_cap.to_le_bytes());
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
             write_generated_group(&mut h, group.commitment);
+            h.write_u64(u64::from(group.num_digits_fold));
+            h.write_bytes(&group.fold_witness_linf_cap.to_le_bytes());
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
         write_generated_partition(&mut h, entry.root.witness_partition);
@@ -653,21 +545,9 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupPro
     h.write_bytes(&key.canonical_descriptor_bytes());
 }
 
-fn write_generated_source(h: &mut Fnv64, source: akita_types::GroupSource) {
-    write_source_encoding(h, source.encoding());
-}
-
-fn write_source_encoding(h: &mut Fnv64, encoding: akita_types::GroupSourceEncoding) {
-    match encoding {
-        akita_types::GroupSourceEncoding::Bounded { coefficient_bits } => {
-            h.write_u64(0);
-            h.write_u64(u64::from(coefficient_bits));
-        }
-        akita_types::GroupSourceEncoding::SparseBinary { chunk_size } => {
-            h.write_u64(1);
-            h.write_u64(chunk_size as u64);
-        }
-    }
+fn write_witness_norms(h: &mut Fnv64, norms: akita_types::sis::FoldWitnessNorms) {
+    h.write_bytes(&norms.infinity_norm().to_le_bytes());
+    h.write_bytes(&norms.l1_norm().to_le_bytes());
 }
 
 pub fn ring_challenge_config_digest(
@@ -732,26 +612,26 @@ impl Fnv64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_types::GroupSource;
+    use akita_types::sis::FoldWitnessNorms;
 
-    fn source_digest(source: GroupSource) -> u64 {
+    fn witness_norms_digest(norms: FoldWitnessNorms) -> u64 {
         let mut h = Fnv64::new();
-        write_generated_source(&mut h, source);
+        write_witness_norms(&mut h, norms);
         h.finish()
     }
 
     #[test]
-    fn generated_source_identity_distinguishes_kind_and_bound() {
+    fn generated_witness_norm_identity_distinguishes_exact_values() {
         let digests = [
-            source_digest(GroupSource::bounded(32)),
-            source_digest(GroupSource::bounded(64)),
-            source_digest(GroupSource::one_hot(16)),
-            source_digest(GroupSource::one_hot(256)),
+            witness_norms_digest(FoldWitnessNorms::new(32, 32)),
+            witness_norms_digest(FoldWitnessNorms::new(64, 64)),
+            witness_norms_digest(FoldWitnessNorms::new(1, 16)),
+            witness_norms_digest(FoldWitnessNorms::new(1, 256)),
         ];
         for (index, digest) in digests.iter().enumerate() {
             assert!(
                 !digests[..index].contains(digest),
-                "generated source identity collision at index {index}"
+                "generated witness-norm identity collision at index {index}"
             );
         }
     }

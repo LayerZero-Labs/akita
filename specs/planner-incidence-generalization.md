@@ -3,10 +3,10 @@
 > **Superseded (schedule keys):** portions of this spec that describe schedule lookup
 > keys, shipped-table selection, or preset↔table binding are superseded by
 > [`schedule-catalog-ownership.md`](schedule-catalog-ownership.md) and the exact
-> profile/row-selection design in
-> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
-> Source providers are not public key fields. This file remains for historical
-> witness-layout / incidence notes until archived.
+> profile/row-selection design now implemented by `CommittedGroupProfile` and
+> `OpeningScheduleSelection`. Private polynomial representations are not public
+> key fields. This file remains for historical witness-layout / incidence notes
+> until archived.
 
 | Field         | Value                          |
 |---------------|--------------------------------|
@@ -220,8 +220,7 @@ result is deterministic.
 Current superseded schedule-key status:
 
 - Scalar same-point paths validate a singleton `OpeningClaimsLayout`, extract
-  its `PolynomialGroupLayout`, and call `AkitaScheduleLookupKey::single` with
-  the explicit group source.
+  its `PolynomialGroupLayout`, and call `AkitaScheduleLookupKey::single`.
 - Grouped-root planning uses `AkitaScheduleLookupKey` with `final_group` plus
   `CommittedGroupProfile` for earlier groups, as specified in
   [`multi-group-batching.md`](multi-group-batching.md).

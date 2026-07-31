@@ -11,9 +11,7 @@ use akita_types::{
 };
 
 use crate::audit::audit_resolved_schedule;
-use crate::catalog_identity::{
-    identity_digest, policy_digest, selection_catalog_identity, validate_catalog_identity,
-};
+use crate::catalog_identity::{identity_digest, policy_digest, validate_catalog_identity};
 use crate::generated::walk::walk_generated_schedule_entry;
 use crate::generated::{table_entry_range, GeneratedFoldScheduleEntry, GeneratedScheduleTable};
 use crate::runtime::validate_policy;
@@ -59,9 +57,8 @@ impl ResolvedScheduleRow {
     /// Construct a row already authorized by a configuration-owned catalog.
     ///
     /// This validates the exact committed profiles, expanded schedule, and row
-    /// digest. The caller remains responsible for authorizing the catalog
-    /// identity; generated configurations do that through their catalog
-    /// identity check before calling this constructor.
+    /// digest. The caller remains responsible for admitting the row from its
+    /// configured catalog.
     pub fn try_new(
         selection: OpeningScheduleSelection,
         profiles: CommittedGroupBatchProfile,
@@ -142,15 +139,11 @@ fn materialize_catalog_rows_uncached(
         digests.push(row_digest);
         rows.push((row_digest, profiles, schedule));
     }
-    let catalog_identity = selection_catalog_identity(&table.identity, &digests)?;
     let mut resolved = rows
         .into_iter()
         .map(|(row_digest, profiles, schedule)| {
             ResolvedScheduleRow::try_new(
-                OpeningScheduleSelection {
-                    catalog_identity,
-                    row_digest,
-                },
+                OpeningScheduleSelection { row_digest },
                 profiles,
                 schedule,
                 policy,
@@ -158,6 +151,14 @@ fn materialize_catalog_rows_uncached(
         })
         .collect::<Result<Vec<_>, _>>()?;
     resolved.sort_by_key(|row| row.selection.row_digest);
+    if resolved
+        .windows(2)
+        .any(|pair| pair[0].selection.row_digest == pair[1].selection.row_digest)
+    {
+        return Err(AkitaError::InvalidSetup(
+            "schedule catalog contains duplicate full-row identities".to_string(),
+        ));
+    }
     Ok(MaterializedCatalog {
         rows_by_digest: resolved,
         entry_row_digests: digests,
@@ -211,8 +212,8 @@ fn materialized_catalog(
 
 /// Resolve an explicit public schedule selection without planner/key search.
 ///
-/// Catalog and row identities are recomputed from exact expanded rows. The
-/// final lookup is a bounded binary search over fixed-width digests.
+/// Row identities are recomputed from exact expanded rows. The final lookup is
+/// a bounded binary search over fixed-width digests in the configured catalog.
 ///
 pub fn resolve_generated_schedule_selection(
     selection: OpeningScheduleSelection,
@@ -231,16 +232,6 @@ pub fn resolve_generated_schedule_selection(
         &ring_challenge_config,
         &fold_challenge_shape_at_level,
     )?;
-    let actual_catalog_identity = catalog
-        .rows_by_digest
-        .first()
-        .map(|row| row.selection.catalog_identity)
-        .ok_or_else(|| AkitaError::InvalidSetup("empty validated schedule catalog".to_string()))?;
-    if selection.catalog_identity != actual_catalog_identity {
-        return Err(AkitaError::UnsupportedSchedule(
-            "schedule catalog identity is not enabled by this configuration".to_string(),
-        ));
-    }
     let index = catalog
         .rows_by_digest
         .binary_search_by_key(&selection.row_digest, |row| row.selection.row_digest)
@@ -419,10 +410,7 @@ pub fn resolve_schedule(
     catalog: Option<GeneratedScheduleTable>,
 ) -> Result<FoldSchedule, AkitaError> {
     resolve_group_batch_schedule(
-        &AkitaScheduleLookupKey::single(
-            key,
-            akita_types::GroupSource::from_encoding(policy.root_source_encoding),
-        ),
+        &AkitaScheduleLookupKey::single(key),
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,

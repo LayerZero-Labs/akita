@@ -78,10 +78,6 @@ impl akita_prover::RootPolyMeta<F> for ContractRootPoly {
     fn num_vars(&self) -> usize {
         self.num_vars
     }
-
-    fn validate_group_source(&self, source: akita_types::GroupSource) -> Result<(), AkitaError> {
-        akita_prover::RootPolyMeta::validate_group_source(&self.dense, source)
-    }
 }
 
 impl<const DD: usize> RootCommitSource<F, DD> for ContractRootPoly {

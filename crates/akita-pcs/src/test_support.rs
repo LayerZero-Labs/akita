@@ -20,12 +20,11 @@ use akita_types::sis::{
 };
 use akita_types::{
     active_setup_field_len, padded_setup_prefix_len, schedule_row_digest, setup_prefix_slot_id,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, CatalogIdentity, ChunkedWitnessCfg,
-    CommitmentRingDims, CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout,
-    RecursiveFoldParams, RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole,
-    SisModulusProfileId, SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessLayout,
-    WitnessPartition,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, CommitmentRingDims,
+    CommittedGroupBatchProfile, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupLayout, RecursiveFoldParams,
+    RecursiveFoldStep, RootFoldStep, SetupMatrixEnvelope, SisMatrixRole, SisModulusProfileId,
+    SisTableDigest, TerminalFoldParams, TerminalFoldStep, WitnessLayout, WitnessPartition,
 };
 use std::{
     any::TypeId,
@@ -104,12 +103,7 @@ where
 {
     let schedule = C::runtime_schedule(key)?;
     let row_digest = schedule_row_digest(profiles, &schedule)?;
-    let mut catalog_bytes = *row_digest.as_bytes();
-    catalog_bytes[0] ^= 0x53;
-    let selection = OpeningScheduleSelection {
-        catalog_identity: CatalogIdentity::from_bytes(catalog_bytes),
-        row_digest,
-    };
+    let selection = OpeningScheduleSelection { row_digest };
     let row = akita_config::ResolvedScheduleRow::try_new(
         selection,
         profiles.clone(),
@@ -156,16 +150,10 @@ where
         })
 }
 
-fn synthetic_schedule_key(
-    profiles: &CommittedGroupBatchProfile,
-    final_source: akita_types::GroupSource,
-    precommitted_source: akita_types::GroupSource,
-) -> AkitaScheduleLookupKey {
+fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaScheduleLookupKey {
     AkitaScheduleLookupKey {
         final_group: profiles.final_group.group,
-        final_source,
         precommitteds: profiles.precommitteds.clone(),
-        precommitted_sources: vec![precommitted_source; profiles.precommitteds.len()],
     }
 }
 
@@ -249,18 +237,15 @@ where
         Envelope::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Envelope::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Envelope::root_fold_witness_norms()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
         Envelope::schedule_catalog()
     }
 
-    fn runtime_schedule(mut key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
-        if !key.precommitteds.is_empty() && key.precommitted_sources.is_empty() {
-            key.precommitted_sources = vec![Envelope::group_source(); key.precommitteds.len()];
-        }
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         let (policy, ring_challenge_config, fold_challenge_shape_at_level) =
             if key.precommitteds.is_empty() {
                 (
@@ -279,8 +264,11 @@ where
                         as fn(AkitaScheduleInputs) -> TensorChallengeShape,
                 )
             };
+        let precommitted_fold_witness_norms =
+            vec![Envelope::root_fold_witness_norms(); key.precommitteds.len()];
         akita_planner::find_group_batch_schedule(
             &key,
+            &precommitted_fold_witness_norms,
             &policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -291,19 +279,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        let grouped = !profiles.precommitteds.is_empty();
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(
-                profiles,
-                if grouped {
-                    Final::group_source()
-                } else {
-                    Envelope::group_source()
-                },
-                Envelope::group_source(),
-            ),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
@@ -323,7 +299,6 @@ where
         }
         Self::runtime_schedule(AkitaScheduleLookupKey::single(
             opening_batch.root_final_group_layout()?,
-            Self::group_source(),
         ))
     }
 }
@@ -541,8 +516,8 @@ where
         Env::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Env::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Env::root_fold_witness_norms()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -560,10 +535,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(profiles, Env::group_source(), Env::group_source()),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
@@ -858,8 +830,8 @@ where
         Env::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Env::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Env::root_fold_witness_norms()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -886,10 +858,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(profiles, Env::group_source(), Env::group_source()),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
@@ -1082,7 +1051,11 @@ where
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("D512 A matrix width overflow".into())
                     })?;
-                commitment = commitment.with_fold_linf_cap_config(field_bits, num_polynomials)?;
+                commitment = commitment.with_fold_plan(
+                    field_bits,
+                    num_polynomials,
+                    Root::root_fold_witness_norms(),
+                )?;
                 let norm = rounded_up_role_a_inf_norm(
                     root_policy.sis_security_policy,
                     SisTableDigest::Q128_INNER_D512,
@@ -1285,8 +1258,8 @@ where
         Root::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Root::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Root::root_fold_witness_norms()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1313,10 +1286,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(profiles, Root::group_source(), Root::group_source()),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
@@ -1429,8 +1399,8 @@ where
         Env::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Env::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Env::root_fold_witness_norms()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1449,10 +1419,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(profiles, Env::group_source(), Env::group_source()),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(

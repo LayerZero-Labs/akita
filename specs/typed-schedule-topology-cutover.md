@@ -3,8 +3,7 @@
 > **Source/profile supersession (2026-07-30).** The typed
 > `root -> recursive_folds[] -> terminal` topology remains authoritative.
 > Source-family fields and lookup ownership are superseded by exact commitment
-> profiles and batch-level approved row selection in
-> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> profiles and batch-level approved row selection.
 
 | Field         | Value                                       |
 |---------------|---------------------------------------------|
@@ -191,9 +190,9 @@ commitment compression.
   schedules for the same lookup key and policy.
 - Generated lookup order and key digests include the complete root statement:
   final group plus ordered standalone precommitted commitment descriptors.
-- Generated catalogs with different source families, final-root-group challenge
-  families, chunk policies, setup-offload policies, matrix dimension domains,
-  slicing capability, or SIS table digests cannot alias.
+- Generated catalogs with different final-root-group challenge families, chunk
+  policies, setup-offload policies, matrix dimension domains, slicing
+  capability, or SIS table digests cannot alias.
 
 #### Transcript, serialization, and safety
 

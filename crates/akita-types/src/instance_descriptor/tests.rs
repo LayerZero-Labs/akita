@@ -1,9 +1,9 @@
 use super::*;
 use crate::{
-    CatalogIdentity, CommittedGroupParams, FoldSchedule, OpeningClaimsLayout,
-    OpeningScheduleSelection, RootFinalChallenge, RootFinalGroupParams, RootFoldParams,
-    RootFoldStep, ScheduleRowDigest, TerminalCommittedGroupParams, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessPartition,
+    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, OpeningScheduleSelection,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep, ScheduleRowDigest,
+    TerminalCommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessPartition,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime32Offset99;
@@ -48,7 +48,6 @@ fn sample_schedule() -> FoldSchedule {
 
 fn sample_selection() -> OpeningScheduleSelection {
     OpeningScheduleSelection {
-        catalog_identity: CatalogIdentity::from_bytes([0x11; 32]),
         row_digest: ScheduleRowDigest::from_bytes([0x22; 32]),
     }
 }
@@ -77,16 +76,6 @@ fn sample_descriptor() -> AkitaInstanceDescriptor {
 fn schedule_selection_is_bound_into_the_v1_instance_descriptor() {
     let descriptor = sample_descriptor();
     let original = descriptor.canonical_bytes().expect("descriptor bytes");
-
-    let mut changed_catalog = descriptor.clone();
-    changed_catalog.plan.schedule_selection.catalog_identity =
-        CatalogIdentity::from_bytes([0x33; 32]);
-    assert_ne!(
-        original,
-        changed_catalog
-            .canonical_bytes()
-            .expect("changed-catalog descriptor bytes")
-    );
 
     let mut changed_row = descriptor;
     changed_row.plan.schedule_selection.row_digest = ScheduleRowDigest::from_bytes([0x44; 32]);

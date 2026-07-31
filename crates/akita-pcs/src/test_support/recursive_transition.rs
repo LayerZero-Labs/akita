@@ -77,8 +77,11 @@ where
             // Plan the exact multi-group root at Root::D, then rebuild B and
             // shared D from the requested final carrier geometry.
             let root_policy = policy_of::<Root>().direct_only();
+            let precommitted_fold_witness_norms =
+                vec![Root::root_fold_witness_norms(); key.precommitteds.len()];
             let mut root = akita_planner::find_group_batch_schedule(
                 key,
+                &precommitted_fold_witness_norms,
                 &root_policy,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
@@ -332,9 +335,7 @@ where
         );
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(final_nv, final_np),
-            final_source: Self::group_source(),
             precommitteds: vec![descriptor, descriptor],
-            precommitted_sources: vec![Self::group_source(), Self::group_source()],
         };
         let schedule = recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
             &key,
@@ -348,15 +349,15 @@ where
         Root::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Root::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Root::root_fold_witness_norms()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
         ChunkCfg::chunked_witness_cfg()
     }
 
-    fn runtime_schedule(mut key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
         if key.precommitteds.is_empty() {
             return per_matrix_ring_dims_root_schedule::<Root>(
                 key.final_group.num_vars(),
@@ -364,9 +365,6 @@ where
                 ROOT_BD_RING_DIM,
                 ROOT_BD_RING_DIM,
             );
-        }
-        if key.precommitted_sources.is_empty() {
-            key.precommitted_sources = vec![Root::group_source(); key.precommitteds.len()];
         }
         recursive_ring_dimension_transition_schedule::<Root, Mid, Suffix, ChunkCfg>(
             &key,
@@ -378,10 +376,7 @@ where
     fn select_schedule_for_profiles(
         profiles: &CommittedGroupBatchProfile,
     ) -> Result<akita_config::ResolvedScheduleRow, AkitaError> {
-        select_synthetic_schedule_row::<Self>(
-            profiles,
-            synthetic_schedule_key(profiles, Root::group_source(), Root::group_source()),
-        )
+        select_synthetic_schedule_row::<Self>(profiles, synthetic_schedule_key(profiles))
     }
 
     fn resolve_schedule_selection(
@@ -399,10 +394,7 @@ where
             .iter()
             .copied()
             .map(|group| {
-                let schedule = Self::runtime_schedule(AkitaScheduleLookupKey::single(
-                    group,
-                    Self::group_source(),
-                ))?;
+                let schedule = Self::runtime_schedule(AkitaScheduleLookupKey::single(group))?;
                 Ok(akita_types::CommittedGroupProfile::from_params(
                     group,
                     &schedule.root.params.final_group.commitment,
@@ -411,8 +403,6 @@ where
             .collect::<Result<Vec<_>, AkitaError>>()?;
         Self::runtime_schedule(AkitaScheduleLookupKey {
             final_group: opening_batch.root_final_group_layout()?,
-            final_source: Self::group_source(),
-            precommitted_sources: vec![Self::group_source(); precommitteds.len()],
             precommitteds,
         })
     }

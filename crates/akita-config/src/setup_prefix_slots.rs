@@ -138,18 +138,11 @@ pub(crate) fn recursive_group_batch_candidates_for_capacity<Cfg: CommitmentConfi
             }
             let candidate = AkitaScheduleLookupKey {
                 final_group: entry.root.final_group.layout,
-                final_source: entry.root.final_group.source,
                 precommitteds: entry
                     .root
                     .precommitted_groups
                     .iter()
                     .map(|group| group.descriptor)
-                    .collect(),
-                precommitted_sources: entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .map(|group| group.source)
                     .collect(),
             };
             if candidate.fits_setup_capacity(max_num_vars, max_num_batched_polys)? {
@@ -185,9 +178,7 @@ mod tests {
         let precommitted = CommittedGroupProfile::from_params(pre, &pre_params);
         AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            final_source: SetupCfg::group_source(),
             precommitteds: vec![precommitted, precommitted],
-            precommitted_sources: vec![SetupCfg::group_source(), SetupCfg::group_source()],
         }
     }
 

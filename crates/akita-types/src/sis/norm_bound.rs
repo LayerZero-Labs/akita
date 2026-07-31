@@ -178,6 +178,26 @@ pub struct FoldWitnessNorms {
 }
 
 impl FoldWitnessNorms {
+    /// Build an exact numeric honest-witness estimate for offline planning.
+    #[inline]
+    #[must_use]
+    pub const fn new(infinity_norm: u128, l1_norm: u128) -> Self {
+        Self {
+            infinity_norm,
+            l1_norm,
+        }
+    }
+
+    /// Validate a nondegenerate numeric planning estimate.
+    pub fn validate(self) -> Result<(), AkitaError> {
+        if self.infinity_norm == 0 || self.l1_norm < self.infinity_norm {
+            return Err(AkitaError::InvalidSetup(
+                "fold witness norms require 0 < infinity_norm <= l1_norm".into(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Witness L∞ norm `||s||_inf`.
     #[inline]
     #[must_use]
@@ -221,23 +241,6 @@ impl FoldWitnessNorms {
             infinity_norm: 1,
             l1_norm: (ring_dimension as u128).div_ceil(chunk_size as u128),
         })
-    }
-
-    /// Derive witness norms from the source's discriminated encoding.
-    #[inline]
-    pub fn from_source_encoding(
-        log_basis: u32,
-        ring_dimension: usize,
-        encoding: crate::GroupSourceEncoding,
-    ) -> Result<Self, AkitaError> {
-        match encoding {
-            crate::GroupSourceEncoding::Bounded { .. } => {
-                Ok(Self::bounded(log_basis, ring_dimension))
-            }
-            crate::GroupSourceEncoding::SparseBinary { chunk_size } => {
-                Self::sparse_binary(ring_dimension, chunk_size)
-            }
-        }
     }
 }
 

@@ -642,7 +642,11 @@ mod tests {
             )
             .with_decomp(1, 1, 1, 1, 1)
             .unwrap()
-            .with_fold_linf_cap_config(F::modulus_bits(), num_claims)
+            .with_fold_plan(
+                F::modulus_bits(),
+                num_claims,
+                crate::sis::FoldWitnessNorms::bounded(log_basis, D),
+            )
             .unwrap();
 
             let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);

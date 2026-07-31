@@ -73,8 +73,8 @@ pub mod fp128 {
             )
         }
 
-        fn group_source() -> akita_types::GroupSource {
-            akita_types::GroupSource::one_hot(crate::proof_optimized::STANDARD_ONEHOT_CHUNK_SIZE)
+        fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+            akita_types::sis::FoldWitnessNorms::new(1, 1)
         }
 
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
@@ -91,9 +91,9 @@ pub mod fp128 {
         fn get_params_for_prove(
             layout: &OpeningClaimsLayout,
         ) -> Result<FoldSchedule, akita_field::AkitaError> {
-            Self::runtime_schedule(
-                crate::proof_optimized::proof_optimized_schedule_key::<Self>(layout)?,
-            )
+            Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
+                layout,
+            )?)
         }
     }
 }

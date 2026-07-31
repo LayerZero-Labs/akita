@@ -165,7 +165,7 @@ where
             }
         }
         let prepared = block_claims
-            .group_source(group_index)?
+            .group(group_index)?
             .prepare_opening(
                 opening,
                 group_dims.d_a(),

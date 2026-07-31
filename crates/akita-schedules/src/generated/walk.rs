@@ -10,8 +10,8 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
-    AkitaScheduleInputs, AkitaScheduleLookupKey, GroupSource, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedLevelParams, TerminalResponseShape,
+    AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
+    PrecommittedLevelParams, TerminalResponseShape,
 };
 
 use crate::generated::{
@@ -38,15 +38,6 @@ pub(crate) fn walk_generated_schedule_entry(
     key.validate(policy.decomposition.field_bits())?;
     validate_entry_key(entry, key)?;
     entry.validate()?;
-    let stored_root_source = entry.root.final_group.source;
-    if stored_root_source.encoding() != key.final_source.encoding() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "generated root source encoding {:?} disagrees with request \
-             source encoding {:?}",
-            stored_root_source.encoding(),
-            key.final_source.encoding()
-        )));
-    }
     let is_multi_group = !key.precommitteds.is_empty();
     let expected_root_w_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
@@ -102,7 +93,9 @@ pub(crate) fn walk_generated_schedule_entry(
                 ring_challenge_config,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
-                key.final_source,
+                entry.root.final_group.num_digits_inner,
+                entry.root.final_group.num_digits_fold,
+                entry.root.final_group.fold_witness_linf_cap,
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
@@ -116,7 +109,11 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 0,
-                key.final_source,
+                Some((
+                    entry.root.final_group.num_digits_inner,
+                    entry.root.final_group.num_digits_fold,
+                    entry.root.final_group.fold_witness_linf_cap,
+                )),
                 expected_root_w_len,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
@@ -151,7 +148,7 @@ pub(crate) fn walk_generated_schedule_entry(
             policy,
             ring_challenge_config,
             index + 1,
-            GroupSource::bounded(policy.decomposition.field_bits()),
+            None,
             input_witness_len,
             TensorChallengeShape::Flat,
             1,

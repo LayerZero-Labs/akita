@@ -630,6 +630,7 @@ pub fn plan_optimal_suffix(
         key: PolynomialGroupLayout::singleton(num_vars),
         setup_field_budget: None,
         root_lookup_key: None,
+        precommitted_fold_witness_norms: &[],
     };
     let mut memo = ScheduleMemo::new();
     let result = derive_optimal_suffix_schedule(
@@ -693,6 +694,7 @@ fn find_schedule_inner(
         key,
         setup_field_budget: None,
         root_lookup_key: None,
+        precommitted_fold_witness_norms: &[],
     };
 
     if policy.recursive_setup_planning {
@@ -1415,12 +1417,15 @@ mod geometry_tests {
         );
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            final_source: D64OneHot::group_source(),
             precommitteds: vec![descriptor, descriptor],
-            precommitted_sources: vec![D64OneHot::group_source(), D64OneHot::group_source()],
         };
+        let precommitted_fold_witness_norms = vec![
+            D64OneHot::root_fold_witness_norms(),
+            D64OneHot::root_fold_witness_norms(),
+        ];
         let planned = crate::find_group_batch_schedule(
             &key,
+            &precommitted_fold_witness_norms,
             &policy_of::<Recursive>(),
             Recursive::ring_challenge_config,
             Recursive::fold_challenge_shape_at_level,

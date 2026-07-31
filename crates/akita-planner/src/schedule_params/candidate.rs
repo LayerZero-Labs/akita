@@ -56,7 +56,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
         num_live_blocks,
         1,
         policy.decomposition.field_bits(),
@@ -132,7 +132,6 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let params = CommittedGroupParams {
-        source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -147,15 +146,15 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_digits_inner: delta_commit,
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold: 1,
+        fold_linf_cap_config: fold_cap_config,
+        num_digits_fold,
+        fold_witness_linf_cap,
         num_fold_claims: 1,
-        field_bits_hint: 0,
+        field_bits_hint: policy.decomposition.field_bits(),
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-    }
-    .with_fold_linf_cap_config(policy.decomposition.field_bits(), 1)?;
+    };
     Ok(Some(params))
 }
 
@@ -457,7 +456,7 @@ pub(super) fn derive_setup_prefix_group(
             infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
             l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
         };
-        let (num_digits_fold, _) = fold_witness_digit_plan(
+        let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
             num_live_blocks,
             1,
             policy.decomposition.field_bits(),
@@ -481,11 +480,11 @@ pub(super) fn derive_setup_prefix_group(
         };
         let params = PrecommittedLevelParams {
             layout,
-            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
             num_digits_fold,
+            fold_witness_linf_cap,
         };
         let physical_width = grouped_segment_rings(
             1,
@@ -967,17 +966,13 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
         num_live_blocks,
         num_claims,
         policy.decomposition.field_bits(),
         log_basis,
         FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
-        FoldWitnessNorms::from_source_encoding(
-            witness_decomp.log_basis,
-            dimensions.d_a(),
-            policy.root_source_encoding,
-        )?,
+        policy.root_fold_witness_norms,
         &fold_cap_config,
     ) else {
         return Ok(None);
@@ -1048,8 +1043,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let params = (CommittedGroupParams {
-        source: akita_types::GroupSource::from_encoding(policy.root_source_encoding),
+    let params = CommittedGroupParams {
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -1064,15 +1058,15 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_inner,
         num_digits_outer: num_digits_open,
         num_digits_open,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold: 1,
+        fold_linf_cap_config: fold_cap_config,
+        num_digits_fold,
+        fold_witness_linf_cap,
         num_fold_claims: num_claims,
-        field_bits_hint: 0,
+        field_bits_hint: policy.decomposition.field_bits(),
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
-    })
-    .with_fold_linf_cap_config(policy.decomposition.field_bits(), num_claims)?;
+    };
     Ok(Some(params))
 }
 
@@ -1111,11 +1105,11 @@ mod tests {
                 PolynomialGroupLayout::new(6, 1),
                 &precommitted,
             ),
-            source: precommitted.source,
             log_basis_open: precommitted.log_basis_open,
             fold_challenge_config: precommitted.fold_challenge_config,
             num_digits_open: precommitted.num_digits_open,
             num_digits_fold: precommitted.num_digits_fold,
+            fold_witness_linf_cap: precommitted.fold_witness_linf_cap,
         }];
         params
     }

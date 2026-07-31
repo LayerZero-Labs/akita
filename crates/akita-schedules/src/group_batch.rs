@@ -16,8 +16,8 @@ use crate::PlannerPolicy;
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
     layout: CommittedGroupProfile,
-    source: akita_types::GroupSource,
     num_digits_fold: usize,
+    fold_witness_linf_cap: u128,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
 }
@@ -63,12 +63,12 @@ fn freeze_precommitted_group_layout(
 
     Ok(PrecommittedGroupSeed {
         layout: *layout,
-        source: generated.source,
         num_digits_fold: usize::try_from(generated.num_digits_fold).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated precommitted fold depth does not fit the target platform".to_string(),
             )
         })?,
+        fold_witness_linf_cap: generated.fold_witness_linf_cap,
         inner_commit_matrix,
         outer_commit_matrix,
     })
@@ -126,11 +126,11 @@ fn materialize_precommitted_group_for_open_basis(
     }
     Ok(PrecommittedLevelParams {
         layout: group.layout,
-        source: group.source,
         log_basis_open,
         fold_challenge_config: *ring_challenge_cfg,
         num_digits_open,
         num_digits_fold,
+        fold_witness_linf_cap: group.fold_witness_linf_cap,
     })
 }
 

@@ -19,11 +19,8 @@ fn schedule_catalog_none_without_feature_rejects() {
 
     let key = PolynomialGroupLayout::new(28, 1);
 
-    let err = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
-        key,
-        fp128::D64OneHot::group_source(),
-    ))
-    .expect_err("runtime schedule must reject without an enabled catalog");
+    let err = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(key))
+        .expect_err("runtime schedule must reject without an enabled catalog");
     assert!(
         matches!(err, akita_field::AkitaError::UnsupportedSchedule(_)),
         "expected UnsupportedSchedule, got {err:?}"

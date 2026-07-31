@@ -4,9 +4,8 @@ use crate::CommitmentConfig;
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
-    AkitaScheduleInputs, AkitaScheduleLookupKey, ChunkedWitnessCfg, DecompositionParams,
-    FoldSchedule, OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
-    SETUP_OFFLOAD_D_SETUP,
+    AkitaScheduleInputs, ChunkedWitnessCfg, DecompositionParams, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixEnvelope, SisModulusProfileId, SETUP_OFFLOAD_D_SETUP,
 };
 #[cfg(any(
     feature = "schedules-fp128-d64-onehot-recursive",
@@ -59,8 +58,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Cfg::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Cfg::root_fold_witness_norms()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
@@ -110,24 +109,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
     }
 
     fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
-        Self::runtime_schedule(recursive_schedule_key::<Self>(layout)?)
+        Self::runtime_schedule(crate::proof_optimized::proof_optimized_schedule_key(
+            layout,
+        )?)
     }
-}
-
-fn recursive_schedule_key<Cfg: CommitmentConfig>(
-    layout: &OpeningClaimsLayout,
-) -> Result<AkitaScheduleLookupKey, AkitaError> {
-    layout.check()?;
-    let final_group = layout.root_final_group_layout()?;
-    if layout.num_groups() != 1 {
-        return Err(AkitaError::InvalidInput(
-            "grouped schedule selection requires exact committed-group descriptors".to_string(),
-        ));
-    }
-    Ok(AkitaScheduleLookupKey::single(
-        final_group,
-        Cfg::group_source(),
-    ))
 }
 
 #[cfg(all(
@@ -141,9 +126,9 @@ mod tests {
     use crate::PrecommittedCommitmentConfig;
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
-        r_decomp_levels, shared_setup_fold_gadget, CommittedGroupProfile, PolynomialGroupLayout,
-        RelationAddressGeometry, SetupContributionGroupInputs, SetupContributionPlan,
-        WitnessLayout,
+        r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
+        PolynomialGroupLayout, RelationAddressGeometry, SetupContributionGroupInputs,
+        SetupContributionPlan, WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
@@ -174,9 +159,7 @@ mod tests {
         let descriptor = CommittedGroupProfile::from_params(precommitted, &params);
         let key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(32, 2),
-            final_source: Cfg::group_source(),
             precommitteds: vec![descriptor, descriptor],
-            precommitted_sources: vec![Cfg::group_source(), Cfg::group_source()],
         };
         let layout = key.opening_layout().expect("profile opening layout");
         let schedule = Cfg::runtime_schedule(key).expect("recursive profile schedule");
@@ -196,9 +179,7 @@ mod tests {
         let expected = CommittedGroupProfile::from_params(precommitted, &params);
         let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group,
-            final_source: Cfg::group_source(),
             precommitteds: vec![expected, expected],
-            precommitted_sources: vec![Cfg::group_source(), Cfg::group_source()],
         })
         .expect("recursive schedule");
 

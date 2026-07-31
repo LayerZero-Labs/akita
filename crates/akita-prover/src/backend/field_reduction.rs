@@ -79,13 +79,6 @@ where
             Self::Sparse(poly) => RootPolyMeta::num_vars(poly.as_ref()),
         }
     }
-
-    fn validate_group_source(&self, source: akita_types::GroupSource) -> Result<(), AkitaError> {
-        match self {
-            Self::Dense(poly) => RootPolyMeta::validate_group_source(poly, source),
-            Self::Sparse(poly) => RootPolyMeta::validate_group_source(poly.as_ref(), source),
-        }
-    }
 }
 
 impl<F, const D: usize> RootPolyShape<F, D> for RootTensorProjectionPoly<F>

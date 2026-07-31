@@ -107,11 +107,12 @@ fn heterogeneous_delegating_clusters_batched_prove_and_verify() {
         vec![hint],
         vec![&poly_refs[..]],
     );
-    let selection = prover_claims.selection().expect("selected schedule");
+    let (selection, prover_claims) = prover_claims;
     let proof = batched_prove::<Cfg, _, _, _, _, _, _>(
         &setup.expanded,
         &setup.prefix_slots,
         &stack,
+        selection,
         prover_claims,
         &mut prover_transcript,
         BasisMode::Lagrange,

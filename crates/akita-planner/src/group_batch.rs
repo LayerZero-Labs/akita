@@ -40,7 +40,7 @@ fn sis_key(
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
     layout: CommittedGroupProfile,
-    source: akita_types::GroupSource,
+    fold_witness_norms: FoldWitnessNorms,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
 }
@@ -51,34 +51,29 @@ struct PrecommittedGroupSeed {
 /// root candidate search.
 fn freeze_precommitted_group_layout(
     layout: &CommittedGroupProfile,
-    source: akita_types::GroupSource,
+    fold_witness_norms: FoldWitnessNorms,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
     layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
+    fold_witness_norms.validate()?;
 
     let d_a = layout.inner_commit_matrix.ring_dimension();
     let d_b = layout.outer_commit_matrix.ring_dimension();
-    source.validate_for_ring_dimension(policy.decomposition.field_bits(), d_a)?;
-    let witness_decomp = source.decomposition(DecompositionParams {
-        log_basis: layout.log_basis_inner,
-        ..policy.decomposition
-    });
     let outer_decomp = DecompositionParams {
         log_basis: layout.log_basis_outer,
         ..policy.decomposition
     };
-    let num_digits_inner = num_digits_inner(witness_decomp, true);
     let num_digits_outer = num_digits_open(outer_decomp);
     let num_live_blocks = layout.num_live_blocks;
     let num_positions_per_block = layout.num_positions_per_block;
-    let width_s = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
-    if num_digits_inner != layout.num_digits_inner
-        || num_digits_outer != layout.num_digits_outer
+    let width_s =
+        decomposed_s_block_ring_count(num_positions_per_block, layout.num_digits_inner)
+            .ok_or_else(|| AkitaError::InvalidSetup("multi-group A width overflow".to_string()))?;
+    if num_digits_outer != layout.num_digits_outer
         || width_s != layout.inner_commit_matrix.input_width()
     {
         return Err(AkitaError::InvalidSetup(
-            "precommitted profile digit depths do not match its source encoding".to_string(),
+            "precommitted profile digit depths do not match its frozen matrices".to_string(),
         ));
     }
     let inner_commit_matrix = layout.inner_commit_matrix;
@@ -113,7 +108,7 @@ fn freeze_precommitted_group_layout(
 
     Ok(PrecommittedGroupSeed {
         layout: *layout,
-        source,
+        fold_witness_norms,
         inner_commit_matrix,
         outer_commit_matrix,
     })
@@ -141,17 +136,11 @@ fn materialize_precommitted_group_for_open_basis(
         ..policy.decomposition
     };
     let num_digits_open = num_digits_open(open_decomp);
-    let source = group.source;
     let challenge_shape = TensorChallengeShape::Flat;
     let challenge = FoldChallengeNorms {
         infinity_norm: challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
         l1_norm: challenge_shape.effective_l1_mass(ring_challenge_cfg) as u128,
     };
-    let witness = FoldWitnessNorms::from_source_encoding(
-        group.layout.log_basis_inner,
-        group.layout.inner_commit_matrix.ring_dimension(),
-        source.encoding(),
-    )?;
     let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
         ring_challenge_cfg,
         challenge_shape,
@@ -159,13 +148,13 @@ fn materialize_precommitted_group_for_open_basis(
         group.inner_commit_matrix.input_width(),
     )?;
     let group_claims = group.layout.group.num_polynomials();
-    let (num_digits_fold, _) = fold_witness_digit_plan(
+    let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
         group.layout.num_live_blocks,
         group_claims,
         policy.decomposition.field_bits(),
         log_basis_open,
         challenge,
-        witness,
+        group.fold_witness_norms,
         &cap_config,
     )?;
     let required_a_bound = rounded_up_role_a_inf_norm(
@@ -200,11 +189,11 @@ fn materialize_precommitted_group_for_open_basis(
     }
     Ok(PrecommittedLevelParams {
         layout: group.layout,
-        source,
         log_basis_open,
         fold_challenge_config: *ring_challenge_cfg,
         num_digits_open,
         num_digits_fold,
+        fold_witness_linf_cap,
     })
 }
 
@@ -212,11 +201,12 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
-    final_source: akita_types::GroupSource,
+    final_fold_witness_norms: FoldWitnessNorms,
 }
 
 fn multi_group_root_precommitted_group_seeds(
     key: &AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: &[FoldWitnessNorms],
     policy: &PlannerPolicy,
 ) -> Result<Vec<PrecommittedGroupSeed>, AkitaError> {
     if key.precommitteds.is_empty() {
@@ -224,17 +214,17 @@ fn multi_group_root_precommitted_group_seeds(
             "multi-group root params require at least one precommitted group".to_string(),
         ));
     }
-    if key.precommitted_sources.len() != key.precommitteds.len() {
+    if precommitted_fold_witness_norms.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(
-            "group-batch planning requires one honest source model per precommitted profile"
+            "group-batch planning requires one numeric witness model per precommitted profile"
                 .to_string(),
         ));
     }
 
     key.precommitteds
         .iter()
-        .zip(&key.precommitted_sources)
-        .map(|(layout, source)| freeze_precommitted_group_layout(layout, *source, policy))
+        .zip(precommitted_fold_witness_norms)
+        .map(|(layout, norms)| freeze_precommitted_group_layout(layout, *norms, policy))
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -287,8 +277,10 @@ pub(crate) fn multi_group_root_next_w_len(
         .ok_or_else(|| AkitaError::InvalidSetup("multi-group next witness length overflow".into()))
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn multi_group_root_level_candidates_for_basis(
     key: &AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: &[FoldWitnessNorms],
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -306,12 +298,13 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
         )));
     }
 
-    let precommitted_groups = multi_group_root_precommitted_group_seeds(key, policy)?;
+    let precommitted_groups =
+        multi_group_root_precommitted_group_seeds(key, precommitted_fold_witness_norms, policy)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg,
         requested_fold_shape,
-        final_source: key.final_source,
+        final_fold_witness_norms: policy.root_fold_witness_norms,
     };
     let opening_batch = key.opening_layout()?;
     let initial_witness_len_bits = root_input_witness_len
@@ -385,19 +378,16 @@ fn multi_group_root_main_level_params_candidate(
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     let policy = ctx.policy;
     let d = policy.ring_dimension;
-    let source = ctx.final_source;
-    source.validate_for_ring_dimension(policy.decomposition.field_bits(), d)?;
     let family = policy.sis_modulus_profile;
     let decomp = ctx.policy.decomposition;
-    let source_decomp = source.decomposition(decomp);
     let level_decomp = DecompositionParams {
         log_basis,
-        ..source_decomp
+        ..decomp
     };
     let log_basis_inner = log_basis;
     let witness_decomp = DecompositionParams {
         log_basis: log_basis_inner,
-        ..source_decomp
+        ..decomp
     };
     let num_digits_inner = num_digits_inner(witness_decomp, true);
     let num_digits_outer = num_digits_open(level_decomp);
@@ -428,13 +418,13 @@ fn multi_group_root_main_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
+    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
         num_live_blocks,
         main_num_polys,
         policy.decomposition.field_bits(),
         log_basis,
         FoldChallengeNorms::new(ctx.ring_challenge_cfg, fold_challenge_shape),
-        FoldWitnessNorms::from_source_encoding(witness_decomp.log_basis, d, source.encoding())?,
+        ctx.final_fold_witness_norms,
         &fold_cap_config,
     ) else {
         return Ok(None);
@@ -506,7 +496,6 @@ fn multi_group_root_main_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
-        source,
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -521,16 +510,16 @@ fn multi_group_root_main_level_params_candidate(
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
-        fold_linf_cap_config: FoldWitnessLinfCapConfig::worst_case_beta_only(),
-        num_digits_fold: 1,
+        fold_linf_cap_config: fold_cap_config,
+        num_digits_fold,
+        fold_witness_linf_cap,
         num_fold_claims: main_num_polys,
-        field_bits_hint: 0,
+        field_bits_hint: policy.decomposition.field_bits(),
         // Multi-group root folds use the ordinary single-chunk precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),
         setup_prefix: None,
-    }
-    .with_fold_linf_cap_config(decomp.field_bits(), main_num_polys)?;
+    };
 
     Ok(Some(params))
 }
@@ -538,6 +527,7 @@ fn multi_group_root_main_level_params_candidate(
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
 pub fn find_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: &[FoldWitnessNorms],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -554,6 +544,7 @@ pub fn find_group_batch_schedule(
         }
         return find_group_batch_schedule_inner(
             key,
+            precommitted_fold_witness_norms,
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -562,6 +553,7 @@ pub fn find_group_batch_schedule(
     }
     find_group_batch_schedule_inner(
         key,
+        precommitted_fold_witness_norms,
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
@@ -571,6 +563,7 @@ pub fn find_group_batch_schedule(
 
 fn find_group_batch_schedule_inner(
     key: &AkitaScheduleLookupKey,
+    precommitted_fold_witness_norms: &[FoldWitnessNorms],
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -580,7 +573,7 @@ fn find_group_batch_schedule_inner(
     if key.precommitteds.is_empty() {
         // Genuine multi-group roots only. Empty-precommit keys are scalar and
         // must not enter recursion-enabled grouped planning.
-        let scalar_policy = policy.with_group_source(key.final_source).direct_only();
+        let scalar_policy = policy.direct_only();
         let dimensions =
             crate::schedule_params::RingDimensionSearchDomain::uniform(policy.ring_dimension)?;
         return find_schedule(
@@ -606,6 +599,7 @@ fn find_group_batch_schedule_inner(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
+        precommitted_fold_witness_norms,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

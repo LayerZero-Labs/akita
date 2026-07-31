@@ -28,10 +28,10 @@ type Cfg = fp128::D64OneHot;
 const POLICIES: &[(&str, u32)] = &[("root=2", 2), ("root=3", 3), ("root=4", 4)];
 
 fn payload_bytes(policy: &PlannerPolicy, nv: usize) -> Result<usize, String> {
-    let key =
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1), Cfg::group_source());
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
     let planned = find_group_batch_schedule(
         &key,
+        &[],
         policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -47,10 +47,10 @@ fn payload_bytes(policy: &PlannerPolicy, nv: usize) -> Result<usize, String> {
 /// (for auditing that the fixed root took and for the report's schedule-anatomy
 /// table). Index 0 is the root fold; the last entry is the terminal input.
 fn schedule_anatomy(policy: &PlannerPolicy, nv: usize) -> Vec<(u32, usize)> {
-    let key =
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1), Cfg::group_source());
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
     match find_group_batch_schedule(
         &key,
+        &[],
         policy,
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -133,10 +133,10 @@ fn fp128_d64_onehot_fixed_root_basis_sweep_proof_sizes() {
     // Root commit geometry @ nv=36: n_a (A-role rank) drives commit cost.
     println!("\n# root commit geometry @ nv=36 (drives commit/prove cost)");
     for (label, policy) in &policies {
-        let key =
-            AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1), Cfg::group_source());
+        let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1));
         if let Ok(planned) = find_group_batch_schedule(
             &key,
+            &[],
             policy,
             Cfg::ring_challenge_config,
             Cfg::fold_challenge_shape_at_level,

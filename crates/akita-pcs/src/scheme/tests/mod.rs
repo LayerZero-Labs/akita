@@ -7,8 +7,7 @@ use akita_config::{CommitmentConfig, PrecommittedCommitmentConfig};
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource};
 use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_prover::{
-    DenseGroupProvider, DensePoly, EitherPreparedGroup, OneHotGroupProvider, OneHotPoly,
-    PreparedProverGroup, ProverGroupInput, ProverOpeningData, WholeGroupSourceProvider,
+    DensePoly, OneHotPoly, PreparedProverGroup, ProverOpeningData, SelectedProverOpeningData,
 };
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::AkitaTranscript;
@@ -38,12 +37,11 @@ type OneHotF = fp128::Field;
 type OneHotCfg = fp128::D64OneHot;
 type PrecommittedOneHotCfg = PrecommittedCommitmentConfig<OneHotCfg>;
 const ONEHOT_D: usize = OneHotCfg::D;
-// `fp128::D64OneHot` requires K=256 one-hot schedules (must match
-// `OneHotCfg::group_source()`); chunks span `K/D = 4` ring elements.
+// `fp128::D64OneHot` uses K=256 one-hot chunks, spanning `K/D = 4` ring elements.
 const BENCH_ONEHOT_K: usize = 256;
 type OneHotScheme = AkitaCommitmentScheme<OneHotCfg>;
 type PrecommittedOneHotScheme = AkitaCommitmentScheme<PrecommittedOneHotCfg>;
-type HomogeneousProverData<'a, C, P> = ProverOpeningData<
+type HomogeneousSelectedProverData<'a, C, P> = SelectedProverOpeningData<
     'a,
     <C as CommitmentConfig>::ExtField,
     PreparedProverGroup<'a, P>,
@@ -57,8 +55,8 @@ const MIN_W_LEN_FOR_FOLDING: usize = 4096;
 mod batched;
 mod dense_group;
 mod fp32_ext4;
+mod heterogeneous_group;
 mod layout;
-mod mixed_source;
 mod onehot;
 mod single;
 
@@ -66,14 +64,17 @@ fn selected_prover_data<'a, C, P>(
     claims: OpeningClaims<'a, C::ExtField, CommittedGroup<C::Field>>,
     hints: Vec<AkitaCommitmentHint<C::Field>>,
     polynomials: Vec<&'a [&'a P]>,
-) -> Result<HomogeneousProverData<'a, C, P>, AkitaError>
+) -> Result<HomogeneousSelectedProverData<'a, C, P>, AkitaError>
 where
     C: CommitmentConfig,
     P: akita_prover::RootPolyMeta<C::Field>,
 {
     let profiles = batch_profiles::<C>(&claims)?;
     let selection = C::select_schedule_for_profiles(&profiles)?.selection();
-    ProverOpeningData::new(selection, claims, hints, polynomials)
+    Ok((
+        selection,
+        ProverOpeningData::new(claims, hints, polynomials)?,
+    ))
 }
 
 fn selected_statement<'a, C>(
@@ -223,7 +224,7 @@ fn prover_claims<'a, P>(
     polynomials: &'a [&'a P],
     commitment: &'a CommittedGroup<F>,
     hint: AkitaCommitmentHint<F>,
-) -> ProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F>
+) -> SelectedProverOpeningData<'a, F, PreparedProverGroup<'a, P>, F>
 where
     P: akita_prover::RootPolyMeta<F>,
 {

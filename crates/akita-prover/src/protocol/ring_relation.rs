@@ -721,7 +721,7 @@ impl RingRelationProver {
             .map(|group_index| {
                 Ok(fold_grind::FoldGrindGroup {
                     group_index,
-                    group: block_claims.group_source(group_index)?,
+                    group: block_claims.group(group_index)?,
                     params: lp.group_params(&opening_batch, group_index)?,
                 })
             })

@@ -13,7 +13,6 @@ use akita_types::{
 fn schedule<Cfg: CommitmentConfig>(num_vars: usize) -> FoldSchedule {
     Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(num_vars),
-        Cfg::group_source(),
     ))
     .expect("runtime schedule")
 }

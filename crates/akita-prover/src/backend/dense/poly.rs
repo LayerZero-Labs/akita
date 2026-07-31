@@ -51,8 +51,6 @@ pub struct DensePoly<F: FieldCore> {
     /// Flat centered-`i8` mirror of `coeffs` (same physical length and
     /// padding), present only when every live coefficient is small.
     pub(super) small_i8_coeffs: Option<Vec<i8>>,
-    /// Checked maximum centered coefficient bit width for source contracts.
-    dense_coefficient_bits: u32,
     digit_cache: OnceLock<DenseDigitCache>,
 }
 
@@ -63,7 +61,6 @@ impl<F: FieldCore + Clone> Clone for DensePoly<F> {
             meta_ring_elems: self.meta_ring_elems,
             coeffs: self.coeffs.clone(),
             small_i8_coeffs: self.small_i8_coeffs.clone(),
-            dense_coefficient_bits: self.dense_coefficient_bits,
             digit_cache: OnceLock::new(),
         }
     }
@@ -74,7 +71,6 @@ impl<F: FieldCore + PartialEq> PartialEq for DensePoly<F> {
         self.num_vars == other.num_vars
             && self.coeffs == other.coeffs
             && self.small_i8_coeffs == other.small_i8_coeffs
-            && self.dense_coefficient_bits == other.dense_coefficient_bits
     }
 }
 
@@ -97,10 +93,6 @@ fn as_ring_view<F: FieldCore, const D: usize>(flat: &[F]) -> &[CyclotomicRing<F,
 }
 
 impl<F: FieldCore> DensePoly<F> {
-    pub(super) fn dense_coefficient_bits(&self) -> u32 {
-        self.dense_coefficient_bits
-    }
-
     /// Full physical (zero-padded) flat coefficient buffer.
     pub fn field_coeffs(&self) -> &[F] {
         self.coeffs.coeffs()
@@ -238,14 +230,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
         // old per-ring check over the zero-padded last ring.
         let q = (-F::one()).to_canonical_u128() + 1;
         let half_q = q / 2;
-        let dense_coefficient_bits = evals
-            .iter()
-            .map(|coefficient| {
-                let canonical = coefficient.to_canonical_u128();
-                canonical.min(q - canonical)
-            })
-            .max()
-            .map_or(0, |magnitude| 128 - magnitude.leading_zeros());
         let mut small_i8_coeffs = Vec::with_capacity(physical_len);
         let mut all_small_i8 = true;
         for coeff in evals {
@@ -265,7 +249,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             meta_ring_elems: expected_len.div_ceil(ring_d),
             coeffs: RingVec::from_coeffs(coeffs),
             small_i8_coeffs: all_small_i8.then_some(small_i8_coeffs),
-            dense_coefficient_bits,
             digit_cache: OnceLock::new(),
         })
     }
@@ -290,14 +273,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             flat.resize(physical_len, 0i8);
             flat
         });
-        let dense_coefficient_bits = small_i8_coeffs.as_ref().map_or(128, |coefficients| {
-            coefficients
-                .iter()
-                .map(|coefficient| coefficient.unsigned_abs())
-                .max()
-                .map_or(0, |magnitude| u8::BITS - magnitude.leading_zeros())
-        });
-
         let mut flat = Vec::with_capacity(physical_len);
         for ring in &coeffs {
             flat.extend_from_slice(ring.coefficients());
@@ -309,7 +284,6 @@ impl<F: FieldCore + CanonicalField> DensePoly<F> {
             meta_ring_elems: coeffs.len(),
             coeffs: RingVec::from_coeffs(flat),
             small_i8_coeffs,
-            dense_coefficient_bits,
             digit_cache: OnceLock::new(),
         }
     }

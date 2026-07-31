@@ -299,6 +299,7 @@ pub(crate) struct SuffixCtx<'a> {
     pub(crate) key: PolynomialGroupLayout,
     pub(crate) setup_field_budget: Option<usize>,
     pub(crate) root_lookup_key: Option<&'a AkitaScheduleLookupKey>,
+    pub(crate) precommitted_fold_witness_norms: &'a [akita_types::sis::FoldWitnessNorms],
 }
 
 #[derive(Clone, Copy)]
@@ -461,6 +462,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
         key: _,
         setup_field_budget: _,
         root_lookup_key,
+        precommitted_fold_witness_norms,
     } = *ctx;
     let SuffixState {
         level,
@@ -541,6 +543,7 @@ pub(crate) fn derive_optimal_suffix_schedule(
             })?;
             let candidates = multi_group_root_level_candidates_for_basis(
                 root_key,
+                precommitted_fold_witness_norms,
                 policy,
                 default_ring_challenge_cfg,
                 ring_challenge_config,

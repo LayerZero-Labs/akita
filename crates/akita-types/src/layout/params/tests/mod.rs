@@ -112,11 +112,11 @@ fn sample_multi_group_root_params() -> (CommittedGroupParams, OpeningClaimsLayou
     layout.outer_commit_matrix = outer_commit_matrix;
     let precommit = PrecommittedLevelParams {
         layout,
-        source: precommit_lp.source,
         log_basis_open: precommit_lp.log_basis_open,
         fold_challenge_config: precommit_lp.fold_challenge_config,
         num_digits_open: precommit_lp.num_digits_open,
         num_digits_fold: precommit_lp.num_digits_fold,
+        fold_witness_linf_cap: precommit_lp.fold_witness_linf_cap,
     };
     let mut grouped = lp;
     grouped.precommitted_groups = vec![precommit];
@@ -132,27 +132,6 @@ fn shared_d_digit_basis_uses_root_opening_basis() {
 
     assert_eq!(grouped.shared_d_digit_log_basis(), 3);
     assert_eq!(shared_d_digit_log_basis(5, &[]), 5);
-}
-
-#[test]
-fn grouped_fold_witness_norms_use_each_groups_source() {
-    let (mut grouped, batch) = sample_multi_group_root_params();
-    grouped.source = crate::GroupSource::one_hot(16);
-    grouped.precommitted_groups[0].source = crate::GroupSource::bounded(32);
-
-    let precommitted = grouped
-        .group_params(&batch, 0)
-        .expect("precommitted group params");
-    let final_group = grouped.group_params(&batch, 1).expect("final group params");
-
-    let precommitted_norms = grouped.fold_witness_norms_for_params(precommitted).unwrap();
-    let final_norms = grouped.fold_witness_norms_for_params(final_group).unwrap();
-    assert_eq!(
-        precommitted_norms.infinity_norm(),
-        1u128 << (precommitted.log_basis_inner() - 1)
-    );
-    assert_eq!(final_norms.infinity_norm(), 1);
-    assert_ne!(precommitted_norms, final_norms);
 }
 
 #[test]
@@ -207,12 +186,12 @@ fn derived_widths_match_ajtai_col_len() {
 }
 
 #[test]
-fn with_fold_linf_cap_config_propagates_fold_digit_errors() {
+fn with_fold_plan_propagates_fold_digit_errors() {
     let mut lp = sample_layout_lp();
     lp.fold_challenge_config = SparseChallengeConfig::pm1_only(0);
 
     let err = lp
-        .with_fold_linf_cap_config(128, 1)
+        .with_fold_plan(128, 1, crate::sis::FoldWitnessNorms::bounded(2, 64))
         .expect_err("zero challenge mass must reject");
 
     assert!(matches!(err, AkitaError::InvalidSetup(message) if message.contains("β = 0")));

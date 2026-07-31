@@ -1,19 +1,15 @@
 //! Whole-group root operations.
-//!
-//! Dispatch across heterogeneous source representations happens once at this
-//! boundary. Every operation then calls the existing concrete polynomial and
-//! backend kernels, preserving monomorphized hot loops.
 
 use super::*;
 use crate::compute::{
     tensor_root_projection, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx,
     RuntimeOpeningProveBackendFor, RuntimeRootProvePoly, RuntimeTensorBackendFor,
 };
-use crate::{EitherPreparedGroup, PreparedProverGroup, RootTensorProjectionPoly};
+use crate::{PreparedProverGroup, RootTensorProjectionPoly};
 use akita_challenges::Challenges;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
-use akita_types::{GroupSource, LevelParamsLike};
+use akita_types::LevelParamsLike;
 
 pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
     pub(in crate::protocol) point: PreparedOpeningPoint<F, E>,
@@ -24,7 +20,6 @@ pub(crate) struct PreparedGroupOpening<F: FieldCore, E: FieldCore> {
 pub(crate) trait RootProverGroupMeta<F: FieldCore> {
     fn num_polynomials(&self) -> usize;
     fn num_vars(&self) -> Result<usize, AkitaError>;
-    fn validate_source(&self, source: GroupSource) -> Result<(), AkitaError>;
 }
 
 pub(crate) trait RootProverGroupOpening<F, E, B>: RootProverGroupMeta<F>
@@ -112,10 +107,6 @@ where
             ));
         }
         Ok(num_vars)
-    }
-
-    fn validate_source(&self, source: GroupSource) -> Result<(), AkitaError> {
-        crate::api::commitment::validate_source_contract::<F, &P>(self.polynomial_refs(), source)
     }
 }
 
@@ -283,156 +274,5 @@ where
                 eta,
             )
         )
-    }
-}
-
-impl<F, L, R> RootProverGroupMeta<F> for EitherPreparedGroup<L, R>
-where
-    F: FieldCore,
-    L: RootProverGroupMeta<F>,
-    R: RootProverGroupMeta<F>,
-{
-    fn num_polynomials(&self) -> usize {
-        match self {
-            Self::Left(group) => group.num_polynomials(),
-            Self::Right(group) => group.num_polynomials(),
-        }
-    }
-
-    fn num_vars(&self) -> Result<usize, AkitaError> {
-        match self {
-            Self::Left(group) => group.num_vars(),
-            Self::Right(group) => group.num_vars(),
-        }
-    }
-
-    fn validate_source(&self, source: GroupSource) -> Result<(), AkitaError> {
-        match self {
-            Self::Left(group) => group.validate_source(source),
-            Self::Right(group) => group.validate_source(source),
-        }
-    }
-}
-
-impl<F, E, B, L, R> RootProverGroupOpening<F, E, B> for EitherPreparedGroup<L, R>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
-    E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
-    B: ComputeBackendSetup<F> + DigitRowsComputeBackend<F>,
-    L: RootProverGroupOpening<F, E, B>,
-    R: RootProverGroupOpening<F, E, B>,
-{
-    fn prepare_opening(
-        &self,
-        ctx: &OperationCtx<'_, F, B>,
-        ring_dimension: usize,
-        protocol_point: &[E],
-        basis: BasisMode,
-        num_positions_per_block: usize,
-        num_live_blocks: usize,
-        alpha_bits: usize,
-    ) -> Result<PreparedGroupOpening<F, E>, AkitaError> {
-        match self {
-            Self::Left(group) => group.prepare_opening(
-                ctx,
-                ring_dimension,
-                protocol_point,
-                basis,
-                num_positions_per_block,
-                num_live_blocks,
-                alpha_bits,
-            ),
-            Self::Right(group) => group.prepare_opening(
-                ctx,
-                ring_dimension,
-                protocol_point,
-                basis,
-                num_positions_per_block,
-                num_live_blocks,
-                alpha_bits,
-            ),
-        }
-    }
-
-    fn probe_fold(
-        &self,
-        ctx: &OperationCtx<'_, F, B>,
-        challenges: &Challenges,
-        root_params: &CommittedGroupParams,
-        params: &(impl LevelParamsLike + ?Sized),
-    ) -> Result<crate::protocol::fold_grind::FoldGrindGroupOutput<F>, AkitaError> {
-        match self {
-            Self::Left(group) => group.probe_fold(ctx, challenges, root_params, params),
-            Self::Right(group) => group.probe_fold(ctx, challenges, root_params, params),
-        }
-    }
-}
-
-impl<F, E, B, L, R> RootProverGroupTensor<F, E, B> for EitherPreparedGroup<L, R>
-where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
-    <F as HasWide>::Wide: From<F> + ReduceTo<F>,
-    E: ExtField<F> + MulBaseUnreduced<F>,
-    B: ComputeBackendSetup<F>,
-    L: RootProverGroupTensor<F, E, B>,
-    R: RootProverGroupTensor<F, E, B>,
-{
-    fn prepare_extension_opening(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-        point: &[E],
-    ) -> Result<PreparedExtensionOpeningGroup<E>, AkitaError> {
-        match self {
-            Self::Left(group) => {
-                group.prepare_extension_opening(backend, prepared, ring_dimension, point)
-            }
-            Self::Right(group) => {
-                group.prepare_extension_opening(backend, prepared, ring_dimension, point)
-            }
-        }
-    }
-
-    fn tensor_project(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-    ) -> Result<Vec<RootTensorProjectionPoly<F>>, AkitaError> {
-        match self {
-            Self::Left(group) => group.tensor_project(backend, prepared, ring_dimension),
-            Self::Right(group) => group.tensor_project(backend, prepared, ring_dimension),
-        }
-    }
-
-    fn extension_opening_terms(
-        &self,
-        backend: &B,
-        prepared: Option<&B::PreparedSetup>,
-        ring_dimension: usize,
-        row_coefficients: &[E],
-        tail_point: &[E],
-        eta: &[E],
-    ) -> Result<Vec<ExtensionOpeningReductionTerm<E>>, AkitaError> {
-        match self {
-            Self::Left(group) => group.extension_opening_terms(
-                backend,
-                prepared,
-                ring_dimension,
-                row_coefficients,
-                tail_point,
-                eta,
-            ),
-            Self::Right(group) => group.extension_opening_terms(
-                backend,
-                prepared,
-                ring_dimension,
-                row_coefficients,
-                tail_point,
-                eta,
-            ),
-        }
     }
 }

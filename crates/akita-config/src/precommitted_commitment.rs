@@ -71,8 +71,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::basis_range()
     }
 
-    fn group_source() -> akita_types::GroupSource {
-        Cfg::group_source()
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        Cfg::root_fold_witness_norms()
     }
 
     fn supports_multi_group_final_commit() -> bool {
@@ -99,12 +99,11 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
             ));
         }
         let key = opening_batch.root_final_group_layout()?;
-        committed_group_params::<Cfg>(&key, Cfg::group_source())
+        committed_group_params::<Cfg>(&key)
     }
 }
 
-/// Resolve the exact standalone A/B commitment parameters for one explicit
-/// group source contract.
+/// Resolve the exact standalone A/B commitment parameters for one group.
 ///
 /// A generated grouped row may carry the frozen precommit descriptor even when
 /// the catalog intentionally omits a scalar proof row for that source. This
@@ -112,10 +111,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
 /// scalar row. It never runs the planner at runtime.
 pub fn committed_group_params<Cfg: CommitmentConfig>(
     key: &PolynomialGroupLayout,
-    source: akita_types::GroupSource,
 ) -> Result<CommittedGroupParams, AkitaError> {
     key.validate()?;
-    source.validate(Cfg::decomposition().field_bits())?;
     if let Some(catalog) = Cfg::schedule_catalog() {
         let policy = policy_of::<Cfg>();
         akita_schedules::validate_catalog_identity(
@@ -126,16 +123,12 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
         )?;
 
         for entry in catalog.entries {
-            let Some((group_idx, _)) =
-                entry
-                    .root
-                    .precommitted_groups
-                    .iter()
-                    .enumerate()
-                    .find(|(_, group)| {
-                        group.descriptor.group == *key
-                            && group.source.encoding() == source.encoding()
-                    })
+            let Some((group_idx, _)) = entry
+                .root
+                .precommitted_groups
+                .iter()
+                .enumerate()
+                .find(|(_, group)| group.descriptor.group == *key)
             else {
                 continue;
             };
@@ -159,7 +152,6 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
                 })?;
             let group = &precommitted.commitment;
             let mut params = schedule.root.params.final_group.commitment.clone();
-            params.source = source;
             params.log_basis_inner = group.layout.log_basis_inner;
             params.log_basis_outer = group.layout.log_basis_outer;
             params.log_basis_open = group.log_basis_open;
@@ -172,16 +164,15 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
             params.num_digits_outer = group.layout.num_digits_outer;
             params.num_digits_open = group.num_digits_open;
             params.num_digits_fold = group.num_digits_fold;
+            params.fold_witness_linf_cap = group.fold_witness_linf_cap;
             params.precommitted_groups.clear();
             return Ok(params);
         }
     }
 
-    Ok(
-        Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key, source))?
-            .root
-            .params
-            .final_group
-            .commitment,
-    )
+    Ok(Cfg::runtime_schedule(AkitaScheduleLookupKey::single(*key))?
+        .root
+        .params
+        .final_group
+        .commitment)
 }

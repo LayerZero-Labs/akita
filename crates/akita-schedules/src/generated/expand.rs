@@ -139,7 +139,7 @@ impl GeneratedSetupPrefixInput {
             d,
             inner_width,
         )?;
-        let (num_digits_fold, _) = fold_witness_digit_plan(
+        let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
             num_live_blocks,
             1,
             policy.decomposition.field_bits(),
@@ -224,11 +224,11 @@ impl GeneratedSetupPrefixInput {
         layout.validate_root_geometry()?;
         Ok(PrecommittedLevelParams {
             layout,
-            source: akita_types::GroupSource::bounded(policy.decomposition.field_bits()),
             log_basis_open,
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
             num_digits_fold,
+            fold_witness_linf_cap,
         })
     }
 }
@@ -271,7 +271,7 @@ impl GeneratedCommittedGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
-        source: akita_types::GroupSource,
+        exact_root_plan: Option<(u32, u32, u128)>,
         input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
@@ -286,7 +286,6 @@ impl GeneratedCommittedGroup {
             )));
         }
         let is_root = fold_level == 0;
-        source.validate_for_ring_dimension(policy.decomposition.field_bits(), ring_d)?;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
         let log_basis_open = open_commit_matrix.log_basis;
@@ -351,14 +350,23 @@ impl GeneratedCommittedGroup {
         };
         let witness_decomp = DecompositionParams {
             log_basis: log_basis_inner,
-            ..source.decomposition(policy.decomposition)
+            log_commit_bound: policy.decomposition.field_bits(),
+            log_open_bound: Some(policy.decomposition.field_bits()),
         };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_inner = num_digits_inner(witness_decomp, is_root);
+        let num_digits_inner = if let Some((num_digits_inner, _, _)) = exact_root_plan {
+            usize::try_from(num_digits_inner).map_err(|_| {
+                AkitaError::InvalidSetup(
+                    "generated root inner digit depth does not fit the target platform".into(),
+                )
+            })?
+        } else {
+            num_digits_inner(witness_decomp, is_root)
+        };
         let num_digits_outer = num_digits_open(outer_decomp);
         let num_digits_open_val = num_digits_open(open_decomp);
 
@@ -370,24 +378,28 @@ impl GeneratedCommittedGroup {
             ring_d,
             inner_width,
         )?;
-        let witness_norms = if is_root {
-            FoldWitnessNorms::from_source_encoding(
-                witness_decomp.log_basis,
-                ring_d,
-                source.encoding(),
-            )?
-        } else {
-            FoldWitnessNorms::bounded(witness_decomp.log_basis, ring_d)
-        };
-        let (num_digits_fold, _) = fold_witness_digit_plan(
-            num_live_blocks,
-            num_claims,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
-            witness_norms,
-            &fold_linf_cap_config,
-        )?;
+        let (num_digits_fold, fold_witness_linf_cap) =
+            if let Some((_, num_digits_fold, fold_witness_linf_cap)) = exact_root_plan {
+                (
+                    usize::try_from(num_digits_fold).map_err(|_| {
+                        AkitaError::InvalidSetup(
+                            "generated root fold digit depth does not fit the target platform"
+                                .into(),
+                        )
+                    })?,
+                    fold_witness_linf_cap,
+                )
+            } else {
+                fold_witness_digit_plan(
+                    num_live_blocks,
+                    num_claims,
+                    policy.decomposition.field_bits(),
+                    log_basis_open,
+                    FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
+                    FoldWitnessNorms::bounded(witness_decomp.log_basis, ring_d),
+                    &fold_linf_cap_config,
+                )?
+            };
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
@@ -497,7 +509,6 @@ impl GeneratedCommittedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
-            source,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -538,6 +549,7 @@ impl GeneratedCommittedGroup {
             num_digits_open,
             fold_linf_cap_config,
             num_digits_fold,
+            fold_witness_linf_cap,
             num_fold_claims: num_claims,
             field_bits_hint: policy.decomposition.field_bits(),
             // The caller stamps the configured per-level chunk policy after
@@ -562,7 +574,9 @@ impl GeneratedCommittedGroup {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_shape: TensorChallengeShape,
         main_num_polys: usize,
-        source: akita_types::GroupSource,
+        num_digits_inner: u32,
+        num_digits_fold: u32,
+        fold_witness_linf_cap: u128,
         precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -614,16 +628,16 @@ impl GeneratedCommittedGroup {
             log_basis: log_basis_outer,
             ..policy.decomposition
         };
-        let witness_decomp = DecompositionParams {
-            log_basis: log_basis_inner,
-            ..source.decomposition(policy.decomposition)
-        };
         let open_decomp = DecompositionParams {
             log_basis: log_basis_open,
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_inner = num_digits_inner(witness_decomp, true);
+        let num_digits_inner = usize::try_from(num_digits_inner).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated root inner digit depth does not fit the target platform".into(),
+            )
+        })?;
         let num_digits_outer = num_digits_open(outer_decomp);
         let num_digits_open_val = num_digits_open(open_decomp);
 
@@ -635,19 +649,11 @@ impl GeneratedCommittedGroup {
             ring_d,
             inner_width,
         )?;
-        let (num_digits_fold, _) = fold_witness_digit_plan(
-            num_live_blocks,
-            main_num_polys,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::from_source_encoding(
-                witness_decomp.log_basis,
-                ring_d,
-                source.encoding(),
-            )?,
-            &fold_linf_cap_config,
-        )?;
+        let num_digits_fold = usize::try_from(num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated root fold digit depth does not fit the target platform".into(),
+            )
+        })?;
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
@@ -722,7 +728,6 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
         let params = CommittedGroupParams {
-            source,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -756,7 +761,7 @@ impl GeneratedCommittedGroup {
             num_live_ring_elements_per_claim: num_live_blocks
                 .checked_mul(num_positions_per_block)
                 .ok_or_else(|| {
-                    AkitaError::InvalidSetup("generated root source length overflow".to_string())
+                    AkitaError::InvalidSetup("generated root group length overflow".to_string())
                 })?,
             num_live_blocks,
             num_positions_per_block,
@@ -767,6 +772,7 @@ impl GeneratedCommittedGroup {
             num_digits_open: num_digits_open_val,
             fold_linf_cap_config,
             num_digits_fold,
+            fold_witness_linf_cap,
             num_fold_claims: main_num_polys,
             field_bits_hint: policy.decomposition.field_bits(),
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),

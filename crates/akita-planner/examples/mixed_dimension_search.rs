@@ -153,14 +153,17 @@ fn main() -> Result<(), akita_field::AkitaError> {
     );
     let recursive_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(32, 2),
-        final_source: D64OneHot::group_source(),
         precommitteds: vec![descriptor, descriptor],
-        precommitted_sources: vec![D64OneHot::group_source(), D64OneHot::group_source()],
     };
+    let precommitted_fold_witness_norms = vec![
+        D64OneHot::root_fold_witness_norms(),
+        D64OneHot::root_fold_witness_norms(),
+    ];
     type Recursive = RecursiveCommitmentConfig<D64OneHot>;
     let recursive_policy = policy_of::<Recursive>();
     let preserved = find_group_batch_schedule(
         &recursive_key,
+        &precommitted_fold_witness_norms,
         &recursive_policy,
         Recursive::ring_challenge_config,
         Recursive::fold_challenge_shape_at_level,

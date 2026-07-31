@@ -111,11 +111,11 @@ fn precommitted_group_params(
 ) -> crate::PrecommittedLevelParams {
     crate::PrecommittedLevelParams {
         layout: CommittedGroupProfile::from_params(group, params),
-        source: params.source,
         log_basis_open: params.log_basis_open,
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
         num_digits_fold: params.num_digits_fold,
+        fold_witness_linf_cap: params.fold_witness_linf_cap,
     }
 }
 
@@ -185,21 +185,6 @@ fn recursive_schedule(
             input_witness_len: successor_ring_dimension,
         },
     }
-}
-
-#[test]
-fn committed_params_preserve_the_discriminated_source_contract() {
-    let dense = committed_params(64);
-    assert_eq!(
-        GroupSource::from_commitment(&dense),
-        GroupSource::bounded(128)
-    );
-
-    let onehot = dense.with_source(GroupSource::one_hot(256));
-    assert_eq!(
-        GroupSource::from_commitment(&onehot),
-        GroupSource::one_hot(256)
-    );
 }
 
 #[test]
@@ -402,7 +387,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     )
     .with_decomp(4, 32, 2, 2, 2)
     .unwrap()
-    .with_fold_linf_cap_config(128, 3)
+    .with_fold_plan(128, 3, crate::sis::FoldWitnessNorms::bounded(3, D))
     .unwrap();
     let field_bits = 128u32;
     let num_poly = 3usize;
@@ -626,7 +611,11 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
         )
         .with_decomp(1, 1, 1, 1, 1)
         .unwrap()
-        .with_fold_linf_cap_config(F::modulus_bits(), num_claims)
+        .with_fold_plan(
+            F::modulus_bits(),
+            num_claims,
+            crate::sis::FoldWitnessNorms::bounded(log_basis, D),
+        )
         .unwrap();
 
         let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
@@ -753,49 +742,30 @@ fn planned_root_extension_reduction_bytes_match_payload() {
 #[test]
 fn scalar_schedule_key_accepts_single_group_layout() {
     let layout = OpeningClaimsLayout::new(4, 2).expect("scalar layout");
-    let key = AkitaScheduleLookupKey::single(
-        layout.root_final_group_layout().expect("final group"),
-        GroupSource::bounded(128),
-    );
+    let key =
+        AkitaScheduleLookupKey::single(layout.root_final_group_layout().expect("final group"));
     assert_eq!(key.final_group, PolynomialGroupLayout::new(4, 2));
     assert!(key.precommitteds.is_empty());
     assert_eq!(key.num_commitment_groups(), 1);
 }
 
 #[test]
-fn group_source_rejects_unrepresentable_bounds_and_chunks() {
-    assert!(GroupSource::bounded(0).validate(128).is_err());
-    assert!(GroupSource::bounded(129).validate(128).is_err());
-    assert!(GroupSource::one_hot(0).validate(128).is_err());
-    assert!(GroupSource::one_hot(3).validate(128).is_err());
-    assert!(GroupSource::one_hot(16)
-        .validate_for_ring_dimension(128, 64)
-        .is_ok());
-    assert!(GroupSource::one_hot(32)
-        .validate_for_ring_dimension(128, 48)
-        .is_err());
-}
-
-#[test]
 fn validate_rejects_zero_dimensions() {
-    assert!(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::new(0, 1),
-        GroupSource::bounded(128),
-    )
-    .validate(128)
-    .is_err());
-    assert!(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::new(20, 0),
-        GroupSource::bounded(128),
-    )
-    .validate(128)
-    .is_err());
-    assert!(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::new(20, 4),
-        GroupSource::bounded(128),
-    )
-    .validate(128)
-    .is_ok());
+    assert!(
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(0, 1))
+            .validate(128)
+            .is_err()
+    );
+    assert!(
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 0))
+            .validate(128)
+            .is_err()
+    );
+    assert!(
+        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(20, 4))
+            .validate(128)
+            .is_ok()
+    );
 }
 
 fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
@@ -840,12 +810,10 @@ fn precommitted_descriptor(num_vars: usize) -> CommittedGroupProfile {
 }
 
 #[test]
-fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
+fn group_batch_key_separates_final_arity_from_max_opening_arity() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(14, 3),
-        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
-        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -872,9 +840,7 @@ fn group_batch_key_separates_final_source_arity_from_max_opening_arity() {
 fn group_batch_key_allows_independent_precommitted_num_vars() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(12)],
-        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -886,9 +852,7 @@ fn group_batch_key_allows_independent_precommitted_num_vars() {
 fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        final_source: GroupSource::bounded(128),
         precommitteds: vec![precommitted_descriptor(20)],
-        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -900,7 +864,6 @@ fn group_batch_key_allows_precommitted_num_vars_equal_to_main() {
 fn group_batch_key_allows_mixed_polynomial_counts() {
     let multi_group_key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(20, 3),
-        final_source: GroupSource::bounded(128),
         precommitteds: vec![{
             let mut descriptor = precommitted_descriptor(10);
             descriptor.group = PolynomialGroupLayout::new(10, 2);
@@ -920,7 +883,6 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
             .expect("audited multi-polynomial B matrix");
             descriptor
         }],
-        precommitted_sources: vec![GroupSource::bounded(128)],
     };
 
     multi_group_key
@@ -933,14 +895,12 @@ fn group_batch_key_allows_mixed_polynomial_counts() {
 }
 
 #[test]
-fn group_batch_key_identity_binds_ordered_source_contracts() {
+fn group_batch_key_identity_binds_ordered_profiles() {
     let first = precommitted_descriptor(12);
     let second = precommitted_descriptor(14);
     let key = AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(16, 1),
-        final_source: GroupSource::one_hot(256),
         precommitteds: vec![first, second],
-        precommitted_sources: vec![GroupSource::one_hot(16), GroupSource::bounded(32)],
     };
 
     let mut reordered = key.clone();
@@ -949,41 +909,6 @@ fn group_batch_key_identity_binds_ordered_source_contracts() {
         key.canonical_descriptor_bytes(),
         reordered.canonical_descriptor_bytes(),
         "group ordering is transcript and catalog identity"
-    );
-
-    let mut changed_pre_source = key.clone();
-    changed_pre_source.precommitted_sources[0] = GroupSource::one_hot(256);
-    assert_ne!(
-        key.canonical_descriptor_bytes(),
-        changed_pre_source.canonical_descriptor_bytes()
-    );
-
-    let mut changed_final_source = key.clone();
-    changed_final_source.final_source = GroupSource::bounded(128);
-    assert_ne!(
-        key.canonical_descriptor_bytes(),
-        changed_final_source.canonical_descriptor_bytes()
-    );
-}
-
-#[test]
-fn group_batch_key_identity_ignores_provider_registration() {
-    let built_in =
-        AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(16, 1), GroupSource::bounded(32));
-    let downstream = AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::new(16, 1),
-        GroupSource::registered(
-            GroupSourceRegistration::new(*b"downstream/test\0", [7; 16]),
-            GroupSourceEncoding::Bounded {
-                coefficient_bits: 32,
-            },
-        ),
-    );
-
-    assert_eq!(
-        built_in.canonical_descriptor_bytes(),
-        downstream.canonical_descriptor_bytes(),
-        "provider registration is application identity, not protocol identity"
     );
 }
 

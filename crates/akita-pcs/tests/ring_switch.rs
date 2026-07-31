@@ -127,8 +127,12 @@ mod tests {
         polynomials: &'a [&'a P],
         commitment: &'a CommittedGroup<Cfg::Field>,
         hint: AkitaCommitmentHint<Cfg::Field>,
-    ) -> ProverOpeningData<'a, Cfg::ExtField, akita_prover::PreparedProverGroup<'a, P>, Cfg::Field>
-    {
+    ) -> akita_prover::SelectedProverOpeningData<
+        'a,
+        Cfg::ExtField,
+        akita_prover::PreparedProverGroup<'a, P>,
+        Cfg::Field,
+    > {
         let group = PolynomialGroupClaims::new(
             point.to_vec(),
             vec![Cfg::ExtField::zero(); polynomials.len()],
@@ -143,8 +147,11 @@ mod tests {
         let selection = Cfg::select_schedule_for_profiles(&profiles)
             .expect("select prover schedule")
             .selection();
-        ProverOpeningData::new(selection, opening_claims, vec![hint], vec![polynomials])
-            .expect("valid prover opening data")
+        (
+            selection,
+            ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
+                .expect("valid prover opening data"),
+        )
     }
 
     fn compute_r_schoolbook<F: FieldCore, const D: usize>(

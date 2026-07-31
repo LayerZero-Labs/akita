@@ -17,11 +17,11 @@ Any malformed verifier-facing proof, setup, schedule, public claim, opening poin
 The verifier never invokes planner search. It accepts only an explicit
 `OpeningScheduleSelection` that resolves in the enabled generated catalog.
 Before setup access or transcript replay, it validates catalog identity and
-runtime hooks, resolves the row digest, compares every ordered public
+runtime hooks, resolves the public row digest, compares every ordered public
 `CommittedGroupProfile`, re-audits every A/B/D/recursive/terminal SIS matrix,
 checks challenge and full terminal cap geometry, and confirms the schedule fits
-the setup envelope. Provider registrations and honest-prover source models are
-not verifier inputs.
+the setup envelope. Private polynomial representations and honest-prover
+witness models are not verifier inputs.
 
 The accepted proof topology is structural: a root fold, at least one suffix
 fold, and one terminal cleartext witness. The verifier rejects empty/one-fold

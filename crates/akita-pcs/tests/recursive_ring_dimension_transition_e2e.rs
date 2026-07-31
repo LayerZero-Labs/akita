@@ -23,10 +23,7 @@ use akita_pcs::test_support::{
     materialize_schedule_setup_prefix_slots, RecursiveRingDimensionTransitionConfig,
 };
 use akita_pcs::AkitaCommitmentScheme;
-use akita_prover::{
-    commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotGroupProvider, OneHotIndex,
-    OneHotPoly,
-};
+use akita_prover::{commit_setup_prefix, ComputeBackendSetup, CpuBackend, OneHotIndex, OneHotPoly};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize};
 use akita_transcript::{AkitaTranscript, Transcript};
 use akita_types::{
@@ -167,9 +164,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
         let pre_frozen = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule_key = AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
-            final_source: ProofCfg::group_source(),
             precommitteds: vec![pre_frozen, pre_frozen],
-            precommitted_sources: vec![ProofCfg::group_source(), ProofCfg::group_source()],
         };
         let opening_layout = schedule_key.opening_layout().expect("opening layout");
 
@@ -239,16 +234,11 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 make_layout_onehot_poly(root_params, 0x0bee_fcaf_3340_1000 + poly_idx as u64)
             })
             .collect();
-        let (final_commitment, final_hint) = Scheme::<ProofCfg>::commit_final_group(
+        let (final_commitment, final_hint, _selection) = Scheme::<ProofCfg>::commit_final_group(
             &setup,
             &final_polys,
             &stack,
             pre_commitments.iter().map(|group| group.profile).collect(),
-            &OneHotGroupProvider::new(
-                ProofCfg::group_source()
-                    .sparse_chunk_size()
-                    .expect("one-hot transition config"),
-            ),
         )
         .expect("final mixed commitment");
 
@@ -306,7 +296,7 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             prover_hints,
             prover_polys,
         );
-        let selection = prover_claims.selection().expect("selected schedule");
+        let selection = prover_claims.0;
 
         let mut prover_transcript = AkitaTranscript::<F>::new(transcript_domain);
         let proof = Scheme::<ProofCfg>::batched_prove(
@@ -400,9 +390,7 @@ fn recursive_mixed_d_prefix_commit_rejects_missing_outer_ntt_slot() {
         let descriptor = CommittedGroupProfile::from_params(pre_key, &pre_layout);
         let schedule = PlainCfg::runtime_schedule(AkitaScheduleLookupKey {
             final_group: PolynomialGroupLayout::new(FINAL_NV, FINAL_GROUP_SIZE),
-            final_source: PlainCfg::group_source(),
             precommitteds: vec![descriptor, descriptor],
-            precommitted_sources: vec![PlainCfg::group_source(), PlainCfg::group_source()],
         })
         .expect("mixed recursive schedule");
         let prefix = schedule.recursive_folds[0]

@@ -50,7 +50,7 @@ where
     let tensor = stack.tensor();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
         let eor_groups: Vec<&P> = match eor_source {
-            ExtensionOpeningSource::CurrentClaims => block_claims.group_sources().collect(),
+            ExtensionOpeningSource::CurrentClaims => block_claims.groups().collect(),
             ExtensionOpeningSource::Logical(groups) => groups.iter().collect(),
         };
         if eor_groups.len() != opening_batch.num_groups() {
@@ -115,7 +115,7 @@ where
             let mut transformed = Vec::with_capacity(opening_batch.num_total_polynomials());
             for group_index in 0..opening_batch.num_groups() {
                 let group_dims = level_params.group_role_dims(&opening_batch, group_index)?;
-                transformed.extend(block_claims.group_source(group_index)?.tensor_project(
+                transformed.extend(block_claims.group(group_index)?.tensor_project(
                     tensor.backend(),
                     Some(tensor.prepared()),
                     group_dims.d_a(),

@@ -224,11 +224,11 @@ fn test_inputs_for_group_sizes(
                 layout.outer_commit_matrix = outer_commit_matrix;
                 crate::PrecommittedLevelParams {
                     layout,
-                    source: lp.source,
                     log_basis_open: lp.log_basis_open,
                     fold_challenge_config: lp.fold_challenge_config,
                     num_digits_open: lp.num_digits_open,
                     num_digits_fold: depth_fold,
+                    fold_witness_linf_cap: lp.fold_witness_linf_cap,
                 }
             })
             .collect();

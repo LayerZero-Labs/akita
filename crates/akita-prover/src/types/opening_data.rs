@@ -7,69 +7,33 @@ use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
     normalize_recursive_opening_point, AkitaCommitmentHint, Commitment, CommittedGroup,
-    CommittedGroupBatchProfile, CommittedGroupParams, CommittedGroupProfile, OpeningClaims,
-    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
-    RingVec, SetupPrefixSlot,
+    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
+    PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
 };
 
-fn batch_profile_from_committed_claims<F: Clone, CommitF: FieldCore>(
-    claims: &OpeningClaims<'_, F, CommittedGroup<CommitF>>,
-) -> Result<CommittedGroupBatchProfile, AkitaError> {
-    let (final_group, precommitteds) = claims
-        .groups()
-        .split_last()
-        .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?;
-    let final_descriptor = *final_group.commitment().profile();
-    if final_descriptor.group.num_polynomials() != final_group.num_evaluations()
-        || final_descriptor.group.num_vars() != final_group.num_vars()
-    {
-        return Err(AkitaError::InvalidInput(
-            "final committed-group descriptor does not match its claims".to_string(),
-        ));
-    }
-    for group in precommitteds {
-        let descriptor = group.commitment().profile();
-        if descriptor.group.num_polynomials() != group.num_evaluations()
-            || descriptor.group.num_vars() != group.num_vars()
-        {
-            return Err(AkitaError::InvalidInput(
-                "precommitted-group descriptor does not match its claims".to_string(),
-            ));
-        }
-    }
-    Ok(CommittedGroupBatchProfile {
-        final_group: final_descriptor,
-        precommitteds: precommitteds
-            .iter()
-            .map(|group| *group.commitment().profile())
-            .collect(),
-    })
-}
+/// Exact top-level row selection paired with its prover opening material.
+pub type SelectedProverOpeningData<'a, PointF, G, CommitF> = (
+    OpeningScheduleSelection,
+    ProverOpeningData<'a, PointF, G, CommitF>,
+);
 
-/// Prover-only material for one ordered public claim group.
-///
-/// The hint and prepared source travel together so the root protocol cannot
-/// accidentally realign two parallel prover-only vectors.
 #[derive(Debug, Clone)]
-pub struct ProverGroupInput<G, CommitF: FieldCore> {
+struct ProverGroupInput<G, CommitF: FieldCore> {
     hint: AkitaCommitmentHint<CommitF>,
-    source: G,
+    group: G,
 }
 
 impl<G, CommitF: FieldCore> ProverGroupInput<G, CommitF> {
-    /// Bind one commitment hint to the prepared source that produced it.
-    pub fn new(hint: AkitaCommitmentHint<CommitF>, source: G) -> Self {
-        Self { hint, source }
+    fn new(hint: AkitaCommitmentHint<CommitF>, group: G) -> Self {
+        Self { hint, group }
     }
 
-    /// Borrow the commitment hint for this group.
-    pub fn hint(&self) -> &AkitaCommitmentHint<CommitF> {
+    fn hint(&self) -> &AkitaCommitmentHint<CommitF> {
         &self.hint
     }
 
-    /// Borrow this group's prepared prover source.
-    pub fn source(&self) -> &G {
-        &self.source
+    fn group(&self) -> &G {
+        &self.group
     }
 }
 
@@ -85,17 +49,14 @@ fn bind_group_inputs<G, CommitF: FieldCore>(
     Ok(hints
         .into_iter()
         .zip(groups)
-        .map(|(hint, source)| ProverGroupInput::new(hint, source))
+        .map(|(hint, group)| ProverGroupInput::new(hint, group))
         .collect())
 }
 
 /// Prover opening input: public claims plus ordered group-local prover material.
 #[derive(Debug, Clone)]
 pub struct ProverOpeningData<'a, PointF: Clone, G, CommitF: FieldCore> {
-    selection: Option<OpeningScheduleSelection>,
     opening_claims: OpeningClaims<'a, PointF, Commitment<CommitF>>,
-    batch_profile: Option<CommittedGroupBatchProfile>,
-    final_descriptor: Option<CommittedGroupProfile>,
     group_inputs: Vec<ProverGroupInput<G, CommitF>>,
 }
 
@@ -115,10 +76,7 @@ where
             .collect::<Result<Vec<_>, _>>()?;
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
-            selection: None,
             opening_claims,
-            batch_profile: None,
-            final_descriptor: None,
             group_inputs,
         };
         data.check_alignment()?;
@@ -127,7 +85,6 @@ where
 
     /// Bundle public claims with matching prover hints and polynomial groups.
     pub fn new(
-        selection: OpeningScheduleSelection,
         opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
         hints: Vec<AkitaCommitmentHint<CommitF>>,
         polynomials: Vec<&'a [&'a P]>,
@@ -136,7 +93,6 @@ where
             .into_iter()
             .map(PreparedProverGroup::from_refs)
             .collect::<Result<Vec<_>, _>>()?;
-        let batch_profile = batch_profile_from_committed_claims(&opening_claims)?;
         let raw_groups = opening_claims
             .groups()
             .iter()
@@ -148,18 +104,9 @@ where
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let final_descriptor = *opening_claims
-            .groups()
-            .last()
-            .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?
-            .commitment()
-            .profile();
         let group_inputs = bind_group_inputs(hints, groups)?;
         let data = Self {
-            selection: Some(selection),
             opening_claims: OpeningClaims::from_groups(raw_groups)?,
-            batch_profile: Some(batch_profile),
-            final_descriptor: Some(final_descriptor),
             group_inputs,
         };
         data.check_alignment()?;
@@ -172,41 +119,6 @@ impl<'a, PointF: Clone, G, CommitF: FieldCore> ProverOpeningData<'a, PointF, G, 
 where
     G: RootProverGroupMeta<CommitF>,
 {
-    /// Bundle public claims with matching prover hints and prepared groups.
-    pub fn from_prepared_groups(
-        selection: OpeningScheduleSelection,
-        opening_claims: OpeningClaims<'a, PointF, CommittedGroup<CommitF>>,
-        group_inputs: Vec<ProverGroupInput<G, CommitF>>,
-    ) -> Result<Self, AkitaError> {
-        let batch_profile = batch_profile_from_committed_claims(&opening_claims)?;
-        let raw_groups = opening_claims
-            .groups()
-            .iter()
-            .map(|group| {
-                PolynomialGroupClaims::new(
-                    group.point().to_vec(),
-                    group.evaluations().to_vec(),
-                    group.commitment().commitment().clone(),
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let final_descriptor = *opening_claims
-            .groups()
-            .last()
-            .ok_or_else(|| AkitaError::InvalidInput("opening claims require a group".to_string()))?
-            .commitment()
-            .profile();
-        let data = Self {
-            selection: Some(selection),
-            opening_claims: OpeningClaims::from_groups(raw_groups)?,
-            batch_profile: Some(batch_profile),
-            final_descriptor: Some(final_descriptor),
-            group_inputs,
-        };
-        data.check_alignment()?;
-        Ok(data)
-    }
-
     fn check_alignment(&self) -> Result<(), AkitaError> {
         if self.opening_claims.num_groups() != self.group_inputs.len() {
             return Err(AkitaError::InvalidInput(
@@ -219,7 +131,7 @@ where
                 .group_inputs
                 .get(group_index)
                 .ok_or_else(|| AkitaError::InvalidInput("missing polynomial group".to_string()))?
-                .source
+                .group
                 .num_polynomials();
             if actual != expected {
                 return Err(AkitaError::InvalidInput(
@@ -230,18 +142,11 @@ where
         Ok(())
     }
 
-    /// Validate alignment and root polynomial shape.
-    pub fn validate(&self) -> Result<(), AkitaError> {
-        self.check_alignment()?;
-        self.opening_layout()?;
-        Ok(())
-    }
-
     /// Largest natural root arity across all polynomial groups.
     pub fn num_vars(&self) -> Result<usize, AkitaError> {
         self.group_inputs
             .iter()
-            .map(|input| input.source.num_vars())
+            .map(|input| input.group.num_vars())
             .collect::<Result<Vec<_>, _>>()?
             .into_iter()
             .max()
@@ -257,32 +162,11 @@ where
         &self.opening_claims
     }
 
-    /// Explicit v1 catalog row selected for this top-level opening.
-    pub fn selection(&self) -> Result<OpeningScheduleSelection, AkitaError> {
-        self.selection.ok_or_else(|| {
-            AkitaError::InvalidInput("top-level opening data requires a schedule selection".into())
-        })
-    }
-
-    /// Exact ordered public profiles carried by the committed groups.
-    pub fn batch_profile(&self) -> Result<CommittedGroupBatchProfile, AkitaError> {
-        self.batch_profile.clone().ok_or_else(|| {
-            AkitaError::InvalidInput("top-level opening data requires committed profiles".into())
-        })
-    }
-
-    /// Exact frozen descriptor returned with the final public commitment.
-    pub fn final_descriptor(&self) -> Result<CommittedGroupProfile, AkitaError> {
-        self.final_descriptor.ok_or_else(|| {
-            AkitaError::InvalidInput("top-level opening data requires a final descriptor".into())
-        })
-    }
-
     /// Layout-only opening geometry derived from prover polynomials.
     pub fn opening_layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
         let mut groups = Vec::with_capacity(self.group_inputs.len());
         for (group_index, input) in self.group_inputs.iter().enumerate() {
-            let group = &input.source;
+            let group = &input.group;
             let group_num_vars = group.num_vars()?;
             let group_point = self.opening_claims.group_point(group_index)?;
             if group_point.len() != group_num_vars {
@@ -308,15 +192,15 @@ where
     }
 
     /// Borrow one polynomial group.
-    pub(crate) fn group_source(&self, index: usize) -> Result<&G, AkitaError> {
+    pub(crate) fn group(&self, index: usize) -> Result<&G, AkitaError> {
         self.group_inputs
             .get(index)
-            .map(ProverGroupInput::source)
+            .map(ProverGroupInput::group)
             .ok_or(AkitaError::InvalidProof)
     }
 
-    pub(crate) fn group_sources(&self) -> impl ExactSizeIterator<Item = &G> {
-        self.group_inputs.iter().map(ProverGroupInput::source)
+    pub(crate) fn groups(&self) -> impl ExactSizeIterator<Item = &G> {
+        self.group_inputs.iter().map(ProverGroupInput::group)
     }
 
     /// Commitments in commitment-group order.
@@ -420,7 +304,7 @@ where
         let mut input_offset = 0usize;
         let mut regrouped = Vec::with_capacity(self.group_inputs.len());
         for input in self.group_inputs {
-            let group_len = input.source.num_polynomials();
+            let group_len = input.group.num_polynomials();
             let input_end = input_offset.checked_add(group_len).ok_or_else(|| {
                 AkitaError::InvalidInput("fold input group offset overflow".to_string())
             })?;
@@ -440,10 +324,7 @@ where
             ));
         }
         let data = ProverOpeningData {
-            selection: self.selection,
             opening_claims: self.opening_claims,
-            batch_profile: self.batch_profile,
-            final_descriptor: self.final_descriptor,
             group_inputs: regrouped,
         };
         data.check_alignment()?;
@@ -639,11 +520,11 @@ mod tests {
         .expect("root params");
         root.precommitted_groups.push(PrecommittedLevelParams {
             layout: CommittedGroupProfile::from_params(pre_layout, &pre),
-            source: pre.source,
             log_basis_open: pre.log_basis_open,
             fold_challenge_config: pre.fold_challenge_config,
             num_digits_open: pre.num_digits_open,
             num_digits_fold: pre.num_digits_fold,
+            fold_witness_linf_cap: pre.fold_witness_linf_cap,
         });
         root
     }

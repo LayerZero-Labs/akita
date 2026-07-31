@@ -1,7 +1,7 @@
 use super::*;
 use akita_config::proof_optimized::fp32;
 use akita_field::ExtField;
-use akita_types::{AkitaScheduleLookupKey, GroupSource, PolynomialGroupLayout};
+use akita_types::{AkitaScheduleLookupKey, PolynomialGroupLayout};
 
 type SmallCfg = fp32::D128OneHot;
 type SmallF = fp32::Field;
@@ -29,9 +29,7 @@ fn small_verifier_statement<'a>(
 }
 
 fn onehot_poly(seed: usize) -> OneHotPoly<SmallF, u8> {
-    let onehot_k = SmallCfg::group_source()
-        .sparse_chunk_size()
-        .expect("fp32 one-hot config");
+    let onehot_k = 256;
     assert!(onehot_k <= 1usize << u8::BITS);
     let num_chunks = (1usize << SMALL_NV) / onehot_k;
     let indices = (0..num_chunks)
@@ -226,16 +224,13 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     type ProtocolCfg =
         crate::test_support::EnvelopeFinalGroupConfig<fp32::D256OneHot, fp32::D128OneHot>;
     type ProtocolScheme = AkitaCommitmentScheme<ProtocolCfg>;
-    const SOURCE: GroupSource = GroupSource::one_hot(256);
-
     let pre_group = PolynomialGroupLayout::new(PRE_NV, 1);
-    let pre_params =
-        ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey::single(pre_group, SOURCE))
-            .expect("precommit schedule")
-            .root
-            .params
-            .final_group
-            .commitment;
+    let pre_params = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey::single(pre_group))
+        .expect("precommit schedule")
+        .root
+        .params
+        .final_group
+        .commitment;
     let pre_poly = grouped_onehot_poly(&pre_params, 1);
     let pre_setup = ProtocolScheme::setup_prover(PRE_NV, 1).expect("precommit setup");
     let pre_prepared = CpuBackend
@@ -247,13 +242,9 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         pre_setup.expanded.as_ref(),
     )
     .expect("precommit stack");
-    let (pre_commitment, pre_hint) = ProtocolScheme::commit_group(
-        &pre_setup,
-        std::slice::from_ref(&pre_poly),
-        &pre_stack,
-        &OneHotGroupProvider::new(256),
-    )
-    .expect("precommit");
+    let (pre_commitment, pre_hint) =
+        ProtocolScheme::commit_group(&pre_setup, std::slice::from_ref(&pre_poly), &pre_stack)
+            .expect("precommit");
 
     let grouped_layout = OpeningClaimsLayout::from_groups(vec![
         akita_types::PolynomialGroupLayout::new(PRE_NV, 1),
@@ -262,9 +253,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     .expect("grouped layout");
     let schedule = ProtocolCfg::runtime_schedule(AkitaScheduleLookupKey {
         final_group: PolynomialGroupLayout::new(FINAL_NV, 1),
-        final_source: SOURCE,
         precommitteds: vec![pre_commitment.profile],
-        precommitted_sources: vec![SOURCE],
     })
     .expect("grouped schedule");
     let root_params = &schedule.root.params.final_group.commitment;
@@ -291,12 +280,11 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("protocol stack");
-    let (final_commitment, final_hint) = ProtocolScheme::commit_final_group(
+    let (final_commitment, final_hint, _selection) = ProtocolScheme::commit_final_group(
         &setup,
         std::slice::from_ref(&final_poly),
         &stack,
         vec![pre_commitment.profile],
-        &OneHotGroupProvider::new(256),
     )
     .expect("final commitment");
 
@@ -327,7 +315,7 @@ fn fp32_ext4_multi_group_uses_one_batched_eor_sumcheck() {
         vec![&pre_refs, &final_refs],
     )
     .expect("grouped prover data");
-    let selection = prover_claims.selection().expect("grouped selection");
+    let selection = prover_claims.0;
 
     let mut prover_transcript = AkitaTranscript::<SmallF>::new(b"test/fp32-ext4-multi-group-eor");
     let proof = ProtocolScheme::batched_prove(

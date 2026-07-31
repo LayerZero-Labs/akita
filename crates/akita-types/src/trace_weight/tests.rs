@@ -47,7 +47,11 @@ fn trace_layout(
     )
     .unwrap();
     let lp = lp
-        .with_fold_linf_cap_config(F::modulus_bits(), num_claims)
+        .with_fold_plan(
+            F::modulus_bits(),
+            num_claims,
+            crate::sis::FoldWitnessNorms::bounded(1, D),
+        )
         .expect("test fold row");
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();

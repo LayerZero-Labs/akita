@@ -6,9 +6,8 @@
 > `zk-wip`.
 >
 > **Profile-key supersession (2026-07-30).** Public schedule identity now binds
-> exact ordered commitment profiles and an approved row selection, not a source
-> enum or registration. Verifier runtime remains planner-free. See
-> [`heterogeneous-group-source-contracts.md`](heterogeneous-group-source-contracts.md).
+> exact ordered commitment profiles and an approved row selection, not private
+> polynomial representation. Verifier runtime remains planner-free.
 
 | Field         | Value |
 |---------------|-------|
@@ -224,8 +223,7 @@ per key through `schedule_from_entry` (table hit) instead of re-running full
   planner semantics with non-ZK table data. Non-ZK-only families (currently tiered)
   are inert under `zk` and excluded from the ZK drift guard.
 - **Same-point batching only.** Scalar lookup keys derive from a validated
-  singleton `OpeningClaimsLayout` and explicit `GroupSource` via
-  `AkitaScheduleLookupKey::single`. No multipoint keys, no
+  singleton `OpeningClaimsLayout` via `AkitaScheduleLookupKey::single`. No multipoint keys, no
   `ClaimIncidenceSummary` schedule path (type not in tree).
 - **Table miss falls back to DP**, never errors solely because a row is absent (unless
   DP itself rejects the key).
@@ -642,7 +640,7 @@ existing `CommitmentConfig` hook name.
 
 Production folded paths validate
 `OpeningClaimsLayout::new(padded_num_vars, num_polys)?`, extract its singleton
-group, and call `AkitaScheduleLookupKey::single(group, source)`:
+group, and call `AkitaScheduleLookupKey::single(group)`:
 
 ```text
 num_t_vectors = num_polys        (polynomials in the bundled commitment)
@@ -652,8 +650,7 @@ num_commitment_groups = 1        (in generated key shape)
 ```
 
 `AkitaScheduleLookupKey::single` is the canonical scalar constructor; grouped
-roots build an explicit key with `final_group`, `final_source`, and ordered
-`precommitteds`.
+roots build an explicit key with `final_group` and ordered `precommitteds`.
 
 **Generated table enumeration** (`family_keys` in emitter) crosses:
 
