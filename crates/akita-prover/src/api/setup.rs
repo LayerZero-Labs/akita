@@ -220,7 +220,9 @@ impl<F: FieldCore> AkitaProverSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaSerialize> Valid for AkitaProverSetup<F> {
+impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaSerialize> Valid
+    for AkitaProverSetup<F>
+{
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()
