@@ -16,9 +16,9 @@ use akita_types::{
 };
 
 use crate::schedule_params::{
-    derive_optimal_suffix_schedule, find_schedule, materialize_candidate_schedule,
-    optimize_fold_challenge_shape, validate_policy, RingChallengeConfigFn, ScheduleMemo, SuffixCtx,
-    SuffixState,
+    derive_optimal_suffix_schedule, find_schedule_mixed_ring, find_schedule_singular,
+    materialize_candidate_schedule, optimize_fold_challenge_shape, validate_policy,
+    RingChallengeConfigFn, ScheduleMemo, SuffixCtx, SuffixState,
 };
 use crate::PlannerPolicy;
 
@@ -534,7 +534,7 @@ fn multi_group_root_main_level_params_candidate(
 }
 
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
-pub fn find_group_batch_schedule(
+pub fn find_schedule(
     key: &AkitaScheduleLookupKey,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
@@ -543,54 +543,45 @@ pub fn find_group_batch_schedule(
     validate_policy(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_challenge_shape_at_level = &fold_challenge_shape_at_level;
-    if policy.recursive_setup_planning && !key.precommitteds.is_empty() {
+    key.validate()?;
+    let scalar_policy = policy.direct_only();
+    let scalar_dimensions =
+        crate::schedule_params::RingDimensionSearchDomain::for_policy(&scalar_policy)?;
+    if !scalar_dimensions.is_uniform_policy_domain(&scalar_policy) {
+        if !key.precommitteds.is_empty() {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for multi-group roots".to_string(),
+            ));
+        }
+        return find_schedule_mixed_ring(
+            key.final_group,
+            &scalar_policy,
+            &scalar_dimensions,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+    if key.precommitteds.is_empty() {
+        // Genuine multi-group roots only. Empty-precommit keys are scalar and
+        // must not enter recursion-enabled grouped planning.
+        return find_schedule_singular(
+            key.final_group,
+            &scalar_policy,
+            ring_challenge_config,
+            fold_challenge_shape_at_level,
+        );
+    }
+    let setup_field_budget = if policy.recursive_setup_planning {
         let setup_field_budget = policy.max_setup_envelope_field_elements;
         if setup_field_budget == 0 {
             return Err(AkitaError::InvalidSetup(
                 "supported setup envelope is empty".to_string(),
             ));
         }
-        return find_group_batch_schedule_inner(
-            key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-            Some(setup_field_budget),
-        );
-    }
-    find_group_batch_schedule_inner(
-        key,
-        policy,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-        None,
-    )
-}
-
-fn find_group_batch_schedule_inner(
-    key: &AkitaScheduleLookupKey,
-    policy: &PlannerPolicy,
-    ring_challenge_config: RingChallengeConfigFn<'_>,
-    fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    setup_field_budget: Option<usize>,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    key.validate()?;
-    if key.precommitteds.is_empty() {
-        // Genuine multi-group roots only. Empty-precommit keys are scalar and
-        // must not enter recursion-enabled grouped planning.
-        let scalar_policy = policy.direct_only();
-        let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
-            scalar_policy.ring_dimension,
-            scalar_policy.ring_dimension_candidates.iter().copied(),
-        )?;
-        return find_schedule(
-            key.final_group,
-            &scalar_policy,
-            &dimensions,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
-    }
+        Some(setup_field_budget)
+    } else {
+        None
+    };
     let root_input_witness_len = 1usize
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| {

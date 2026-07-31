@@ -95,7 +95,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
     let domain = RingDimensionSearchDomain::new(base_policy.ring_dimension, dimensions).unwrap();
     let policy = policy_for_domain(base_policy, &domain);
     let key = PolynomialGroupLayout::singleton(16);
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         key,
         &policy,
         &domain,
@@ -110,7 +110,7 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
     let uniform = RingDimensionSearchDomain::new(policy.ring_dimension, [dimensions[0]]).unwrap();
     let uniform_policy = policy_for_domain(policy_of::<D256OneHot>(), &uniform);
-    let candidate = find_schedule(
+    let candidate = find_schedule_mixed_ring(
         key,
         &uniform_policy,
         &uniform,
@@ -167,14 +167,14 @@ fn grouped_scalar_fallback_preserves_mixed_domain() {
     let policy = policy_for_domain(base_policy, &domain);
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
 
-    let grouped = crate::find_group_batch_schedule(
+    let grouped = crate::find_schedule(
         &key,
         &policy,
         D256OneHot::ring_challenge_config,
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let direct = find_schedule(
+    let direct = find_schedule_mixed_ring(
         key.final_group,
         &policy,
         &domain,
@@ -212,7 +212,7 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     let policy = policy_for_domain(base_policy, &canonical);
     let key = PolynomialGroupLayout::singleton(16);
 
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         key,
         &policy,
         &reversed_with_duplicate,
@@ -228,7 +228,7 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
         D256OneHot::fold_challenge_shape_at_level,
     )
     .unwrap();
-    let repeated = find_schedule(
+    let repeated = find_schedule_mixed_ring(
         key,
         &policy,
         &canonical,
@@ -280,7 +280,7 @@ fn mixed_search_parallel_generation_is_descriptor_deterministic() {
                 )
                 .expect("mixed dimension domain");
                 let policy = policy_for_domain(base_policy, &domain);
-                find_schedule(
+                find_schedule_mixed_ring(
                     PolynomialGroupLayout::singleton(16),
                     &policy,
                     &domain,
@@ -313,7 +313,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
         .expect("mixed dimension domain");
     policy = policy_for_domain(policy, &domain);
     let key = PolynomialGroupLayout::singleton(16);
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         key,
         &policy,
         &domain,
@@ -383,7 +383,7 @@ fn mixed_search_skips_an_unsupported_sis_candidate_and_keeps_its_sibling() {
         RingDimensionSearchDomain::new(base_policy.ring_dimension, [d64, unsupported_uniform_d512])
             .expect("mixed domain");
     let policy = policy_for_domain(base_policy, &domain);
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &policy,
         &domain,
@@ -428,7 +428,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     )
     .expect("benchmark dimension domain");
     let policy = policy_for_domain(base_policy, &domain);
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(36),
         &policy,
         &domain,
@@ -442,7 +442,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     let mut comparison_policy =
         policy_for_domain(policy_of::<D256OneHot>(), &rank_one_capped_domain);
     comparison_policy.max_setup_envelope_field_elements = usize::MAX;
-    let rank_one_capped = find_schedule(
+    let rank_one_capped = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(36),
         &comparison_policy,
         &rank_one_capped_domain,
@@ -499,7 +499,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
     )
     .unwrap();
     let missing_policy = policy_for_domain(base_policy, &missing_d64);
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &missing_policy,
         &missing_d64,
@@ -524,7 +524,7 @@ fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
     )
     .unwrap();
     let below_policy = policy_for_domain(base_policy, &below_d64);
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &below_policy,
         &below_d64,
@@ -546,7 +546,7 @@ fn mixed_search_rejects_direct_multi_chunk_policy() {
         RingDimensionSearchDomain::new(policy.ring_dimension, [CommitmentRingDims::uniform(64)])
             .unwrap();
     policy = policy_for_domain(policy, &domain);
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &policy,
         &domain,
@@ -575,7 +575,7 @@ fn mixed_search_validates_key_and_policy_at_entry() {
     .unwrap();
     let policy = policy_for_domain(base_policy, &domain);
 
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::new(16, 0),
         &policy,
         &domain,
@@ -589,7 +589,7 @@ fn mixed_search_validates_key_and_policy_at_entry() {
 
     let mut invalid_policy = policy;
     invalid_policy.max_setup_envelope_field_elements = 0;
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &invalid_policy,
         &domain,
@@ -609,7 +609,7 @@ fn dimension_domain_is_bound_to_setup_generation_dimension() {
 
     let policy = policy_of::<D128OneHot>();
     let domain = RingDimensionSearchDomain::uniform(256).unwrap();
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &policy,
         &domain,
@@ -641,7 +641,7 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
     )
     .unwrap();
     policy = policy_for_domain(policy, &domain);
-    let selected = find_schedule(
+    let selected = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &policy,
         &domain,
@@ -653,7 +653,7 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
         akita_types::setup_matrix_field_elements_for_schedule(&selected.schedule).unwrap();
     policy.max_setup_envelope_field_elements = exact_fields - 1;
 
-    let error = find_schedule(
+    let error = find_schedule_mixed_ring(
         PolynomialGroupLayout::singleton(16),
         &policy,
         &domain,
@@ -675,12 +675,9 @@ fn preserved_recursive_proof_size_is_documented() {
     type Recursive = RecursiveCommitmentConfig<D64OneHot>;
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let precommit_policy = policy_of::<D64OneHot>();
-    let precommit_domain =
-        RingDimensionSearchDomain::uniform(precommit_policy.ring_dimension).unwrap();
-    let precommit = find_schedule(
+    let precommit = find_schedule_singular(
         precommit_layout,
         &precommit_policy,
-        &precommit_domain,
         D64OneHot::ring_challenge_config,
         D64OneHot::fold_challenge_shape_at_level,
     )
@@ -693,7 +690,7 @@ fn preserved_recursive_proof_size_is_documented() {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let planned = crate::find_group_batch_schedule(
+    let planned = crate::find_schedule(
         &key,
         &policy_of::<Recursive>(),
         Recursive::ring_challenge_config,

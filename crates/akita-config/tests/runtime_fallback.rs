@@ -15,7 +15,7 @@ use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{
     policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::find_group_batch_schedule;
+use akita_planner::find_schedule;
 use akita_schedules::{resolve_schedule, PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{
     AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
@@ -203,7 +203,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
             &pre_params,
         )],
     };
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

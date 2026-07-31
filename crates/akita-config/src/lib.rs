@@ -711,7 +711,7 @@ mod precommit_tests {
         let mut policy = policy_of::<fp128::D64OneHot>();
         policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
         policy.witness_chunk = ChunkedWitnessCfg::default();
-        let planned = akita_planner::find_group_batch_schedule(
+        let planned = akita_planner::find_schedule(
             &AkitaScheduleLookupKey::single(group),
             &policy,
             fp128::D64OneHot::ring_challenge_config,

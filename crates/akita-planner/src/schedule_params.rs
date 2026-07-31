@@ -2,7 +2,8 @@
 //! grouped scheduling additionally minimizes the first direct setup footprint
 //! before proof size.
 //!
-//! Public entry: [`find_schedule`]. The search is `Cfg`-free: every
+//! Scalar schedule search behind the public grouped gate. The search is
+//! `Cfg`-free: every
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
@@ -36,8 +37,10 @@ mod mixed_search;
 mod setup_score;
 mod suffix_dp;
 #[cfg(feature = "test-support")]
+#[path = "schedule_params/tests/test_support.rs"]
 pub(crate) mod test_support;
 #[cfg(all(test, feature = "catalog-gen"))]
+#[path = "schedule_params/tests/unpruned_search.rs"]
 mod unpruned_search;
 
 pub use candidate::suffix_opening_layout;
@@ -45,6 +48,7 @@ pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
+pub(crate) use mixed_search::find_schedule_mixed_ring;
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
 };
@@ -75,7 +79,7 @@ pub(crate) struct CandidateTerminalResponse {
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
 ///
 /// `PlannerPolicy::ring_dimension` remains the setup generation dimension and
-/// the implicit singleton domain used by [`find_schedule`]. This separate
+/// the implicit singleton domain used by scalar schedule search. This separate
 /// offline-only value makes mixed-D search opt-in without changing runtime
 /// policy or existing catalog identity.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +135,13 @@ impl RingDimensionSearchDomain {
         )
     }
 
+    pub(crate) fn for_policy(policy: &PlannerPolicy) -> Result<Self, AkitaError> {
+        Self::new(
+            policy.ring_dimension,
+            policy.ring_dimension_candidates.iter().copied(),
+        )
+    }
+
     /// Canonically ordered admitted A/B/D tuples.
     pub fn candidates(&self) -> &[CommitmentRingDims] {
         &self.candidates
@@ -157,7 +168,7 @@ impl RingDimensionSearchDomain {
         Ok(())
     }
 
-    fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
+    pub(crate) fn is_uniform_policy_domain(&self, policy: &PlannerPolicy) -> bool {
         self.candidates.as_slice() == [CommitmentRingDims::uniform(policy.ring_dimension)]
     }
 }
@@ -275,7 +286,13 @@ pub(crate) fn materialize_candidate_schedule(
                     .collect(),
                 open_commit_matrix: root.params.open_commit_matrix.clone(),
                 sparse_challenge_config: root.params.fold_challenge_config,
-                witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
+                witness_partition: if root.params.witness_chunk.num_chunks == 1 {
+                    WitnessPartition::Single
+                } else {
+                    WitnessPartition::Distributed {
+                        num_chunks: root.params.witness_chunk.num_chunks,
+                    }
+                },
             },
             input_witness_len: root.input_witness_len,
             output_witness_len: root.output_witness_len,
@@ -287,7 +304,13 @@ pub(crate) fn materialize_candidate_schedule(
                     open_commit_matrix: fold.params.open_commit_matrix.clone(),
                     sparse_challenge_config: fold.params.fold_challenge_config,
                     incoming_setup_prefix: fold.params.setup_prefix.clone(),
-                    witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
+                    witness_partition: if fold.params.witness_chunk.num_chunks == 1 {
+                        WitnessPartition::Single
+                    } else {
+                        WitnessPartition::Distributed {
+                            num_chunks: fold.params.witness_chunk.num_chunks,
+                        }
+                    },
                     witness: fold.params,
                 },
                 input_witness_len: fold.input_witness_len,
@@ -318,30 +341,6 @@ pub(crate) fn materialize_candidate_schedule(
         .filter(|fold| fold.params.incoming_setup_prefix.is_some())
         .count();
     Ok(PlannedFoldSchedule { schedule, estimate })
-}
-
-fn candidate_schedule_descriptor_bytes(
-    choice: &ScheduleCandidate,
-    setup_generation_dimension: usize,
-) -> Result<Vec<u8>, AkitaError> {
-    Ok(materialize_candidate_schedule(
-        choice.total_bytes,
-        choice.setup_field_elements,
-        setup_generation_dimension,
-        choice.first_direct_setup_field_len,
-        choice.folds.clone(),
-        choice.terminal.clone(),
-    )?
-    .schedule
-    .canonical_descriptor_bytes())
-}
-
-fn witness_partition(num_chunks: usize) -> WitnessPartition {
-    if num_chunks == 1 {
-        WitnessPartition::Single
-    } else {
-        WitnessPartition::Distributed { num_chunks }
-    }
 }
 
 /// Validate the complete planner policy at a verifier-reachable entry point.
@@ -479,78 +478,6 @@ pub(crate) fn layout_candidate_score(
 // memo state without changing emitted tables.
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
-/// Find the optimal schedule for a root schedule lookup key and dimension domain.
-///
-/// A singleton domain matching the setup generation dimension preserves the
-/// uniform proof-payload objective. An explicit mixed domain selects exact
-/// physical setup fields first and exact proof payload second.
-///
-/// The result is a pure,
-/// deterministic function of `(policy, key, dimensions)` (plus the `ring_challenge_config` /
-/// `fold_challenge_shape_at_level` closures, which presets derive from the same hooks the
-/// generated tables were emitted from), so the prover and verifier
-/// regenerate identical schedules on a table miss.
-///
-/// # Errors
-///
-/// Returns an error if vector counts are invalid or if the witness length
-/// overflows. The function never panics on malformed input — it is
-/// verifier-reachable and audited under the no-panic contract.
-pub fn find_schedule(
-    key: PolynomialGroupLayout,
-    policy: &PlannerPolicy,
-    dimensions: &RingDimensionSearchDomain,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-) -> Result<PlannedFoldSchedule, AkitaError> {
-    key.validate()?;
-    validate_policy(policy)?;
-    dimensions.validate_for_policy(policy)?;
-    if dimensions.is_uniform_policy_domain(policy) {
-        return find_schedule_inner(
-            key,
-            policy,
-            ring_challenge_config,
-            fold_challenge_shape_at_level,
-        );
-    }
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support recursive setup planning".into(),
-        ));
-    }
-    if policy.witness_chunk.uses_multi_chunk() {
-        return Err(AkitaError::InvalidSetup(
-            "mixed-D search does not yet support direct multi-chunk planning".into(),
-        ));
-    }
-    let suffix_dimensions = CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION);
-    if !dimensions.candidates().contains(&suffix_dimensions) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D search requires the D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} uniform candidate \
-             used from fold level {MIXED_SEARCH_FOLD_LEVELS} onward"
-        )));
-    }
-    if dimensions.candidates().iter().any(|dims| {
-        dims.d_a() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_b() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-            || dims.d_d() < MIXED_SEARCH_SUFFIX_RING_DIMENSION
-    }) {
-        return Err(AkitaError::InvalidSetup(format!(
-            "mixed-D candidates must be component-wise at least \
-             D{MIXED_SEARCH_SUFFIX_RING_DIMENSION} so the schedule can return monotonically to \
-             uniform D{MIXED_SEARCH_SUFFIX_RING_DIMENSION}"
-        )));
-    }
-    mixed_search::find_schedule(
-        key,
-        policy,
-        dimensions,
-        ring_challenge_config,
-        fold_challenge_shape_at_level,
-    )
-}
-
 fn componentwise_dimensions_at_most(
     dimensions: CommitmentRingDims,
     ceiling: CommitmentRingDims,
@@ -601,7 +528,7 @@ pub struct PlannedSuffix {
 /// `start_witness_len` field elements (produced by some predecessor fold at
 /// `start_level - 1`) down to a cleartext terminal, at `policy.ring_dimension`.
 ///
-/// This is the exact suffix DP [`find_schedule`] runs after choosing a root,
+/// This is the exact suffix DP [`crate::find_schedule`] runs after choosing a root,
 /// exposed so callers can splice an optimal suffix onto a differently sized
 /// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
 /// folds at a larger ring dimension than the suffix. `start_lb` is the
@@ -680,12 +607,14 @@ pub fn plan_optimal_suffix(
     })
 }
 
-fn find_schedule_inner(
+pub(crate) fn find_schedule_singular(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
+    key.validate()?;
+    validate_policy(policy)?;
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
