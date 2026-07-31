@@ -221,7 +221,7 @@ mod tests {
     }
 
     #[test]
-    fn profiling_schedule_deferred_setup_weights_match_the_full_plan() {
+    fn profiling_schedule_tensor_setup_weights_match_dense_materialization() {
         let (schedule, opening_batch) = profiling_schedule();
         let params = &schedule.root.params.final_group.commitment;
         let rows = params
@@ -277,48 +277,32 @@ mod tests {
         let alpha = scalar(3);
         let fold_gadget =
             shared_setup_fold_gadget::<Prime128OffsetA7F7>(params, &opening_batch, &groups);
-        let relation_address =
-            PreparedRelationAddress::new(&address_point).expect("relation address");
-        let full = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
-            params,
-            &opening_batch,
-            eq_tau1.clone().into(),
-            &witness_layout,
-            &groups,
-            relation_address.clone(),
-            fold_gadget.as_deref(),
-            address_geometry,
-            alpha,
-        )
-        .expect("full setup plan");
-        let deferred = SetupContributionPlan::prepare_deferred::<Prime128OffsetA7F7>(
+        let plan = SetupContributionPlan::prepare::<Prime128OffsetA7F7>(
             params,
             &opening_batch,
             eq_tau1.into(),
             &witness_layout,
             &groups,
-            relation_address,
+            PreparedRelationAddress::new(&address_point).expect("relation address"),
             fold_gadget.as_deref(),
             address_geometry,
-            alpha,
         )
-        .expect("deferred setup plan");
-        let setup_idx_bits = full.required().next_power_of_two().trailing_zeros() as usize;
+        .expect("setup tensor plan");
+        let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
         let rho = (0..setup_idx_bits)
             .map(|index| scalar(401 + index as u128))
             .collect::<Vec<_>>();
-        let dense_mle = full
+        let dense_mle = plan
             .materialize_setup_index_weights(alpha)
-            .expect("full setup weights")
+            .expect("dense setup weights")
             .into_iter()
             .enumerate()
             .fold(Prime128OffsetA7F7::zero(), |acc, (index, weight)| {
                 acc + eq_at_index(&rho, index) * weight
             });
         assert_eq!(
-            deferred
-                .evaluate_setup_index_weight_mle(&rho, alpha)
-                .expect("deferred setup weight MLE"),
+            plan.evaluate_setup_index_weight_mle(&rho, alpha)
+                .expect("tensor setup weight MLE"),
             dense_mle
         );
     }

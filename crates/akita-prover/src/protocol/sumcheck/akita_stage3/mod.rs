@@ -270,7 +270,6 @@ where
         tau1,
         x_challenges,
         relation_address_geometry,
-        alpha,
     )?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
@@ -285,7 +284,6 @@ fn prepare_setup_contribution_plan<F, E>(
     tau1: &[E],
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
-    alpha: E,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -343,7 +341,6 @@ where
         PreparedRelationAddress::new(x_challenges)?,
         fold_gadget.as_deref(),
         relation_address_geometry,
-        alpha,
     )?;
     Ok(plan)
 }

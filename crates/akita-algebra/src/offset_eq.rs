@@ -9,13 +9,11 @@ use crate::{AkitaError, FieldCore};
 use akita_field::parallel::*;
 use std::collections::BTreeMap;
 
-mod compact_pair;
-#[cfg(test)]
-use compact_pair::{
-    charge_compact_pair_work, coalesce_weighted_compact_pair_terms,
-    rectangle_preprocessing_worthwhile,
+mod tensor_pair;
+pub use tensor_pair::{
+    contract_eq_tensor_left, eval_eq_pair_tensor_families, materialize_eq_tensor_left,
+    EqPairTensorAxis, EqPairTensorFamily, EqPairTensorWeights,
 };
-pub use compact_pair::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm};
 
 /// Verifier work cap for one compact-stride equality contraction.
 pub const MAX_COMPACT_STRIDE_TERMS: usize = 1 << 28;

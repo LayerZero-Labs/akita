@@ -53,10 +53,9 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             .take_cached_setup_contribution_plan(x_challenges)?
             .map_or_else(
                 || {
-                    relation_matrix_evaluator.setup_contribution_plan_deferred::<F>(
+                    relation_matrix_evaluator.setup_contribution_plan::<F>(
                         PreparedRelationAddress::new(x_challenges)?,
                         fold_gadget.as_deref(),
-                        alpha,
                     )
                 },
                 Ok,

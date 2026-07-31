@@ -182,8 +182,9 @@ pub fn relation_evaluator_benchmark_case_with_chunks(
             .ok_or(AkitaError::InvalidProof)?,
     )?;
     let fold_gadget = gadget_row_scalars::<F>(depth_fold, LOG_BASIS);
-    let plan: SetupContributionPlan<F> =
-        evaluator.setup_contribution_plan::<F>(relation_address, Some(&fold_gadget), alpha)?;
+    let mut plan: SetupContributionPlan<F> =
+        evaluator.setup_contribution_plan::<F>(relation_address, Some(&fold_gadget))?;
+    plan.materialize_direct_scan(alpha)?;
     let carrier_ratio = CARRIER_D
         .checked_div(plan.projection_geometry().base_ring_dim())
         .filter(|ratio| *ratio != 0)

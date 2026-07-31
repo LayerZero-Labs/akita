@@ -45,22 +45,13 @@ where
     // the checked flat live length. The same plan therefore owns the mixed
     // E/T/Z contraction, direct setup scan, and deferred Stage-3 geometry.
     let fold_gadget = evaluator.setup_contribution_fold_gadget::<F>()?;
-    let plan = {
+    let mut plan = {
         let _span = tracing::info_span!("relation_setup_plan").entered();
         let fold_gadget = fold_gadget.as_deref().unwrap_or(&[]);
-        if deferred_setup_claim.is_some() {
-            evaluator.setup_contribution_plan_deferred::<F>(
-                prepared_point.relation_address().clone(),
-                (!fold_gadget.is_empty()).then_some(fold_gadget),
-                alpha,
-            )?
-        } else {
-            evaluator.setup_contribution_plan::<F>(
-                prepared_point.relation_address().clone(),
-                (!fold_gadget.is_empty()).then_some(fold_gadget),
-                alpha,
-            )?
-        }
+        evaluator.setup_contribution_plan::<F>(
+            prepared_point.relation_address().clone(),
+            (!fold_gadget.is_empty()).then_some(fold_gadget),
+        )?
     };
 
     let mut structured_evaluation = E::zero();
@@ -89,6 +80,7 @@ where
     } else {
         let _span =
             tracing::info_span!("relation_setup_scan", required = plan.required()).entered();
+        plan.materialize_direct_scan(alpha)?;
         plan.evaluate_direct::<F>(
             setup,
             prepared_point.inner().powers.as_ref(),

@@ -130,7 +130,6 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         None,
         relation_address_geometry,
-        test_scalar(3),
     )
     .is_ok());
 }

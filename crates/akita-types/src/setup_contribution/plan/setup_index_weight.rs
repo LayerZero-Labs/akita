@@ -1,17 +1,107 @@
+use super::types::ProjectedEqPairTensor;
 use super::*;
 use akita_algebra::{
-    offset_eq::{eval_weighted_compact_pair_eq, WeightedCompactPairTerm, MAX_COMPACT_STRIDE_TERMS},
+    offset_eq::{
+        contract_eq_tensor_left, eval_eq_pair_tensor_families, materialize_eq_tensor_left,
+        EqPairTensorAxis, EqPairTensorFamily, OffsetEqWindow,
+    },
     ring::{evaluate_power_sequence_mle, scalar_powers_with_stride},
 };
 use akita_field::fft::field_pow;
-use std::collections::BTreeMap;
 
 struct GroupSetupIndexWeights<E> {
-    projection_scales: [Vec<E>; 3],
-    relation_lane_powers: [Vec<E>; 3],
+    projection_scales: [Option<Vec<E>>; 3],
+    column_weights: [Vec<E>; 3],
+}
+
+enum RelationTensorEquality<'a, E: FieldCore> {
+    Borrowed(&'a OffsetEqWindow<E>),
+    Owned(OffsetEqWindow<E>),
+}
+
+impl<E: FieldCore> AsRef<OffsetEqWindow<E>> for RelationTensorEquality<'_, E> {
+    fn as_ref(&self) -> &OffsetEqWindow<E> {
+        match self {
+            Self::Borrowed(equality) => equality,
+            Self::Owned(equality) => equality,
+        }
+    }
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
+    pub(super) fn materialize_role_tensor_weights(
+        &self,
+        ratio: usize,
+        tensors: &[EqPairTensorFamily<E>],
+        output_len: usize,
+        alpha: E,
+    ) -> Result<Vec<E>, AkitaError> {
+        let (equality, projection) = self.relation_tensor_projection(ratio, alpha)?;
+        let mut weights = materialize_eq_tensor_left(equality.as_ref(), tensors, output_len)?;
+        if let Some(projection) = projection {
+            if projection != E::one() {
+                cfg_iter_mut!(weights).for_each(|weight| *weight *= projection);
+            }
+        }
+        Ok(weights)
+    }
+
+    pub(super) fn contract_role_tensor_weights(
+        &self,
+        ratio: usize,
+        tensors: &[EqPairTensorFamily<E>],
+        left_weights: &[E],
+        alpha: E,
+    ) -> Result<E, AkitaError> {
+        let (equality, projection) = self.relation_tensor_projection(ratio, alpha)?;
+        let contraction = contract_eq_tensor_left(equality.as_ref(), tensors, left_weights)?;
+        Ok(match projection {
+            Some(projection) if projection != E::one() => projection * contraction,
+            _ => contraction,
+        })
+    }
+
+    fn relation_tensor_projection(
+        &self,
+        ratio: usize,
+        alpha: E,
+    ) -> Result<(RelationTensorEquality<'_, E>, Option<E>), AkitaError> {
+        if ratio == 1 {
+            return Ok((
+                RelationTensorEquality::Borrowed(self.relation_address.equality_window()),
+                None,
+            ));
+        }
+        if ratio == 0 || !ratio.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "setup projection ratio must be a non-zero power of two".into(),
+            ));
+        }
+        let low_variable_count = ratio.trailing_zeros() as usize;
+        let point = self.relation_address.point();
+        let low_point = point
+            .get(..low_variable_count)
+            .ok_or(AkitaError::InvalidSize {
+                expected: low_variable_count,
+                actual: point.len(),
+            })?;
+        let high_point = point
+            .get(low_variable_count..)
+            .ok_or(AkitaError::InvalidSize {
+                expected: low_variable_count,
+                actual: point.len(),
+            })?;
+        let base_ring_dim_u64 =
+            u64::try_from(self.projection_geometry.base_ring_dim()).map_err(|_| {
+                AkitaError::InvalidSetup("setup base ring dimension does not fit u64".into())
+            })?;
+        let beta = field_pow(alpha, base_ring_dim_u64);
+        Ok((
+            RelationTensorEquality::Owned(OffsetEqWindow::new(high_point)?),
+            Some(evaluate_power_sequence_mle(beta, low_point)),
+        ))
+    }
+
     /// Materialize the dense packed setup-position weight vector.
     pub fn materialize_setup_index_weights(&self, alpha: E) -> Result<Vec<E>, AkitaError> {
         // Both power families depend only on the group. Hoist their allocation
@@ -22,7 +112,26 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             .map(|group| -> Result<_, AkitaError> {
                 Ok(GroupSetupIndexWeights {
                     projection_scales: self.group_projection_scales(group, alpha)?,
-                    relation_lane_powers: self.group_relation_lane_powers(group, alpha)?,
+                    column_weights: [
+                        self.materialize_role_tensor_weights(
+                            group.a_ratio,
+                            &group.a_tensors,
+                            group.z_cols,
+                            alpha,
+                        )?,
+                        self.materialize_role_tensor_weights(
+                            group.b_ratio,
+                            &group.b_tensors,
+                            group.t_cols,
+                            alpha,
+                        )?,
+                        self.materialize_role_tensor_weights(
+                            group.d_ratio,
+                            &group.d_tensors,
+                            group.d_col_range.len(),
+                            alpha,
+                        )?,
+                    ],
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -32,13 +141,14 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 
     /// Evaluate the packed setup-position weight polynomial from its canonical
-    /// contribution spans.
+    /// paired-equality tensors.
     ///
     /// For a role dimension `d_R`, let `q = d_R / base_ring_dim` and
     /// `beta = alpha^base_ring_dim`. The `q` setup subrings and `q` relation
     /// lanes carry the separable weight `beta^u * beta^v`. Their low Boolean
-    /// coordinates are evaluated once with [`evaluate_power_sequence_mle`],
-    /// leaving one compact term per semantic span and matrix row.
+    /// coordinates are evaluated once with [`evaluate_power_sequence_mle`].
+    /// For `q = 1`, the tensor is already in the common base: no power MLE,
+    /// identity vector, or multiplication by one is performed.
     pub fn evaluate_setup_index_weight_mle(
         &self,
         rho_setup_idx: &[E],
@@ -51,18 +161,32 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 actual: rho_setup_idx.len(),
             });
         }
-        self.projection_geometry
-            .ensure_setup_index_evaluation_budget()?;
         let _span = tracing::info_span!("stage3_setup_index_weight_mle").entered();
-        let base_ring_dim = self.projection_geometry.base_ring_dim();
-        let base_ring_dim_u64 = u64::try_from(base_ring_dim).map_err(|_| {
-            AkitaError::InvalidSetup("setup base ring dimension does not fit u64".into())
-        })?;
-        let alpha_per_base_ring = field_pow(alpha, base_ring_dim_u64);
-        self.setup_index_terms
+        let alpha_per_base_ring = if self
+            .setup_index_tensors
             .iter()
-            .try_fold(E::zero(), |evaluation, (ratio, terms)| {
-                let low_variable_count = ratio.trailing_zeros() as usize;
+            .any(|batch| batch.ratio != 1)
+        {
+            let base_ring_dim_u64 = u64::try_from(self.projection_geometry.base_ring_dim())
+                .map_err(|_| {
+                    AkitaError::InvalidSetup("setup base ring dimension does not fit u64".into())
+                })?;
+            Some(field_pow(alpha, base_ring_dim_u64))
+        } else {
+            None
+        };
+        self.setup_index_tensors
+            .iter()
+            .try_fold(E::zero(), |evaluation, batch| {
+                if batch.ratio == 1 {
+                    return Ok(evaluation
+                        + eval_eq_pair_tensor_families(
+                            rho_setup_idx,
+                            self.relation_address.point(),
+                            &batch.families,
+                        )?);
+                }
+                let low_variable_count = batch.ratio.trailing_zeros() as usize;
                 let setup_low_point =
                     rho_setup_idx
                         .get(..low_variable_count)
@@ -92,56 +216,47 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             expected: low_variable_count,
                             actual: relation_point.len(),
                         })?;
-                let power_factor =
-                    evaluate_power_sequence_mle(alpha_per_base_ring, setup_low_point)
-                        * evaluate_power_sequence_mle(alpha_per_base_ring, relation_low_point);
+                let beta = alpha_per_base_ring.ok_or_else(|| {
+                    AkitaError::InvalidSetup("missing non-identity setup projection".into())
+                })?;
+                let power_factor = evaluate_power_sequence_mle(beta, setup_low_point)
+                    * evaluate_power_sequence_mle(beta, relation_low_point);
                 Ok(evaluation
                     + power_factor
-                        * eval_weighted_compact_pair_eq(
+                        * eval_eq_pair_tensor_families(
                             setup_high_point,
                             relation_high_point,
-                            terms,
+                            &batch.families,
                         )?)
             })
     }
 
-    pub(crate) fn prepare_setup_index_terms(
-        &self,
-    ) -> Result<BTreeMap<usize, Vec<WeightedCompactPairTerm<E>>>, AkitaError> {
-        let mut terms_by_projection_ratio =
-            BTreeMap::<usize, Vec<WeightedCompactPairTerm<E>>>::new();
-        for group in &self.groups {
-            self.append_d_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.d_ratio).or_default(),
-            )?;
-            self.append_b_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.b_ratio).or_default(),
-            )?;
-            self.append_a_span_terms(
-                group,
-                terms_by_projection_ratio.entry(group.a_ratio).or_default(),
-            )?;
+    pub(crate) fn prepare_setup_index_tensors(
+        &mut self,
+        witness_layout: &WitnessLayout,
+    ) -> Result<Vec<ProjectedEqPairTensor<E>>, AkitaError> {
+        let relation_geometry = self.relation_address_geometry;
+        for group in &mut self.groups {
+            let [d_tensors, b_tensors, a_tensors] =
+                build_group_role_tensors(relation_geometry, group, witness_layout)?;
+            group.d_tensors = d_tensors;
+            group.b_tensors = b_tensors;
+            group.a_tensors = a_tensors;
         }
-        terms_by_projection_ratio
-            .into_iter()
-            .map(|(ratio, terms)| {
-                if ratio == 0 || !ratio.is_power_of_two() {
-                    return Err(AkitaError::InvalidSetup(
-                        "setup projection ratio must be a non-zero power of two".into(),
-                    ));
-                }
-                Ok((ratio, terms))
-            })
-            .collect()
+        let mut batches = Vec::<ProjectedEqPairTensor<E>>::new();
+        for group in &self.groups {
+            self.append_d_tensors(group, &mut batches)?;
+            self.append_b_tensors(group, &mut batches)?;
+            self.append_a_tensors(group, &mut batches)?;
+        }
+        Ok(batches)
     }
 
     fn group_projection_scales(
         &self,
         group: &SetupContributionGroupPlan<E>,
         alpha: E,
-    ) -> Result<[Vec<E>; 3], AkitaError> {
+    ) -> Result<[Option<Vec<E>>; 3], AkitaError> {
         let base_ring_dim = self.projection_geometry.base_ring_dim();
         let role_scales = |role_dim: usize| {
             let ratio = role_dim
@@ -152,7 +267,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                         "setup role dimension does not decompose over its base ring".into(),
                     )
                 })?;
-            scalar_powers_with_stride(alpha, base_ring_dim, ratio)
+            if ratio == 1 {
+                Ok(None)
+            } else {
+                scalar_powers_with_stride(alpha, base_ring_dim, ratio).map(Some)
+            }
         };
         Ok([
             role_scales(group.role_dims.d_a())?,
@@ -175,9 +294,8 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
         let mut weight = E::zero();
         for (group, weights) in self.groups.iter().zip(group_weights) {
-            let column_slices = group.column_eq_slices();
             let scales = &weights.projection_scales;
-            let lane_powers = &weights.relation_lane_powers;
+            let [z_eq, t_eq, e_eq] = &weights.column_weights;
             let d_idx = setup_idx / group.d_ratio;
             let d_footprint = self
                 .d_rows
@@ -187,16 +305,13 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let d_col = d_idx % self.d_physical_cols;
                 let d_row = d_idx / self.d_physical_cols;
                 if group.d_col_range.contains(&d_col) {
-                    weight += scales[2][setup_idx % group.d_ratio]
-                        * self.d_weights[d_row]
-                        * role_column_weight_or_materialized(
-                            &group.d_spans,
-                            column_slices.map(|slices| slices.0),
-                            d_col - group.d_col_range.start,
-                            self.relation_address.equality_window(),
-                            &lane_powers[2],
-                            None,
-                        )?;
+                    let term = self.d_weights[d_row]
+                        * *e_eq
+                            .get(d_col - group.d_col_range.start)
+                            .ok_or(AkitaError::InvalidProof)?;
+                    weight += scales[2]
+                        .as_ref()
+                        .map_or(term, |scale| scale[setup_idx % group.d_ratio] * term);
                 }
             }
 
@@ -208,16 +323,11 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             if b_idx < b_footprint {
                 let b_col = b_idx % group.t_cols;
                 let b_row = b_idx / group.t_cols;
-                weight += scales[1][setup_idx % group.b_ratio]
-                    * group.b_weights[b_row]
-                    * role_column_weight_or_materialized(
-                        &group.b_spans,
-                        column_slices.map(|slices| slices.1),
-                        b_col,
-                        self.relation_address.equality_window(),
-                        &lane_powers[1],
-                        None,
-                    )?;
+                let term =
+                    group.b_weights[b_row] * *t_eq.get(b_col).ok_or(AkitaError::InvalidProof)?;
+                weight += scales[1]
+                    .as_ref()
+                    .map_or(term, |scale| scale[setup_idx % group.b_ratio] * term);
             }
 
             let a_idx = setup_idx / group.a_ratio;
@@ -228,249 +338,297 @@ impl<E: FieldCore> SetupContributionPlan<E> {
             if a_idx < a_footprint {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
-                weight += scales[0][setup_idx % group.a_ratio]
-                    * group.a_row_weights[a_row]
-                    * role_column_weight_or_materialized(
-                        &group.a_families,
-                        column_slices.map(|slices| slices.2),
-                        a_col,
-                        self.relation_address.equality_window(),
-                        &lane_powers[0],
-                        Some(&group.fold_gadget),
-                    )?;
+                let term = group.a_row_weights[a_row]
+                    * *z_eq.get(a_col).ok_or(AkitaError::InvalidProof)?;
+                weight += scales[0]
+                    .as_ref()
+                    .map_or(term, |scale| scale[setup_idx % group.a_ratio] * term);
             }
         }
         Ok(weight)
     }
 
-    fn append_d_span_terms(
+    fn append_d_tensors(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+        batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
         if self.d_rows == 0 || self.d_physical_cols == 0 {
             return Ok(());
         }
-        for span in &group.d_spans {
-            ensure_span_lane_count(span, group.d_ratio)?;
-            let setup_col = group
-                .d_col_range
-                .start
-                .checked_add(span.setup_column_start)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
-            let relation_start = divide_aligned(
-                span.relation_lane_start,
+        for tensor in &group.d_tensors {
+            push_projected_tensor(
+                batches,
                 group.d_ratio,
-                "setup D relation address is not aligned to its projection ratio",
-            )?;
-            let relation_stride = divide_aligned(
-                span.relation_lane_stride,
-                group.d_ratio,
-                "setup D relation stride is not aligned to its projection ratio",
-            )?;
-            for (row, &row_weight) in self.d_weights.iter().enumerate() {
-                push_weighted_term(
-                    terms,
-                    WeightedCompactPairTerm {
-                        left_offset: row_major_index(self.d_physical_cols, row, setup_col)?,
-                        left_stride: span.setup_column_stride,
-                        right_offset: relation_start,
-                        right_stride: relation_stride,
-                        len: span.occurrence_count,
-                        weight: row_weight,
-                    },
-                )?;
-            }
+                lift_role_tensor(
+                    tensor,
+                    group.d_col_range.start,
+                    self.d_physical_cols,
+                    &self.d_weights,
+                )?,
+            );
         }
         Ok(())
     }
 
-    fn append_b_span_terms(
+    fn append_b_tensors(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+        batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
-        for span in &group.b_spans {
-            ensure_span_lane_count(span, group.b_ratio)?;
-            let relation_start = divide_aligned(
-                span.relation_lane_start,
+        if group.n_b == 0 {
+            return Ok(());
+        }
+        for tensor in &group.b_tensors {
+            push_projected_tensor(
+                batches,
                 group.b_ratio,
-                "setup B relation address is not aligned to its projection ratio",
-            )?;
-            let relation_stride = divide_aligned(
-                span.relation_lane_stride,
-                group.b_ratio,
-                "setup B relation stride is not aligned to its projection ratio",
-            )?;
-            for (row, &row_weight) in group.b_weights.iter().enumerate() {
-                push_weighted_term(
-                    terms,
-                    WeightedCompactPairTerm {
-                        left_offset: row_major_index(group.t_cols, row, span.setup_column_start)?,
-                        left_stride: span.setup_column_stride,
-                        right_offset: relation_start,
-                        right_stride: relation_stride,
-                        len: span.occurrence_count,
-                        weight: row_weight,
-                    },
-                )?;
-            }
+                lift_role_tensor(tensor, 0, group.t_cols, &group.b_weights)?,
+            );
         }
         Ok(())
     }
 
-    fn append_a_span_terms(
+    fn append_a_tensors(
         &self,
         group: &SetupContributionGroupPlan<E>,
-        terms: &mut Vec<WeightedCompactPairTerm<E>>,
+        batches: &mut Vec<ProjectedEqPairTensor<E>>,
     ) -> Result<(), AkitaError> {
-        for span in &group.a_families {
-            if span.relation_lane_count != group.a_ratio
-                || span.fold_count != group.fold_gadget.len()
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "setup A span is not one coarse fold family".into(),
-                ));
-            }
-            let relation_stride = divide_aligned(
-                span.relation_lane_stride,
+        if group.n_a == 0 {
+            return Ok(());
+        }
+        for tensor in &group.a_tensors {
+            push_projected_tensor(
+                batches,
                 group.a_ratio,
-                "setup A relation stride is not aligned to its projection ratio",
-            )?;
-            for (fold_digit, &fold) in group.fold_gadget.iter().enumerate() {
-                let fold_lane_offset = fold_digit
-                    .checked_mul(span.fold_lane_stride)
-                    .and_then(|offset| span.relation_lane_start.checked_add(offset))
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("setup A relation address overflow".into())
-                    })?;
-                let relation_start = divide_aligned(
-                    fold_lane_offset,
-                    group.a_ratio,
-                    "setup A relation address is not aligned to its projection ratio",
-                )?;
-                for (row, &row_weight) in group.a_row_weights.iter().enumerate() {
-                    push_weighted_term(
-                        terms,
-                        WeightedCompactPairTerm {
-                            left_offset: row_major_index(
-                                group.z_cols,
-                                row,
-                                span.setup_column_start,
-                            )?,
-                            left_stride: span.setup_column_stride,
-                            right_offset: relation_start,
-                            right_stride: relation_stride,
-                            len: span.occurrence_count,
-                            weight: -(row_weight * fold),
-                        },
-                    )?;
-                }
-            }
+                lift_role_tensor(tensor, 0, group.z_cols, &group.a_row_weights)?,
+            );
         }
         Ok(())
     }
 }
 
-fn push_weighted_term<E: FieldCore>(
-    terms: &mut Vec<WeightedCompactPairTerm<E>>,
-    term: WeightedCompactPairTerm<E>,
-) -> Result<(), AkitaError> {
-    if terms.len() >= MAX_COMPACT_STRIDE_TERMS {
-        return Err(AkitaError::InvalidSize {
-            expected: MAX_COMPACT_STRIDE_TERMS,
-            actual: terms.len().saturating_add(1),
+fn build_group_role_tensors<E: FieldCore>(
+    relation_geometry: RelationAddressGeometry,
+    group: &SetupContributionGroupPlan<E>,
+    witness_layout: &WitnessLayout,
+) -> Result<[Vec<EqPairTensorFamily<E>>; 3], AkitaError> {
+    let (b_subcolumns, d_subcolumns) =
+        SetupProjectionGeometry::a_carrier_subcolumn_counts(group.role_dims)?;
+    let carrier_lanes = carrier_lane_count(relation_geometry)?;
+    let d_witness_stride = divide_aligned(
+        carrier_lanes,
+        group.d_ratio,
+        "setup D carrier does not project to its role dimension",
+    )?;
+    let b_witness_stride = divide_aligned(
+        carrier_lanes,
+        group.b_ratio,
+        "setup B carrier does not project to its role dimension",
+    )?;
+    let a_witness_stride = divide_aligned(
+        carrier_lanes,
+        group.a_ratio,
+        "setup A carrier does not project to its role dimension",
+    )?;
+
+    let d_block_setup_stride = checked_mul(
+        d_subcolumns,
+        group.depth_open,
+        "setup D block stride overflow",
+    )?;
+    let d_block_relation_stride = checked_mul(
+        group.depth_open,
+        d_witness_stride,
+        "setup D relation stride overflow",
+    )?;
+    let b_digit_setup_stride = b_subcolumns;
+    let b_a_row_setup_stride = checked_mul(
+        group.depth_commit,
+        b_digit_setup_stride,
+        "setup B A-row stride overflow",
+    )?;
+    let b_block_setup_stride = checked_mul(
+        group.n_a,
+        b_a_row_setup_stride,
+        "setup B block stride overflow",
+    )?;
+    let b_a_row_relation_stride = checked_mul(
+        group.depth_commit,
+        b_witness_stride,
+        "setup B relation A-row stride overflow",
+    )?;
+    let b_block_relation_stride = checked_mul(
+        group.n_a,
+        b_a_row_relation_stride,
+        "setup B relation block stride overflow",
+    )?;
+    let a_relation_column_stride = checked_mul(
+        group.fold_gadget.len(),
+        a_witness_stride,
+        "setup A relation column stride overflow",
+    )?;
+    let fold_weights = group
+        .fold_gadget
+        .iter()
+        .copied()
+        .map(std::ops::Neg::neg)
+        .collect::<Vec<_>>();
+
+    let mut d_tensors = Vec::new();
+    let mut b_tensors = Vec::new();
+    let mut a_tensors = Vec::new();
+    for unit in witness_layout.units_for_group(group.group_id)? {
+        for claim in 0..group.num_claims {
+            let d_setup_column = claim
+                .checked_mul(group.num_live_blocks)
+                .and_then(|base| base.checked_add(unit.global_block_start()))
+                .and_then(|base| base.checked_mul(d_block_setup_stride))
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
+            let d_witness_column = unit.e_index(
+                group.num_claims,
+                group.depth_open,
+                claim,
+                unit.global_block_start(),
+                0,
+            )?;
+            let d_relation_start = d_witness_column
+                .checked_mul(d_witness_stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup D address overflow".into()))?;
+            d_tensors.push(EqPairTensorFamily::new(
+                d_setup_column,
+                d_relation_start,
+                E::one(),
+                vec![
+                    EqPairTensorAxis::unit(group.depth_open, 1, d_witness_stride),
+                    EqPairTensorAxis::unit(d_subcolumns, group.depth_open, 1),
+                    EqPairTensorAxis::unit(
+                        unit.num_live_blocks(),
+                        d_block_setup_stride,
+                        d_block_relation_stride,
+                    ),
+                ],
+            )?);
+
+            if group.n_b != 0 {
+                let b_setup_column = claim
+                    .checked_mul(group.num_live_blocks)
+                    .and_then(|base| base.checked_add(unit.global_block_start()))
+                    .and_then(|base| base.checked_mul(b_block_setup_stride))
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
+                let b_witness_column = unit.t_index(
+                    group.num_claims,
+                    group.n_a,
+                    group.depth_commit,
+                    claim,
+                    unit.global_block_start(),
+                    0,
+                    0,
+                )?;
+                let b_relation_start = b_witness_column
+                    .checked_mul(b_witness_stride)
+                    .ok_or_else(|| AkitaError::InvalidSetup("setup B address overflow".into()))?;
+                b_tensors.push(EqPairTensorFamily::new(
+                    b_setup_column,
+                    b_relation_start,
+                    E::one(),
+                    vec![
+                        EqPairTensorAxis::unit(b_subcolumns, 1, 1),
+                        EqPairTensorAxis::unit(
+                            group.depth_commit,
+                            b_digit_setup_stride,
+                            b_witness_stride,
+                        ),
+                        EqPairTensorAxis::unit(
+                            group.n_a,
+                            b_a_row_setup_stride,
+                            b_a_row_relation_stride,
+                        ),
+                        EqPairTensorAxis::unit(
+                            unit.num_live_blocks(),
+                            b_block_setup_stride,
+                            b_block_relation_stride,
+                        ),
+                    ],
+                )?);
+            }
+        }
+
+        if group.n_a != 0 {
+            let a_witness_column = unit.z_index(
+                group.num_positions_per_block,
+                group.depth_witness,
+                group.fold_gadget.len(),
+                0,
+                0,
+                0,
+            )?;
+            let a_relation_start = a_witness_column
+                .checked_mul(a_witness_stride)
+                .ok_or_else(|| AkitaError::InvalidSetup("setup A address overflow".into()))?;
+            a_tensors.push(EqPairTensorFamily::new(
+                0,
+                a_relation_start,
+                E::one(),
+                vec![
+                    EqPairTensorAxis::unit(group.z_cols, 1, a_relation_column_stride),
+                    EqPairTensorAxis::dense(0, a_witness_stride, fold_weights.clone()),
+                ],
+            )?);
+        }
+    }
+    Ok([d_tensors, b_tensors, a_tensors])
+}
+
+fn lift_role_tensor<E: FieldCore>(
+    tensor: &EqPairTensorFamily<E>,
+    left_offset: usize,
+    row_stride: usize,
+    row_weights: &[E],
+) -> Result<EqPairTensorFamily<E>, AkitaError> {
+    let mut axes = tensor.axes.clone();
+    axes.push(EqPairTensorAxis::dense(row_stride, 0, row_weights.to_vec()));
+    EqPairTensorFamily::new(
+        tensor
+            .left_offset
+            .checked_add(left_offset)
+            .ok_or_else(|| AkitaError::InvalidSetup("setup tensor address overflow".into()))?,
+        tensor.right_offset,
+        tensor.scalar,
+        axes,
+    )
+}
+
+fn push_projected_tensor<E: FieldCore>(
+    batches: &mut Vec<ProjectedEqPairTensor<E>>,
+    ratio: usize,
+    family: EqPairTensorFamily<E>,
+) {
+    if let Some(batch) = batches.iter_mut().find(|batch| batch.ratio == ratio) {
+        batch.families.push(family);
+    } else {
+        batches.push(ProjectedEqPairTensor {
+            ratio,
+            families: vec![family],
         });
     }
-    if terms.len() == terms.capacity() {
-        terms.try_reserve(1).map_err(|_| {
-            AkitaError::InvalidSetup("setup evaluation term allocation failed".into())
-        })?;
-    }
-    terms.push(term);
-    Ok(())
 }
 
-fn role_column_weight_or_materialized<E: FieldCore>(
-    spans: &[SetupContributionSpan],
-    materialized: Option<&[E]>,
-    column: usize,
-    equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
-    lane_powers: &[E],
-    fold_gadget: Option<&[E]>,
-) -> Result<E, AkitaError> {
-    if let Some(materialized) = materialized {
-        return materialized
-            .get(column)
-            .copied()
-            .ok_or(AkitaError::InvalidProof);
-    }
-    if spans.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "setup contribution plan is missing canonical spans".into(),
-        ));
-    }
-    role_column_weight(spans, column, equality_window, lane_powers, fold_gadget)
+fn carrier_lane_count(geometry: RelationAddressGeometry) -> Result<usize, AkitaError> {
+    geometry
+        .carrier_ring_dimension()
+        .checked_div(geometry.relation_coefficient_block_len())
+        .filter(|count| *count != 0)
+        .ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "setup carrier does not decompose over the relation coefficient block".into(),
+            )
+        })
 }
 
-fn role_column_weight<E: FieldCore>(
-    spans: &[SetupContributionSpan],
-    column: usize,
-    equality_window: &akita_algebra::offset_eq::OffsetEqWindow<E>,
-    lane_powers: &[E],
-    fold_gadget: Option<&[E]>,
-) -> Result<E, AkitaError> {
-    let mut weight = E::zero();
-    for span in spans {
-        let Some(relation_lane_start) = span.relation_lane_start_for_setup_column(column)? else {
-            continue;
-        };
-        if let Some(fold_gadget) = fold_gadget {
-            if span.relation_lane_count != lane_powers.len() || span.fold_count != fold_gadget.len()
-            {
-                return Err(AkitaError::InvalidSetup(
-                    "setup A span is not one coarse fold family".into(),
-                ));
-            }
-            for (fold_digit, &fold) in fold_gadget.iter().enumerate() {
-                for (lane, &power) in lane_powers.iter().enumerate() {
-                    let offset = fold_digit
-                        .checked_mul(span.fold_lane_stride)
-                        .and_then(|offset| offset.checked_add(lane))
-                        .ok_or_else(|| {
-                            AkitaError::InvalidSetup("setup A fold lane overflow".into())
-                        })?;
-                    weight -= equality_window
-                        .eval(checked_add_relation_lane(relation_lane_start, offset)?)
-                        * power
-                        * fold;
-                }
-            }
-        } else {
-            super::structured::ensure_lane_count(span, lane_powers)?;
-            for (lane, &power) in lane_powers.iter().enumerate() {
-                weight += equality_window
-                    .eval(checked_add_relation_lane(relation_lane_start, lane)?)
-                    * power;
-            }
-        }
-    }
-    Ok(weight)
-}
-
-fn ensure_span_lane_count(span: &SetupContributionSpan, ratio: usize) -> Result<(), AkitaError> {
-    if ratio == 0 || !ratio.is_power_of_two() || span.relation_lane_count != ratio {
-        return Err(AkitaError::InvalidSetup(
-            "setup span lane count disagrees with its projection ratio".into(),
-        ));
-    }
-    Ok(())
-}
-
-fn checked_add_relation_lane(start: usize, lane: usize) -> Result<usize, AkitaError> {
-    start
-        .checked_add(lane)
-        .ok_or_else(|| AkitaError::InvalidSetup("setup contribution relation lane overflow".into()))
+fn checked_mul(lhs: usize, rhs: usize, context: &'static str) -> Result<usize, AkitaError> {
+    lhs.checked_mul(rhs)
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
 fn divide_aligned(
@@ -482,16 +640,4 @@ fn divide_aligned(
         .checked_div(divisor)
         .filter(|_| divisor != 0 && value.is_multiple_of(divisor))
         .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
-}
-
-fn row_major_index(width: usize, row: usize, column: usize) -> Result<usize, AkitaError> {
-    if column >= width {
-        return Err(AkitaError::InvalidSetup(
-            "setup row-major column out of range".into(),
-        ));
-    }
-    width
-        .checked_mul(row)
-        .and_then(|base| base.checked_add(column))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup row-major index overflow".into()))
 }

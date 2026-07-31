@@ -1,6 +1,5 @@
 //! Challenge-free setup product geometry: projection sizing and envelope guards.
 
-use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
 use akita_field::{AkitaError, FieldCore};
 
 use crate::layout::{validate_role_dims, CommitmentRingDims};
@@ -14,9 +13,6 @@ pub(crate) struct SetupProjectionGroupGeometry {
     pub(crate) b_rows: usize,
     pub(crate) b_cols: usize,
     pub(crate) d_active_cols: usize,
-    pub(crate) d_span_count: usize,
-    pub(crate) b_span_count: usize,
-    pub(crate) a_span_count: usize,
 }
 
 /// Checked common-base geometry for the Stage 3 setup projection.
@@ -40,7 +36,6 @@ pub struct SetupProjectionGeometry {
     ring_bits: usize,
     rounds: usize,
     natural_field_len: usize,
-    setup_index_term_count: usize,
 }
 
 impl SetupProjectionGeometry {
@@ -98,7 +93,7 @@ impl SetupProjectionGeometry {
         }
         let (a_ratio, b_ratio) = (ratio("A", role_dims.d_a())?, ratio("B", role_dims.d_b())?);
         let required = a_footprint.max(b_footprint).max(d_footprint);
-        let mut geometry = Self::from_projected_footprints(
+        Self::from_projected_footprints(
             role_dims,
             base_ring_dim,
             a_ratio,
@@ -108,32 +103,7 @@ impl SetupProjectionGeometry {
             b_footprint,
             d_footprint,
             required,
-        )?;
-        let mut setup_index_term_count = 0usize;
-        for group in groups {
-            let d_terms = group.d_span_count.checked_mul(d_rows).ok_or_else(|| {
-                AkitaError::InvalidSetup("setup D evaluation work overflow".into())
-            })?;
-            let b_terms = group
-                .b_span_count
-                .checked_mul(group.b_rows)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup B evaluation work overflow".into())
-                })?;
-            let a_terms = group
-                .a_span_count
-                .checked_mul(group.a_rows)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A evaluation work overflow".into())
-                })?;
-            setup_index_term_count = setup_index_term_count
-                .checked_add(d_terms)
-                .and_then(|terms| terms.checked_add(b_terms))
-                .and_then(|terms| terms.checked_add(a_terms))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup evaluation work overflow".into()))?;
-        }
-        geometry.setup_index_term_count = setup_index_term_count;
-        Ok(geometry)
+        )
     }
 
     #[cfg(test)]
@@ -210,7 +180,6 @@ impl SetupProjectionGeometry {
             ring_bits,
             rounds,
             natural_field_len,
-            setup_index_term_count: 0,
         })
     }
 
@@ -315,24 +284,6 @@ impl SetupProjectionGeometry {
     #[must_use]
     pub const fn natural_field_len(self) -> usize {
         self.natural_field_len
-    }
-
-    /// Number of semantic span-row terms before compact recurrence coalescing.
-    #[must_use]
-    pub const fn setup_index_term_count(self) -> usize {
-        self.setup_index_term_count
-    }
-
-    /// Reject a setup-index evaluation whose semantic term count exceeds the
-    /// verifier work budget.
-    pub fn ensure_setup_index_evaluation_budget(self) -> Result<(), AkitaError> {
-        if self.setup_index_term_count > MAX_COMPACT_STRIDE_TERMS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: self.setup_index_term_count,
-            });
-        }
-        Ok(())
     }
 
     pub(crate) fn validate_alpha_power_lengths(
@@ -478,56 +429,6 @@ mod tests {
     }
 
     #[test]
-    fn evaluation_budget_accepts_cap_and_rejects_next_term() {
-        let geometry_at_cap = SetupProjectionGeometry::from_groups(
-            CommitmentRingDims::uniform(64),
-            0,
-            0,
-            &[SetupProjectionGroupGeometry {
-                role_dims: CommitmentRingDims::uniform(64),
-                a_rows: 1,
-                a_cols: MAX_COMPACT_STRIDE_TERMS,
-                b_rows: 0,
-                b_cols: 0,
-                d_active_cols: 0,
-                d_span_count: 0,
-                b_span_count: 0,
-                a_span_count: MAX_COMPACT_STRIDE_TERMS,
-            }],
-        )
-        .expect("geometry at cap");
-        assert_eq!(
-            geometry_at_cap.setup_index_term_count(),
-            MAX_COMPACT_STRIDE_TERMS
-        );
-        geometry_at_cap
-            .ensure_setup_index_evaluation_budget()
-            .expect("cap accepted");
-
-        let geometry_above_cap = SetupProjectionGeometry::from_groups(
-            CommitmentRingDims::uniform(64),
-            0,
-            0,
-            &[SetupProjectionGroupGeometry {
-                role_dims: CommitmentRingDims::uniform(64),
-                a_rows: 1,
-                a_cols: MAX_COMPACT_STRIDE_TERMS + 1,
-                b_rows: 0,
-                b_cols: 0,
-                d_active_cols: 0,
-                d_span_count: 0,
-                b_span_count: 0,
-                a_span_count: MAX_COMPACT_STRIDE_TERMS + 1,
-            }],
-        )
-        .expect("geometry above cap");
-        assert!(matches!(
-            geometry_above_cap.ensure_setup_index_evaluation_budget(),
-            Err(AkitaError::InvalidSize { .. })
-        ));
-    }
-
-    #[test]
     fn projection_geometry_uses_every_groups_native_dimensions() {
         let geometry = SetupProjectionGeometry::from_groups(
             CommitmentRingDims {
@@ -545,9 +446,6 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 1,
-                    d_span_count: 1,
-                    b_span_count: 1,
-                    a_span_count: 1,
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
@@ -560,9 +458,6 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 2,
-                    d_span_count: 1,
-                    b_span_count: 1,
-                    a_span_count: 1,
                 },
             ],
         )

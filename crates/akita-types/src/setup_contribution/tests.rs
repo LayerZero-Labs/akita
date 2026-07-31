@@ -1,4 +1,4 @@
-use super::plan::{SetupContributionColumnWeights, SetupContributionGroupPlan};
+use super::plan::{DirectScanWeights, SetupContributionGroupPlan};
 use super::test_oracle_weights::{setup_z_col_weights, RoleLaneSpec};
 use super::*;
 use crate::{
@@ -8,7 +8,7 @@ use crate::{
 };
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{eval_ring_at_pows, scalar_powers};
+use akita_algebra::ring::scalar_powers;
 use akita_challenges::SparseChallengeConfig;
 use akita_field::Prime128OffsetA7F7;
 
@@ -324,7 +324,7 @@ fn prepare_test_plan(
 ) -> Result<SetupContributionPlan<F>, AkitaError> {
     let relation_address_geometry =
         crate::RelationAddressGeometry::new(role_dims, role_dims.d_a(), opening_source_len)?;
-    SetupContributionPlan::prepare::<F>(
+    let mut plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
@@ -333,10 +333,9 @@ fn prepare_test_plan(
         PreparedRelationAddress::new(full_vec_randomness)?,
         fold_gadget,
         relation_address_geometry,
-        // All `prepare_test_plan` callers are uniform-role, so the folding
-        // challenge only affects the (unexercised) per-role A lane sum.
-        test_scalar(3),
-    )
+    )?;
+    plan.materialize_direct_scan(test_scalar(3))?;
+    Ok(plan)
 }
 fn finalize_test_plan(
     d_rows: usize,
@@ -370,7 +369,7 @@ fn finalize_test_plan(
             .map(|idx| test_scalar(43 + 4 * idx as u128))
             .collect::<Vec<_>>()
             .into(),
-        setup_index_terms: Default::default(),
+        setup_index_tensors: Vec::new(),
         relation_address: PreparedRelationAddress::new(&[]).unwrap(),
         relation_address_geometry: crate::RelationAddressGeometry::new(
             role_dims,
@@ -396,9 +395,6 @@ fn finalize_test_plan(
             )
             .expect("valid cached setup scan segments");
     }
-    plan.setup_index_terms = plan
-        .prepare_setup_index_terms()
-        .expect("valid cached setup-index terms");
     plan
 }
 
@@ -441,14 +437,14 @@ fn test_group_plan(
         a_row_weights: a_row_weights.into(),
         b_weights: b_weights.into(),
         fold_gadget: vec![F::one()].into(),
-        column_weights: SetupContributionColumnWeights::Prepared {
+        direct_scan_weights: Some(DirectScanWeights {
             e: e_eq_slice,
             t: t_eq_slice,
             z: z_eq_slice,
-        },
-        d_spans: Vec::new(),
-        b_spans: Vec::new(),
-        a_families: Vec::new(),
+        }),
+        d_tensors: Vec::new(),
+        b_tensors: Vec::new(),
+        a_tensors: Vec::new(),
     }
 }
 fn prepare_single_group_plan(
@@ -592,7 +588,7 @@ fn structured_weight_fixture_with_outgoing(
         a_row_start: 1,
         b_row_start: 1 + n_a,
     }];
-    let plan = SetupContributionPlan::prepare::<F>(
+    let mut plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
@@ -601,9 +597,9 @@ fn structured_weight_fixture_with_outgoing(
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
-        test_scalar(3),
     )
     .unwrap();
+    plan.materialize_direct_scan(test_scalar(3)).unwrap();
     (
         inputs,
         groups,
@@ -738,7 +734,7 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(quotient_depth, 4);
-    let plan = SetupContributionPlan::prepare::<F>(
+    let mut plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
@@ -747,9 +743,9 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
-        test_scalar(3),
     )
     .unwrap();
+    plan.materialize_direct_scan(test_scalar(3)).unwrap();
     assert_eq!(
         plan.groups
             .iter()
@@ -767,18 +763,6 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         2..3
     );
     let alpha = test_scalar(3);
-    let deferred = SetupContributionPlan::prepare_deferred::<F>(
-        &inputs.level_params,
-        &inputs.opening_batch,
-        inputs.eq_tau1.clone(),
-        &witness_layout,
-        &groups,
-        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
-        Some(&fold_gadget),
-        relation_address_geometry,
-        alpha,
-    )
-    .unwrap();
     let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
     let rho_setup_idx = (0..setup_idx_bits)
         .map(|index| test_scalar(1301 + index as u128))
@@ -797,14 +781,6 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         dense_mle,
         "multi-group setup-index MLE must match the full plan"
     );
-    assert_eq!(
-        deferred
-            .evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
-            .unwrap(),
-        dense_mle,
-        "deferred multi-group setup-index MLE must match the full plan"
-    );
-
     for group in &plan.groups {
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(1501 + 17 * group.group_id as u128 + index as u128))
@@ -828,19 +804,6 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             .unwrap(),
             reference,
             "full structured evaluation must match group {} dense oracle",
-            group.group_id
-        );
-        assert_eq!(
-            deferred
-                .evaluate_structured_group::<F>(
-                    group.group_id,
-                    &block_challenges,
-                    &opening_a_evals,
-                    alpha,
-                )
-                .unwrap(),
-            reference,
-            "deferred structured evaluation must match group {} dense oracle",
             group.group_id
         );
     }
@@ -1062,19 +1025,6 @@ fn single_group_plan_supports_multi_chunk_weights() {
         .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
         .unwrap();
     assert_eq!(got, expected);
-    let setup_index_weight = plan
-        .materialize_setup_index_weights(test_scalar(3))
-        .unwrap();
-    let setup_view = setup
-        .shared_matrix()
-        .ring_view::<TEST_D>(1, setup_index_weight.len())
-        .unwrap();
-    let tie: F = setup_index_weight
-        .iter()
-        .zip(setup_view.as_slice())
-        .map(|(w, ring)| eval_ring_at_pows(ring, &alpha_pows) * *w)
-        .sum();
-    assert_eq!(tie, got);
 }
 #[test]
 fn packed_direct_matches_row_fallback_with_d_offset() {
@@ -1192,19 +1142,6 @@ fn multi_group_packed_direct_matches_row_fallback() {
         .evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
         .unwrap();
     assert_eq!(got, expected);
-    let setup_index_weight = plan
-        .materialize_setup_index_weights(test_scalar(3))
-        .unwrap();
-    let setup_view = setup
-        .shared_matrix()
-        .ring_view::<TEST_D>(1, setup_index_weight.len())
-        .unwrap();
-    let tie: F = setup_index_weight
-        .iter()
-        .zip(setup_view.as_slice())
-        .map(|(w, ring)| eval_ring_at_pows(ring, &alpha_pows) * *w)
-        .sum();
-    assert_eq!(tie, got);
 }
 #[test]
 fn packed_direct_matches_row_fallback_with_nested_role_dims() {

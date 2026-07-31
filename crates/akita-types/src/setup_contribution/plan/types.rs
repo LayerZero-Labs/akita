@@ -3,9 +3,9 @@ use crate::{
     CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
-use akita_algebra::offset_eq::{OffsetEqWindow, WeightedCompactPairTerm};
+use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_field::{AkitaError, FieldCore};
-use std::{collections::BTreeMap, ops::Range, sync::Arc};
+use std::{ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub struct SetupContributionGroupInputs {
@@ -312,10 +312,15 @@ pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) setup_index_terms: BTreeMap<usize, Vec<WeightedCompactPairTerm<E>>>,
+    pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
     pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
+}
+
+pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
+    pub(crate) ratio: usize,
+    pub(crate) families: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
@@ -343,195 +348,15 @@ impl<E: FieldCore> SetupContributionPlan<E> {
     }
 }
 
-/// A strided family of setup columns and their corresponding relation lanes.
-///
-/// Every occurrence maps one physical setup column to
-/// `relation_lane_count` consecutive lanes. The lanes are folded by the
-/// ring-switch challenge when column equality weights are materialized.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SetupContributionSpan {
-    pub(crate) setup_column_start: usize,
-    pub(crate) setup_column_stride: usize,
-    pub(crate) relation_lane_start: usize,
-    pub(crate) relation_lane_stride: usize,
-    pub(crate) occurrence_count: usize,
-    pub(crate) relation_lane_count: usize,
-    pub(crate) fold_count: usize,
-    pub(crate) fold_lane_stride: usize,
-}
-
-impl SetupContributionSpan {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        setup_column_start: usize,
-        setup_column_stride: usize,
-        relation_lane_start: usize,
-        relation_lane_stride: usize,
-        occurrence_count: usize,
-        relation_lane_count: usize,
-        setup_column_count: usize,
-        relation_lane_capacity: usize,
-    ) -> Result<Self, AkitaError> {
-        if setup_column_stride == 0 || relation_lane_stride == 0 || relation_lane_count == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup contribution span strides and lane count must be positive".into(),
-            ));
-        }
-        if occurrence_count != 0 {
-            let last_setup_column =
-                checked_span_index(setup_column_start, setup_column_stride, occurrence_count)?;
-            if last_setup_column >= setup_column_count {
-                return Err(AkitaError::InvalidSetup(
-                    "setup contribution span exceeds role columns".into(),
-                ));
-            }
-            let last_relation_lane =
-                checked_span_index(relation_lane_start, relation_lane_stride, occurrence_count)?;
-            let relation_lane_end = last_relation_lane
-                .checked_add(relation_lane_count)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-                })?;
-            if relation_lane_end > relation_lane_capacity {
-                return Err(AkitaError::InvalidSetup(
-                    "setup contribution span exceeds relation lane domain".into(),
-                ));
-            }
-        }
-        Ok(Self {
-            setup_column_start,
-            setup_column_stride,
-            relation_lane_start,
-            relation_lane_stride,
-            occurrence_count,
-            relation_lane_count,
-            fold_count: 1,
-            fold_lane_stride: relation_lane_count,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_fold_family(
-        setup_column_start: usize,
-        setup_column_stride: usize,
-        relation_lane_start: usize,
-        relation_lane_stride: usize,
-        occurrence_count: usize,
-        relation_lane_count: usize,
-        fold_count: usize,
-        fold_lane_stride: usize,
-        setup_column_count: usize,
-        relation_lane_capacity: usize,
-    ) -> Result<Self, AkitaError> {
-        if fold_count == 0 || fold_lane_stride < relation_lane_count {
-            return Err(AkitaError::InvalidSetup(
-                "setup A fold family geometry must be non-empty and disjoint".into(),
-            ));
-        }
-        let mut family = Self::new(
-            setup_column_start,
-            setup_column_stride,
-            relation_lane_start,
-            relation_lane_stride,
-            occurrence_count,
-            relation_lane_count,
-            setup_column_count,
-            relation_lane_capacity,
-        )?;
-        let fold_end = fold_count
-            .checked_sub(1)
-            .and_then(|last| last.checked_mul(fold_lane_stride))
-            .and_then(|offset| offset.checked_add(relation_lane_count))
-            .ok_or_else(|| AkitaError::InvalidSetup("setup A fold family overflow".into()))?;
-        if fold_end > relation_lane_stride {
-            return Err(AkitaError::InvalidSetup(
-                "setup A fold family exceeds its occurrence stride".into(),
-            ));
-        }
-        if occurrence_count != 0 {
-            let last_start =
-                checked_span_index(relation_lane_start, relation_lane_stride, occurrence_count)?;
-            let last_end = last_start
-                .checked_add(fold_end)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup A fold family overflow".into()))?;
-            if last_end > relation_lane_capacity {
-                return Err(AkitaError::InvalidSetup(
-                    "setup A fold family exceeds relation lane domain".into(),
-                ));
-            }
-        }
-        family.fold_count = fold_count;
-        family.fold_lane_stride = fold_lane_stride;
-        Ok(family)
-    }
-
-    pub(crate) fn occurrences(
-        &self,
-    ) -> impl Iterator<Item = Result<(usize, usize), AkitaError>> + '_ {
-        (0..self.occurrence_count).map(|occurrence| {
-            let setup_column = self
-                .setup_column_stride
-                .checked_mul(occurrence)
-                .and_then(|offset| self.setup_column_start.checked_add(offset))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution span overflow".into())
-                })?;
-            let relation_lane = self
-                .relation_lane_stride
-                .checked_mul(occurrence)
-                .and_then(|offset| self.relation_lane_start.checked_add(offset))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-                })?;
-            Ok((setup_column, relation_lane))
-        })
-    }
-
-    pub(crate) fn relation_lane_start_for_setup_column(
-        &self,
-        setup_column: usize,
-    ) -> Result<Option<usize>, AkitaError> {
-        let Some(delta) = setup_column.checked_sub(self.setup_column_start) else {
-            return Ok(None);
-        };
-        let occurrence = if self.setup_column_stride == 1 {
-            delta
-        } else if delta.is_multiple_of(self.setup_column_stride) {
-            delta / self.setup_column_stride
-        } else {
-            return Ok(None);
-        };
-        if occurrence >= self.occurrence_count {
-            return Ok(None);
-        }
-        self.relation_lane_stride
-            .checked_mul(occurrence)
-            .and_then(|offset| self.relation_lane_start.checked_add(offset))
-            .map(Some)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-            })
-    }
-}
-
-fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, AkitaError> {
-    let last = len.checked_sub(1).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup contribution span length must be positive".into())
-    })?;
-    stride
-        .checked_mul(last)
-        .and_then(|offset| start.checked_add(offset))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup contribution span overflow".into()))
-}
-
-pub(crate) enum SetupContributionColumnWeights<E> {
-    Prepared { e: Vec<E>, t: Vec<E>, z: Vec<E> },
-    Deferred,
+pub(crate) struct DirectScanWeights<E> {
+    pub(crate) e: Vec<E>,
+    pub(crate) t: Vec<E>,
+    pub(crate) z: Vec<E>,
 }
 
 type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
-pub(crate) struct SetupContributionGroupPlan<E> {
+pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) group_id: usize,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_ratio: usize,
@@ -557,18 +382,17 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    pub(crate) column_weights: SetupContributionColumnWeights<E>,
-    pub(crate) d_spans: Vec<SetupContributionSpan>,
-    pub(crate) b_spans: Vec<SetupContributionSpan>,
-    pub(crate) a_families: Vec<SetupContributionSpan>,
+    pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
+    pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
     pub(crate) fn column_eq_slices(&self) -> Option<(&[E], &[E], &[E])> {
-        match &self.column_weights {
-            SetupContributionColumnWeights::Prepared { e, t, z } => Some((e, t, z)),
-            SetupContributionColumnWeights::Deferred => None,
-        }
+        self.direct_scan_weights
+            .as_ref()
+            .map(|weights| (&weights.e[..], &weights.t[..], &weights.z[..]))
     }
 
     pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {

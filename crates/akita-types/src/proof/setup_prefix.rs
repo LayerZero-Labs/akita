@@ -1213,11 +1213,6 @@ fn active_setup_projection_geometry(
             b_rows: group_params.b_rows_len(),
             b_cols,
             d_active_cols,
-            // Prefix sizing consumes only the physical footprint. Stage 3
-            // fills these evaluation-only counts from its canonical spans.
-            d_span_count: 0,
-            b_span_count: 0,
-            a_span_count: 0,
         });
     }
     crate::SetupProjectionGeometry::from_groups(

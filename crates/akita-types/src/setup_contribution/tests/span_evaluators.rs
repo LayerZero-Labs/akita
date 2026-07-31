@@ -147,7 +147,7 @@ pub(super) fn structured_slice_reference(
 }
 
 #[test]
-fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
+fn canonical_tensors_match_dense_oracles_across_geometries() {
     let cases = [
         (&[8][..], CommitmentRingDims::uniform(TEST_D), TEST_D),
         (
@@ -167,29 +167,12 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
     ];
     let alpha = test_scalar(3);
     for (ownership_widths, role_dims, outgoing_ring_dim) in cases {
-        let (inputs, groups, layout, full, _, address_point, fold_gadget) =
-            structured_weight_fixture_with_outgoing(
-                8,
-                ownership_widths,
-                role_dims,
-                outgoing_ring_dim,
-            );
-        let opening_source_len = layout.total_len() * role_dims.d_a() / outgoing_ring_dim;
-        let relation_address_geometry =
-            crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
-                .unwrap();
-        let deferred = SetupContributionPlan::prepare_deferred::<F>(
-            &inputs.level_params,
-            &inputs.opening_batch,
-            inputs.eq_tau1.clone(),
-            &layout,
-            &groups,
-            PreparedRelationAddress::new(&address_point).unwrap(),
-            Some(&fold_gadget),
-            relation_address_geometry,
-            alpha,
-        )
-        .unwrap();
+        let (_, _, layout, full, _, _, _) = structured_weight_fixture_with_outgoing(
+            8,
+            ownership_widths,
+            role_dims,
+            outgoing_ring_dim,
+        );
         let rho = rho_for_required(full.required());
         let dense = full
             .materialize_setup_index_weights(alpha)
@@ -203,24 +186,14 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             full.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
             dense
         );
-        assert_eq!(
-            deferred
-                .evaluate_setup_index_weight_mle(&rho, alpha)
-                .unwrap(),
-            dense
-        );
-
         let group = &full.groups[0];
         let expected_families = layout.units_for_group(group.group_id).unwrap().len();
-        assert_eq!(group.a_families.len(), expected_families);
-        assert_eq!(
-            deferred.groups[0].a_families.len(),
-            expected_families,
-            "Full and Deferred must share one coarse A family per physical unit"
-        );
-        assert!(group.a_families.iter().all(|family| {
-            family.relation_lane_count == group.a_ratio
-                && family.fold_count == group.fold_gadget.len()
+        assert_eq!(group.a_tensors.len(), expected_families);
+        assert!(group.a_tensors.iter().all(|family| {
+            family
+                .axes
+                .iter()
+                .any(|axis| axis.left_stride == 0 && axis.len == group.fold_gadget.len())
         }));
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(401 + index as u128))
@@ -238,17 +211,6 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
                 alpha,
             )
             .unwrap(),
-            reference
-        );
-        assert_eq!(
-            deferred
-                .evaluate_structured_group::<F>(
-                    group.group_id,
-                    &block_challenges,
-                    &opening_a_evals,
-                    alpha,
-                )
-                .unwrap(),
             reference
         );
     }
@@ -269,18 +231,6 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
     let alpha = test_scalar(3);
     let rho = rho_for_required(plan.required());
     assert_span_mle_matches_dense(&plan, &rho, alpha);
-}
-
-#[test]
-fn setup_index_term_count_tracks_chunk_fragmentation() {
-    let (_, _, _, one_chunk, _, _, _) =
-        structured_weight_fixture(8, &[8], CommitmentRingDims::uniform(TEST_D));
-    let (_, _, _, four_chunks, _, _, _) =
-        structured_weight_fixture(8, &[2, 2, 2, 2], CommitmentRingDims::uniform(TEST_D));
-    assert!(
-        one_chunk.projection_geometry().setup_index_term_count()
-            < four_chunks.projection_geometry().setup_index_term_count()
-    );
 }
 
 #[test]

@@ -22,7 +22,6 @@ const D: usize = 64;
 
 struct SetupIndexWeightBenchCase {
     plan: SetupContributionPlan<F>,
-    setup_index_term_count: usize,
     dense_weights: Vec<F>,
     rho: Vec<F>,
     alpha: F,
@@ -228,7 +227,6 @@ fn make_case_with_shape(
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
         relation_address_geometry,
-        alpha,
     )
     .unwrap();
     let rho_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
@@ -248,11 +246,8 @@ fn make_case_with_shape(
         plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
         dense
     );
-    let setup_index_term_count = plan.projection_geometry().setup_index_term_count();
-
     SetupIndexWeightBenchCase {
         plan,
-        setup_index_term_count,
         dense_weights,
         rho,
         alpha,
@@ -275,13 +270,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
         ] {
             let case = make_case(num_live_blocks, blocks_per_chunk);
             group.bench_with_input(
-                BenchmarkId::new(
-                    format!(
-                        "uniform/{layout}/semantic_spans/{}_terms",
-                        case.setup_index_term_count
-                    ),
-                    num_live_blocks,
-                ),
+                BenchmarkId::new(format!("uniform/{layout}/tensor"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -297,13 +286,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
                 },
             );
             group.bench_with_input(
-                BenchmarkId::new(
-                    format!(
-                        "uniform/{layout}/dense/{}_terms",
-                        case.setup_index_term_count
-                    ),
-                    num_live_blocks,
-                ),
+                BenchmarkId::new(format!("uniform/{layout}/dense"), num_live_blocks),
                 &case,
                 |b, case| {
                     b.iter(|| {
@@ -368,13 +351,7 @@ fn bench_setup_index_weight(c: &mut Criterion) {
             num_groups,
         );
         shape_group.bench_with_input(
-            BenchmarkId::new(
-                format!(
-                    "{shape}/semantic_spans/{}_terms",
-                    case.setup_index_term_count
-                ),
-                num_live_blocks,
-            ),
+            BenchmarkId::new(format!("{shape}/tensor"), num_live_blocks),
             &case,
             |b, case| {
                 b.iter(|| {

@@ -63,7 +63,6 @@ fn ring_switch_prepare_rejects_zero_num_live_blocks() {
         PreparedRelationAddress::new(&[F::one(), F::one()]).unwrap(),
         None,
         relation_address_geometry,
-        F::one(),
     ) {
         Ok(_) => panic!("zero num_live_blocks should be rejected"),
         Err(err) => err,
@@ -180,13 +179,13 @@ fn prepared_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .setup_contribution_fold_gadget::<MixedF>()
         .unwrap()
         .unwrap();
-    let direct_plan = evaluator
+    let mut direct_plan = evaluator
         .setup_contribution_plan::<MixedF>(
             PreparedRelationAddress::new(address_point).unwrap(),
             Some(&fold_gadget),
-            alpha,
         )
         .unwrap();
+    direct_plan.materialize_direct_scan(alpha).unwrap();
     let setup_claim = direct_plan
         .evaluate_direct::<MixedF>(
             &setup,

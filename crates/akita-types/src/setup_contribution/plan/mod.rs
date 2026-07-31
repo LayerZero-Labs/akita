@@ -29,17 +29,15 @@ mod test_oracle;
 mod types;
 
 pub(crate) use types::validate_setup_inputs;
+pub(crate) use types::{DirectScanWeights, SetupContributionGroupPlan};
 pub use types::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
-pub(crate) use types::{
-    SetupContributionColumnWeights, SetupContributionGroupPlan, SetupContributionSpan,
-};
 
 use super::geometry::SetupProjectionGroupGeometry;
 use super::{checked_slice, SetupProjectionGeometry};
 use crate::dispatch_for_field;
 use crate::layout::{CommittedGroupParams, RingMatrixView};
 use crate::proof::AkitaExpandedSetup;
-use crate::{OpeningClaimsLayout, RelationAddressGeometry, RingRole, WitnessLayout};
+use crate::{OpeningClaimsLayout, RelationAddressGeometry, WitnessLayout};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, MulBase, MulBaseUnreduced};
 

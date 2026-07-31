@@ -683,7 +683,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
         &self,
         relation_address: PreparedRelationAddress<E>,
         fold_gadget: Option<&[F]>,
-        alpha: E,
     ) -> Result<SetupContributionPlan<E>, AkitaError>
     where
         F: FieldCore + CanonicalField,
@@ -700,32 +699,6 @@ impl<E: FieldCore> RelationMatrixEvaluator<E> {
             relation_address,
             fold_gadget,
             self.relation_address_geometry,
-            alpha,
-        )
-    }
-
-    pub(crate) fn setup_contribution_plan_deferred<F>(
-        &self,
-        relation_address: PreparedRelationAddress<E>,
-        fold_gadget: Option<&[F]>,
-        alpha: E,
-    ) -> Result<SetupContributionPlan<E>, AkitaError>
-    where
-        F: FieldCore + CanonicalField,
-        E: MulBase<F>,
-    {
-        let context = self.flat_context.as_ref().ok_or(AkitaError::InvalidProof)?;
-        let setup_groups = self.setup_contribution_inputs();
-        SetupContributionPlan::prepare_deferred::<F>(
-            &context.level_params,
-            &context.opening_batch,
-            self.eq_tau1.clone(),
-            &context.witness_layout,
-            &setup_groups,
-            relation_address,
-            fold_gadget,
-            self.relation_address_geometry,
-            alpha,
         )
     }
 
