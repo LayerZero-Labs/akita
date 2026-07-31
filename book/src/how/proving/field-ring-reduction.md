@@ -447,24 +447,24 @@ explains how this claim is row-batched and fused with the other Stage-2 terms.
 The base-field path follows the reduction above:
 
 1. **Prepare the opening weights.**
-   [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/batch.rs#L687-L750)
+   [`prepare_opening_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/batch.rs)
    constructs $Q_p$, $B_b$, and $P$.
 2. **Evaluate the ring polynomial.**
-   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold_kernels.rs#L61-L89)
+   [`evaluate_claims_at_prepared_point`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
    returns the position-folded rings $E_b$ and the temporary ring $Y$.
 3. **Recover the scalar evaluation.**
-   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold_kernels.rs#L224-L274)
+   [`scalar_opening_from_folded_ring`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold_kernels.rs)
    computes $\operatorname{TraceOpen}_P(Y)$.
 4. **Prepare the trace factors.**
-   [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/trace_weight/evaluation_trace.rs#L162-L269)
+   [`prepare_evaluation_trace_group_parameters`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/trace_weight/evaluation_trace.rs)
    prepares the block point underlying $B_b$, the gadget weights $G_h$, and
    the inner trace weights $J_\ell$.
 5. **Construct the trace weights.**
-   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs#L101-L168)
+   [`build_evaluation_trace_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/evaluation_trace.rs)
    combines those factors with the claim coefficients and physical $\hat e$
    locations to construct $T(x)$.
 6. **Fuse the Stage-2 relation.**
-   [`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L281-L300)
+   [`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)
    adds the trace relation to the fused Stage-2 sumcheck.
 
 The main data flow is:

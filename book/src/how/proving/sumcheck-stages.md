@@ -156,7 +156,7 @@ $$
 Their product is $R_b$. Each $L_\ell$ is quartic except at basis $4$, where
 the only leaf is quadratic. Product substages prove how these leaves combine,
 using only arity-$2$ or arity-$4$ products. The topology is fixed by
-[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/stage1.rs#L179-L400):
+[`DigitRangePlan`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs):
 
 | Basis | Product substages | Final leaf |
 |---:|---|---|
@@ -257,8 +257,8 @@ At the root there is one parent with weight $1$ and claim $0$. Each product
 substage expands the current parents into their children; the fresh powers of
 $\gamma$ compress those child claims back into one claim for the next
 substage. The prover and verifier follow the same transcript order
-([`digit_range/mod.rs:230`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs#L230-L299),
-[`stage1.rs:167`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/stages/stage1.rs#L161-L252)).
+([`DigitRangeProver::prove`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/digit_range/mod.rs),
+[`AkitaStage1Verifier::verify`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 ### The final leaf
 
@@ -315,7 +315,7 @@ in general. The equality $S(x)=w(x)(w(x)+1)$ holds at Boolean vertices, but
 multilinear extension does not commute with the quadratic map away from those
 vertices. The proof therefore carries the independent
 `range_image_evaluation` field
-([`levels.rs:20`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/levels.rs#L20-L25)).
+([`AkitaStage1Proof`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/levels.rs)).
 
 ### Domain and challenge order
 
@@ -327,14 +327,14 @@ Ring switching supplies $\tau_0$ in column-then-ring order, while the flat
 table binds variables in increasing physical-address-bit order. The protocol
 reorders the point so that ring-slot coordinates come first, followed by
 column coordinates
-([`stage1.rs:19`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-types/src/proof/stage1.rs#L19-L170)).
+([`DigitRangeEqualityPoint`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-types/src/proof/stage1.rs)).
 
 ### The verifier
 
 The verifier replays the same product substages, derives the same interstage
 challenges and weights, checks each child-product claim, and closes the final
 leaf at `range_image_evaluation`
-([`stage1.rs:167`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/stages/stage1.rs#L161-L252)).
+([`AkitaStage1Verifier::verify`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/stages/stage1.rs)).
 
 Passing Stage 1 proves that the range-tree claims are internally consistent and
 reduces the final leaf to `range_image_evaluation`. It does **not** by itself
@@ -637,16 +637,16 @@ point. They contract three different domains.
 The implementation builds the row weights with
 `eq_tau1.eval_at(row)`, factors the resulting flat relation table into the
 common alpha and lane factors, and evaluates that factorization at $r_2$
-([`relation_weights.rs:442`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L442-L520),
-[`relation_weights.rs:234`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs#L234-L310),
-[`ring_switch.rs:627`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-verifier/src/protocol/ring_switch.rs#L627-L657)).
+([`factor_common_alpha`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
+[`into_common_alpha_factor_and_relation_lane_weights`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/ring_switch/relation_weights.rs),
+[`prepare_relation_matrix_evaluator`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-verifier/src/protocol/ring_switch.rs)).
 Those relation weights stop at the physical fold-consistency, $A$, $B$, and
 $D$ rows. The trace index is the next reserved padded-domain index, but no
 matrix row is created for it. The prover builds its weight function separately
 and adds it directly to the relation weight during the shared witness scan
-([`relation_range_image/mod.rs:281`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L281-L300)).
+([`accumulate_fused_relation_trace`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs)).
 The fused identity is implemented by
-[`relation_range_image/mod.rs`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs#L1-L77).
+[`RelationRangeImageProver`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/sumcheck/relation_range_image/mod.rs).
 
 ## Stage 3: recursive setup contribution
 
@@ -654,4 +654,4 @@ When the level uses recursive setup contribution, Stage 3 batches the public
 setup-product claim with Stage 2's next-witness opening. One sumcheck proves
 both claims and returns their evaluations at the resulting projected points.
 Under direct setup contribution, Stage 3 is absent
-([`fold.rs:1079`](https://github.com/LayerZero-Labs/akita/blob/b104dae6c672f406b676b04c47e00f4249669ba5/crates/akita-prover/src/protocol/core/fold.rs#L671-L731)).
+([`prove_stage3`](https://github.com/LayerZero-Labs/akita/blob/main/crates/akita-prover/src/protocol/core/fold/mod.rs)).
