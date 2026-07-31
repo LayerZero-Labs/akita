@@ -18,19 +18,15 @@ struct PreparedExtensionOpeningGroup<E: FieldCore> {
     openings: Vec<E>,
 }
 
-pub(in crate::protocol::core) trait ExtensionOpeningClaimGeometry<E: FieldCore> {
-    fn layout(&self) -> Result<OpeningClaimsLayout, AkitaError>;
-    fn group_point(&self, group_index: usize) -> Result<&[E], AkitaError>;
-}
-
-impl<E: FieldCore, C> ExtensionOpeningClaimGeometry<E> for OpeningClaims<'_, E, C> {
-    fn layout(&self) -> Result<OpeningClaimsLayout, AkitaError> {
-        OpeningClaims::layout(self)
-    }
-
-    fn group_point(&self, group_index: usize) -> Result<&[E], AkitaError> {
-        OpeningClaims::group_point(self, group_index)
-    }
+/// Truthful per-group input to extension-opening reduction.
+///
+/// EOR needs polynomial sources and point geometry, not claimed evaluations or
+/// commitments. Keeping those values out prevents recursive suffix proving
+/// from fabricating public claims merely to satisfy an adapter.
+pub(in crate::protocol::core) struct ExtensionOpeningGroupInput<'a, E: FieldCore, P> {
+    pub(in crate::protocol::core) polynomials: Vec<&'a P>,
+    pub(in crate::protocol::core) point: Vec<E>,
+    pub(in crate::protocol::core) ring_dimension: usize,
 }
 
 fn prepare_extension_opening_group<F, E, P, B, const D: usize>(
@@ -88,9 +84,7 @@ where
 pub(in crate::protocol::core) fn prove_extension_opening_reduction<F, E, T, P, B>(
     tensor_backend: &B,
     tensor_prepared: Option<&<B as ComputeBackendSetup<F>>::PreparedSetup>,
-    polys: &[&P],
-    opening_claims: &dyn ExtensionOpeningClaimGeometry<E>,
-    group_ring_dimensions: &[usize],
+    group_inputs: &[ExtensionOpeningGroupInput<'_, E, P>],
     pad_base_evals: bool,
     transcript: &mut T,
     path: &'static str,
@@ -103,7 +97,12 @@ where
     P: RuntimeRootProvePoly<F>,
     B: RuntimeTensorBackendFor<F, P, E>,
 {
-    let opening_batch = opening_claims.layout()?;
+    let opening_batch = OpeningClaimsLayout::from_groups(
+        group_inputs
+            .iter()
+            .map(|group| PolynomialGroupLayout::new(group.point.len(), group.polynomials.len()))
+            .collect(),
+    )?;
     let _span = tracing::info_span!(
         "prove_extension_opening_reduction",
         path,
@@ -111,18 +110,6 @@ where
         num_groups = opening_batch.num_groups(),
     )
     .entered();
-    if polys.len() != opening_batch.num_total_polynomials() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_total_polynomials(),
-            actual: polys.len(),
-        });
-    }
-    if group_ring_dimensions.len() != opening_batch.num_groups() {
-        return Err(AkitaError::InvalidSize {
-            expected: opening_batch.num_groups(),
-            actual: group_ring_dimensions.len(),
-        });
-    }
     let (split_bits, width) = tensor_opening_split::<F, E>()?;
     let max_tail_vars = opening_batch.max_num_vars().checked_sub(split_bits).ok_or(
         AkitaError::InvalidPointDimension {
@@ -132,27 +119,22 @@ where
     )?;
 
     let mut groups = Vec::with_capacity(opening_batch.num_groups());
-    for group_index in 0..opening_batch.num_groups() {
-        let point = opening_claims.group_point(group_index)?;
+    for (group_index, input) in group_inputs.iter().enumerate() {
+        let point = &input.point;
         if point.len() < split_bits {
             return Err(AkitaError::InvalidPointDimension {
                 expected: split_bits,
                 actual: point.len(),
             });
         }
-        let claim_range = opening_batch.root_group_claim_range(group_index)?;
-        let group_polys = polys.get(claim_range).ok_or(AkitaError::InvalidProof)?;
-        let ring_dimension = *group_ring_dimensions
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
         let group = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
-            ring_dimension,
+            input.ring_dimension,
             |D| prepare_extension_opening_group::<F, E, P, B, D>(
                 tensor_backend,
                 tensor_prepared,
-                group_polys,
+                &input.polynomials,
                 point,
             )
         )
@@ -213,25 +195,22 @@ where
     let mut term_ranges = Vec::<Range<usize>>::with_capacity(groups.len());
     for group_index in 0..groups.len() {
         let claim_range = opening_batch.root_group_claim_range(group_index)?;
-        let group_polys = polys
-            .get(claim_range.clone())
+        let input = group_inputs
+            .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let point = opening_claims.group_point(group_index)?;
+        let point = &input.point;
         let tail_point = &point[split_bits..];
         let extra_vars = max_tail_vars
             .checked_sub(tail_point.len())
             .ok_or(AkitaError::InvalidProof)?;
-        let ring_dimension = *group_ring_dimensions
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
         let group_terms = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
-            ring_dimension,
+            input.ring_dimension,
             |D| build_extension_opening_reduction_terms::<F, E, P, B, D>(
                 tensor_backend,
                 tensor_prepared,
-                group_polys,
+                &input.polynomials,
                 row_coefficients
                     .get(claim_range.clone())
                     .ok_or(AkitaError::InvalidProof)?,
@@ -278,7 +257,10 @@ where
     let mut final_factors = Vec::with_capacity(groups.len());
     let mut protocol_points = Vec::with_capacity(groups.len());
     for group_index in 0..groups.len() {
-        let point = opening_claims.group_point(group_index)?;
+        let input = group_inputs
+            .get(group_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        let point = &input.point;
         let tail_point = &point[split_bits..];
         let local_rho = rho
             .get(..tail_point.len())
@@ -304,13 +286,10 @@ where
                 "{path} extension-opening transparent factor mismatch"
             )));
         }
-        let ring_dimension = *group_ring_dimensions
-            .get(group_index)
-            .ok_or(AkitaError::InvalidProof)?;
         let protocol_point = dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Inner),
             F,
-            ring_dimension,
+            input.ring_dimension,
             |D| ring_subfield_packed_extension_opening_point::<F, E, D>(local_rho.len(), local_rho,)
         )?;
         final_factors.push(factor);

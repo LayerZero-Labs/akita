@@ -46,8 +46,8 @@ use akita_types::{
     tensor_reduction_claim_from_rows, tensor_row_partials_from_columns, AkitaBatchedProof,
     AkitaExpandedSetup, AkitaStage1Proof, AkitaStage2Proof, BasisMode, Commitment,
     CommittedGroupParams, EvaluationTraceInputs, ExtensionOpeningReductionProof, FoldLevelProof,
-    FoldSchedule, OpeningClaims, OpeningClaimsLayout, PreparedOpeningPoint, RecursiveFoldParams,
-    RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, PreparedOpeningPoint,
+    RecursiveFoldParams, RingMultiplierOpeningPoint, RingVec, RingView, SetupContributionMode,
     SetupPrefixProverRegistry, SetupSumcheckProof, TerminalCommittedGroupParams,
     TerminalFoldParams, TerminalLevelProof,
 };
@@ -74,8 +74,8 @@ mod tests;
 
 pub(in crate::protocol::core) use extension_opening_reduction::*;
 pub(in crate::protocol::core) use fold::{
-    prepare_extension_claim_fold, prepare_single_field_fold, prove_fold, ExtensionOpeningSource,
-    PreparedFold,
+    extension_opening_group_inputs, prepare_extension_claim_fold, prepare_single_field_fold,
+    prove_fold, PreparedFold,
 };
 pub(in crate::protocol::core) use fold_kernels::*;
 pub use prove::{batched_prove, prove};
@@ -107,5 +107,4 @@ pub(in crate::protocol::core) type RelationRangeImageProveResult<E> =
 pub(in crate::protocol::core) struct Stage3ProveOutput<E: FieldCore> {
     pub(in crate::protocol::core) proof: SetupSumcheckProof<E>,
     pub(in crate::protocol::core) setup_prefix_point: Vec<E>,
-    pub(in crate::protocol::core) setup_prefix_eval: E,
 }

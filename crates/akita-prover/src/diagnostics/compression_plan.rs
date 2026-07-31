@@ -116,12 +116,15 @@ fn select_maps(
 ///
 /// # Errors
 ///
-/// Returns an error for an empty or larger-than-16-KiB source, or when the
-/// narrow compression SIS table cannot price every map.
+/// Returns `Ok(None)` when the selected ladder cannot be represented by the
+/// prepared setup's generation ring dimension. Returns an error for an empty
+/// or larger-than-16-KiB source, or when the narrow compression SIS table
+/// cannot price every map.
 pub(crate) fn plan_compression_diagnostic(
     modulus_profile: SisModulusProfileId,
     source_coefficients: usize,
-) -> Result<CompressionDiagnosticPlan, AkitaError> {
+    gen_ring_dim: usize,
+) -> Result<Option<CompressionDiagnosticPlan>, AkitaError> {
     if source_coefficients == 0 {
         return Err(AkitaError::InvalidInput(
             "compression diagnostic source must be nonempty".into(),
@@ -146,6 +149,9 @@ pub(crate) fn plan_compression_diagnostic(
     } else {
         standard_first_ring_dimension
     };
+    if first_ring_dimension > gen_ring_dim || !gen_ring_dim.is_multiple_of(first_ring_dimension) {
+        return Ok(None);
+    }
     let maps = select_maps(
         modulus_profile,
         field_bits,
@@ -153,7 +159,7 @@ pub(crate) fn plan_compression_diagnostic(
         first_ring_dimension,
         source_coefficients,
     )?;
-    Ok(CompressionDiagnosticPlan { field_bytes, maps })
+    Ok(Some(CompressionDiagnosticPlan { field_bytes, maps }))
 }
 
 #[cfg(test)]
@@ -168,8 +174,10 @@ mod tests {
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
             for input_kib in [1, 2, 4, 8] {
-                let plan = plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes)
-                    .expect("plan");
+                let plan =
+                    plan_compression_diagnostic(profile, input_kib * 1024 / field_bytes, 128)
+                        .expect("plan")
+                        .expect("supported setup");
                 assert_eq!(plan.maps.len(), 2);
                 assert_eq!(plan.maps[0].ring_dimension * field_bytes, 256);
                 assert_eq!(plan.maps[1].ring_dimension * field_bytes, 128);
@@ -184,7 +192,9 @@ mod tests {
             (SisModulusProfileId::Q64Offset59, 8),
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
-            let plan = plan_compression_diagnostic(profile, 16 * 1024 / field_bytes).expect("plan");
+            let plan = plan_compression_diagnostic(profile, 16 * 1024 / field_bytes, 128)
+                .expect("plan")
+                .expect("supported setup");
             assert_eq!(plan.maps.len(), 3);
             assert_eq!(
                 plan.maps
@@ -220,8 +230,9 @@ mod tests {
             (SisModulusProfileId::Q32Offset99, 4),
         ] {
             for source_bytes in [9 * 1024, 12 * 1024, 15 * 1024] {
-                let plan =
-                    plan_compression_diagnostic(profile, source_bytes / field_bytes).expect("plan");
+                let plan = plan_compression_diagnostic(profile, source_bytes / field_bytes, 128)
+                    .expect("plan")
+                    .expect("supported setup");
                 assert_eq!(plan.maps.len(), 3);
             }
         }
@@ -229,6 +240,22 @@ mod tests {
 
     #[test]
     fn sources_above_sixteen_kib_are_rejected_not_sliced() {
-        assert!(plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, 1025).is_err());
+        assert!(
+            plan_compression_diagnostic(SisModulusProfileId::Q128OffsetA7F7, 1025, 128).is_err()
+        );
+    }
+
+    #[test]
+    fn setup_dimension_gates_the_doubled_first_map() {
+        assert!(
+            plan_compression_diagnostic(SisModulusProfileId::Q32Offset99, 4096, 64)
+                .expect("plan")
+                .is_none()
+        );
+        assert!(
+            plan_compression_diagnostic(SisModulusProfileId::Q32Offset99, 2048, 64)
+                .expect("plan")
+                .is_some()
+        );
     }
 }

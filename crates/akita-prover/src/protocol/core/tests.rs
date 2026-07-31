@@ -3,9 +3,7 @@ use crate::RecursiveWitnessFlat;
 use akita_config::{proof_optimized::fp128::D64OneHot, CommitmentConfig};
 use akita_field::{Fp32, FpExt2, NegOneNr};
 use akita_transcript::AkitaTranscript;
-use akita_types::{
-    OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PolynomialGroupLayout,
-};
+use akita_types::{OpeningClaimsLayout, PolynomialGroupLayout};
 
 type F = Fp32<251>;
 type E = FpExt2<F, NegOneNr>;
@@ -25,23 +23,17 @@ fn recursive_extension_opening_reduction_pads_to_opening_cube() {
         E::new(F::from_u64(41), F::from_u64(43)),
         E::new(F::from_u64(47), F::from_u64(53)),
     ];
-    let logical_polys = [&logical_w];
-
     let mut transcript =
         AkitaTranscript::<F>::new(b"test/recursive-extension-opening-reduction-padding");
-    let opening_batch = OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
-        point.to_vec(),
-        vec![E::zero()],
-        (),
-    )
-    .expect("group claims")])
-    .expect("opening batch");
+    let groups = vec![ExtensionOpeningGroupInput {
+        polynomials: vec![&logical_w],
+        point: point.to_vec(),
+        ring_dimension: 64,
+    }];
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
         &crate::compute::CpuBackend,
         None,
-        &logical_polys,
-        &opening_batch,
-        &[64],
+        &groups,
         true,
         &mut transcript,
         "recursive",
@@ -67,20 +59,24 @@ fn extension_opening_reduction_uses_one_sumcheck_for_all_groups() {
     let long_point = (0..8)
         .map(|index| E::new(F::from_u64(index + 3), F::from_u64(index + 17)))
         .collect::<Vec<_>>();
-    let opening_batch = OpeningClaims::from_groups(vec![
-        PolynomialGroupClaims::new(short_point, vec![E::zero()], ()).expect("short group"),
-        PolynomialGroupClaims::new(long_point.clone(), vec![E::zero()], ()).expect("long group"),
-    ])
-    .expect("opening batch");
-    let polys = [&short_witness, &long_witness];
+    let groups = vec![
+        ExtensionOpeningGroupInput {
+            polynomials: vec![&short_witness],
+            point: short_point,
+            ring_dimension: 64,
+        },
+        ExtensionOpeningGroupInput {
+            polynomials: vec![&long_witness],
+            point: long_point.clone(),
+            ring_dimension: 64,
+        },
+    ];
     let mut transcript = AkitaTranscript::<F>::new(b"test/grouped-extension-opening-reduction");
 
     let proved = prove_extension_opening_reduction::<F, E, _, RecursiveWitnessFlat, _>(
         &crate::compute::CpuBackend,
         None,
-        &polys,
-        &opening_batch,
-        &[64, 64],
+        &groups,
         true,
         &mut transcript,
         "recursive",

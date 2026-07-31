@@ -90,11 +90,12 @@ where
             basis,
         )
     } else {
+        let eor_inputs = extension_opening_group_inputs(&claims, root_params)?;
         prepare_extension_claim_fold::<F, E, T, P, _, C, O, TS, R>(
             stack,
             needs_extension_reduction,
             claims,
-            ExtensionOpeningSource::CurrentClaims,
+            eor_inputs,
             false,
             transcript,
             || validate_non_eor_root_opening_shape::<F, E>(root_ring_d, alpha_bits),

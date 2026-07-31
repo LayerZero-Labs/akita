@@ -412,7 +412,7 @@ pub(super) fn window_sparse_challenges(
 pub struct RingRelationProver;
 
 impl RingRelationProver {
-    /// Root-level constructor for one shared opening point with one or more
+    /// Root-level constructor for one or more group-local opening points and
     /// polynomial slots.
     ///
     /// `opening_point` is the single ring-level opening point used by the

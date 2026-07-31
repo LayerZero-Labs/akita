@@ -73,6 +73,23 @@ impl FoldLinfProtocolBinding {
             self.grind_target_accept_prob_den as u128,
         )
     }
+
+    /// Minimum retained fraction of `t*` for the field width being sized.
+    ///
+    /// Fp32/Fp64 schedules retain `3/4`: their coarse digit boundaries make
+    /// the general `1/2` floor too aggressive. Wider fields use the fraction
+    /// serialized in the protocol binding.
+    #[inline]
+    pub const fn snap_min_tstar_retain(&self, field_bits: u32) -> (u32, u32) {
+        if field_bits < 128 {
+            (3, 4)
+        } else {
+            (
+                self.snap_min_tstar_retain_num,
+                self.snap_min_tstar_retain_den,
+            )
+        }
+    }
 }
 
 impl Valid for FoldLinfProtocolBinding {
@@ -207,5 +224,18 @@ impl AkitaDeserialize for FoldLinfProtocolBinding {
             out.check()?;
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FoldLinfProtocolBinding;
+
+    #[test]
+    fn snap_floor_is_canonical_for_small_and_wide_fields() {
+        let binding = FoldLinfProtocolBinding::CURRENT;
+        assert_eq!(binding.snap_min_tstar_retain(32), (3, 4));
+        assert_eq!(binding.snap_min_tstar_retain(64), (3, 4));
+        assert_eq!(binding.snap_min_tstar_retain(128), (1, 2));
     }
 }
