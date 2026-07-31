@@ -273,10 +273,10 @@ fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
 }
 
 #[test]
-fn schedule_accepts_short_stage2_points_for_wider_successors() {
+fn schedule_accepts_stage2_points_within_successor_capacity() {
     recursive_schedule(128, 64, false)
         .validate_structure()
-        .expect("both successor cubes may be wider than their incoming Stage 2 points");
+        .expect("successor cubes may be wider than their incoming Stage 2 points");
 }
 
 #[test]

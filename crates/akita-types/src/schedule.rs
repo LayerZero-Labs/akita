@@ -1022,6 +1022,9 @@ fn validate_stage2_successor_capacity(
     successor_ring_dimension: usize,
     successor_opening_num_vars: usize,
 ) -> Result<(), AkitaError> {
+    // Stage 2 owns the predecessor-derived point. A successor may expose a
+    // wider scheduled cube; preparation derives that wider representation by
+    // zero-extension. The schedule must reject only points that do not fit.
     if successor_ring_dimension == 0 || !output_witness_len.is_multiple_of(successor_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(format!(
