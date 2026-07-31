@@ -33,6 +33,8 @@ mod plans;
 mod poly;
 mod stack;
 
+#[cfg(feature = "compression-diagnostics")]
+pub use backend::CompressionDiagnosticBackend;
 pub use backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, ProverComputeBackend, RingSwitchComputeBackend,

@@ -60,7 +60,7 @@ pub(in crate::protocol::core) type SetupPrefixOpening<E> = (Vec<E>, E);
 pub(in crate::protocol::core) type FoldVerifyOutput<E> = (Vec<E>, Option<SetupPrefixOpening<E>>);
 
 pub(in crate::protocol::core) use fold::{
-    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
     prepare_single_field_terminal_suffix, verify_extension_claim_root_prefix,
     verify_extension_claim_suffix_prefix, verify_extension_claim_terminal_suffix, verify_fold,
     verify_single_field_root_prefix, FoldPrefix, PreparedFoldPayload, PreparedFoldReplay,

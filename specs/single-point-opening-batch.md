@@ -2,6 +2,11 @@
 
 Status: landed in PR #186 (`refactor/collapse-ext-field-remove-multipoint`).
 
+> **Point-model supersession (2026-07-22).** The single shared-point model in
+> this historical design was superseded by
+> [`group-local-opening-points.md`](archive/2026-Q3/group-local-opening-points.md).
+> Each commitment group now owns one complete opening point.
+
 ## Summary
 
 Batched `prove` / `verify` take **one shared opening point** for every claim in

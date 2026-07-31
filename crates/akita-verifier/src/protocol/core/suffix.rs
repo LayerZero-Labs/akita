@@ -447,7 +447,10 @@ where
             role_dims.d_a(),
             alpha_bits,
         )?;
-        absorb_prepared_opening_points(&prepared_points, transcript);
+        let group_points = (0..opening_batch.num_groups())
+            .map(|group_index| block_claims.group_point(group_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        absorb_protocol_opening_points(&group_points, transcript);
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
         FoldPrefix {
             prepared_points,

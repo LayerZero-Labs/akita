@@ -88,11 +88,12 @@ where
     Ok((folded_rings, folded_blocks))
 }
 
-/// Prepare one group's opening point, evaluate all of its claims, and bind the
-/// canonical padded point to the transcript. This is the common opening phase
-/// for ordinary relation folds and the direct terminal fold.
+/// Prepare one group's opening point and evaluate all of its claims.
+///
+/// Transcript ownership stays with the protocol layer so preparation-only
+/// padding can never become public transcript state.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, T, Q, B, const D: usize>(
+pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, Q, B, const D: usize>(
     backend: &B,
     prepared: Option<&B::PreparedSetup>,
     polys: &[&Q],
@@ -101,12 +102,10 @@ pub(in crate::protocol::core) fn prepare_and_evaluate_opening_group<F, E, T, Q, 
     num_positions_per_block: usize,
     num_live_blocks: usize,
     alpha_bits: usize,
-    transcript: &mut T,
 ) -> Result<(PreparedOpeningPoint<F, E>, FoldedClaimEvals<F, D>), AkitaError>
 where
     F: FieldCore + CanonicalField,
-    E: FpExtEncoding<F> + ExtField<F> + AkitaSerialize,
-    T: Transcript<F>,
+    E: FpExtEncoding<F> + ExtField<F>,
     Q: RootOpeningSource<F, D>,
     B: ComputeBackendSetup<F> + for<'a> OpeningFoldKernel<Q::OpeningView<'a>, F, D>,
 {
@@ -124,9 +123,6 @@ where
         &prepared_point,
         num_positions_per_block,
     )?;
-    for coordinate in &prepared_point.padded_point {
-        append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, coordinate);
-    }
     Ok((prepared_point, folded))
 }
 

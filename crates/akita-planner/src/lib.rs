@@ -18,7 +18,6 @@ pub use akita_schedules::{
     SisModulusProfileId, SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 
-pub mod compression_diagnostic;
 pub mod emit;
 #[cfg(feature = "catalog-gen")]
 pub mod generated_families;
