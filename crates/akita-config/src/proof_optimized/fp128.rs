@@ -31,6 +31,32 @@ pub struct D128OneHot;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct D256OneHot;
 
+/// Binary onehot preset with D256 setup generation and planner-selected
+/// per-level commitment dimensions.
+///
+/// Mixed-dimension planning is an offline generation step. Runtime proving
+/// and verification resolve the exact generated catalog row.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MixedDimFp128OneHot;
+
+impl MixedDimFp128OneHot {
+    /// Audited commitment-role dimension candidates used by offline planning.
+    pub const RING_DIMENSION_CANDIDATES: [akita_types::CommitmentRingDims; 4] = [
+        akita_types::CommitmentRingDims::uniform(64),
+        akita_types::CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+        akita_types::CommitmentRingDims::uniform(128),
+        akita_types::CommitmentRingDims {
+            inner: 256,
+            outer: 128,
+            opening: 128,
+        },
+    ];
+}
+
 /// Tableless policy marker for a `D = 512` inner (A-role) root.
 ///
 /// fp128 certifies the A role at `D = 512` for the Q128 profile, but not B/D.
@@ -136,6 +162,21 @@ impl_proof_optimized_preset!(
     128,
     1,
     fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1)
+);
+impl_proof_optimized_preset!(
+    MixedDimFp128OneHot,
+    Field,
+    Field,
+    akita_types::SisModulusProfileId::Q128OffsetA7F7,
+    256,
+    128,
+    1,
+    fold_norms = akita_types::sis::FoldWitnessNorms::new(1, 1),
+    schedules = (
+        "schedules-fp128-mixed-dim-onehot",
+        "fp128_mixed_dim_onehot",
+        fp128_mixed_dim_onehot_table
+    )
 );
 impl_proof_optimized_preset!(
     D512OneHot,

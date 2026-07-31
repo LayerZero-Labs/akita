@@ -72,6 +72,7 @@ fn family_catalog_is_linked(family: &GeneratedFamily) -> bool {
     match family.module_name {
         "fp128_d128_dense" => fp128::D128Dense::schedule_catalog().is_some(),
         "fp128_d128_onehot" => fp128::D128OneHot::schedule_catalog().is_some(),
+        "fp128_mixed_dim_onehot" => fp128::MixedDimFp128OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot" => fp128::D64OneHot::schedule_catalog().is_some(),
         "fp128_d64_onehot_recursive" => {
             <akita_config::RecursiveCommitmentConfig<fp128::D64OneHot> as CommitmentConfig>::schedule_catalog()
@@ -237,6 +238,9 @@ fn family_catalog(
         "fp128_d128_onehot" => {
             prepare_family_catalog::<fp128::D128OneHot>(family.module_name, keys)
         }
+        "fp128_mixed_dim_onehot" => {
+            prepare_family_catalog::<fp128::MixedDimFp128OneHot>(family.module_name, keys)
+        }
         "fp128_d64_onehot" => prepare_family_catalog::<fp128::D64OneHot>(family.module_name, keys),
         "fp128_d64_onehot_recursive" => prepare_family_catalog::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,
@@ -299,6 +303,10 @@ fn assert_family_group_batch_table_hit(family: &GeneratedFamily, requests: &[Gro
         "fp128_d128_onehot" => {
             assert_group_batch_table_hits::<fp128::D128OneHot>(family.module_name, requests)
         }
+        "fp128_mixed_dim_onehot" => assert_group_batch_table_hits::<fp128::MixedDimFp128OneHot>(
+            family.module_name,
+            requests,
+        ),
         "fp128_d64_onehot" => {
             assert_group_batch_table_hits::<fp128::D64OneHot>(family.module_name, requests)
         }
@@ -390,6 +398,9 @@ fn resolve_family_group_batch_schedule(
     match family.module_name {
         "fp128_d128_dense" => table_backed_group_batch_schedule::<fp128::D128Dense>(request),
         "fp128_d128_onehot" => table_backed_group_batch_schedule::<fp128::D128OneHot>(request),
+        "fp128_mixed_dim_onehot" => {
+            table_backed_group_batch_schedule::<fp128::MixedDimFp128OneHot>(request)
+        }
         "fp128_d64_onehot" => table_backed_group_batch_schedule::<fp128::D64OneHot>(request),
         "fp128_d64_onehot_recursive" => table_backed_group_batch_schedule::<
             akita_config::RecursiveCommitmentConfig<fp128::D64OneHot>,

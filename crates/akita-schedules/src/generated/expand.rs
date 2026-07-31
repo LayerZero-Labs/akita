@@ -20,13 +20,15 @@ use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, min_secure_rank, num_digits_inner, num_digits_open,
-    num_digits_setup_prefix_commit, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
-    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms, SisTableKey,
+    num_digits_setup_prefix_commit, projected_role_ring_count, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    SisTableKey,
 };
 use akita_types::{
-    shared_d_digit_log_basis, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
-    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout, PrecommittedLevelParams, TerminalCommittedGroupParams,
+    shared_d_digit_log_basis, validate_role_dims, CommitmentRingDims, CommittedGroupParams,
+    CommittedGroupProfile, DecompositionParams, InnerCommitMatrixParams, OpenCommitMatrixParams,
+    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    TerminalCommittedGroupParams,
 };
 
 fn sis_key(
@@ -262,9 +264,9 @@ impl GeneratedCommittedGroup {
     ///
     /// # Errors
     ///
-    /// Returns an error when the stored ring dimension disagrees with the
-    /// policy, bucket/width resolution fails, or a generated rank fails its SIS
-    /// audit against the (batched) width.
+    /// Returns an error when the stored role dimensions are invalid for the
+    /// setup-generation policy, bucket/width resolution fails, or a generated
+    /// rank fails its SIS audit against the (batched) width.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn expand_to_level_params_with_setup(
         &self,
@@ -278,13 +280,21 @@ impl GeneratedCommittedGroup {
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
     ) -> Result<CommittedGroupParams, AkitaError> {
-        let ring_d = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_d == 0 || ring_d != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "generated fold step ring dimension {ring_d} does not match policy D={}",
-                policy.ring_dimension
-            )));
+        let dimensions = CommitmentRingDims {
+            inner: self.inner_commit_matrix.ring_dimension as usize,
+            outer: self.outer_commit_matrix.ring_dimension as usize,
+            opening: open_commit_matrix.ring_dimension as usize,
+        };
+        validate_role_dims(dimensions)?;
+        for dimension in [dimensions.d_a(), dimensions.d_b(), dimensions.d_d()] {
+            if !policy.ring_dimension.is_multiple_of(dimension) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "generated fold role dimension {dimension} does not divide setup D={}",
+                    policy.ring_dimension
+                )));
+            }
         }
+        let ring_d = dimensions.d_a();
         let is_root = fold_level == 0;
         let log_basis_inner = self.inner_commit_matrix.log_basis;
         let log_basis_outer = self.outer_commit_matrix.log_basis;
@@ -341,7 +351,7 @@ impl GeneratedCommittedGroup {
         let no_layout = |role: &str| {
             AkitaError::InvalidSetup(format!(
                 "no audited {role}-role layout for generated schedule \
-                 (profile={sis_modulus_profile:?}, d={ring_d}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
+                 (profile={sis_modulus_profile:?}, dims={dimensions:?}, inner={log_basis_inner}, outer={log_basis_outer}, open={log_basis_open})"
             ))
         };
         let outer_decomp = DecompositionParams {
@@ -427,24 +437,30 @@ impl GeneratedCommittedGroup {
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Outer,
-            ring_d,
+            dimensions.d_b(),
             log_basis_outer,
         )
         .ok_or_else(|| no_layout("B"))?;
-        let outer_width =
+        let native_outer_width =
             decomposed_t_ring_count(n_a, num_digits_outer, num_live_blocks, num_claims)
+                .ok_or_else(|| no_layout("B"))?;
+        let outer_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_b(), native_outer_width)
                 .ok_or_else(|| no_layout("B"))?;
 
         let d_bucket = rounded_up_collision_inf_norm(
             sis_policy,
             sis_modulus_profile,
             akita_types::SisMatrixRole::Open,
-            ring_d,
+            dimensions.d_d(),
             log_basis_open,
         )
         .ok_or_else(|| no_layout("D"))?;
-        let main_d_width =
+        let native_main_d_width =
             decomposed_w_ring_count(num_digits_open_val, num_live_blocks, num_claims)
+                .ok_or_else(|| no_layout("D"))?;
+        let main_d_width =
+            projected_role_ring_count(dimensions.d_a(), dimensions.d_d(), native_main_d_width)
                 .ok_or_else(|| no_layout("D"))?;
         let setup_prefix = if let Some(group) = setup_prefix_group {
             let commitment_params = group.expand_to_precommitted_group(
@@ -474,7 +490,7 @@ impl GeneratedCommittedGroup {
         let precommitted_groups = Vec::new();
         let precommitted_d_width = setup_prefix
             .as_ref()
-            .map(|prefix| prefix.commitment_params.d_segment_width(ring_d))
+            .map(|prefix| prefix.commitment_params.d_segment_width(dimensions.d_d()))
             .transpose()?
             .unwrap_or(0);
         let d_matrix_width = main_d_width
@@ -489,7 +505,7 @@ impl GeneratedCommittedGroup {
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Outer,
-                ring_d as u32,
+                dimensions.d_b() as u32,
                 b_bucket,
             ),
             outer_width,
@@ -499,7 +515,7 @@ impl GeneratedCommittedGroup {
             sis_key(
                 policy,
                 akita_types::SisMatrixRole::Open,
-                ring_d as u32,
+                dimensions.d_d() as u32,
                 d_bucket,
             ),
             d_matrix_width,
@@ -528,7 +544,7 @@ impl GeneratedCommittedGroup {
                 n_b,
                 outer_width,
                 b_bucket,
-                ring_d,
+                dimensions.d_b(),
             )?,
             open_commit_matrix: OpenCommitMatrixParams::try_new(
                 sis_policy,
@@ -537,7 +553,7 @@ impl GeneratedCommittedGroup {
                 n_d,
                 d_matrix_width,
                 d_bucket,
-                ring_d,
+                dimensions.d_d(),
             )?,
             num_live_ring_elements_per_claim,
             num_live_blocks,
@@ -792,10 +808,11 @@ impl GeneratedTerminalFold {
         input_witness_len: usize,
     ) -> Result<(TerminalCommittedGroupParams, u128), AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
-        if ring_dimension == 0 || ring_dimension != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(
-                "generated terminal inner ring dimension does not match policy".to_string(),
-            ));
+        if ring_dimension == 0 || !policy.ring_dimension.is_multiple_of(ring_dimension) {
+            return Err(AkitaError::InvalidSetup(format!(
+                "generated terminal inner ring dimension {ring_dimension} does not divide setup D={}",
+                policy.ring_dimension
+            )));
         }
         if input_witness_len == 0 || !input_witness_len.is_multiple_of(ring_dimension) {
             return Err(AkitaError::InvalidSetup(

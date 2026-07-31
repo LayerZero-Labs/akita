@@ -17,7 +17,10 @@ use std::{
     sync::{LazyLock, Mutex, MutexGuard},
 };
 
-use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
+use crate::{
+    find_group_batch_schedule, find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy,
+    RingDimensionSearchDomain,
+};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::FoldWitnessNorms;
@@ -162,6 +165,22 @@ fn plan_regen<Cfg: CommitmentConfig>(
 /// Pure DP regeneration for `Cfg` — never consults the generated table.
 fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key), &[])
+}
+
+/// Offline mixed-dimension regeneration for the catalog-backed fp128 profile.
+fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
+    type Cfg = fp128::MixedDimFp128OneHot;
+    let policy = policy_of::<Cfg>();
+    let dimensions =
+        RingDimensionSearchDomain::new(policy.ring_dimension, Cfg::RING_DIMENSION_CANDIDATES)?;
+    Ok(find_schedule(
+        key,
+        &policy,
+        &dimensions,
+        Cfg::ring_challenge_config,
+        Cfg::fold_challenge_shape_at_level,
+    )?
+    .schedule)
 }
 
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
@@ -608,6 +627,24 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHot
     ),
+    GeneratedFamily {
+        module_name: "fp128_mixed_dim_onehot",
+        const_name: "FP128_MIXED_DIM_ONEHOT_SCHEDULES",
+        schedule_feature: "fp128-mixed-dim-onehot",
+        min_num_vars: 32,
+        max_num_vars: 32,
+        num_polys: &[1],
+        regen: regen_mixed_dim_fp128_onehot,
+        regen_group_batch: regen_group_batch::<fp128::MixedDimFp128OneHot>,
+        emit_group_batch: false,
+        group_batch_keys: group_batch_keys::<fp128::MixedDimFp128OneHot>,
+        table_backed: table_backed::<fp128::MixedDimFp128OneHot>,
+        policy: family_policy::<fp128::MixedDimFp128OneHot>,
+        ring_challenge_config:
+            <fp128::MixedDimFp128OneHot as CommitmentConfig>::ring_challenge_config,
+        fold_challenge_shape_at_level:
+            <fp128::MixedDimFp128OneHot as CommitmentConfig>::fold_challenge_shape_at_level,
+    },
     family_row!(
         recursive,
         "fp128_d64_onehot_recursive",

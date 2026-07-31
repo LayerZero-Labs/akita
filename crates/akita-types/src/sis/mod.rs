@@ -43,6 +43,7 @@ pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
     num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    projected_role_ring_count,
 };
 pub use fold_witness_grind::{
     FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,

@@ -1,20 +1,10 @@
 use akita_config::{
     policy_of,
-    proof_optimized::fp128::{D256OneHot, D64OneHot},
+    proof_optimized::fp128::{D256OneHot, D64OneHot, MixedDimFp128OneHot},
     CommitmentConfig, RecursiveCommitmentConfig,
 };
 use akita_planner::{find_group_batch_schedule, find_schedule, RingDimensionSearchDomain};
-use akita_types::{
-    AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupProfile, PolynomialGroupLayout,
-};
-
-fn dims(d_a: usize, d_b: usize, d_d: usize) -> CommitmentRingDims {
-    CommitmentRingDims {
-        inner: d_a,
-        outer: d_b,
-        opening: d_d,
-    }
-}
+use akita_types::{AkitaScheduleLookupKey, CommittedGroupProfile, PolynomialGroupLayout};
 
 fn print_schedule(
     label: &str,
@@ -93,22 +83,17 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .nth(1)
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
-    let direct_policy = policy_of::<D256OneHot>();
+    let direct_policy = policy_of::<MixedDimFp128OneHot>();
     let domain = RingDimensionSearchDomain::new(
         direct_policy.ring_dimension,
-        [
-            CommitmentRingDims::uniform(64),
-            dims(128, 64, 64),
-            CommitmentRingDims::uniform(128),
-            dims(256, 128, 128),
-        ],
+        MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES,
     )?;
     let direct = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &direct_policy,
         &domain,
-        D256OneHot::ring_challenge_config,
-        D256OneHot::fold_challenge_shape_at_level,
+        MixedDimFp128OneHot::ring_challenge_config,
+        MixedDimFp128OneHot::fold_challenge_shape_at_level,
     )?;
     print_schedule(
         &format!("direct scalar mixed-D search (nv={num_vars})"),
@@ -121,8 +106,8 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let recursive_domain = RingDimensionSearchDomain::new(
         D256OneHot::D,
         [
-            CommitmentRingDims::uniform(64),
-            CommitmentRingDims::uniform(256),
+            akita_types::CommitmentRingDims::uniform(64),
+            akita_types::CommitmentRingDims::uniform(256),
         ],
     )?;
     let mixed_recursive = find_schedule(
