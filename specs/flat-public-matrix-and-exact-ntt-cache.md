@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
 | Status        | active |
-| PR            | stacked follow-up to #334 (number TBD) |
+| PR            | stacked follow-up to #338 (number TBD) |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
 | Superseded-by | |
 | Book-chapter  | book/src/usage/commitment-api.md |
@@ -331,10 +331,14 @@ Therefore:
   to use `n_prefix`;
 - A/B matrices that commit the padded object are ordinary matrix uses and their
   exact `rows * columns * D` footprints remain in capacity accounting;
-- `d_setup = 64` remains a valid protocol choice for chunking the padded
-  setup-prefix witness. It is not a public-matrix generation dimension;
+- the setup-prefix group's inner A-matrix ring dimension determines how the
+  padded witness is chunked for commitment. It is a planner-owned commitment
+  parameter, not a public-matrix generation dimension;
+- the setup-prefix group's outer B-matrix dimension is selected independently,
+  exactly like every other committed group's B matrix;
 - neither `natural_len` nor the whole materialized setup must be divisible by
-  `d_setup`. Only the padded witness shape used by the D64 commitment must be.
+  the prefix A dimension. Only the padded witness shape consumed by that
+  commitment must be divisible by it.
 
 A setup-prefix slot's semantic identity MUST bind the `PublicMatrixId`,
 `natural_len`, padded-domain/commitment geometry, and commitment parameters.
@@ -360,9 +364,18 @@ derived-state waste independently. Eliminating the remaining Boolean-domain
 padding would require a separate non-power-of-two-domain protocol change.
 
 The current restriction that recursive setup planning requires the base setup
-to have been generated at D64 MUST be removed. Preprocessing a D64 setup-prefix
-commitment over a flat source is valid even when the same setup later supplies
-D512, D128, or D64 protocol matrices.
+to have been generated at D64 MUST be removed. Preprocessing a setup-prefix
+commitment with planner-selected A/B dimensions over a flat source is valid
+even when the same setup later supplies different dimensions to other protocol
+matrices.
+
+The prefix A dimension is not the producer's Stage 3 projection dimension and
+is not required to equal the consumer witness group's A dimension. Stage 3
+produces one flat field vector. The prefix commitment profile independently
+chooses how that vector is chunked and committed; the subsequent fold shares
+only the opening/ring-switch dimension required by its relation. A slot ID MUST
+derive the prefix A dimension from its committed-group profile rather than
+store a second `d_setup` field that can disagree with the profile.
 
 ### Transcript and protocol identity
 
@@ -772,8 +785,6 @@ admitted schedule universe.
 ### Non-goals
 
 - This spec does not change the packed overlapping-prefix A/B/D layout.
-- It does not make setup-prefix `d_setup` planner-selectable; D64 remains the
-  current protocol policy.
 - It does not eliminate legitimate power-of-two Boolean domains.
 - It does not serialize NTT caches or require a global eager prewarm.
 - It does not change CRT prime selection or SIS security pricing, except that
@@ -828,8 +839,13 @@ This follow-up is not complete until all merge-blocking criteria below are satis
   prefix and separately includes setup-prefix commitment matrices.
 - [ ] Tests cover a non-power-of-two natural length and prove all padded entries
   are zero rather than later public-stream coefficients.
-- [ ] D64 setup-prefix preprocessing works with a setup that also serves a
-  D512/D128/D64 mixed schedule.
+- [ ] Setup-prefix preprocessing works for independently selected prefix A/B
+  dimensions while the same setup serves a differently dimensioned mixed
+  schedule.
+- [ ] Validation neither equates the prefix A dimension with the producer
+  Stage 3 projection dimension nor with the consumer witness A dimension.
+- [ ] Slot identity derives the prefix A dimension from the committed-group
+  profile without a duplicate `d_setup` field.
 - [ ] Setup-prefix slot identity and registry validation are bound to the flat
   public matrix identity and exact natural/padded geometry.
 
@@ -1143,7 +1159,9 @@ wrappers.
 5. Change `akita-setup` provisioning, serialization, disk keys, and streamed
    validation. Invalidate old cache files.
 6. Correct setup-prefix source capacity to natural length, remove the D64 base
-   setup restriction, and keep explicit zero padding.
+   setup restriction, make prefix A/B dimensions planner-owned commitment
+   parameters, remove duplicate `d_setup` identity, and keep explicit zero
+   padding.
 7. Introduce canonical execution requirements and independent-domain covering
    cache slots. Cut kernels and prewarming to exact requests.
 8. Route requirements per compute cluster and preserve the exact terminal
