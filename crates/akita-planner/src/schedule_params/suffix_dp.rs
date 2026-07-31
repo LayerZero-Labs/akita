@@ -5,9 +5,9 @@ use std::{
 
 use akita_field::AkitaError;
 use akita_types::{
-    active_setup_field_len, extension_opening_reduction_level_bytes, level_proof_bytes,
-    terminal_response_bytes, AkitaScheduleLookupKey, CommitmentRingDims, CommittedGroupParams,
-    OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
+    active_setup_field_len, level_proof_bytes, terminal_response_bytes,
+    try_extension_opening_reduction_level_bytes, AkitaScheduleLookupKey, CommitmentRingDims,
+    CommittedGroupParams, OpeningClaimsLayout, PolynomialGroupLayout, TerminalResponseShape,
 };
 
 use crate::{group_batch::multi_group_root_level_candidates_for_basis, PlannerPolicy};
@@ -220,7 +220,7 @@ fn child_choice(
 
     let direct_payload_bytes = level_proof_bytes(
         edge.policy.decomposition.field_bits(),
-        edge.policy.decomposition.field_bits() * edge.policy.chal_ext_degree as u32,
+        edge.policy.challenge_field_bits()?,
         edge.candidate_params,
         suffix.first_fold_params(),
         edge.next_witness_len,
@@ -504,14 +504,15 @@ pub(crate) fn derive_optimal_suffix_schedule(
         })
         .transpose()?;
     let eor_key = root_eor_key.unwrap_or_else(|| PolynomialGroupLayout::singleton(num_vars));
-    let Ok(eor_bytes) = extension_opening_reduction_level_bytes(
-        policy.decomposition.field_bits() * policy.chal_ext_degree as u32,
+    let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+        policy.challenge_field_bits()?,
         policy.claim_ext_degree,
         level,
         eor_key,
         current_witness_len,
         policy.ring_dimension,
-    ) else {
+    )?
+    else {
         let result = empty_suffix_result();
         memo.insert(memo_key, Arc::clone(&result));
         return Ok(result);

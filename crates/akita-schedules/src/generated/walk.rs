@@ -43,13 +43,7 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
-    let challenge_field_bits = field_bits
-        .checked_mul(policy.chal_ext_degree as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule challenge field bit width overflow".to_string(),
-            )
-        })?;
+    let challenge_field_bits = policy.challenge_field_bits()?;
     let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
     let stored_root_shape = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,

@@ -4,11 +4,12 @@ use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
     intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FoldScheduleEstimate,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams,
-    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
-    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
-    TerminalFoldStep, TerminalResponseShape, WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
+    CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
+    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
+    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
+    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, SisModulusProfileId,
+    SisSecurityPolicyId, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
 };
 
 /// Quantities materialized and checked by the current bounded planner cost model.
@@ -41,6 +42,8 @@ pub enum SelectionPolicyId {
     MinEstimatedProofPayload,
     /// Pick the first direct setup footprint, then payload, within setup support.
     MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    /// Pick exact physical setup fields, then exact proof payload bytes.
+    MinSetupMatrixFieldElementsThenProofPayload,
 }
 
 impl SelectionPolicyId {
@@ -49,6 +52,7 @@ impl SelectionPolicyId {
         match self {
             Self::MinEstimatedProofPayload => 1,
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinSetupMatrixFieldElementsThenProofPayload => 3,
         }
     }
 
@@ -58,6 +62,9 @@ impl SelectionPolicyId {
             Self::MinEstimatedProofPayload => "MinEstimatedProofPayload",
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
                 "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope"
+            }
+            Self::MinSetupMatrixFieldElementsThenProofPayload => {
+                "MinSetupMatrixFieldElementsThenProofPayload"
             }
         }
     }
@@ -75,6 +82,11 @@ pub struct PlannerPolicy {
     pub max_setup_envelope_field_elements: usize,
     pub min_offloaded_witness_contraction: usize,
     pub ring_dimension: usize,
+    /// Canonically ordered A/B/D tuples admitted by offline schedule search.
+    ///
+    /// Generated catalog identity binds this complete domain, including tuples
+    /// that do not win any emitted row.
+    pub ring_dimension_candidates: &'static [CommitmentRingDims],
     pub decomposition: DecompositionParams,
     pub sis_modulus_profile: SisModulusProfileId,
     pub sis_security_policy: SisSecurityPolicyId,
@@ -91,12 +103,45 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
+    /// Validate extension-field geometry and return the challenge-field width.
+    ///
+    /// The checked conversion and multiplication keep malformed custom policy
+    /// values from truncating or overflowing in verifier-reachable pricing.
+    pub fn challenge_field_bits(&self) -> Result<u32, AkitaError> {
+        for (name, degree) in [
+            ("claim extension degree", self.claim_ext_degree),
+            ("challenge extension degree", self.chal_ext_degree),
+        ] {
+            if degree == 0 || !degree.is_power_of_two() {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "{name} must be a nonzero power of two, got {degree}"
+                )));
+            }
+        }
+        let challenge_degree = u32::try_from(self.chal_ext_degree).map_err(|_| {
+            AkitaError::InvalidSetup(format!(
+                "challenge extension degree {} exceeds u32",
+                self.chal_ext_degree
+            ))
+        })?;
+        self.decomposition
+            .field_bits()
+            .checked_mul(challenge_degree)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
+            })
+    }
+
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
         Self {
             recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy: if self.ring_dimension_candidates.len() > 1 {
+                SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+            } else {
+                SelectionPolicyId::MinEstimatedProofPayload
+            },
             ..self
         }
     }
@@ -144,8 +189,12 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    policy.challenge_field_bits()?;
+    validate_ring_dimension_candidates(policy)?;
     let expected_selection_policy = if policy.recursive_setup_planning {
         SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+    } else if policy.ring_dimension_candidates.len() > 1 {
+        SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
     } else {
         SelectionPolicyId::MinEstimatedProofPayload
     };
@@ -170,6 +219,34 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
             "num_activated_levels={} exceeds the schedule recursion cap {MAX_RECURSION_DEPTH}",
             policy.witness_chunk.num_activated_levels
         )));
+    }
+    Ok(())
+}
+
+fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    let candidates = policy.ring_dimension_candidates;
+    if candidates.is_empty() {
+        return Err(AkitaError::InvalidSetup(
+            "ring-dimension candidate domain must be nonempty".to_string(),
+        ));
+    }
+    let key = |dims: CommitmentRingDims| (dims.d_a(), dims.d_b(), dims.d_d());
+    for (index, &dims) in candidates.iter().enumerate() {
+        dims.validate_a_carrier()?;
+        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
+            if !policy.ring_dimension.is_multiple_of(d) {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "candidate dimension D{d} does not divide setup generation D{}",
+                    policy.ring_dimension
+                )));
+            }
+        }
+        if index > 0 && key(candidates[index - 1]) >= key(dims) {
+            return Err(AkitaError::InvalidSetup(
+                "ring-dimension candidate domain must be strictly sorted and duplicate-free"
+                    .to_string(),
+            ));
+        }
     }
     Ok(())
 }
@@ -247,13 +324,7 @@ pub(crate) fn stage3_payload_bytes_for_successor(
             "setup-prefix field length does not align with its ring dimension".to_string(),
         ));
     }
-    let challenge_field_bits = policy
-        .decomposition
-        .field_bits()
-        .checked_mul(policy.chal_ext_degree as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("challenge field bit width overflow".to_string())
-        })?;
+    let challenge_field_bits = policy.challenge_field_bits()?;
     Ok(akita_types::proof_size::stage3_setup_product_bytes(
         challenge_field_bits,
         prefix.d_setup,

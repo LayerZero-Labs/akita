@@ -75,20 +75,13 @@ fn suffix_frontier(
     }
 
     let field_bits = policy.decomposition.field_bits();
+    let challenge_field_bits = policy.challenge_field_bits()?;
     let requested_fold_shape = fold_shape(AkitaScheduleInputs {
         num_vars: key.num_vars(),
         level,
         input_witness_len,
     });
     let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(level);
-    let eor_bytes = extension_opening_reduction_level_bytes(
-        field_bits * policy.chal_ext_degree as u32,
-        policy.claim_ext_degree,
-        level,
-        key,
-        input_witness_len,
-        dimension_ceiling.d_a(),
-    )?;
     let mut frontier = Vec::new();
 
     for log_basis in min_log_basis.max(current_log_basis)..=max_log_basis {
@@ -101,6 +94,17 @@ fn suffix_frontier(
             } else if !componentwise_dimensions_at_most(*candidate_dimensions, dimension_ceiling) {
                 continue;
             }
+            let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+                challenge_field_bits,
+                policy.claim_ext_degree,
+                level,
+                key,
+                input_witness_len,
+                candidate_dimensions.d_a(),
+            )?
+            else {
+                continue;
+            };
             let Ok(ring_challenge) = ring_challenge_config(candidate_dimensions.d_a()) else {
                 continue;
             };
@@ -197,7 +201,7 @@ fn suffix_frontier(
                     let child_is_terminal = child.folds.is_empty();
                     let direct_bytes = level_proof_bytes(
                         field_bits,
-                        field_bits * policy.chal_ext_degree as u32,
+                        challenge_field_bits,
                         &params,
                         child.first_fold_params(),
                         output_witness_len,
@@ -315,14 +319,17 @@ pub(super) fn find_schedule(
                 {
                     continue;
                 }
-                let eor_bytes = extension_opening_reduction_level_bytes(
-                    field_bits * policy.chal_ext_degree as u32,
+                let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
+                    policy.challenge_field_bits()?,
                     policy.claim_ext_degree,
                     0,
                     key,
                     input_witness_len,
                     root_dimensions.d_a(),
-                )?;
+                )?
+                else {
+                    continue;
+                };
                 for suffix in suffix_frontier(
                     policy,
                     dimensions,
@@ -338,7 +345,7 @@ pub(super) fn find_schedule(
                     let child_is_terminal = suffix.folds.is_empty();
                     let root_bytes = level_proof_bytes(
                         field_bits,
-                        field_bits * policy.chal_ext_degree as u32,
+                        policy.challenge_field_bits()?,
                         &root_params,
                         suffix.first_fold_params(),
                         output_witness_len,

@@ -9,8 +9,8 @@ mod runtime;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use akita_types::{
-    ChunkedWitnessCfg, DecompositionParams, SisModulusProfileId, SisSecurityPolicyId,
-    DEFAULT_SIS_SECURITY_POLICY,
+    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, SisModulusProfileId,
+    SisSecurityPolicyId, DEFAULT_SIS_SECURITY_POLICY,
 };
 pub use catalog_identity::{
     expected_catalog_identity, identity_digest, key_digest, policy_digest,

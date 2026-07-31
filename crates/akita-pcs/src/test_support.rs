@@ -40,6 +40,8 @@ enum SyntheticScheduleKind {
     RecursiveRingDimensionTransition,
 }
 
+const D256_PLANNER_CANDIDATES: &[CommitmentRingDims] = &[CommitmentRingDims::uniform(256)];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct SyntheticScheduleCacheKey {
     kind: SyntheticScheduleKind,
@@ -1011,6 +1013,9 @@ where
             // candidate, so temporarily start from D256 root geometry and promote A.
             let mut root_policy = policy_of::<Root>();
             let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
+            if Root::D != planned_root_d {
+                root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;
+            }
             root_policy.ring_dimension = planned_root_d;
             let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
             let mut root = akita_planner::find_schedule(

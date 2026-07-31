@@ -483,6 +483,19 @@ fn emit_witness_chunk(cfg: akita_types::ChunkedWitnessCfg) -> String {
 }
 
 fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
+    let ring_dimension_candidates = identity
+        .ring_dimension_candidates
+        .iter()
+        .map(|dims| {
+            format!(
+                "CommitmentRingDims {{ inner: {}, outer: {}, opening: {} }}",
+                dims.d_a(),
+                dims.d_b(),
+                dims.d_d()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
     let ring_dims: String = identity
         .ring_dimensions
         .iter()
@@ -491,6 +504,8 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         .join(", ");
     format!(
         concat!(
+            "#[rustfmt::skip]\n",
+            "pub(crate) static CATALOG_RING_DIMENSION_CANDIDATES: &[CommitmentRingDims] = &[{ring_dimension_candidates}];\n",
             "#[rustfmt::skip]\n",
             "pub(crate) static CATALOG_RING_DIMENSIONS: &[usize] = &[{ring_dims}];\n",
             "#[rustfmt::skip]\n",
@@ -514,12 +529,14 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
+            "    ring_dimension_candidates: CATALOG_RING_DIMENSION_CANDIDATES,\n",
             "    ring_dimensions: CATALOG_RING_DIMENSIONS,\n",
             "    ring_challenge_config_digest: {ring_challenge_config_digest},\n",
             "    key_count: {key_count},\n",
             "    key_digest: {key_digest},\n",
             "}};\n",
         ),
+        ring_dimension_candidates = ring_dimension_candidates,
         ring_dims = ring_dims,
         family_name = identity.family_name,
         protocol_epoch = identity.protocol_epoch,
@@ -664,9 +681,8 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         PlannerCostModelId, \
-         PolynomialGroupLayout, CommittedGroupProfile, InnerCommitMatrixParams, \
-         OuterCommitMatrixParams, \
+         CommitmentRingDims, PlannerCostModelId, PolynomialGroupLayout, CommittedGroupProfile, \
+         InnerCommitMatrixParams, OuterCommitMatrixParams, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
          TensorChallengeShape,\n}};"
     )

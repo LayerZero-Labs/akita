@@ -11,8 +11,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
     accumulate_matrix_field_elements_for_level, AkitaScheduleInputs, AkitaScheduleLookupKey,
-    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
-    OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope, SisModulusProfileId,
+    CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile, DecompositionParams,
+    FoldSchedule, OpeningClaimsLayout, PolynomialGroupLayout, SetupMatrixEnvelope,
+    SisModulusProfileId,
 };
 use std::marker::PhantomData;
 
@@ -26,6 +27,7 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
     type ExtField = Cfg::ExtField;
 
     const D: usize = Cfg::D;
+    const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] = Cfg::RING_DIMENSION_CANDIDATES;
 
     fn decomposition() -> DecompositionParams {
         Cfg::decomposition()

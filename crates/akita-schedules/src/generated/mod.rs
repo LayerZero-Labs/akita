@@ -147,6 +147,9 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub recursive_setup_planning: bool,
 
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
+    /// Complete ordered A/B/D domain used to generate this catalog, including
+    /// candidates that did not win an emitted row.
+    pub ring_dimension_candidates: &'static [akita_types::CommitmentRingDims],
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
@@ -163,8 +166,8 @@ pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
-    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, SelectionPolicyId,
-    SisSecurityPolicyId, TensorChallengeShape,
+    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
+    SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
     CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
