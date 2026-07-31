@@ -27,10 +27,14 @@ use akita_pcs::test_support::{MixedDConfig, RecursiveRingDimensionTransitionConf
 #[cfg(feature = "profile-ci")]
 use akita_planner::{find_schedule, RingDimensionSearchDomain};
 use akita_serialization::{AkitaSerialize, Valid};
+#[cfg(feature = "profile-ci")]
 use akita_types::{
-    setup_matrix_envelope_for_schedule, AkitaScheduleLookupKey, ChunkedWitnessCfg,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, FpExtEncoding, MultiChunkProfileId,
-    OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout, SetupMatrixEnvelope,
+    setup_matrix_envelope_for_schedule, ChunkedWitnessCfg, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, PlannedFoldSchedule, SetupMatrixEnvelope,
+};
+use akita_types::{
+    AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
+    PolynomialGroupLayout,
 };
 #[cfg(feature = "profile-ci")]
 use std::collections::BTreeMap;
