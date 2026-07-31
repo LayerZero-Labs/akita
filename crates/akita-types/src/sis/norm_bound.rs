@@ -12,11 +12,10 @@ use super::ajtai_key::{
     ceil_supported_linf_bound, SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId,
     SisTableDigest,
 };
-use super::decomposition_digits::{
-    balanced_digit_abs_max, balanced_digit_max, num_digits_for_bound,
-};
+use super::decomposition_digits::balanced_digit_abs_max;
+#[cfg(test)]
+use super::decomposition_digits::{balanced_digit_max, num_digits_for_bound};
 use crate::layout::digit_math::isqrt_ceil;
-use crate::FoldLinfProtocolBinding;
 
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
@@ -254,7 +253,8 @@ impl FoldWitnessNorms {
 /// # Errors
 ///
 /// Propagates folded-witness bound / tail-bound setup errors.
-pub fn fold_witness_digit_plan(
+#[cfg(test)]
+pub(crate) fn fold_witness_digit_plan(
     num_live_blocks: usize,
     num_claims: usize,
     field_bits: u32,
@@ -277,15 +277,15 @@ pub fn fold_witness_digit_plan(
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
     //
-    // The protocol binding owns the field-width-specific retain floor.
+    // This pre-cutover regression oracle uses the historical field-specific
+    // retain floor. Production policy ownership lives in honest_fold_policy.
     if let (
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         Some(rademacher_inf_norm_bound),
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
-        let (retain_num, retain_den) =
-            FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain(field_bits);
+        let (retain_num, retain_den): (u32, u32) = if field_bits == 32 { (3, 4) } else { (1, 2) };
         if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
             let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
                 / u128::from(retain_den))
@@ -499,11 +499,11 @@ mod tests {
         // Recompute the Lemma-7 envelope from the same primitives the function wires.
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(
@@ -571,11 +571,11 @@ mod tests {
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
         let witness = FoldWitnessNorms::sparse_binary(d, 64).unwrap();
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, honest_cap) = fold_witness_digit_plan(
@@ -645,7 +645,7 @@ mod tests {
             log_open_bound: None,
         };
         let cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(&fold_challenge_config, fold_shape, 64, 2)
+            FoldWitnessLinfCapConfig::for_fold_coeffs(&fold_challenge_config, fold_shape, 64, 128)
                 .unwrap();
         let (delta_fold, inf_norm_bound) = fold_witness_digit_plan(
             5,
@@ -710,11 +710,11 @@ mod tests {
 
         let challenge = FoldChallengeNorms::new(&fold_challenge_config, fold_shape);
         let witness = FoldWitnessNorms::bounded(decomposition.log_basis, d);
-        let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
+        let cap_config = FoldWitnessLinfCapConfig::for_fold_coeffs(
             &fold_challenge_config,
             fold_shape,
             d,
-            inner_width as usize,
+            inner_width as usize * d,
         )
         .unwrap();
         let (delta_fold, _) = fold_witness_digit_plan(

@@ -185,6 +185,7 @@ fn group_batch_commits_independent_arity_precommitteds() {
     const FINAL_NV: usize = 20;
     const GROUP_SIZE: usize = 1;
     const FINAL_SIZE: usize = 4;
+    const SETUP_CAPACITY_SIZE: usize = FINAL_SIZE + 2 * GROUP_SIZE;
 
     let pre_a_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
     let pre_b_key = akita_types::PolynomialGroupLayout::new(PRE_NV, GROUP_SIZE);
@@ -196,7 +197,7 @@ fn group_batch_commits_independent_arity_precommitteds() {
     let pre_a_polys = [debug_make_onehot_poly(&pre_a_layout, 0x0bee_fcaf_9a77_5001)];
     let pre_b_polys = [debug_make_onehot_poly(&pre_b_layout, 0x0bee_fcaf_9a77_6001)];
 
-    let setup = OneHotScheme::setup_prover(FINAL_NV, FINAL_SIZE).expect("protocol setup");
+    let setup = OneHotScheme::setup_prover(FINAL_NV, SETUP_CAPACITY_SIZE).expect("protocol setup");
     let prepared = CpuBackend
         .prepare_setup(&setup)
         .expect("prepared protocol setup");
@@ -213,6 +214,9 @@ fn group_batch_commits_independent_arity_precommitteds() {
         final_group: akita_types::PolynomialGroupLayout::new(FINAL_NV, FINAL_SIZE),
         precommitteds: vec![pre_a_frozen, pre_b_frozen],
     };
+    assert!(multi_group_key
+        .fits_setup_capacity(FINAL_NV, SETUP_CAPACITY_SIZE)
+        .expect("setup capacity"));
 
     let multi_group_schedule =
         OneHotCfg::runtime_schedule(multi_group_key).expect("multi-group runtime schedule");

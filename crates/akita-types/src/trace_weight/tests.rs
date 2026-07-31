@@ -11,7 +11,7 @@ use crate::{
     SisModulusProfileId, WitnessLayout,
 };
 use akita_algebra::CyclotomicRing;
-use akita_field::{CanonicalField, Prime128OffsetA7F7, RandomSampling};
+use akita_field::{Prime128OffsetA7F7, RandomSampling};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 
@@ -46,13 +46,8 @@ fn trace_layout(
         num_digits_open,
     )
     .unwrap();
-    let lp = lp
-        .with_fold_plan(
-            F::modulus_bits(),
-            num_claims,
-            crate::sis::FoldWitnessNorms::bounded(1, D),
-        )
-        .expect("test fold row");
+    let mut lp = lp;
+    lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, num_chunks, 1, 1).unwrap();
     let opening_source_len = witness_layout.total_len();

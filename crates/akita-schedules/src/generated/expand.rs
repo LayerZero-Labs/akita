@@ -1,8 +1,10 @@
 //! On-demand expansion of compact generated schedule steps into full
 //! [`CommittedGroupParams`].
 //!
-//! Generated rows store optimizer choices. Expansion derives all digit depths,
-//! matrix widths, collision buckets, and minimum SIS-secure output ranks.
+//! Generated rows store optimizer choices, including each exact fold digit
+//! depth. Expansion derives commitment digit depths, matrix widths, collision
+//! buckets, and minimum SIS-secure output ranks without rerunning honest fold
+//! sizing.
 //!
 //! This is verifier-reachable (config resolves levels through it on the
 //! replay path), so every fallible step returns [`AkitaError`] rather than
@@ -19,9 +21,8 @@ use crate::runtime::optimize_fold_challenge_shape;
 use crate::PlannerPolicy;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, min_secure_rank, num_digits_inner, num_digits_open,
-    num_digits_setup_prefix_commit, projected_role_ring_count, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessNorms,
+    min_secure_rank, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    projected_role_ring_count, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm,
     SisTableKey,
 };
 use akita_types::{
@@ -135,21 +136,16 @@ impl GeneratedSetupPrefixInput {
         }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            ring_challenge_cfg,
-            fold_shape,
-            d,
-            inner_width,
-        )?;
-        let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
-            FoldWitnessNorms::bounded(self.commitment.inner_commit_matrix.log_basis, d),
-            &fold_linf_cap_config,
-        )?;
+        let num_digits_fold = usize::try_from(self.num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated setup-prefix fold digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated setup-prefix fold digit depth must be nonzero".into(),
+            ));
+        }
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
@@ -230,7 +226,6 @@ impl GeneratedSetupPrefixInput {
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
             num_digits_fold,
-            fold_witness_linf_cap,
         })
     }
 }
@@ -273,7 +268,8 @@ impl GeneratedCommittedGroup {
         policy: &PlannerPolicy,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
-        exact_root_plan: Option<(u32, u32, u128)>,
+        exact_num_digits_inner: Option<u32>,
+        generated_num_digits_fold: u32,
         input_witness_len: usize,
         fold_shape: TensorChallengeShape,
         num_claims: usize,
@@ -368,7 +364,7 @@ impl GeneratedCommittedGroup {
             ..policy.decomposition
         };
         let ring_challenge_cfg = ring_challenge_config(ring_d)?;
-        let num_digits_inner = if let Some((num_digits_inner, _, _)) = exact_root_plan {
+        let num_digits_inner = if let Some(num_digits_inner) = exact_num_digits_inner {
             usize::try_from(num_digits_inner).map_err(|_| {
                 AkitaError::InvalidSetup(
                     "generated root inner digit depth does not fit the target platform".into(),
@@ -382,34 +378,16 @@ impl GeneratedCommittedGroup {
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &ring_challenge_cfg,
-            fold_shape,
-            ring_d,
-            inner_width,
-        )?;
-        let (num_digits_fold, fold_witness_linf_cap) =
-            if let Some((_, num_digits_fold, fold_witness_linf_cap)) = exact_root_plan {
-                (
-                    usize::try_from(num_digits_fold).map_err(|_| {
-                        AkitaError::InvalidSetup(
-                            "generated root fold digit depth does not fit the target platform"
-                                .into(),
-                        )
-                    })?,
-                    fold_witness_linf_cap,
-                )
-            } else {
-                fold_witness_digit_plan(
-                    num_live_blocks,
-                    num_claims,
-                    policy.decomposition.field_bits(),
-                    log_basis_open,
-                    FoldChallengeNorms::new(&ring_challenge_cfg, fold_shape),
-                    FoldWitnessNorms::bounded(witness_decomp.log_basis, ring_d),
-                    &fold_linf_cap_config,
-                )?
-            };
+        let num_digits_fold = usize::try_from(generated_num_digits_fold).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated fold digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_fold == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated fold digit depth must be nonzero".into(),
+            ));
+        }
         let a_bucket = rounded_up_role_a_inf_norm(
             sis_policy,
             policy.sis_table_digest,
@@ -563,11 +541,7 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open,
-            fold_linf_cap_config,
             num_digits_fold,
-            fold_witness_linf_cap,
-            num_fold_claims: num_claims,
-            field_bits_hint: policy.decomposition.field_bits(),
             // The caller stamps the configured per-level chunk policy after
             // expansion; this neutral default keeps parameter construction pure.
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
@@ -592,7 +566,6 @@ impl GeneratedCommittedGroup {
         main_num_polys: usize,
         num_digits_inner: u32,
         num_digits_fold: u32,
-        fold_witness_linf_cap: u128,
         precommitted_groups: Vec<PrecommittedLevelParams>,
         precommitted_d_width: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
@@ -659,12 +632,6 @@ impl GeneratedCommittedGroup {
 
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| no_layout("A"))?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &ring_challenge_cfg,
-            fold_shape,
-            ring_d,
-            inner_width,
-        )?;
         let num_digits_fold = usize::try_from(num_digits_fold).map_err(|_| {
             AkitaError::InvalidSetup(
                 "generated root fold digit depth does not fit the target platform".into(),
@@ -786,11 +753,7 @@ impl GeneratedCommittedGroup {
             num_digits_inner,
             num_digits_outer,
             num_digits_open: num_digits_open_val,
-            fold_linf_cap_config,
             num_digits_fold,
-            fold_witness_linf_cap,
-            num_fold_claims: main_num_polys,
-            field_bits_hint: policy.decomposition.field_bits(),
             witness_chunk: akita_types::ChunkedWitnessCfg::default(),
             precommitted_groups,
             setup_prefix: None,
@@ -806,7 +769,7 @@ impl GeneratedTerminalFold {
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         _fold_level: usize,
         input_witness_len: usize,
-    ) -> Result<(TerminalCommittedGroupParams, u128), AkitaError> {
+    ) -> Result<TerminalCommittedGroupParams, AkitaError> {
         let ring_dimension = self.inner_commit_matrix.ring_dimension as usize;
         if ring_dimension == 0 || !policy.ring_dimension.is_multiple_of(ring_dimension) {
             return Err(AkitaError::InvalidSetup(format!(
@@ -837,57 +800,36 @@ impl GeneratedTerminalFold {
             ));
         }
         let log_basis_inner = self.inner_commit_matrix.log_basis;
-        let witness_decomposition = DecompositionParams {
-            log_basis: log_basis_inner,
-            ..policy.decomposition
-        };
-        let num_digits_inner = num_digits_inner(witness_decomposition, false);
+        let num_digits_inner = usize::try_from(self.num_digits_inner).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal inner digit depth does not fit the target platform".into(),
+            )
+        })?;
+        if num_digits_inner == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal inner digit depth must be nonzero".into(),
+            ));
+        }
         let inner_width = decomposed_s_block_ring_count(num_positions_per_block, num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("terminal A width overflow".to_string()))?;
         let sparse = ring_challenge_config(ring_dimension)?;
-        let fold_linf_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-            &sparse,
-            TensorChallengeShape::Flat,
-            ring_dimension,
-            inner_width,
-        )?;
-        let (fold_digit_depth, _) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis_inner,
-            FoldChallengeNorms::new(&sparse, TensorChallengeShape::Flat),
-            FoldWitnessNorms::bounded(log_basis_inner, ring_dimension),
-            &fold_linf_cap_config,
-        )?;
-        let collision_bucket = rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            ring_dimension,
-            log_basis_inner,
-            &sparse,
-            TensorChallengeShape::Flat,
-            fold_digit_depth,
-            policy.ring_subfield_norm_bound,
-        )
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("terminal A collision exceeds the SIS table".to_string())
+        let output_rank = usize::try_from(self.inner_output_rank).map_err(|_| {
+            AkitaError::InvalidSetup(
+                "generated terminal inner rank does not fit the target platform".into(),
+            )
         })?;
-        let key = sis_key(
-            policy,
-            akita_types::SisMatrixRole::Inner,
-            ring_dimension as u32,
-            collision_bucket,
-        );
-        let output_rank = secure_rank("terminal A", key, inner_width)?;
+        if output_rank == 0 || self.inner_coeff_linf_bound == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal matrix contract must be nonzero".into(),
+            ));
+        }
         let inner_commit_matrix = InnerCommitMatrixParams::try_new(
             policy.sis_security_policy,
             policy.sis_table_digest,
             policy.sis_modulus_profile,
             output_rank,
             inner_width,
-            collision_bucket,
+            self.inner_coeff_linf_bound,
             ring_dimension,
         )?;
         let terminal = TerminalCommittedGroupParams {
@@ -897,10 +839,17 @@ impl GeneratedTerminalFold {
             num_positions_per_block,
             num_live_blocks,
             num_digits_inner,
-            fold_linf_cap_config,
         };
-        let response_policy = terminal.response_linf_policy(&sparse)?;
-        Ok((terminal, response_policy.admission_cap))
+        if self.z_admission_linf_cap == 0
+            || self.z_admission_linf_cap > terminal.certified_response_linf_cap(&sparse)?
+            || self.z_rice_low_bits >= 64
+            || self.z_payload_bytes == 0
+        {
+            return Err(AkitaError::InvalidSetup(
+                "generated terminal response contract is invalid".into(),
+            ));
+        }
+        Ok(terminal)
     }
 }
 

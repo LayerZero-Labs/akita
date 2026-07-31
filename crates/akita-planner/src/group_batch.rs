@@ -4,10 +4,9 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     compute_num_digits_field_width, decomposed_s_block_ring_count, decomposed_t_ring_count,
-    decomposed_w_ring_count, fold_witness_digit_plan, num_digits_inner, num_digits_open,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisTableKey,
+    decomposed_w_ring_count, num_digits_inner, num_digits_open, rounded_up_collision_inf_norm,
+    rounded_up_role_a_inf_norm, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
@@ -40,7 +39,7 @@ fn sis_key(
 #[derive(Clone, Debug)]
 struct PrecommittedGroupSeed {
     layout: CommittedGroupProfile,
-    fold_witness_norms: FoldWitnessNorms,
+    honest_fold_policy: HonestFoldPolicySpec,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
 }
@@ -51,11 +50,10 @@ struct PrecommittedGroupSeed {
 /// root candidate search.
 fn freeze_precommitted_group_layout(
     layout: &CommittedGroupProfile,
-    fold_witness_norms: FoldWitnessNorms,
+    honest_fold_policy: HonestFoldPolicySpec,
     policy: &PlannerPolicy,
 ) -> Result<PrecommittedGroupSeed, AkitaError> {
     layout.validate_frozen_precommit(policy.decomposition.field_bits())?;
-    fold_witness_norms.validate()?;
 
     let d_a = layout.inner_commit_matrix.ring_dimension();
     let d_b = layout.outer_commit_matrix.ring_dimension();
@@ -108,7 +106,7 @@ fn freeze_precommitted_group_layout(
 
     Ok(PrecommittedGroupSeed {
         layout: *layout,
-        fold_witness_norms,
+        honest_fold_policy,
         inner_commit_matrix,
         outer_commit_matrix,
     })
@@ -137,26 +135,24 @@ fn materialize_precommitted_group_for_open_basis(
     };
     let num_digits_open = num_digits_open(open_decomp);
     let challenge_shape = TensorChallengeShape::Flat;
-    let challenge = FoldChallengeNorms {
-        infinity_norm: challenge_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-        l1_norm: challenge_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-    };
-    let cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        ring_challenge_cfg,
-        challenge_shape,
-        group.layout.inner_commit_matrix.ring_dimension(),
-        group.inner_commit_matrix.input_width(),
-    )?;
+    let ring_dimension = group.layout.inner_commit_matrix.ring_dimension();
+    let num_fold_coeffs = group
+        .inner_commit_matrix
+        .input_width()
+        .checked_mul(ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup("precommitted fold width overflow".into()))?;
     let group_claims = group.layout.group.num_polynomials();
-    let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
-        group.layout.num_live_blocks,
-        group_claims,
-        policy.decomposition.field_bits(),
-        log_basis_open,
-        challenge,
-        group.fold_witness_norms,
-        &cap_config,
-    )?;
+    let num_digits_fold = group
+        .honest_fold_policy
+        .num_digits_fold(HonestFoldSizingQuery {
+            ring_dimension,
+            num_claims: group_claims,
+            num_live_blocks: group.layout.num_live_blocks,
+            num_fold_coeffs,
+            log_basis: log_basis_open,
+            challenge_config: ring_challenge_cfg,
+            challenge_shape,
+        })?;
     let required_a_bound = rounded_up_role_a_inf_norm(
         policy.sis_security_policy,
         policy.sis_table_digest,
@@ -193,7 +189,6 @@ fn materialize_precommitted_group_for_open_basis(
         fold_challenge_config: *ring_challenge_cfg,
         num_digits_open,
         num_digits_fold,
-        fold_witness_linf_cap,
     })
 }
 
@@ -201,12 +196,12 @@ struct MultiGroupRootCandidateCtx<'a> {
     policy: &'a PlannerPolicy,
     ring_challenge_cfg: &'a SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
-    final_fold_witness_norms: FoldWitnessNorms,
+    final_honest_fold_policy: HonestFoldPolicySpec,
 }
 
 fn multi_group_root_precommitted_group_seeds(
     key: &AkitaScheduleLookupKey,
-    precommitted_fold_witness_norms: &[FoldWitnessNorms],
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
 ) -> Result<Vec<PrecommittedGroupSeed>, AkitaError> {
     if key.precommitteds.is_empty() {
@@ -214,17 +209,19 @@ fn multi_group_root_precommitted_group_seeds(
             "multi-group root params require at least one precommitted group".to_string(),
         ));
     }
-    if precommitted_fold_witness_norms.len() != key.precommitteds.len() {
+    if precommitted_honest_fold_policies.len() != key.precommitteds.len() {
         return Err(AkitaError::InvalidSetup(
-            "group-batch planning requires one numeric witness model per precommitted profile"
+            "group-batch planning requires one honest fold policy per precommitted profile"
                 .to_string(),
         ));
     }
 
     key.precommitteds
         .iter()
-        .zip(precommitted_fold_witness_norms)
-        .map(|(layout, norms)| freeze_precommitted_group_layout(layout, *norms, policy))
+        .zip(precommitted_honest_fold_policies)
+        .map(|(layout, honest_policy)| {
+            freeze_precommitted_group_layout(layout, *honest_policy, policy)
+        })
         .collect::<Result<Vec<_>, _>>()
 }
 
@@ -280,7 +277,8 @@ pub(crate) fn multi_group_root_next_w_len(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn multi_group_root_level_candidates_for_basis(
     key: &AkitaScheduleLookupKey,
-    precommitted_fold_witness_norms: &[FoldWitnessNorms],
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     ring_challenge_config: &dyn Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -299,12 +297,12 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
     }
 
     let precommitted_groups =
-        multi_group_root_precommitted_group_seeds(key, precommitted_fold_witness_norms, policy)?;
+        multi_group_root_precommitted_group_seeds(key, precommitted_honest_fold_policies, policy)?;
     let candidate_ctx = MultiGroupRootCandidateCtx {
         policy,
         ring_challenge_cfg,
         requested_fold_shape,
-        final_fold_witness_norms: policy.root_fold_witness_norms,
+        final_honest_fold_policy,
     };
     let opening_batch = key.opening_layout()?;
     let initial_witness_len_bits = root_input_witness_len
@@ -410,23 +408,21 @@ fn multi_group_root_main_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
-        ctx.ring_challenge_cfg,
-        fold_challenge_shape,
-        d,
-        width_s,
-    ) else {
+    let Some(num_fold_coeffs) = width_s.checked_mul(d) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
-        num_live_blocks,
-        main_num_polys,
-        policy.decomposition.field_bits(),
-        log_basis,
-        FoldChallengeNorms::new(ctx.ring_challenge_cfg, fold_challenge_shape),
-        ctx.final_fold_witness_norms,
-        &fold_cap_config,
-    ) else {
+    let Ok(num_digits_fold) = ctx
+        .final_honest_fold_policy
+        .num_digits_fold(HonestFoldSizingQuery {
+            ring_dimension: d,
+            num_claims: main_num_polys,
+            num_live_blocks,
+            num_fold_coeffs,
+            log_basis,
+            challenge_config: ctx.ring_challenge_cfg,
+            challenge_shape: fold_challenge_shape,
+        })
+    else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -510,11 +506,7 @@ fn multi_group_root_main_level_params_candidate(
         num_digits_inner,
         num_digits_outer,
         num_digits_open,
-        fold_linf_cap_config: fold_cap_config,
         num_digits_fold,
-        fold_witness_linf_cap,
-        num_fold_claims: main_num_polys,
-        field_bits_hint: policy.decomposition.field_bits(),
         // Multi-group root folds use the ordinary single-chunk precommit path.
         witness_chunk: akita_types::ChunkedWitnessCfg::default(),
         precommitted_groups: precommitted_groups.to_vec(),
@@ -527,7 +519,8 @@ fn multi_group_root_main_level_params_candidate(
 /// Build the phase-1 multi-group-root schedule from the full multi-group key.
 pub fn find_group_batch_schedule(
     key: &AkitaScheduleLookupKey,
-    precommitted_fold_witness_norms: &[FoldWitnessNorms],
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -544,7 +537,8 @@ pub fn find_group_batch_schedule(
         }
         return find_group_batch_schedule_inner(
             key,
-            precommitted_fold_witness_norms,
+            final_honest_fold_policy,
+            precommitted_honest_fold_policies,
             policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -553,7 +547,8 @@ pub fn find_group_batch_schedule(
     }
     find_group_batch_schedule_inner(
         key,
-        precommitted_fold_witness_norms,
+        final_honest_fold_policy,
+        precommitted_honest_fold_policies,
         policy,
         ring_challenge_config,
         fold_challenge_shape_at_level,
@@ -563,7 +558,8 @@ pub fn find_group_batch_schedule(
 
 fn find_group_batch_schedule_inner(
     key: &AkitaScheduleLookupKey,
-    precommitted_fold_witness_norms: &[FoldWitnessNorms],
+    final_honest_fold_policy: HonestFoldPolicySpec,
+    precommitted_honest_fold_policies: &[HonestFoldPolicySpec],
     policy: &PlannerPolicy,
     ring_challenge_config: RingChallengeConfigFn<'_>,
     fold_challenge_shape_at_level: &dyn Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -579,6 +575,7 @@ fn find_group_batch_schedule_inner(
         return find_schedule(
             key.final_group,
             &scalar_policy,
+            final_honest_fold_policy,
             &dimensions,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -599,7 +596,8 @@ fn find_group_batch_schedule_inner(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
-        precommitted_fold_witness_norms,
+        root_honest_fold_policy: Some(final_honest_fold_policy),
+        precommitted_honest_fold_policies,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

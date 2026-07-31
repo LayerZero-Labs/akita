@@ -11,7 +11,7 @@ use akita_field::{AkitaError, Prime128OffsetA7F7};
 use akita_types::{
     extension_opening_reduction_level_bytes, level_proof_bytes, terminal_response_bytes,
     AkitaScheduleInputs, AkitaScheduleLookupKey, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, TerminalResponseShape,
+    PrecommittedLevelParams, TailSegmentGroupLayout, TailSegmentLayout, TerminalResponseShape,
 };
 
 use crate::generated::{
@@ -95,7 +95,6 @@ pub(crate) fn walk_generated_schedule_entry(
                 key.final_group.num_polynomials(),
                 entry.root.final_group.num_digits_inner,
                 entry.root.final_group.num_digits_fold,
-                entry.root.final_group.fold_witness_linf_cap,
                 precommitted_groups,
                 precommitted_d_width,
                 entry.root.open_commit_matrix,
@@ -109,11 +108,8 @@ pub(crate) fn walk_generated_schedule_entry(
                 policy,
                 ring_challenge_config,
                 0,
-                Some((
-                    entry.root.final_group.num_digits_inner,
-                    entry.root.final_group.num_digits_fold,
-                    entry.root.final_group.fold_witness_linf_cap,
-                )),
+                Some(entry.root.final_group.num_digits_inner),
+                entry.root.final_group.num_digits_fold,
                 expected_root_w_len,
                 stored_root_shape,
                 key.final_group.num_polynomials(),
@@ -149,6 +145,7 @@ pub(crate) fn walk_generated_schedule_entry(
             ring_challenge_config,
             index + 1,
             None,
+            fold.num_digits_fold,
             input_witness_len,
             TensorChallengeShape::Flat,
             1,
@@ -162,13 +159,48 @@ pub(crate) fn walk_generated_schedule_entry(
         input_witness_len = output_witness_len;
     }
     let terminal_level = entry.recursive_folds.len() + 1;
-    let (terminal_params, admission_cap) = entry.terminal.expand_to_level_params(
+    let terminal_params = entry.terminal.expand_to_level_params(
         policy,
         ring_challenge_config,
         terminal_level,
         input_witness_len,
     )?;
-    let witness_shape = TerminalResponseShape::derive(&terminal_params, admission_cap)?;
+    let z_coords = terminal_params
+        .inner_width()
+        .checked_mul(terminal_params.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal z coordinates overflow".into()))?;
+    let e_field_elems = terminal_params
+        .num_live_blocks
+        .checked_mul(terminal_params.d_a())
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal e coordinates overflow".into()))?;
+    let t_field_elems = terminal_params
+        .num_live_blocks
+        .checked_mul(terminal_params.inner_commit_matrix.output_rank())
+        .and_then(|value| value.checked_mul(terminal_params.d_a()))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal t coordinates overflow".into()))?;
+    let logical_num_elems = z_coords
+        .checked_add(e_field_elems)
+        .and_then(|value| value.checked_add(t_field_elems))
+        .ok_or_else(|| AkitaError::InvalidSetup("terminal response coordinates overflow".into()))?;
+    let z_payload_bytes = usize::try_from(entry.terminal.z_payload_bytes).map_err(|_| {
+        AkitaError::InvalidSetup(
+            "generated terminal payload budget does not fit the target platform".into(),
+        )
+    })?;
+    let witness_shape = TerminalResponseShape {
+        layout: TailSegmentLayout {
+            ring_dimension: terminal_params.d_a(),
+            groups: vec![TailSegmentGroupLayout {
+                z_coords,
+                e_field_elems,
+                t_field_elems,
+                z_admission_linf_cap: entry.terminal.z_admission_linf_cap,
+                z_rice_low_bits: entry.terminal.z_rice_low_bits,
+                z_payload_bytes,
+            }],
+            logical_num_elems,
+        },
+    };
     let mut folds = Vec::with_capacity(expanded.len());
     let mut total_bytes = 0usize;
     for (fold_level, (lp, input_witness_len, output_witness_len)) in expanded.iter().enumerate() {

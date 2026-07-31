@@ -19,16 +19,15 @@
 //! let inner_commit_matrix = InnerCommitMatrixParams::try_new(bits, family, n_a, width_s, norm_s, d)?;
 //! ```
 //!
-//! Layout/search orchestration (`optimal_block_geometry_split`, the `*_layout_from_params`
-//! builders) stays in `crate::layout`; it composes these primitives but
-//! contains no SIS formula of its own.
+//! Layout/search orchestration stays in `akita-planner`; it composes these
+//! primitives but contains no SIS formula of its own.
 
 pub mod ajtai_key;
 pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
-pub mod fold_witness_grind;
 mod generated_sis_table;
+pub mod honest_fold_policy;
 pub mod norm_bound;
 
 pub use ajtai_key::{
@@ -45,11 +44,14 @@ pub use decomposition_digits::{
     num_digits_for_bound, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
     projected_role_ring_count,
 };
-pub use fold_witness_grind::{
-    FoldWitnessGrindBatchContract, FoldWitnessGrindContract, FOLD_GRIND_PROBE_ORDER_ABSORB,
+pub use honest_fold_policy::{
+    BalancedSignedDigitFoldPolicy, DigitSnapCalibration, HonestFoldPolicy, HonestFoldPolicySpec,
+    HonestFoldSizingQuery, UnitOneHotFoldPolicy,
 };
+#[cfg(test)]
+pub(crate) use norm_bound::fold_witness_digit_plan;
 pub use norm_bound::{
-    fold_witness_digit_plan, fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
+    fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
     role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,

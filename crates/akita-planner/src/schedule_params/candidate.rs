@@ -48,23 +48,22 @@ pub(crate) fn recursive_fold_level_params_candidate(
     let Some(width_s) = decomposed_s_block_ring_count(num_positions_per_block, delta_commit) else {
         return Ok(None);
     };
-    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
-        ring_challenge_cfg,
-        fold_challenge_shape,
-        dimensions.d_a(),
-        width_s,
-    ) else {
+    let Some(num_fold_coeffs) = width_s.checked_mul(dimensions.d_a()) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
-        num_live_blocks,
-        1,
+    let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
         policy.decomposition.field_bits(),
-        decomp.log_basis,
-        FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
         FoldWitnessNorms::bounded(decomp.log_basis, dimensions.d_a()),
-        &fold_cap_config,
-    ) else {
+    );
+    let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
+        ring_dimension: dimensions.d_a(),
+        num_claims: 1,
+        num_live_blocks,
+        num_fold_coeffs,
+        log_basis: decomp.log_basis,
+        challenge_config: ring_challenge_cfg,
+        challenge_shape: fold_challenge_shape,
+    }) else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -146,11 +145,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         num_digits_inner: delta_commit,
         num_digits_outer: delta_open,
         num_digits_open: delta_open,
-        fold_linf_cap_config: fold_cap_config,
         num_digits_fold,
-        fold_witness_linf_cap,
-        num_fold_claims: 1,
-        field_bits_hint: policy.decomposition.field_bits(),
         witness_chunk: policy.witness_chunk_for_level(fold_level),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
@@ -268,7 +263,7 @@ fn grouped_setup_prefix_next_witness_len(
         params.num_digits_inner,
         params.num_digits_outer,
         params.num_digits_open,
-        params.num_digits_fold(final_num_polys, field_bits)?,
+        params.num_digits_fold(),
     )?;
     for group in params.precommitted_group_iter() {
         let group_rings = grouped_segment_rings(
@@ -381,20 +376,22 @@ pub(super) fn derive_setup_prefix_group(
         else {
             continue;
         };
-        let Ok(fold_cap_config) =
-            FoldWitnessLinfCapConfig::for_fold_level(ring_challenge_cfg, fold_shape, d, width_s)
-        else {
+        let Some(num_fold_coeffs) = width_s.checked_mul(d) else {
             continue;
         };
-        let Ok((num_digits_fold, _)) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
+        let fold_policy = BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
             policy.decomposition.field_bits(),
-            log_basis_open,
-            FoldChallengeNorms::new(ring_challenge_cfg, fold_shape),
             FoldWitnessNorms::bounded(inner_decomp.log_basis, d),
-            &fold_cap_config,
-        ) else {
+        );
+        let Ok(num_digits_fold) = fold_policy.num_digits_fold(HonestFoldSizingQuery {
+            ring_dimension: d,
+            num_claims: 1,
+            num_live_blocks,
+            num_fold_coeffs,
+            log_basis: log_basis_open,
+            challenge_config: ring_challenge_cfg,
+            challenge_shape: fold_shape,
+        }) else {
             continue;
         };
         let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -450,21 +447,6 @@ pub(super) fn derive_setup_prefix_group(
         ) else {
             continue;
         };
-        let fold_linf_cap_config =
-            FoldWitnessLinfCapConfig::for_fold_level(ring_challenge_cfg, fold_shape, d, width_s)?;
-        let challenge = FoldChallengeNorms {
-            infinity_norm: fold_shape.effective_infinity_norm(ring_challenge_cfg) as u128,
-            l1_norm: fold_shape.effective_l1_mass(ring_challenge_cfg) as u128,
-        };
-        let (num_digits_fold, fold_witness_linf_cap) = fold_witness_digit_plan(
-            num_live_blocks,
-            1,
-            policy.decomposition.field_bits(),
-            log_basis_open,
-            challenge,
-            FoldWitnessNorms::bounded(log_basis_inner, d),
-            &fold_linf_cap_config,
-        )?;
         let layout = CommittedGroupProfile {
             version: CommittedGroupProfile::VERSION,
             group: PolynomialGroupLayout::singleton(prefix_num_vars),
@@ -484,7 +466,6 @@ pub(super) fn derive_setup_prefix_group(
             fold_challenge_config: *ring_challenge_cfg,
             num_digits_open: num_digits_open_val,
             num_digits_fold,
-            fold_witness_linf_cap,
         };
         let physical_width = grouped_segment_rings(
             1,
@@ -918,6 +899,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     log_basis: u32,
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
+    honest_fold_policy: HonestFoldPolicySpec,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
     dimensions.validate_a_carrier()?;
     let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
@@ -958,23 +940,18 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     else {
         return Ok(None);
     };
-    let Ok(fold_cap_config) = FoldWitnessLinfCapConfig::for_fold_level(
-        ring_challenge_cfg,
-        fold_challenge_shape,
-        dimensions.d_a(),
-        width_s,
-    ) else {
+    let Some(num_fold_coeffs) = width_s.checked_mul(dimensions.d_a()) else {
         return Ok(None);
     };
-    let Ok((num_digits_fold, fold_witness_linf_cap)) = fold_witness_digit_plan(
-        num_live_blocks,
+    let Ok(num_digits_fold) = honest_fold_policy.num_digits_fold(HonestFoldSizingQuery {
+        ring_dimension: dimensions.d_a(),
         num_claims,
-        policy.decomposition.field_bits(),
+        num_live_blocks,
+        num_fold_coeffs,
         log_basis,
-        FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape),
-        policy.root_fold_witness_norms,
-        &fold_cap_config,
-    ) else {
+        challenge_config: ring_challenge_cfg,
+        challenge_shape: fold_challenge_shape,
+    }) else {
         return Ok(None);
     };
     let Some(norm_s) = rounded_up_role_a_inf_norm(
@@ -1058,11 +1035,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         num_digits_inner,
         num_digits_outer: num_digits_open,
         num_digits_open,
-        fold_linf_cap_config: fold_cap_config,
         num_digits_fold,
-        fold_witness_linf_cap,
-        num_fold_claims: num_claims,
-        field_bits_hint: policy.decomposition.field_bits(),
         witness_chunk: policy.witness_chunk_for_level(0),
         precommitted_groups: Vec::new(),
         setup_prefix: None,
@@ -1109,7 +1082,6 @@ mod tests {
             fold_challenge_config: precommitted.fold_challenge_config,
             num_digits_open: precommitted.num_digits_open,
             num_digits_fold: precommitted.num_digits_fold,
-            fold_witness_linf_cap: precommitted.fold_witness_linf_cap,
         }];
         params
     }

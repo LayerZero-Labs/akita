@@ -276,7 +276,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        root_fold_witness_norms: Cfg::root_fold_witness_norms(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning: Cfg::recursive_setup_planning(),
     };
@@ -311,10 +310,11 @@ fn offline_planner_admits_dense_multi_group_roots() {
         final_group: PolynomialGroupLayout::singleton(FINAL_NV),
         precommitteds: vec![CommittedGroupProfile::from_params(pre_group, &pre_params)],
     };
-    let precommitted_fold_witness_norms = vec![Cfg::root_fold_witness_norms()];
+    let precommitted_honest_fold_policies = vec![Cfg::root_honest_fold_policy()];
     let planned = find_group_batch_schedule(
         &key,
-        &precommitted_fold_witness_norms,
+        Cfg::root_honest_fold_policy(),
+        &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,
@@ -380,13 +380,24 @@ fn heterogeneous_group_profiles_match_generated_lookup_and_reject_unlisted_order
         precommitteds: vec![onehot_16, dense],
     };
 
-    let precommitted_fold_witness_norms = vec![
-        akita_types::sis::FoldWitnessNorms::new(1, 4),
-        akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
+    let precommitted_honest_fold_policies = vec![
+        akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+            akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                Cfg::decomposition().field_bits(),
+                akita_types::sis::FoldWitnessNorms::new(1, 4),
+            ),
+        ),
+        akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+            akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                Cfg::decomposition().field_bits(),
+                akita_types::sis::FoldWitnessNorms::bounded(3, Cfg::D),
+            ),
+        ),
     ];
     let planned = find_group_batch_schedule(
         &key,
-        &precommitted_fold_witness_norms,
+        Cfg::root_honest_fold_policy(),
+        &precommitted_honest_fold_policies,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

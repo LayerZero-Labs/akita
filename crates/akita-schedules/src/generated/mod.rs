@@ -48,7 +48,6 @@ pub struct GeneratedRootFinalGroup {
     pub challenge: GeneratedRootFinalChallenge,
     pub num_digits_inner: u32,
     pub num_digits_fold: u32,
-    pub fold_witness_linf_cap: u128,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -56,7 +55,6 @@ pub struct GeneratedRootFinalGroup {
 pub struct GeneratedRootPrecommittedGroup {
     pub descriptor: akita_types::CommittedGroupProfile,
     pub num_digits_fold: u32,
-    pub fold_witness_linf_cap: u128,
     pub commitment: GeneratedCommittedGroup,
 }
 
@@ -78,12 +76,14 @@ pub struct GeneratedRootFold {
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
     pub d_setup: u32,
+    pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedRecursiveFold {
     pub witness: GeneratedCommittedGroup,
+    pub num_digits_fold: u32,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,
     pub witness_partition: GeneratedWitnessPartition,
@@ -93,6 +93,12 @@ pub struct GeneratedRecursiveFold {
 pub struct GeneratedTerminalFold {
     pub geometry: GeneratedBlockGeometry,
     pub inner_commit_matrix: GeneratedInnerCommitMatrix,
+    pub num_digits_inner: u32,
+    pub inner_output_rank: u32,
+    pub inner_coeff_linf_bound: u128,
+    pub z_admission_linf_cap: u128,
+    pub z_rice_low_bits: u32,
+    pub z_payload_bytes: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +140,6 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    pub root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     /// Multi-chunk witness layout this table was emitted under. A chunked policy
     /// never aliases a single-chunk table (and vice versa), even when row keys
     /// match. `ChunkedWitnessCfg::default()` for single-chunk tables.
@@ -162,8 +167,7 @@ pub use crate::{
     SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{
-    sis::FoldWitnessNorms, CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams,
-    PolynomialGroupLayout,
+    CommittedGroupProfile, InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
 };
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
 pub use validate::{validate_generated_schedule_entry, validate_generated_schedule_table};

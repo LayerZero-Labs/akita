@@ -31,6 +31,7 @@ fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSumma
     let key = PolynomialGroupLayout::new(num_vars, 1);
     let schedule = find_group_batch_schedule(
         &akita_types::AkitaScheduleLookupKey::single(key),
+        Cfg::root_honest_fold_policy(),
         &[],
         policy,
         Cfg::ring_challenge_config,

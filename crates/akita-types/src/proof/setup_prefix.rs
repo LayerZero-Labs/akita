@@ -427,9 +427,6 @@ fn serialize_precommitted_level_params<W: Write>(
     params
         .num_digits_fold
         .serialize_with_mode(&mut writer, compress)?;
-    params
-        .fold_witness_linf_cap
-        .serialize_with_mode(&mut writer, compress)?;
     Ok(())
 }
 
@@ -464,7 +461,6 @@ fn deserialize_precommitted_level_params<R: Read>(
     let challenge_count_pm2 = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_open = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
     let num_digits_fold = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
-    let fold_witness_linf_cap = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
     Ok(PrecommittedLevelParams {
         layout: CommittedGroupProfile {
             version,
@@ -486,7 +482,6 @@ fn deserialize_precommitted_level_params<R: Read>(
         },
         num_digits_open,
         num_digits_fold,
-        fold_witness_linf_cap,
     })
 }
 
@@ -527,7 +522,6 @@ fn precommitted_level_params_serialized_size(
             .serialized_size(compress)
         + params.num_digits_open.serialized_size(compress)
         + params.num_digits_fold.serialized_size(compress)
-        + params.fold_witness_linf_cap.serialized_size(compress)
 }
 
 impl AkitaSerialize for SetupPrefixSlotId {
@@ -1320,7 +1314,6 @@ pub fn setup_prefix_precommitted_params(
                 fold_challenge_config: prefix_params.fold_challenge_config,
                 num_digits_open: prefix_params.num_digits_open,
                 num_digits_fold: prefix_params.num_digits_fold,
-                fold_witness_linf_cap: prefix_params.fold_witness_linf_cap,
             });
         }
         num_positions_per_block = num_positions_per_block.checked_mul(2).ok_or_else(|| {

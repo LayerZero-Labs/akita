@@ -1,7 +1,7 @@
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 
-use crate::descriptor_bytes::{push_u128, push_usize};
+use crate::descriptor_bytes::push_usize;
 use crate::schedule::CommittedGroupProfile;
 use crate::sis::InnerCommitMatrixParams;
 use crate::CommitmentRingDims;
@@ -24,8 +24,6 @@ pub struct PrecommittedLevelParams {
     pub num_digits_open: usize,
     /// Exact folded-witness digit depth selected by this schedule row.
     pub num_digits_fold: usize,
-    /// Exact per-coefficient folded-response cap selected by this schedule row.
-    pub fold_witness_linf_cap: u128,
 }
 
 impl PartialEq for PrecommittedLevelParams {
@@ -35,7 +33,6 @@ impl PartialEq for PrecommittedLevelParams {
             && self.fold_challenge_config == other.fold_challenge_config
             && self.num_digits_open == other.num_digits_open
             && self.num_digits_fold == other.num_digits_fold
-            && self.fold_witness_linf_cap == other.fold_witness_linf_cap
     }
 }
 
@@ -66,11 +63,7 @@ impl PrecommittedLevelParams {
                 .validate_for_ring_dim(self.layout.inner_commit_matrix.ring_dimension())
                 .map_err(|msg| AkitaError::InvalidSetup(msg.to_string()))?;
         }
-        if self.log_basis_open == 0
-            || self.num_digits_open == 0
-            || self.num_digits_fold == 0
-            || self.fold_witness_linf_cap == 0
-        {
+        if self.log_basis_open == 0 || self.num_digits_open == 0 || self.num_digits_fold == 0 {
             return Err(AkitaError::InvalidSetup(
                 "precommitted exact fold plan is missing or inconsistent".to_string(),
             ));
@@ -160,7 +153,6 @@ impl PrecommittedLevelParams {
         );
         push_usize(bytes, self.num_digits_open);
         push_usize(bytes, self.num_digits_fold);
-        push_u128(bytes, self.fold_witness_linf_cap);
     }
 }
 
@@ -185,8 +177,6 @@ pub trait LevelParamsLike {
     fn num_digits_outer(&self) -> usize;
     fn num_digits_open(&self) -> usize;
     fn num_digits_fold(&self) -> usize;
-    fn fold_witness_linf_cap(&self) -> u128;
-    fn num_fold_claims(&self) -> usize;
     fn log_basis_inner(&self) -> u32;
     fn log_basis_outer(&self) -> u32;
     fn log_basis_open(&self) -> u32;
@@ -255,14 +245,6 @@ impl LevelParamsLike for CommittedGroupParams {
 
     fn num_digits_fold(&self) -> usize {
         self.num_digits_fold
-    }
-
-    fn fold_witness_linf_cap(&self) -> u128 {
-        self.fold_witness_linf_cap
-    }
-
-    fn num_fold_claims(&self) -> usize {
-        self.num_fold_claims
     }
 
     fn log_basis_outer(&self) -> u32 {
@@ -344,14 +326,6 @@ impl LevelParamsLike for PrecommittedLevelParams {
 
     fn num_digits_fold(&self) -> usize {
         self.num_digits_fold
-    }
-
-    fn fold_witness_linf_cap(&self) -> u128 {
-        self.fold_witness_linf_cap
-    }
-
-    fn num_fold_claims(&self) -> usize {
-        self.layout.group.num_polynomials()
     }
 
     fn log_basis_outer(&self) -> u32 {

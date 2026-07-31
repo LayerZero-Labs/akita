@@ -42,10 +42,10 @@ use akita_field::AkitaError;
 use akita_planner::generated_families::{
     emitted_scalar_keys, GeneratedFamily, ALL_GENERATED_FAMILIES,
 };
-use akita_types::sis::FoldWitnessNorms;
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{AkitaScheduleLookupKey, FoldSchedule, PolynomialGroupLayout};
 
-type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<FoldWitnessNorms>);
+type GroupBatchCandidate = (AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>);
 
 #[cfg(feature = "all-schedules")]
 use akita_config::policy_of;

@@ -15,10 +15,7 @@ mod fold_linf_binding;
 #[cfg(test)]
 mod tests;
 
-pub use fold_linf_binding::{
-    FoldLinfProtocolBinding, FOLD_GRIND_PROBE_ORDER_SEQUENTIAL_MIN,
-    FOLD_GRIND_PROBE_ORDER_TRANSCRIPT_SHUFFLE,
-};
+pub use fold_linf_binding::FoldLinfProtocolBinding;
 
 use crate::descriptor_bytes::{push_usize, sis_modulus_profile_tag};
 use crate::{

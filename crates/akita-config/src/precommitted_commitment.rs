@@ -71,8 +71,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for PrecommittedCommitmentConfig<Cf
         Cfg::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Cfg::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Cfg::root_honest_fold_policy()
     }
 
     fn supports_multi_group_final_commit() -> bool {
@@ -164,7 +164,6 @@ pub fn committed_group_params<Cfg: CommitmentConfig>(
             params.num_digits_outer = group.layout.num_digits_outer;
             params.num_digits_open = group.num_digits_open;
             params.num_digits_fold = group.num_digits_fold;
-            params.fold_witness_linf_cap = group.fold_witness_linf_cap;
             params.precommitted_groups.clear();
             return Ok(params);
         }

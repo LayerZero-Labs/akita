@@ -161,21 +161,18 @@ fn terminal_response_z_fold_stats<FF: FieldCore>(
     field_bits: u32,
 ) -> Result<ZFoldEncodingStats, akita_field::AkitaError> {
     let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let group = witness
         .layout
         .groups
         .first()
         .ok_or(akita_field::AkitaError::InvalidProof)?;
-    let admission_cap = params.response_linf_policy(sparse)?.admission_cap;
+    let admission_cap = group.z_admission_linf_cap;
     let z_values = akita_types::decode_terminal_z_golomb_payload(
         witness
             .z_payloads
             .first()
             .ok_or(akita_field::AkitaError::InvalidProof)?,
-        group.z_coords,
-        admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     )?;
     let log_cap = u128::BITS - admission_cap.leading_zeros();
     let hypothetical_digits =
@@ -197,12 +194,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
     field_bits: u32,
     actual_z_payload_bytes: usize,
 ) {
-    let params = &schedule.terminal.params.witness;
-    let sparse = &schedule.terminal.params.sparse_challenge_config;
     let Some(group) = witness.layout.groups.first() else {
-        return;
-    };
-    let Ok(response_policy) = params.response_linf_policy(sparse) else {
         return;
     };
     let Ok(z_values) = akita_types::decode_terminal_z_golomb_payload(
@@ -211,9 +203,7 @@ fn emit_z_golomb_k_sweep<FF: FieldCore>(
             .first()
             .map(Vec::as_slice)
             .unwrap_or_default(),
-        group.z_coords,
-        response_policy.admission_cap,
-        Some(group.z_payload_bytes),
+        group,
     ) else {
         return;
     };
@@ -368,7 +358,6 @@ pub(crate) fn emit_runtime_schedule_summary(
     );
     for (level_idx, lp, input_witness_len, output_witness_len, current_w_groups) in nonterminal {
         let role_dims = lp.role_dims();
-        let num_claims = if level_idx == 0 { root_num_claims } else { 1 };
         let current_w_len = current_w_groups;
         let next_w_len = output_witness_len;
         let setup_prefix = schedule
@@ -402,7 +391,7 @@ pub(crate) fn emit_runtime_schedule_summary(
             num_digits_inner = lp.num_digits_inner,
             num_digits_outer = lp.num_digits_outer,
             num_digits_open = lp.num_digits_open,
-            delta_fold = lp.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+            delta_fold = lp.num_digits_fold(),
             input_witness_len,
             output_witness_len,
             current_w_len,
@@ -760,7 +749,7 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     );
 }
 
-pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, field_bits: u32) {
+pub(crate) fn print_layout(layout: &CommittedGroupParams, _num_claims: usize, _field_bits: u32) {
     tracing::debug!(
         position_index_bits = layout.position_index_bits(),
         block_index_bits = layout.block_index_bits(),
@@ -771,7 +760,7 @@ pub(crate) fn print_layout(layout: &CommittedGroupParams, num_claims: usize, fie
         num_digits_inner = layout.num_digits_inner,
         num_digits_outer = layout.num_digits_outer,
         num_digits_open = layout.num_digits_open,
-        delta_fold = layout.num_digits_fold(num_claims, field_bits).unwrap_or(0),
+        delta_fold = layout.num_digits_fold(),
         log_basis_inner = layout.log_basis_inner,
         log_basis_outer = layout.log_basis_outer,
         log_basis_open = layout.log_basis_open,

@@ -73,8 +73,13 @@ pub mod fp128 {
             )
         }
 
-        fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-            akita_types::sis::FoldWitnessNorms::new(1, 1)
+        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+            akita_types::sis::HonestFoldPolicySpec::UnitOneHot(
+                akita_types::sis::UnitOneHotFoldPolicy::preserving_existing_behavior(
+                    128,
+                    akita_types::sis::FoldWitnessNorms::new(1, 1),
+                ),
+            )
         }
 
         fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {

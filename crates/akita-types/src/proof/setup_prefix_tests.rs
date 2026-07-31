@@ -153,7 +153,6 @@ fn precommitted_group(
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
         num_digits_fold: params.num_digits_fold,
-        fold_witness_linf_cap: params.fold_witness_linf_cap,
     }
 }
 

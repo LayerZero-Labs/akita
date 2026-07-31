@@ -89,8 +89,8 @@ impl akita_config::CommitmentConfig for MixedDBadLevelDim {
         Envelope::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Envelope::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Envelope::root_honest_fold_policy()
     }
 
     fn get_params_for_prove(

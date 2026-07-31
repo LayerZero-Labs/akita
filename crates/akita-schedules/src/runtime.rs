@@ -83,8 +83,6 @@ pub struct PlannerPolicy {
     pub claim_ext_degree: usize,
     pub chal_ext_degree: usize,
     pub basis_range: (u32, u32),
-    /// Numeric honest root-witness estimate used only by offline planning.
-    pub root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     pub witness_chunk: ChunkedWitnessCfg,
     pub recursive_setup_planning: bool,
 }
@@ -93,17 +91,6 @@ pub struct PlannerPolicy {
 pub type RuntimeSchedulePolicy = PlannerPolicy;
 
 impl PlannerPolicy {
-    /// Root-witness-specialized policy for offline scalar/precommit planning.
-    pub fn with_root_fold_witness_norms(
-        self,
-        root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
-    ) -> Self {
-        Self {
-            root_fold_witness_norms,
-            ..self
-        }
-    }
-
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
@@ -157,7 +144,6 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    policy.root_fold_witness_norms.validate()?;
     let expected_selection_policy = if policy.recursive_setup_planning {
         SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
     } else {
@@ -502,7 +488,7 @@ fn grouped_setup_prefix_next_witness_len(
         params.num_digits_inner,
         params.num_digits_outer,
         params.num_digits_open,
-        params.num_digits_fold(final_num_polys, field_bits)?,
+        params.num_digits_fold(),
     )?;
     for group in params.precommitted_group_iter() {
         let group_rings = grouped_segment_rings(

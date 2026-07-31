@@ -3,8 +3,8 @@
 //! Pure data and pure verifier-reachable helpers only. The recursion layout is
 //! owned by the schedule: runtime expands catalog rows through
 //! `akita_schedules::schedule_from_entry`, while the offline planner builds new
-//! candidates with `akita_planner::find_group_batch_schedule` and the digit-math
-//! `optimal_block_geometry_split` sweep. Prover/verifier read those params directly.
+//! candidates with `akita_planner::find_group_batch_schedule`. Prover/verifier
+//! read those params directly.
 //! This module retains the layout glue the replay path reaches through
 //! `CommitmentConfig`.
 

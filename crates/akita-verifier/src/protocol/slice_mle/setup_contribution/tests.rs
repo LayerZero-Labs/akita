@@ -160,15 +160,7 @@ impl SetupContributionFixture {
                 TEST_RING_DIM,
             );
         }
-        let fold_witness_norms =
-            akita_types::sis::FoldWitnessNorms::bounded(lp.log_basis_inner, TEST_RING_DIM);
-        lp = lp
-            .with_fold_plan(
-                TestField::modulus_bits(),
-                shape.num_claims,
-                fold_witness_norms,
-            )
-            .expect("setup contribution fixture fold row");
+        lp.num_digits_fold = 3;
         shape.depth_fold = lp.num_digits_fold;
         let opening_batch = OpeningClaimsLayout::from_group_sizes(0, &shape.num_polys_per_group)
             .expect("setup contribution fixture opening batch");

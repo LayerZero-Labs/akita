@@ -2,10 +2,9 @@
 
 use akita_field::AkitaError;
 use akita_types::sis::{
-    decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_digit_plan, num_digits_inner,
-    num_digits_open, rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
+    decomposed_t_ring_count, decomposed_w_ring_count, num_digits_inner, num_digits_open,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, InnerCommitMatrixParams,
+    OpenCommitMatrixParams, OuterCommitMatrixParams, SisMatrixRole, SisTableKey,
 };
 use akita_types::{
     shared_d_digit_log_basis, validate_role_dims, CommittedGroupBatchProfile, CommittedGroupParams,
@@ -169,17 +168,8 @@ fn audit_committed_params(
     num_claims: usize,
     policy: &PlannerPolicy,
 ) -> Result<(), AkitaError> {
-    if num_claims == 0 || params.num_fold_claims != num_claims {
-        return Err(invalid(
-            label,
-            "fold claim count does not match the committed group",
-        ));
-    }
-    if params.field_bits_hint != policy.decomposition.field_bits() {
-        return Err(invalid(
-            label,
-            "field-width hint disagrees with the catalog policy",
-        ));
+    if num_claims == 0 {
+        return Err(invalid(label, "fold claim count must be positive"));
     }
     params.validate_block_geometry()?;
     params.witness_chunk.validate()?;
@@ -206,19 +196,6 @@ fn audit_committed_params(
         || params.num_digits_open != expected_open_digits
     {
         return Err(invalid(label, "digit depths are missing or noncanonical"));
-    }
-
-    let expected_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        &params.fold_challenge_config,
-        params.fold_challenge_shape,
-        params.d_a(),
-        params.inner_width(),
-    )?;
-    if params.fold_linf_cap_config != expected_cap_config {
-        return Err(invalid(
-            label,
-            "fold L-infinity cap configuration is not canonical",
-        ));
     }
 
     let dims = params.role_dims();
@@ -326,48 +303,17 @@ fn audit_terminal(
         ));
     }
 
-    let expected_cap_config = FoldWitnessLinfCapConfig::for_fold_level(
-        sparse,
-        akita_challenges::TensorChallengeShape::Flat,
-        params.d_a(),
-        params.inner_width(),
-    )?;
-    if params.fold_linf_cap_config != expected_cap_config {
+    let group = response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| invalid(label, "terminal response shape is missing its group"))?;
+    if response_shape.layout.groups.len() != 1
+        || group.z_admission_linf_cap > params.certified_response_linf_cap(sparse)?
+    {
         return Err(invalid(
             label,
-            "terminal fold L-infinity cap configuration is not canonical",
-        ));
-    }
-    let (fold_digit_depth, _) = fold_witness_digit_plan(
-        params.num_live_blocks,
-        1,
-        policy.decomposition.field_bits(),
-        params.log_basis_inner,
-        FoldChallengeNorms::new(sparse, akita_challenges::TensorChallengeShape::Flat),
-        FoldWitnessNorms::bounded(params.log_basis_inner, params.d_a()),
-        &expected_cap_config,
-    )?;
-    audit_bound(
-        label,
-        params.inner_commit_matrix.coeff_linf_bound(),
-        rounded_up_role_a_inf_norm(
-            policy.sis_security_policy,
-            policy.sis_table_digest,
-            policy.sis_modulus_profile,
-            params.d_a(),
-            params.log_basis_inner,
-            sparse,
-            akita_challenges::TensorChallengeShape::Flat,
-            fold_digit_depth,
-            policy.ring_subfield_norm_bound,
-        ),
-    )?;
-
-    let response_policy = params.response_linf_policy(sparse)?;
-    if *response_shape != TerminalResponseShape::derive(params, response_policy.admission_cap)? {
-        return Err(invalid(
-            label,
-            "terminal response shape disagrees with the accepted response cap",
+            "terminal response shape exceeds the matrix-certified cap",
         ));
     }
     Ok(())
@@ -430,7 +376,7 @@ pub(crate) fn audit_resolved_schedule(
         audit_committed_params(
             &format!("recursive fold {index}"),
             &step.params.witness,
-            step.params.witness.num_fold_claims,
+            1,
             policy,
         )?;
         if step.params.open_commit_matrix != step.params.witness.open_commit_matrix {

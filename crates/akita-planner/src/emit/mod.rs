@@ -11,7 +11,7 @@ use std::process::Command;
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-use akita_types::sis::FoldWitnessNorms;
+use akita_types::sis::HonestFoldPolicySpec;
 use akita_types::{
     AkitaScheduleInputs, AkitaScheduleLookupKey, CommittedGroupParams, CommittedGroupProfile,
     FoldSchedule, OpenCommitMatrixParams, PolynomialGroupLayout, RootFinalChallenge,
@@ -37,12 +37,12 @@ pub struct EmitSpec {
     pub schedule_feature: &'static str,
     pub policy: PlannerPolicy,
     pub keys: Vec<PolynomialGroupLayout>,
-    pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>)>,
+    pub group_batch_keys: Vec<(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>)>,
     pub emit_group_batch: bool,
     pub output_dir: PathBuf,
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     pub regen_group_batch:
-        fn(AkitaScheduleLookupKey, Vec<FoldWitnessNorms>) -> Result<FoldSchedule, AkitaError>,
+        fn(AkitaScheduleLookupKey, Vec<HonestFoldPolicySpec>) -> Result<FoldSchedule, AkitaError>,
     pub ring_challenge_config: fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     pub fold_challenge_shape_at_level: fn(AkitaScheduleInputs) -> TensorChallengeShape,
     pub generator_command: &'static str,
@@ -96,6 +96,7 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
     GeneratedSetupPrefixInput {
         natural_len: slot.natural_len as u64,
         d_setup: group.layout.inner_commit_matrix.ring_dimension() as u32,
+        num_digits_fold: group.num_digits_fold as u32,
         commitment: GeneratedCommittedGroup {
             geometry: GeneratedBlockGeometry {
                 live_ring_elements_per_claim: group.layout.num_live_ring_elements_per_claim as u64,
@@ -118,7 +119,7 @@ fn setup_prefix_slot_input(slot: &SetupPrefixSlotId) -> GeneratedSetupPrefixInpu
 fn generated_entry(
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
-) -> GeneratedFoldScheduleEntry {
+) -> Result<GeneratedFoldScheduleEntry, String> {
     let root_fold = &schedule.root.params;
     let root_params = &root_fold.final_group.commitment;
     let precommitted_groups = key
@@ -129,7 +130,6 @@ fn generated_entry(
         .map(|(descriptor, group)| GeneratedRootPrecommittedGroup {
             descriptor,
             num_digits_fold: group.commitment.num_digits_fold as u32,
-            fold_witness_linf_cap: group.commitment.fold_witness_linf_cap,
             commitment: GeneratedCommittedGroup {
                 geometry: GeneratedBlockGeometry {
                     live_ring_elements_per_claim: group
@@ -159,6 +159,7 @@ fn generated_entry(
         .iter()
         .map(|step| GeneratedRecursiveFold {
             witness: committed_group(&step.params.witness),
+            num_digits_fold: step.params.witness.num_digits_fold as u32,
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
                 step.params.witness.log_basis_open,
@@ -177,13 +178,23 @@ fn generated_entry(
             fold_low_len: fold_low_len as u32,
         },
     };
-    GeneratedFoldScheduleEntry {
+    let terminal_group = schedule
+        .terminal
+        .params
+        .response_shape
+        .layout
+        .groups
+        .first()
+        .ok_or_else(|| "terminal response shape has no group".to_string())?;
+    if schedule.terminal.params.response_shape.layout.groups.len() != 1 {
+        return Err("generated scalar terminal response must have exactly one group".to_string());
+    }
+    Ok(GeneratedFoldScheduleEntry {
         root: GeneratedRootFold {
             final_group: GeneratedRootFinalGroup {
                 layout: key.final_group,
                 num_digits_inner: root_params.num_digits_inner as u32,
                 num_digits_fold: root_params.num_digits_fold as u32,
-                fold_witness_linf_cap: root_params.fold_witness_linf_cap,
                 challenge,
                 commitment: committed_group(root_params),
             },
@@ -216,8 +227,24 @@ fn generated_entry(
                     .ring_dimension() as u32,
                 log_basis: schedule.terminal.params.witness.log_basis_inner,
             },
+            num_digits_inner: schedule.terminal.params.witness.num_digits_inner as u32,
+            inner_output_rank: schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .output_rank() as u32,
+            inner_coeff_linf_bound: schedule
+                .terminal
+                .params
+                .witness
+                .inner_commit_matrix
+                .coeff_linf_bound(),
+            z_admission_linf_cap: terminal_group.z_admission_linf_cap,
+            z_rice_low_bits: terminal_group.z_rice_low_bits,
+            z_payload_bytes: terminal_group.z_payload_bytes as u64,
         },
-    }
+    })
 }
 
 fn emit_key(key: PolynomialGroupLayout) -> String {
@@ -272,14 +299,6 @@ fn emit_profile_matrix(
     )
 }
 
-fn emit_fold_witness_norms(norms: FoldWitnessNorms) -> String {
-    format!(
-        "FoldWitnessNorms::new({}, {})",
-        norms.infinity_norm(),
-        norms.l1_norm()
-    )
-}
-
 fn emit_geometry(value: GeneratedBlockGeometry) -> String {
     format!(
         "GeneratedBlockGeometry {{ live_ring_elements_per_claim: {}, positions_per_block: {}, live_blocks: {} }}",
@@ -318,9 +337,10 @@ fn emit_partition(value: GeneratedWitnessPartition) -> String {
 fn emit_setup_prefix(value: Option<GeneratedSetupPrefixInput>) -> String {
     match value {
         Some(value) => format!(
-            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, commitment: {} }})",
+            "Some(GeneratedSetupPrefixInput {{ natural_len: {}, d_setup: {}, num_digits_fold: {}, commitment: {} }})",
             value.natural_len,
             value.d_setup,
+            value.num_digits_fold,
             emit_committed_group(value.commitment)
         ),
         None => "None".to_string(),
@@ -332,7 +352,7 @@ fn emit_schedule_entry(
     key: &AkitaScheduleLookupKey,
     schedule: &FoldSchedule,
 ) -> Result<(), String> {
-    let entry = generated_entry(key, schedule);
+    let entry = generated_entry(key, schedule)?;
     let challenge = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => "GeneratedRootFinalChallenge::Flat".to_string(),
         GeneratedRootFinalChallenge::Tensor { fold_low_len } => {
@@ -343,11 +363,10 @@ fn emit_schedule_entry(
     writeln!(out, "        root: GeneratedRootFold {{").map_err(|e| e.to_string())?;
     writeln!(
         out,
-        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {}, fold_witness_linf_cap: {}, challenge: {},",
+        "            final_group: GeneratedRootFinalGroup {{ layout: {}, num_digits_inner: {}, num_digits_fold: {}, challenge: {},",
         emit_key(entry.root.final_group.layout),
         entry.root.final_group.num_digits_inner,
         entry.root.final_group.num_digits_fold,
-        entry.root.final_group.fold_witness_linf_cap,
         challenge,
     )
     .map_err(|e| e.to_string())?;
@@ -364,10 +383,9 @@ fn emit_schedule_entry(
         for group in entry.root.precommitted_groups {
             writeln!(
                 out,
-                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, fold_witness_linf_cap: {}, commitment: {} }},",
+                "                GeneratedRootPrecommittedGroup {{ descriptor: {}, num_digits_fold: {}, commitment: {} }},",
                 emit_precommitted_group_key(&group.descriptor),
                 group.num_digits_fold,
-                group.fold_witness_linf_cap,
                 emit_committed_group(group.commitment),
             )
             .map_err(|e| e.to_string())?;
@@ -394,8 +412,9 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ witness: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
                 emit_committed_group(fold.witness),
+                fold.num_digits_fold,
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),
                 emit_partition(fold.witness_partition),
@@ -406,10 +425,16 @@ fn emit_schedule_entry(
     }
     writeln!(
         out,
-        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }} }},",
+        "        terminal: GeneratedTerminalFold {{ geometry: {}, inner_commit_matrix: GeneratedInnerCommitMatrix {{ ring_dimension: {}, log_basis: {} }}, num_digits_inner: {}, inner_output_rank: {}, inner_coeff_linf_bound: {}, z_admission_linf_cap: {}, z_rice_low_bits: {}, z_payload_bytes: {} }},",
         emit_geometry(entry.terminal.geometry),
         entry.terminal.inner_commit_matrix.ring_dimension,
         entry.terminal.inner_commit_matrix.log_basis,
+        entry.terminal.num_digits_inner,
+        entry.terminal.inner_output_rank,
+        entry.terminal.inner_coeff_linf_bound,
+        entry.terminal.z_admission_linf_cap,
+        entry.terminal.z_rice_low_bits,
+        entry.terminal.z_payload_bytes,
     )
     .map_err(|e| e.to_string())?;
     writeln!(out, "    }},").map_err(|e| e.to_string())
@@ -486,7 +511,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
             "    claim_ext_degree: {claim_ext_degree},\n",
             "    chal_ext_degree: {chal_ext_degree},\n",
             "    basis_range: ({basis_min}, {basis_max}),\n",
-            "    root_fold_witness_norms: {root_fold_witness_norms},\n",
             "    witness_chunk: {witness_chunk},\n",
             "    recursive_setup_planning: {recursive_setup_planning},\n",
             "    root_fold_shape: {root_fold_shape},\n",
@@ -513,7 +537,6 @@ fn emit_identity_const(identity: &GeneratedScheduleCatalogIdentity) -> String {
         chal_ext_degree = identity.chal_ext_degree,
         basis_min = identity.basis_range.0,
         basis_max = identity.basis_range.1,
-        root_fold_witness_norms = emit_fold_witness_norms(identity.root_fold_witness_norms),
         witness_chunk = emit_witness_chunk(identity.witness_chunk),
         recursive_setup_planning = identity.recursive_setup_planning,
         root_fold_shape = emit_root_fold_shape(identity.root_fold_shape),
@@ -641,7 +664,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
          GeneratedRootFinalChallenge, GeneratedRootFinalGroup, GeneratedRootFold, \
          GeneratedRootPrecommittedGroup, GeneratedScheduleCatalogIdentity, \
          GeneratedSetupPrefixInput, GeneratedTerminalFold, GeneratedWitnessPartition, \
-         FoldWitnessNorms, PlannerCostModelId, \
+         PlannerCostModelId, \
          PolynomialGroupLayout, CommittedGroupProfile, InnerCommitMatrixParams, \
          OuterCommitMatrixParams, \
          SelectionPolicyId, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest, \
@@ -661,7 +684,7 @@ pub fn emit_family_module(spec: &EmitSpec) -> Result<String, String> {
 
     for (key, schedule) in materialized {
         emit_schedule_entry(&mut out, &key, &schedule)?;
-        memory_entries.push(generated_entry(&key, &schedule));
+        memory_entries.push(generated_entry(&key, &schedule)?);
     }
     debug_assert!(akita_schedules::catalog_entries_sorted_for_lookup(
         &memory_entries

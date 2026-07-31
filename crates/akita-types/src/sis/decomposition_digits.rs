@@ -22,9 +22,8 @@
 //!    - [`num_digits_inner`]: committed witness `s` (`log_commit_bound` at
 //!      the root, `log_basis` at recursive levels).
 //!    - [`num_digits_open`]: opening witnesses `t̂` / `ŵ` (`log_open_bound`).
-//!    - [`super::norm_bound::fold_witness_digit_plan`]: folded witness `z` — the
-//!      digit count for the norm-derived bound `β`, which is not a
-//!      [`DecompositionParams`] field.
+//!    - [`super::honest_fold_policy::HonestFoldPolicy`]: folded witness `z` — the
+//!      group-owned offline policy returns its exact scheduled digit count.
 //!
 //! 3. **Committed-matrix widths** — name the `checked_mul` products that turn a
 //!    digit depth plus block geometry into a matrix's ring-column count:
@@ -100,8 +99,7 @@ pub fn balanced_digit_abs_max(log_basis: u32, num_digits: usize) -> u128 {
 /// `2^(k-1) - 1`, since the balanced digit range `[-b/2, b/2 - 1]` reaches
 /// further on the negative side. This is *not* `2^log_bound - 1`: the leading
 /// bit is the sign, so callers that mean "magnitude up to `2^m`" must pass
-/// `log_bound = m + 1` (this is exactly what
-/// [`super::norm_bound::fold_witness_digit_plan`] does).
+/// `log_bound = m + 1`.
 ///
 /// The count is `ceil(log_bound / log_basis)`, plus one more digit when the
 /// balanced-digit positive reach `balanced_digit_max` still falls short of

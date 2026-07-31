@@ -91,6 +91,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let direct = find_schedule(
         PolynomialGroupLayout::singleton(num_vars),
         &direct_policy,
+        MixedDimFp128OneHot::root_honest_fold_policy(),
         &domain,
         MixedDimFp128OneHot::ring_challenge_config,
         MixedDimFp128OneHot::fold_challenge_shape_at_level,
@@ -113,6 +114,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let mixed_recursive = find_schedule(
         PolynomialGroupLayout::new(32, 2),
         &mixed_recursive_policy,
+        MixedRecursive::root_honest_fold_policy(),
         &recursive_domain,
         MixedRecursive::ring_challenge_config,
         MixedRecursive::fold_challenge_shape_at_level,
@@ -128,6 +130,7 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let precommit = find_schedule(
         precommit_layout,
         &policy_of::<D64OneHot>(),
+        D64OneHot::root_honest_fold_policy(),
         &precommit_domain,
         D64OneHot::ring_challenge_config,
         D64OneHot::fold_challenge_shape_at_level,
@@ -140,15 +143,16 @@ fn main() -> Result<(), akita_field::AkitaError> {
         final_group: PolynomialGroupLayout::new(32, 2),
         precommitteds: vec![descriptor, descriptor],
     };
-    let precommitted_fold_witness_norms = vec![
-        D64OneHot::root_fold_witness_norms(),
-        D64OneHot::root_fold_witness_norms(),
+    let precommitted_honest_fold_policies = vec![
+        D64OneHot::root_honest_fold_policy(),
+        D64OneHot::root_honest_fold_policy(),
     ];
     type Recursive = RecursiveCommitmentConfig<D64OneHot>;
     let recursive_policy = policy_of::<Recursive>();
     let preserved = find_group_batch_schedule(
         &recursive_key,
-        &precommitted_fold_witness_norms,
+        Recursive::root_honest_fold_policy(),
+        &precommitted_honest_fold_policies,
         &recursive_policy,
         Recursive::ring_challenge_config,
         Recursive::fold_challenge_shape_at_level,

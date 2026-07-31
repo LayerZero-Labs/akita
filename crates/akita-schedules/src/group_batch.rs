@@ -17,7 +17,6 @@ use crate::PlannerPolicy;
 struct PrecommittedGroupSeed {
     layout: CommittedGroupProfile,
     num_digits_fold: usize,
-    fold_witness_linf_cap: u128,
     inner_commit_matrix: InnerCommitMatrixParams,
     outer_commit_matrix: OuterCommitMatrixParams,
 }
@@ -68,7 +67,6 @@ fn freeze_precommitted_group_layout(
                 "generated precommitted fold depth does not fit the target platform".to_string(),
             )
         })?,
-        fold_witness_linf_cap: generated.fold_witness_linf_cap,
         inner_commit_matrix,
         outer_commit_matrix,
     })
@@ -130,7 +128,6 @@ fn materialize_precommitted_group_for_open_basis(
         fold_challenge_config: *ring_challenge_cfg,
         num_digits_open,
         num_digits_fold,
-        fold_witness_linf_cap: group.fold_witness_linf_cap,
     })
 }
 

@@ -576,7 +576,7 @@ where
         let depth_witness = group_lp.num_digits_inner();
         let depth_commit = group_lp.num_digits_outer();
         let depth_open = group_lp.num_digits_open();
-        let depth_fold = lp.num_digits_fold_for_params(group_lp, k_g, lp.field_bits_for_cache())?;
+        let depth_fold = group_lp.num_digits_fold();
         let log_basis_inner = group_lp.log_basis_inner();
         let log_basis_outer = group_lp.log_basis_outer();
         let log_basis_open = group_lp.log_basis_open();

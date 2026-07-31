@@ -31,6 +31,7 @@ fn payload_bytes(policy: &PlannerPolicy, nv: usize) -> Result<usize, String> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
     let planned = find_group_batch_schedule(
         &key,
+        Cfg::root_honest_fold_policy(),
         &[],
         policy,
         Cfg::ring_challenge_config,
@@ -50,6 +51,7 @@ fn schedule_anatomy(policy: &PlannerPolicy, nv: usize) -> Vec<(u32, usize)> {
     let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(nv, 1));
     match find_group_batch_schedule(
         &key,
+        Cfg::root_honest_fold_policy(),
         &[],
         policy,
         Cfg::ring_challenge_config,
@@ -136,6 +138,7 @@ fn fp128_d64_onehot_fixed_root_basis_sweep_proof_sizes() {
         let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(36, 1));
         if let Ok(planned) = find_group_batch_schedule(
             &key,
+            Cfg::root_honest_fold_policy(),
             &[],
             policy,
             Cfg::ring_challenge_config,

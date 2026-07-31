@@ -68,8 +68,8 @@ macro_rules! impl_multi_chunk_companion {
             fn basis_range() -> (u32, u32) {
                 <$base as $crate::CommitmentConfig>::basis_range()
             }
-            fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-                <$base as $crate::CommitmentConfig>::root_fold_witness_norms()
+            fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+                <$base as $crate::CommitmentConfig>::root_honest_fold_policy()
             }
             fn chunked_witness_cfg() -> akita_types::ChunkedWitnessCfg {
                 $profile.cfg()
@@ -138,10 +138,14 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         claim_ext_degree: Cfg::EXT_DEGREE,
         chal_ext_degree: Cfg::EXT_DEGREE,
         basis_range: Cfg::basis_range(),
-        root_fold_witness_norms: Cfg::root_fold_witness_norms(),
         witness_chunk: Cfg::chunked_witness_cfg(),
         recursive_setup_planning,
     }
+}
+
+/// Root group's source-specific policy for offline schedule generation.
+pub fn honest_fold_policy_of<Cfg: CommitmentConfig>() -> akita_types::sis::HonestFoldPolicySpec {
+    Cfg::root_honest_fold_policy()
 }
 
 /// Commitment-config trait for the ring-native commitment core (§4.1–§4.2).
@@ -270,8 +274,8 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     fn basis_range() -> (u32, u32);
 
-    /// Numeric honest root-witness estimate used only during offline planning.
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms;
+    /// Group-owned honest sizing rule used only during offline planning.
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec;
 
     /// Multi-chunk witness layout parameters for schedule planning and (future)
     /// prover orchestration.
@@ -453,8 +457,13 @@ mod tests {
             (3, 3)
         }
 
-        fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-            akita_types::sis::FoldWitnessNorms::bounded(8, Self::D)
+        fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+            akita_types::sis::HonestFoldPolicySpec::BalancedSignedDigit(
+                akita_types::sis::BalancedSignedDigitFoldPolicy::preserving_existing_behavior(
+                    32,
+                    akita_types::sis::FoldWitnessNorms::bounded(8, Self::D),
+                ),
+            )
         }
 
         fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
@@ -716,6 +725,7 @@ mod precommit_tests {
         policy.witness_chunk = ChunkedWitnessCfg::default();
         let planned = akita_planner::find_group_batch_schedule(
             &AkitaScheduleLookupKey::single(group),
+            fp128::D64OneHot::root_honest_fold_policy(),
             &[],
             &policy,
             fp128::D64OneHot::ring_challenge_config,

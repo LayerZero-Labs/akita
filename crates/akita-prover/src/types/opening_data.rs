@@ -481,7 +481,6 @@ mod tests {
             fold_challenge_config: pre.fold_challenge_config,
             num_digits_open: pre.num_digits_open,
             num_digits_fold: pre.num_digits_fold,
-            fold_witness_linf_cap: pre.fold_witness_linf_cap,
         });
         root
     }

@@ -196,6 +196,7 @@ fn exhaustive_suffixes(
 pub(super) fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
     fold_shape: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -246,6 +247,7 @@ pub(super) fn find_schedule(
                     log_basis,
                     block_bits,
                     root_shape,
+                    honest_fold_policy,
                 )?
                 else {
                     continue;

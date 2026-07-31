@@ -237,8 +237,8 @@ where
         Envelope::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Envelope::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Envelope::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -264,11 +264,12 @@ where
                         as fn(AkitaScheduleInputs) -> TensorChallengeShape,
                 )
             };
-        let precommitted_fold_witness_norms =
-            vec![Envelope::root_fold_witness_norms(); key.precommitteds.len()];
+        let precommitted_honest_fold_policies =
+            vec![Envelope::root_honest_fold_policy(); key.precommitteds.len()];
         akita_planner::find_group_batch_schedule(
             &key,
-            &precommitted_fold_witness_norms,
+            Envelope::root_honest_fold_policy(),
+            &precommitted_honest_fold_policies,
             &policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
@@ -365,6 +366,7 @@ where
             let envelope = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
                 &envelope_policy,
+                EnvelopeCfg::root_honest_fold_policy(),
                 &envelope_domain,
                 EnvelopeCfg::ring_challenge_config,
                 EnvelopeCfg::fold_challenge_shape_at_level,
@@ -516,8 +518,8 @@ where
         Env::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Env::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -594,6 +596,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
             let mut root = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
                 &root_policy,
+                Env::root_honest_fold_policy(),
                 &root_domain,
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
@@ -830,8 +833,8 @@ where
         Env::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Env::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1013,6 +1016,7 @@ where
             let mut root = akita_planner::find_schedule(
                 PolynomialGroupLayout::new(num_vars, num_polynomials),
                 &root_policy,
+                Root::root_honest_fold_policy(),
                 &root_domain,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
@@ -1051,10 +1055,20 @@ where
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("D512 A matrix width overflow".into())
                     })?;
-                commitment = commitment.with_fold_plan(
-                    field_bits,
-                    num_polynomials,
-                    Root::root_fold_witness_norms(),
+                let num_fold_coeffs = inner_width.checked_mul(Root::D).ok_or_else(|| {
+                    AkitaError::InvalidSetup("D512 fold coefficient count overflow".into())
+                })?;
+                commitment.num_digits_fold = akita_types::sis::HonestFoldPolicy::num_digits_fold(
+                    &Root::root_honest_fold_policy(),
+                    akita_types::sis::HonestFoldSizingQuery {
+                        ring_dimension: Root::D,
+                        num_claims: num_polynomials,
+                        num_live_blocks: commitment.num_live_blocks,
+                        num_fold_coeffs,
+                        log_basis: commitment.log_basis_open,
+                        challenge_config: &ring_challenge,
+                        challenge_shape: commitment.fold_challenge_shape,
+                    },
                 )?;
                 let norm = rounded_up_role_a_inf_norm(
                     root_policy.sis_security_policy,
@@ -1258,8 +1272,8 @@ where
         Root::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Root::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Root::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {
@@ -1399,8 +1413,8 @@ where
         Env::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Env::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Env::root_honest_fold_policy()
     }
 
     fn schedule_catalog() -> Option<akita_planner::GeneratedScheduleTable> {

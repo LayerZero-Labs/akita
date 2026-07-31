@@ -58,8 +58,8 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         Cfg::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Cfg::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Cfg::root_honest_fold_policy()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {
@@ -218,13 +218,7 @@ mod tests {
                 SetupContributionGroupInputs {
                     group_id,
                     num_claims: group_layout.num_polynomials(),
-                    depth_fold: params
-                        .num_digits_fold_for_params(
-                            group_params,
-                            group_layout.num_polynomials(),
-                            params.field_bits_for_cache(),
-                        )
-                        .expect("group fold depth"),
+                    depth_fold: group_params.num_digits_fold(),
                     a_row_start: params
                         .a_row_range(&opening_batch, group_id)
                         .expect("A rows")

@@ -123,12 +123,7 @@ fn mixed_relation_accepts_exact_deferred_setup_claim_and_caches_its_plan() {
         .map(|index| MixedF::from_u64(11 + index as u64))
         .collect::<Vec<_>>()
         .into();
-    let depth_fold = lp
-        .num_digits_fold(
-            opening_batch.num_total_polynomials(),
-            lp.field_bits_for_cache(),
-        )
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let evaluator = RelationMatrixEvaluator {
         role_dims,
         relation_address_geometry,
@@ -268,12 +263,7 @@ fn tensor_et_intervals_match_dense_oracle_across_residual_shards() {
     .with_decomp(4, 25, 1, 1, 3)
     .unwrap();
     let opening_batch = OpeningClaimsLayout::new(0, 1).unwrap();
-    let depth_fold = lp
-        .num_digits_fold(
-            opening_batch.num_total_polynomials(),
-            lp.field_bits_for_cache(),
-        )
-        .unwrap();
+    let depth_fold = lp.num_digits_fold();
     let witness_layout = WitnessLayout::new(&lp, &opening_batch, 2, 4, 2).unwrap();
     let units = witness_layout.units_for_group(0).unwrap();
     assert_eq!(

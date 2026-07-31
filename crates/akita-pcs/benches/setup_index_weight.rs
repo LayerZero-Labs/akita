@@ -102,9 +102,7 @@ fn make_case(num_live_blocks: usize, blocks_per_chunk: usize) -> SetupIndexWeigh
         1,
         D,
     );
-    let depth_fold = level_params
-        .num_digits_fold(num_claims, level_params.field_bits_for_cache())
-        .unwrap();
+    let depth_fold = level_params.num_digits_fold();
     let opening_batch = OpeningClaimsLayout::new(0, num_claims).unwrap();
     let layout = WitnessLayout::new(
         &level_params,

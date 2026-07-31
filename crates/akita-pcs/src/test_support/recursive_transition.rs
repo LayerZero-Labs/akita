@@ -77,11 +77,12 @@ where
             // Plan the exact multi-group root at Root::D, then rebuild B and
             // shared D from the requested final carrier geometry.
             let root_policy = policy_of::<Root>().direct_only();
-            let precommitted_fold_witness_norms =
-                vec![Root::root_fold_witness_norms(); key.precommitteds.len()];
+            let precommitted_honest_fold_policies =
+                vec![Root::root_honest_fold_policy(); key.precommitteds.len()];
             let mut root = akita_planner::find_group_batch_schedule(
                 key,
-                &precommitted_fold_witness_norms,
+                Root::root_honest_fold_policy(),
+                &precommitted_honest_fold_policies,
                 &root_policy,
                 Root::ring_challenge_config,
                 Root::fold_challenge_shape_at_level,
@@ -349,8 +350,8 @@ where
         Root::basis_range()
     }
 
-    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
-        Root::root_fold_witness_norms()
+    fn root_honest_fold_policy() -> akita_types::sis::HonestFoldPolicySpec {
+        Root::root_honest_fold_policy()
     }
 
     fn chunked_witness_cfg() -> ChunkedWitnessCfg {

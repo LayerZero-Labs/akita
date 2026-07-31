@@ -610,7 +610,6 @@ mod tests {
                     fold_challenge_config: akita_challenges::SparseChallengeConfig::pm1_only(0),
                     num_digits_open: 1,
                     num_digits_fold: 1,
-                    fold_witness_linf_cap: 1,
                 };
                 let id = setup_prefix_slot_id(TEST_D, 1, commitment_params);
                 // One block of zero planes at the setup ring dimension.

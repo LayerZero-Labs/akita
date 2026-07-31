@@ -22,8 +22,6 @@ fn fold_schedule_estimate_separates_direct_and_stage3_payloads() {
     assert_eq!(estimate.estimated_proof_payload_bytes().unwrap(), 1_033);
 }
 use crate::golomb_rice::golomb_rice_encode_vec;
-use crate::sis::FoldWitnessLinfCapPolicy;
-use crate::tail_golomb_rice_z_params;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
@@ -115,7 +113,6 @@ fn precommitted_group_params(
         fold_challenge_config: params.fold_challenge_config,
         num_digits_open: params.num_digits_open,
         num_digits_fold: params.num_digits_fold,
-        fold_witness_linf_cap: params.fold_witness_linf_cap,
     }
 }
 
@@ -175,6 +172,7 @@ fn recursive_schedule(
                             z_coords: successor_ring_dimension,
                             e_field_elems: successor_ring_dimension,
                             t_field_elems: successor_ring_dimension,
+                            z_admission_linf_cap: 1,
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],
@@ -392,17 +390,12 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
 
     let (terminal, response_cap) = TerminalCommittedGroupParams::try_from_expanded_group(committed)
         .expect("terminal projection");
-    let response_policy = terminal
-        .response_linf_policy(&sparse)
-        .expect("terminal response bounds");
-
     assert_eq!(terminal.inner_commit_matrix, expected_inner);
-    assert_eq!(response_cap, response_policy.admission_cap);
-    assert!(response_policy.admission_cap <= response_policy.certified_capacity);
-    assert!(
-        response_policy.admission_cap >= response_policy.unconstrained_target.div_ceil(2),
-        "terminal capacity must retain at least half of the unconstrained target"
+    assert_eq!(
+        response_cap,
+        terminal.certified_response_linf_cap(&sparse).unwrap()
     );
+    assert!(response_cap > 0);
 }
 
 #[test]
@@ -410,7 +403,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
     const D: usize = 64;
     let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
     // num_live_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-    let lp = CommittedGroupParams::params_only(
+    let mut lp = CommittedGroupParams::params_only(
         SisModulusProfileId::Q128OffsetA7F7,
         D,
         3,
@@ -420,9 +413,8 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         fold_challenge_config,
     )
     .with_decomp(4, 32, 2, 2, 2)
-    .unwrap()
-    .with_fold_plan(128, 3, crate::sis::FoldWitnessNorms::bounded(3, D))
     .unwrap();
+    lp.num_digits_fold = 3;
     let field_bits = 128u32;
     let num_poly = 3usize;
 
@@ -434,7 +426,7 @@ fn chunked_witness_count_matches_chunk_layout_arithmetic() {
         single
     );
 
-    let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
+    let z_pre = lp.inner_width() * lp.num_digits_fold();
     for num_chunks in [2usize, 4, 8] {
         let chunked =
             intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, num_chunks)
@@ -489,13 +481,19 @@ fn terminal_response_fixture(
     let shape = TerminalResponseShape::from_groups(
         lp,
         field_bits,
-        [(lp as &dyn crate::LevelParamsLike, num_claims, num_claims, 1)],
+        [(
+            lp as &dyn crate::LevelParamsLike,
+            num_claims,
+            num_claims,
+            1,
+            127,
+        )],
     )
     .expect("terminal response shape");
     let layout = shape.layout.clone();
     let group = layout.groups[0];
-    let (rice_low_bits, zigzag_w) =
-        tail_golomb_rice_z_params(lp, num_claims).expect("golomb z params");
+    let rice_low_bits = group.z_rice_low_bits;
+    let zigzag_w = crate::golomb_rice::golomb_rice_zigzag_width(group.z_admission_linf_cap);
     let z_payload = golomb_rice_encode_vec(&vec![0i64; group.z_coords], rice_low_bits, zigzag_w)
         .expect("encode zero z segment");
     let witness = TerminalResponse {
@@ -634,7 +632,7 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
     let num_claims = 3;
 
     for log_basis in 2..=6 {
-        let lp = CommittedGroupParams::params_only(
+        let mut lp = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             D,
             log_basis,
@@ -644,13 +642,8 @@ fn planned_terminal_level_bytes_match_terminal_payload_at_all_bases() {
             fold_challenge_config,
         )
         .with_decomp(1, 1, 1, 1, 1)
-        .unwrap()
-        .with_fold_plan(
-            F::modulus_bits(),
-            num_claims,
-            crate::sis::FoldWitnessNorms::bounded(log_basis, D),
-        )
         .unwrap();
+        lp.num_digits_fold = 2;
 
         let (terminal_response, witness_shape) = terminal_response_fixture(&lp, num_claims);
         let terminal_response_bytes_runtime = terminal_response.serialized_size(Compress::No);
@@ -987,56 +980,25 @@ fn schedule_row_identity_binds_profiles_and_expanded_schedule() {
         crate::schedule_row_digest(&profiles, &changed_schedule).expect("changed-row digest")
     );
 
-    let terminal_config = schedule.terminal.params.witness.fold_linf_cap_config;
-    let mut changed_configs = Vec::new();
-
-    let mut changed = terminal_config;
-    changed.policy = match changed.policy {
-        FoldWitnessLinfCapPolicy::WorstCaseBetaOnly => FoldWitnessLinfCapPolicy::TailBoundWithGrind,
-        FoldWitnessLinfCapPolicy::TailBoundWithGrind
-        | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind => {
-            FoldWitnessLinfCapPolicy::WorstCaseBetaOnly
-        }
-    };
-    changed_configs.push(("policy", changed));
-
-    let mut changed = terminal_config;
-    changed.challenge_l2_sq_max += 1;
-    changed_configs.push(("challenge_l2_sq_max", changed));
-    let mut changed = terminal_config;
-    changed.tensor_factor_l2_sq_max += 1;
-    changed_configs.push(("tensor_factor_l2_sq_max", changed));
-    let mut changed = terminal_config;
-    changed.tensor_factor_nonzero_count_max += 1;
-    changed_configs.push(("tensor_factor_nonzero_count_max", changed));
-    let mut changed = terminal_config;
-    changed.tensor_fold_low_len += 1;
-    changed_configs.push(("tensor_fold_low_len", changed));
-    let mut changed = terminal_config;
-    changed.num_fold_coeffs += 1;
-    changed_configs.push(("num_fold_coeffs", changed));
-    let mut changed = terminal_config;
-    changed.grind_target_accept_num += 1;
-    changed_configs.push(("grind_target_accept_num", changed));
-    let mut changed = terminal_config;
-    changed.grind_target_accept_den += 1;
-    changed_configs.push(("grind_target_accept_den", changed));
-    let mut changed = terminal_config;
-    changed.grind_union_ln += 1;
-    changed_configs.push(("grind_union_ln", changed));
-
-    for (field, changed_config) in changed_configs {
+    for field in ["cap", "rice", "budget"] {
         let mut changed_schedule = schedule.clone();
-        changed_schedule
+        let group = &mut changed_schedule
             .terminal
             .params
-            .witness
-            .fold_linf_cap_config = changed_config;
+            .response_shape
+            .layout
+            .groups[0];
+        match field {
+            "cap" => group.z_admission_linf_cap += 1,
+            "rice" => group.z_rice_low_bits += 1,
+            "budget" => group.z_payload_bytes += 1,
+            _ => unreachable!(),
+        }
         assert_ne!(
             digest,
             crate::schedule_row_digest(&profiles, &changed_schedule)
-                .expect("terminal-policy mutation digest"),
-            "terminal fold-linf field {field} must change the row digest"
+                .expect("terminal-shape mutation digest"),
+            "terminal response-shape field {field} must change the row digest"
         );
     }
 }

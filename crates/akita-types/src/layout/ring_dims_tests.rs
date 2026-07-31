@@ -50,6 +50,7 @@ fn schedule(root: CommittedGroupParams, terminal: CommittedGroupParams) -> FoldS
                             z_coords: ring_dimension,
                             e_field_elems: ring_dimension,
                             t_field_elems: ring_dimension,
+                            z_admission_linf_cap: 1,
                             z_payload_bytes: 1,
                             z_rice_low_bits: 0,
                         }],

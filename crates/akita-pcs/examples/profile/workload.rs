@@ -63,11 +63,12 @@ fn planned_payload_bytes<Cfg: CommitmentConfig>(
             .expect("generated schedule estimate");
         }
     }
-    let precommitted_fold_witness_norms =
-        vec![Cfg::root_fold_witness_norms(); key.precommitteds.len()];
+    let precommitted_honest_fold_policies =
+        vec![Cfg::root_honest_fold_policy(); key.precommitteds.len()];
     akita_planner::find_group_batch_schedule(
         &key,
-        &precommitted_fold_witness_norms,
+        Cfg::root_honest_fold_policy(),
+        &precommitted_honest_fold_policies,
         &akita_config::policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

@@ -943,13 +943,7 @@ mod tests {
         let num_positions_per_block = group_params.num_positions_per_block();
         let depth_witness = group_params.num_digits_inner();
         let depth_open = group_params.num_digits_open();
-        let depth_fold = level_params
-            .num_digits_fold_for_params(
-                group_params,
-                num_claims,
-                level_params.field_bits_for_cache(),
-            )
-            .expect("single group fold depth");
+        let depth_fold = group_params.num_digits_fold();
         let n_a = group_params.a_rows_len();
         let quotient_depth = r_decomp_levels::<F>(level_params.log_basis_open);
 

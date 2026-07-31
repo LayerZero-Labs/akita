@@ -40,11 +40,6 @@ fn prove_tail_bound_with_grind_onehot_fixture(num_vars: usize, seed: u64) -> Tai
         &akita_types::OpeningClaimsLayout::new(num_vars, 1).expect("singleton opening batch"),
     )
     .expect("layout");
-    assert_eq!(
-        layout.fold_witness_linf_cap_policy(),
-        akita_types::sis::FoldWitnessLinfCapPolicy::TailBoundWithGrind
-    );
-
     let poly = make_onehot_poly(&layout, seed);
     let point = random_point(num_vars, seed.wrapping_add(1));
     let opening = opening_from_poly::<ONEHOT_D, _>(&poly, &point, &layout);

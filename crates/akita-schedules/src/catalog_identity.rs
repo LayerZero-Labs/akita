@@ -53,7 +53,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(policy.chal_ext_degree as u64);
     h.write_u64(u64::from(policy.basis_range.0));
     h.write_u64(u64::from(policy.basis_range.1));
-    write_witness_norms(&mut h, policy.root_fold_witness_norms);
     h.write_u64(policy.witness_chunk.num_chunks as u64);
     h.write_u64(policy.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(policy.recursive_setup_planning));
@@ -82,7 +81,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(identity.chal_ext_degree as u64);
     h.write_u64(u64::from(identity.basis_range.0));
     h.write_u64(u64::from(identity.basis_range.1));
-    write_witness_norms(&mut h, identity.root_fold_witness_norms);
     h.write_u64(identity.witness_chunk.num_chunks as u64);
     h.write_u64(identity.witness_chunk.num_activated_levels as u64);
     h.write_u64(u64::from(identity.recursive_setup_planning));
@@ -141,7 +139,6 @@ struct CatalogIdentityExpectation {
     claim_ext_degree: usize,
     chal_ext_degree: usize,
     basis_range: (u32, u32),
-    root_fold_witness_norms: akita_types::sis::FoldWitnessNorms,
     witness_chunk: akita_types::ChunkedWitnessCfg,
     recursive_setup_planning: bool,
 
@@ -171,7 +168,6 @@ impl CatalogIdentityExpectation {
             claim_ext_degree: identity.claim_ext_degree,
             chal_ext_degree: identity.chal_ext_degree,
             basis_range: identity.basis_range,
-            root_fold_witness_norms: identity.root_fold_witness_norms,
             witness_chunk: identity.witness_chunk,
             recursive_setup_planning: identity.recursive_setup_planning,
 
@@ -215,7 +211,6 @@ fn catalog_identity_expectation(
         claim_ext_degree: policy.claim_ext_degree,
         chal_ext_degree: policy.chal_ext_degree,
         basis_range: policy.basis_range,
-        root_fold_witness_norms: policy.root_fold_witness_norms,
         witness_chunk: policy.witness_chunk,
         recursive_setup_planning: policy.recursive_setup_planning,
 
@@ -259,7 +254,6 @@ pub fn expected_catalog_identity(
         claim_ext_degree: expected.claim_ext_degree,
         chal_ext_degree: expected.chal_ext_degree,
         basis_range: expected.basis_range,
-        root_fold_witness_norms: expected.root_fold_witness_norms,
         witness_chunk: expected.witness_chunk,
         recursive_setup_planning: expected.recursive_setup_planning,
 
@@ -476,13 +470,11 @@ fn entries_key_digest(entries: &[GeneratedFoldScheduleEntry]) -> u64 {
         write_generated_group(&mut h, entry.root.final_group.commitment);
         h.write_u64(u64::from(entry.root.final_group.num_digits_inner));
         h.write_u64(u64::from(entry.root.final_group.num_digits_fold));
-        h.write_bytes(&entry.root.final_group.fold_witness_linf_cap.to_le_bytes());
         h.write_u64(entry.root.precommitted_groups.len() as u64);
         for group in entry.root.precommitted_groups {
             write_generated_precommitted_group_key(&mut h, &group.descriptor);
             write_generated_group(&mut h, group.commitment);
             h.write_u64(u64::from(group.num_digits_fold));
-            h.write_bytes(&group.fold_witness_linf_cap.to_le_bytes());
         }
         write_generated_open_matrix(&mut h, entry.root.open_commit_matrix);
         write_generated_partition(&mut h, entry.root.witness_partition);
@@ -545,11 +537,6 @@ fn write_generated_precommitted_group_key(h: &mut Fnv64, key: &CommittedGroupPro
     h.write_bytes(&key.canonical_descriptor_bytes());
 }
 
-fn write_witness_norms(h: &mut Fnv64, norms: akita_types::sis::FoldWitnessNorms) {
-    h.write_bytes(&norms.infinity_norm().to_le_bytes());
-    h.write_bytes(&norms.l1_norm().to_le_bytes());
-}
-
 pub fn ring_challenge_config_digest(
     ring_dimensions: &[usize],
     ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
@@ -606,33 +593,5 @@ impl Fnv64 {
 
     fn finish(self) -> u64 {
         self.state
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use akita_types::sis::FoldWitnessNorms;
-
-    fn witness_norms_digest(norms: FoldWitnessNorms) -> u64 {
-        let mut h = Fnv64::new();
-        write_witness_norms(&mut h, norms);
-        h.finish()
-    }
-
-    #[test]
-    fn generated_witness_norm_identity_distinguishes_exact_values() {
-        let digests = [
-            witness_norms_digest(FoldWitnessNorms::new(32, 32)),
-            witness_norms_digest(FoldWitnessNorms::new(64, 64)),
-            witness_norms_digest(FoldWitnessNorms::new(1, 16)),
-            witness_norms_digest(FoldWitnessNorms::new(1, 256)),
-        ];
-        for (index, digest) in digests.iter().enumerate() {
-            assert!(
-                !digests[..index].contains(digest),
-                "generated witness-norm identity collision at index {index}"
-            );
-        }
     }
 }

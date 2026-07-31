@@ -119,12 +119,8 @@ fn generated_q32_terminals_require_the_i16_tail() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn fp128_d128_onehot_catalog_binds_numeric_root_norms() {
+fn fp128_d128_onehot_catalog_freezes_root_fold_digits() {
     let table = fp128::D128OneHot::schedule_catalog().expect("D128 one-hot schedule catalog");
-    assert_eq!(
-        table.identity.root_fold_witness_norms,
-        fp128::D128OneHot::root_fold_witness_norms()
-    );
     let first = table
         .entries
         .first()
@@ -133,8 +129,8 @@ fn fp128_d128_onehot_catalog_binds_numeric_root_norms() {
         .expect("resolve D128 one-hot row");
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(
-        root.fold_witness_linf_cap, first.root.final_group.fold_witness_linf_cap,
-        "generated rows freeze the exact fold cap used at runtime"
+        root.num_digits_fold,
+        first.root.final_group.num_digits_fold as usize
     );
 }
 

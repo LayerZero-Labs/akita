@@ -47,7 +47,7 @@ pub fn ring_relation_segment_lengths<F: FieldCore + CanonicalField>(
         num_claims,
         num_t_vectors,
     } = opening_counts;
-    let depth_fold = lp.num_digits_fold(num_t_vectors, lp.field_bits_for_cache())?;
+    let depth_fold = lp.num_digits_fold();
     if depth_open == 0 || depth_inner == 0 || depth_outer == 0 || depth_fold == 0 {
         return Err(AkitaError::InvalidSetup(
             "prepared ring-switch layout has zero width".to_string(),
@@ -497,8 +497,8 @@ mod tests {
         }
     }
 
-    fn test_level_params(num_fold_claims: usize) -> CommittedGroupParams {
-        CommittedGroupParams::params_only(
+    fn test_level_params(_num_fold_claims: usize) -> CommittedGroupParams {
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -508,13 +508,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 8, 1, 2, 2)
-        .expect("test params")
-        .with_fold_plan(
-            F::modulus_bits(),
-            num_fold_claims,
-            crate::sis::FoldWitnessNorms::bounded(2, D),
-        )
-        .expect("test fold row")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     fn test_challenges(lp: &CommittedGroupParams, num_claims: usize) -> Challenges {
@@ -560,10 +556,10 @@ mod tests {
 
     fn chunk_test_level_params(
         block_index_bits: usize,
-        num_fold_claims: usize,
+        _num_fold_claims: usize,
     ) -> CommittedGroupParams {
         // num_live_blocks = 2^block_index_bits, num_positions_per_block = 2^position_index_bits, single-tier.
-        CommittedGroupParams::params_only(
+        let mut params = CommittedGroupParams::params_only(
             crate::SisModulusProfileId::Q32Offset99,
             D,
             2,
@@ -573,13 +569,9 @@ mod tests {
             fold_challenge_config(),
         )
         .with_decomp(4, 1usize << (2 + block_index_bits), 1, 2, 2)
-        .expect("test params")
-        .with_fold_plan(
-            F::modulus_bits(),
-            num_fold_claims,
-            crate::sis::FoldWitnessNorms::bounded(2, D),
-        )
-        .expect("test fold row")
+        .expect("test params");
+        params.num_digits_fold = 3;
+        params
     }
 
     /// Build a minimal non-terminal relation instance whose layout-relevant
@@ -820,7 +812,6 @@ mod tests {
             fold_challenge_config: precommit_lp.fold_challenge_config,
             num_digits_open: precommit_lp.num_digits_open,
             num_digits_fold: precommit_lp.num_digits_fold,
-            fold_witness_linf_cap: precommit_lp.fold_witness_linf_cap,
         };
         let mut multi_group_lp = lp;
         multi_group_lp.precommitted_groups = vec![precommit];
@@ -996,9 +987,7 @@ mod tests {
             )
             .expect("emit T");
 
-            let depth_fold = lp
-                .num_digits_fold_for_params(params, num_claims, lp.field_bits_for_cache())
-                .expect("fold depth");
+            let depth_fold = params.num_digits_fold();
             for unit in layout.units_for_group(group_index).expect("units") {
                 let z_source = (0..params.num_positions_per_block() * depth_witness * depth_fold)
                     .map(|index| marker(500 * group_index + 100 * unit.chunk_index() + index))

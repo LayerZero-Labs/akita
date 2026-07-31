@@ -53,10 +53,7 @@ impl TestSetupInputs {
         self.level_params.num_digits_inner
     }
     fn depth_fold(&self) -> Result<usize, AkitaError> {
-        self.level_params.num_digits_fold(
-            self.opening_batch.num_total_polynomials(),
-            self.level_params.field_bits_for_cache(),
-        )
+        Ok(self.level_params.num_digits_fold())
     }
 }
 fn test_scalar(value: u128) -> F {
@@ -196,7 +193,6 @@ fn test_inputs_for_group_sizes(
         );
     }
     lp.num_digits_fold = depth_fold;
-    lp.num_fold_claims = num_claims;
     if group_sizes.len() > 1 {
         lp.precommitted_groups = group_sizes[..group_sizes.len() - 1]
             .iter()
@@ -228,7 +224,6 @@ fn test_inputs_for_group_sizes(
                     fold_challenge_config: lp.fold_challenge_config,
                     num_digits_open: lp.num_digits_open,
                     num_digits_fold: depth_fold,
-                    fold_witness_linf_cap: lp.fold_witness_linf_cap,
                 }
             })
             .collect();
@@ -453,11 +448,7 @@ fn test_single_group_descriptor(
     Ok(SetupContributionGroupInputs {
         group_id: *group_index,
         num_claims,
-        depth_fold: inputs.level_params.num_digits_fold_for_params(
-            group_lp,
-            num_claims,
-            inputs.level_params.field_bits_for_cache(),
-        )?,
+        depth_fold: group_lp.num_digits_fold(),
         a_row_start: a_range.start,
         b_row_start: b_range.start,
     })

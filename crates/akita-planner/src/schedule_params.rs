@@ -12,10 +12,10 @@ use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
-    fold_witness_digit_plan, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
-    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessNorms, InnerCommitMatrixParams, OpenCommitMatrixParams,
-    OuterCommitMatrixParams, SisTableKey,
+    num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, BalancedSignedDigitFoldPolicy,
+    FoldWitnessNorms, HonestFoldPolicy, HonestFoldPolicySpec, HonestFoldSizingQuery,
+    InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
     extension_opening_reduction_level_bytes, intermediate_w_ring_element_count_for_chunks,
@@ -493,6 +493,7 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 pub fn find_schedule(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
     dimensions: &RingDimensionSearchDomain,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
@@ -504,6 +505,7 @@ pub fn find_schedule(
         return find_schedule_inner(
             key,
             policy,
+            honest_fold_policy,
             ring_challenge_config,
             fold_challenge_shape_at_level,
         );
@@ -539,6 +541,7 @@ pub fn find_schedule(
     mixed_search::find_schedule(
         key,
         policy,
+        honest_fold_policy,
         dimensions,
         ring_challenge_config,
         fold_challenge_shape_at_level,
@@ -632,7 +635,8 @@ pub fn plan_optimal_suffix(
         key: PolynomialGroupLayout::singleton(num_vars),
         setup_field_budget: None,
         root_lookup_key: None,
-        precommitted_fold_witness_norms: &[],
+        root_honest_fold_policy: None,
+        precommitted_honest_fold_policies: &[],
     };
     let mut memo = ScheduleMemo::new();
     let result = derive_optimal_suffix_schedule(
@@ -678,6 +682,7 @@ pub fn plan_optimal_suffix(
 fn find_schedule_inner(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
+    honest_fold_policy: HonestFoldPolicySpec,
     ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
     fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
 ) -> Result<PlannedFoldSchedule, AkitaError> {
@@ -694,7 +699,8 @@ fn find_schedule_inner(
         key,
         setup_field_budget: None,
         root_lookup_key: None,
-        precommitted_fold_witness_norms: &[],
+        root_honest_fold_policy: None,
+        precommitted_honest_fold_policies: &[],
     };
 
     if policy.recursive_setup_planning {
@@ -742,6 +748,7 @@ fn find_schedule_inner(
                     candidate_log_basis,
                     block_index_bits,
                     fold_challenge_shape,
+                    honest_fold_policy,
                 )?
                 else {
                     continue;
@@ -936,7 +943,6 @@ mod geometry_tests {
     #[test]
     fn mixed_domain_search_beats_or_ties_uniform_d64() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let policy = policy_of::<D256OneHot>();
         let dimensions = [
             CommitmentRingDims::uniform(64),
@@ -951,6 +957,7 @@ mod geometry_tests {
         let selected = find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -966,6 +973,7 @@ mod geometry_tests {
         let candidate = find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &uniform,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1005,7 +1013,6 @@ mod geometry_tests {
     #[test]
     fn mixed_frontier_matches_exhaustive_oracle_and_is_canonical() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let policy = policy_of::<D256OneHot>();
         let d64 = CommitmentRingDims::uniform(64);
         let a128 = CommitmentRingDims {
@@ -1021,6 +1028,7 @@ mod geometry_tests {
         let selected = find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &reversed_with_duplicate,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1029,6 +1037,7 @@ mod geometry_tests {
         let exhaustive = exhaustive_oracle::find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &canonical,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1037,6 +1046,7 @@ mod geometry_tests {
         let repeated = find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &canonical,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1068,7 +1078,6 @@ mod geometry_tests {
     #[test]
     fn mixed_search_parallel_generation_is_descriptor_deterministic() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let handles = (0..8)
             .map(|_| {
                 std::thread::spawn(|| {
@@ -1088,6 +1097,7 @@ mod geometry_tests {
                     find_schedule(
                         PolynomialGroupLayout::singleton(16),
                         &policy,
+                        D256OneHot::root_honest_fold_policy(),
                         &domain,
                         D256OneHot::ring_challenge_config,
                         D256OneHot::fold_challenge_shape_at_level,
@@ -1109,7 +1119,6 @@ mod geometry_tests {
     #[test]
     fn mixed_root_prices_eor_at_candidate_a_dimension() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let mut policy = policy_of::<D256OneHot>();
         // D256 enables root projection at this width while the D64 candidate does not.
         policy.claim_ext_degree = 64;
@@ -1120,6 +1129,7 @@ mod geometry_tests {
         let selected = find_schedule(
             key,
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1180,7 +1190,6 @@ mod geometry_tests {
     #[test]
     fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let policy = policy_of::<D256OneHot>();
         let d64 = CommitmentRingDims::uniform(64);
         let d128_mixed = CommitmentRingDims {
@@ -1202,6 +1211,7 @@ mod geometry_tests {
         let selected = find_schedule(
             PolynomialGroupLayout::singleton(36),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1215,6 +1225,7 @@ mod geometry_tests {
         let rank_one_capped = find_schedule(
             PolynomialGroupLayout::singleton(36),
             &comparison_policy,
+            D256OneHot::root_honest_fold_policy(),
             &rank_one_capped_domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1233,14 +1244,14 @@ mod geometry_tests {
         );
         assert_eq!(
             selected.estimate.estimated_setup_envelope_ring_elements,
-            262_144
+            176_128
         );
         assert_eq!(
             selected.estimate.estimated_proof_payload_bytes().unwrap(),
-            99_368
+            98_728
         );
         assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
-        assert_eq!(selected_root.inner_commit_matrix.output_rank(), 2);
+        assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
         assert_eq!(rank_one_capped_root.outer_commit_matrix.output_rank(), 1);
         assert_eq!(selected_root.outer_commit_matrix.output_rank(), 1);
         assert!(
@@ -1261,7 +1272,6 @@ mod geometry_tests {
     #[test]
     fn mixed_search_requires_a_monotonic_d64_suffix_domain() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let policy = policy_of::<D256OneHot>();
         let missing_d64 = RingDimensionSearchDomain::new(
             policy.ring_dimension,
@@ -1271,6 +1281,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &missing_d64,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1295,6 +1306,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &below_d64,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1307,7 +1319,6 @@ mod geometry_tests {
     #[test]
     fn mixed_search_rejects_direct_multi_chunk_policy() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let mut policy = policy_of::<D256OneHot>();
         policy.witness_chunk = akita_types::ChunkedWitnessCfg::d64_production();
         let domain = RingDimensionSearchDomain::new(
@@ -1318,6 +1329,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1332,7 +1344,6 @@ mod geometry_tests {
     #[test]
     fn mixed_search_validates_key_and_policy_at_entry() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let policy = policy_of::<D256OneHot>();
         let domain = RingDimensionSearchDomain::new(
             policy.ring_dimension,
@@ -1346,6 +1357,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::new(16, 0),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1360,6 +1372,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &invalid_policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1374,12 +1387,12 @@ mod geometry_tests {
     #[test]
     fn dimension_domain_is_bound_to_setup_generation_dimension() {
         use akita_config::{policy_of, proof_optimized::fp128::D128OneHot, CommitmentConfig};
-
         let policy = policy_of::<D128OneHot>();
         let domain = RingDimensionSearchDomain::uniform(256).unwrap();
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D128OneHot::root_honest_fold_policy(),
             &domain,
             D128OneHot::ring_challenge_config,
             D128OneHot::fold_challenge_shape_at_level,
@@ -1394,7 +1407,6 @@ mod geometry_tests {
     #[test]
     fn mixed_search_applies_setup_budget_in_physical_fields() {
         use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
-
         let mut policy = policy_of::<D256OneHot>();
         let domain = RingDimensionSearchDomain::new(
             policy.ring_dimension,
@@ -1411,6 +1423,7 @@ mod geometry_tests {
         let selected = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1423,6 +1436,7 @@ mod geometry_tests {
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
             &policy,
+            D256OneHot::root_honest_fold_policy(),
             &domain,
             D256OneHot::ring_challenge_config,
             D256OneHot::fold_challenge_shape_at_level,
@@ -1448,6 +1462,7 @@ mod geometry_tests {
         let precommit = find_schedule(
             precommit_layout,
             &precommit_policy,
+            D64OneHot::root_honest_fold_policy(),
             &precommit_domain,
             D64OneHot::ring_challenge_config,
             D64OneHot::fold_challenge_shape_at_level,
@@ -1461,13 +1476,14 @@ mod geometry_tests {
             final_group: PolynomialGroupLayout::new(32, 2),
             precommitteds: vec![descriptor, descriptor],
         };
-        let precommitted_fold_witness_norms = vec![
-            D64OneHot::root_fold_witness_norms(),
-            D64OneHot::root_fold_witness_norms(),
+        let precommitted_honest_fold_policies = vec![
+            D64OneHot::root_honest_fold_policy(),
+            D64OneHot::root_honest_fold_policy(),
         ];
         let planned = crate::find_group_batch_schedule(
             &key,
-            &precommitted_fold_witness_norms,
+            Recursive::root_honest_fold_policy(),
+            &precommitted_honest_fold_policies,
             &policy_of::<Recursive>(),
             Recursive::ring_challenge_config,
             Recursive::fold_challenge_shape_at_level,
