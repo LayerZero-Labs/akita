@@ -109,7 +109,8 @@ pub fn extension_opening_reduction_level_bytes(
         input_witness_len,
         ring_d,
     )? {
-        ExtensionOpeningReductionGeometry::NotRequired => Ok(0),
+        // This is a serialized-byte count, not cryptographic material.
+        ExtensionOpeningReductionGeometry::NotRequired => Ok(usize::default()),
         ExtensionOpeningReductionGeometry::Required {
             partials,
             opening_vars,
@@ -148,7 +149,8 @@ pub fn try_extension_opening_reduction_level_bytes(
         input_witness_len,
         ring_d,
     )? {
-        ExtensionOpeningReductionGeometry::NotRequired => Ok(Some(0)),
+        // This is a serialized-byte count, not cryptographic material.
+        ExtensionOpeningReductionGeometry::NotRequired => Ok(Some(usize::default())),
         ExtensionOpeningReductionGeometry::Required {
             partials,
             opening_vars,
