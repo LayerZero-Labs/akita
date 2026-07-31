@@ -6,9 +6,9 @@ use crate::PreparedProverGroup;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore};
 use akita_transcript::Transcript;
 use akita_types::{
-    normalize_recursive_opening_point, AkitaCommitmentHint, Commitment, CommittedGroup,
-    CommittedGroupParams, OpeningClaims, OpeningClaimsLayout, OpeningScheduleSelection,
-    PolynomialGroupClaims, PolynomialGroupLayout, RingVec, SetupPrefixSlot,
+    AkitaCommitmentHint, Commitment, CommittedGroup, CommittedGroupParams, OpeningClaims,
+    OpeningClaimsLayout, OpeningScheduleSelection, PolynomialGroupClaims, PolynomialGroupLayout,
+    RingVec, SetupPrefixSlot,
 };
 
 /// Exact top-level row selection paired with its prover opening material.
@@ -338,22 +338,6 @@ where
     PointF: FieldCore,
     CommitF: FieldCore,
 {
-    /// Build the single-group recursive suffix batch using the mixed-source type.
-    pub(crate) fn new_recursive_suffix_source(
-        opening_point: &[PointF],
-        recursive_num_vars: usize,
-        witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        commitment: CommitmentWithHint<CommitF>,
-    ) -> Result<Self, AkitaError> {
-        let padded_point = normalize_recursive_opening_point(opening_point, recursive_num_vars)?;
-        let claims = PolynomialGroupClaims::new(padded_point, vec![PointF::zero()], commitment.0)?;
-        ProverOpeningData::new_internal(
-            OpeningClaims::from_groups(vec![claims])?,
-            vec![commitment.1],
-            vec![witness_polys],
-        )
-    }
-
     /// Build recursive suffix opening data, with an optional setup-prefix group.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new_recursive_suffix_fold(
@@ -366,8 +350,17 @@ where
         witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
         witness_commitment: CommitmentWithHint<CommitF>,
     ) -> Result<Self, AkitaError> {
-        let padded_witness_point =
-            normalize_recursive_opening_point(opening_point, recursive_num_vars)?;
+        if opening_point.len() > recursive_num_vars {
+            return Err(AkitaError::InvalidPointDimension {
+                expected: recursive_num_vars,
+                actual: opening_point.len(),
+            });
+        }
+        let witness_group = PolynomialGroupClaims::new(
+            opening_point.to_vec(),
+            vec![witness_eval],
+            witness_commitment.0,
+        )?;
 
         match (setup_prefix_opening, setup_slot, setup_polys) {
             (
@@ -375,66 +368,30 @@ where
                 Some(setup_slot),
                 Some(setup_polys),
             ) => {
-                let block_claims = Self::new_recursive_suffix_with_setup_prefix(
-                    setup_prefix_point.clone(),
-                    padded_witness_point.clone(),
-                    setup_prefix_eval,
-                    witness_eval,
-                    setup_slot,
-                    setup_polys,
-                    witness_polys,
-                    setup_slot.hint.clone(),
-                    witness_commitment.1,
-                    witness_commitment.0,
+                let setup_commitment_rows =
+                    setup_slot.commitment.rows.first().cloned().ok_or_else(|| {
+                        AkitaError::InvalidSetup("setup-prefix slot has no commitment rows".into())
+                    })?;
+                let setup_group = PolynomialGroupClaims::new(
+                    setup_prefix_point,
+                    vec![setup_prefix_eval],
+                    Commitment::new(setup_commitment_rows),
                 )?;
-                Ok(block_claims)
+                ProverOpeningData::new_internal(
+                    OpeningClaims::from_groups(vec![setup_group, witness_group])?,
+                    vec![setup_slot.hint.clone(), witness_commitment.1],
+                    vec![setup_polys, witness_polys],
+                )
             }
-            (None, None, None) => {
-                let block_claims = Self::new_recursive_suffix_source(
-                    &padded_witness_point,
-                    recursive_num_vars,
-                    witness_polys,
-                    witness_commitment,
-                )?;
-                Ok(block_claims)
-            }
+            (None, None, None) => ProverOpeningData::new_internal(
+                OpeningClaims::from_groups(vec![witness_group])?,
+                vec![witness_commitment.1],
+                vec![witness_polys],
+            ),
             _ => Err(AkitaError::InvalidInput(
                 "setup-prefix suffix inputs are incomplete".to_string(),
             )),
         }
-    }
-
-    /// Build the two-group recursive suffix batch used when the previous fold
-    /// offloaded setup-prefix evaluation into this fold.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new_recursive_suffix_with_setup_prefix(
-        setup_prefix_point: Vec<PointF>,
-        witness_point: Vec<PointF>,
-        setup_prefix_eval: PointF,
-        witness_eval: PointF,
-        setup_slot: &'a SetupPrefixSlot<CommitF>,
-        setup_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        witness_polys: &'a [&'a RecursiveFoldSource<CommitF>],
-        setup_hint: AkitaCommitmentHint<CommitF>,
-        witness_hint: AkitaCommitmentHint<CommitF>,
-        witness_commitment: Commitment<CommitF>,
-    ) -> Result<Self, AkitaError> {
-        let setup_commitment_rows =
-            setup_slot.commitment.rows.first().cloned().ok_or_else(|| {
-                AkitaError::InvalidSetup("setup-prefix slot has no commitment rows".into())
-            })?;
-        let setup_group = PolynomialGroupClaims::new(
-            setup_prefix_point,
-            vec![setup_prefix_eval],
-            Commitment::new(setup_commitment_rows),
-        )?;
-        let witness_group =
-            PolynomialGroupClaims::new(witness_point, vec![witness_eval], witness_commitment)?;
-        ProverOpeningData::new_internal(
-            OpeningClaims::from_groups(vec![setup_group, witness_group])?,
-            vec![setup_hint, witness_hint],
-            vec![setup_polys, witness_polys],
-        )
     }
 }
 

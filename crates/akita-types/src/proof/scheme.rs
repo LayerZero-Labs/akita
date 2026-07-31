@@ -25,7 +25,7 @@ where
     type VerifierSetup: Clone + Send + Sync;
     /// Protocol-facing commitment storage for public claims.
     type Commitment: Clone + PartialEq + Send + Sync;
-    /// Batched single-point evaluation/opening proof object.
+    /// Batched ordered group-local evaluation/opening proof object.
     ///
     /// A "singleton" opening is the 1x1 special case: a single polynomial,
     /// a single commitment, and a single opening point.

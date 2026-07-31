@@ -7,7 +7,7 @@ use crate::layout::params::{
 use crate::sis::FoldWitnessLinfCapConfig;
 use crate::{
     CommittedGroupParams, InnerCommitMatrixParams, OpeningClaimsLayout, OuterCommitMatrixParams,
-    PolynomialGroupLayout, SetupContributionMode, TerminalResponseShape,
+    PolynomialGroupLayout, RelationAddressGeometry, SetupContributionMode, TerminalResponseShape,
 };
 use akita_field::{AkitaError, CanonicalField};
 
@@ -798,6 +798,28 @@ impl FoldSchedule {
                 "root output witness length does not match its successor".to_string(),
             ));
         }
+        let (first_successor_d, first_successor_opening_num_vars) =
+            self.recursive_folds.first().map_or_else(
+                || {
+                    Ok((
+                        self.terminal.params.witness.d_a(),
+                        self.terminal.params.witness.recursive_opening_num_vars()?,
+                    ))
+                },
+                |step| {
+                    Ok((
+                        step.params.witness.d_a(),
+                        step.params.witness.recursive_opening_num_vars()?,
+                    ))
+                },
+            )?;
+        validate_stage2_successor_capacity(
+            "root fold",
+            &self.root.params.final_group.commitment,
+            self.root.output_witness_len,
+            first_successor_d,
+            first_successor_opening_num_vars,
+        )?;
         let mut predecessor = &self.root.params.final_group.commitment;
         let root_shared_d = predecessor.role_dims().d_d();
         let mut predecessor_setup_d = self.root.params.precommitted_groups.iter().try_fold(
@@ -858,6 +880,28 @@ impl FoldSchedule {
                     "recursive fold {index} output witness length does not match its successor"
                 )));
             }
+            let (successor_d, successor_opening_num_vars) =
+                self.recursive_folds.get(index + 1).map_or_else(
+                    || {
+                        Ok((
+                            self.terminal.params.witness.d_a(),
+                            self.terminal.params.witness.recursive_opening_num_vars()?,
+                        ))
+                    },
+                    |next| {
+                        Ok((
+                            next.params.witness.d_a(),
+                            next.params.witness.recursive_opening_num_vars()?,
+                        ))
+                    },
+                )?;
+            validate_stage2_successor_capacity(
+                &format!("recursive fold {index}"),
+                &step.params.witness,
+                step.output_witness_len,
+                successor_d,
+                successor_opening_num_vars,
+            )?;
             predecessor = &step.params.witness;
             predecessor_setup_d = predecessor.role_dims().common_relation_coeff_count();
         }
@@ -949,6 +993,44 @@ impl FoldSchedule {
             .append_descriptor_bytes(bytes);
         push_usize(bytes, self.terminal.input_witness_len);
     }
+}
+
+fn validate_stage2_successor_capacity(
+    predecessor_name: &str,
+    predecessor: &CommittedGroupParams,
+    output_witness_len: usize,
+    successor_ring_dimension: usize,
+    successor_opening_num_vars: usize,
+) -> Result<(), AkitaError> {
+    // Stage 2 owns the predecessor-derived point. A successor may expose a
+    // wider scheduled cube; preparation derives that wider representation by
+    // zero-extension. The schedule must reject only points that do not fit.
+    if successor_ring_dimension == 0 || !output_witness_len.is_multiple_of(successor_ring_dimension)
+    {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{predecessor_name} output witness length {output_witness_len} is not divisible by \
+             successor ring dimension {successor_ring_dimension}"
+        )));
+    }
+    let shared_d = predecessor.role_dims().d_d();
+    let precommitted_role_dims = predecessor
+        .precommitted_group_iter()
+        .map(|group| group.role_dims(shared_d))
+        .collect::<Vec<_>>();
+    let geometry = RelationAddressGeometry::new_for_groups(
+        predecessor.role_dims(),
+        &precommitted_role_dims,
+        successor_ring_dimension,
+        output_witness_len / successor_ring_dimension,
+    )?;
+    let stage2_num_vars = geometry.relation_point_variable_count();
+    if stage2_num_vars > successor_opening_num_vars {
+        return Err(AkitaError::InvalidSetup(format!(
+            "{predecessor_name} Stage 2 point has {stage2_num_vars} variables, exceeding \
+             successor opening capacity {successor_opening_num_vars}"
+        )));
+    }
+    Ok(())
 }
 
 fn append_witness_partition_descriptor_bytes(bytes: &mut Vec<u8>, partition: &WitnessPartition) {

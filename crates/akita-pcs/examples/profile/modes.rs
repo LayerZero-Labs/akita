@@ -7,12 +7,16 @@ use crate::workload::{
     onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot,
     run_recursive_multi_group_onehot,
 };
+#[cfg(feature = "profile-ci")]
+use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_config::proof_optimized::{fp128, fp32, fp64};
 use akita_config::tensor_verifier;
 use akita_config::test_support::akita_batched_root_layout;
 use akita_config::CommitmentConfig;
 use akita_field::unreduced::HasWide;
 use akita_field::unreduced::{HasOptimizedFold, HasUnreducedOps};
+#[cfg(feature = "profile-ci")]
+use akita_field::AkitaError;
 use akita_field::TranscriptChallenge;
 use akita_field::{
     CanonicalBytes, CanonicalField, FrobeniusExtField, FromPrimitiveInt, HalvingField,
@@ -20,13 +24,174 @@ use akita_field::{
 };
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
 use akita_pcs::test_support::{MixedDConfig, RecursiveRingDimensionTransitionConfig};
+#[cfg(feature = "profile-ci")]
+use akita_planner::{find_schedule, RingDimensionSearchDomain};
 use akita_serialization::{AkitaSerialize, Valid};
+#[cfg(feature = "profile-ci")]
+use akita_types::{
+    setup_matrix_envelope_for_schedule, ChunkedWitnessCfg, DecompositionParams, FoldSchedule,
+    OpeningClaimsLayout, PlannedFoldSchedule, SetupMatrixEnvelope,
+};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
     PolynomialGroupLayout,
 };
+#[cfg(feature = "profile-ci")]
+use std::collections::BTreeMap;
+#[cfg(feature = "profile-ci")]
+use std::sync::{Mutex, OnceLock};
 
 type F = fp128::Field;
+
+// The CI profile intentionally exercises the mixed planner as an actual PCS
+// schedule provider. This adapter is benchmark-only: it keeps setup generation
+// at D256, admits the same D64/D128/D256 candidate domain as the planner example,
+// and rejects grouped or batched keys because the mixed planner currently plans
+// direct scalar schedules only.
+#[cfg(feature = "profile-ci")]
+#[derive(Clone, Copy, Debug, Default)]
+struct PlannerMixedFp128OneHot;
+
+#[cfg(feature = "profile-ci")]
+fn planner_mixed_fp128_onehot_plan(num_vars: usize) -> Result<PlannedFoldSchedule, AkitaError> {
+    static CACHE: OnceLock<Mutex<BTreeMap<usize, PlannedFoldSchedule>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(BTreeMap::new()));
+    if let Some(plan) = cache
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("mixed planner cache is poisoned".into()))?
+        .get(&num_vars)
+        .cloned()
+    {
+        return Ok(plan);
+    }
+
+    let policy = akita_config::policy_of::<fp128::D256OneHot>();
+    let dimensions = RingDimensionSearchDomain::new(
+        policy.ring_dimension,
+        [
+            akita_types::CommitmentRingDims::uniform(64),
+            akita_types::CommitmentRingDims {
+                inner: 128,
+                outer: 64,
+                opening: 64,
+            },
+            akita_types::CommitmentRingDims::uniform(128),
+            akita_types::CommitmentRingDims {
+                inner: 256,
+                outer: 128,
+                opening: 128,
+            },
+        ],
+    )?;
+    let plan = find_schedule(
+        PolynomialGroupLayout::singleton(num_vars),
+        &policy,
+        &dimensions,
+        fp128::D256OneHot::ring_challenge_config,
+        fp128::D256OneHot::fold_challenge_shape_at_level,
+    )?;
+    cache
+        .lock()
+        .map_err(|_| AkitaError::InvalidSetup("mixed planner cache is poisoned".into()))?
+        .insert(num_vars, plan.clone());
+    Ok(plan)
+}
+
+#[cfg(feature = "profile-ci")]
+impl CommitmentConfig for PlannerMixedFp128OneHot {
+    type Field = fp128::Field;
+    type ExtField = fp128::Field;
+
+    const D: usize = fp128::D256OneHot::D;
+
+    fn decomposition() -> DecompositionParams {
+        fp128::D256OneHot::decomposition()
+    }
+
+    fn ring_challenge_config(d: usize) -> Result<SparseChallengeConfig, AkitaError> {
+        fp128::D256OneHot::ring_challenge_config(d)
+    }
+
+    fn fold_challenge_shape_at_level(
+        inputs: akita_types::AkitaScheduleInputs,
+    ) -> TensorChallengeShape {
+        fp128::D256OneHot::fold_challenge_shape_at_level(inputs)
+    }
+
+    fn sis_modulus_profile() -> akita_types::SisModulusProfileId {
+        fp128::D256OneHot::sis_modulus_profile()
+    }
+
+    fn ring_subfield_embedding_norm_bound() -> u32 {
+        fp128::D256OneHot::ring_subfield_embedding_norm_bound()
+    }
+
+    fn max_setup_matrix_size(
+        max_num_vars: usize,
+        max_num_batched_polys: usize,
+    ) -> Result<SetupMatrixEnvelope, AkitaError> {
+        if max_num_batched_polys != 1 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "the CI mixed planner profile supports singleton batches only".into(),
+            ));
+        }
+        let mut envelope = SetupMatrixEnvelope::minimum();
+        let mut saw_schedule = false;
+        for num_vars in 1..=max_num_vars {
+            let Ok(plan) = planner_mixed_fp128_onehot_plan(num_vars) else {
+                continue;
+            };
+            saw_schedule = true;
+            let schedule = plan.schedule;
+            let required = setup_matrix_envelope_for_schedule(&schedule, Self::D)?;
+            envelope.max_setup_len = envelope.max_setup_len.max(required.max_setup_len);
+        }
+        if !saw_schedule {
+            return Err(AkitaError::UnsupportedSchedule(
+                "the CI mixed planner found no schedule within the requested capacity".into(),
+            ));
+        }
+        Ok(envelope)
+    }
+
+    fn basis_range() -> (u32, u32) {
+        fp128::D256OneHot::basis_range()
+    }
+
+    fn root_fold_witness_norms() -> akita_types::sis::FoldWitnessNorms {
+        fp128::D256OneHot::root_fold_witness_norms()
+    }
+
+    fn chunked_witness_cfg() -> ChunkedWitnessCfg {
+        fp128::D256OneHot::chunked_witness_cfg()
+    }
+
+    fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
+        None
+    }
+
+    fn runtime_schedule(key: AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError> {
+        key.validate(Self::decomposition().field_bits())?;
+        if !key.precommitteds.is_empty() || key.final_group.num_polynomials() != 1 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "the CI mixed planner profile supports direct singleton schedules only".into(),
+            ));
+        }
+        Ok(planner_mixed_fp128_onehot_plan(key.final_group.num_vars())?.schedule)
+    }
+
+    fn get_params_for_prove(layout: &OpeningClaimsLayout) -> Result<FoldSchedule, AkitaError> {
+        layout.check()?;
+        if layout.num_groups() != 1 || layout.num_total_polynomials() != 1 {
+            return Err(AkitaError::UnsupportedSchedule(
+                "the CI mixed planner profile supports direct singleton layouts only".into(),
+            ));
+        }
+        Self::runtime_schedule(AkitaScheduleLookupKey::single(
+            layout.root_final_group_layout()?,
+        ))
+    }
+}
 
 fn fp128_prime_label() -> String {
     match <F as PseudoMersenneField>::MODULUS_OFFSET {
@@ -186,6 +351,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d64",
         run: run_profile_onehot_fp128_d64,
+    },
+    ProfileMode {
+        name: "onehot_fp128_mixed_d_planner",
+        run: run_profile_onehot_fp128_mixed_d_planner,
     },
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
@@ -401,6 +570,58 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     type Cfg = fp128::D64OneHot;
     let title = fp128_onehot_title(64, nv, num_polys);
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
+}
+
+#[cfg(feature = "profile-ci")]
+fn run_profile_onehot_fp128_mixed_d_planner(nv: usize, num_polys: usize) {
+    type Cfg = PlannerMixedFp128OneHot;
+    assert_eq!(nv, 32, "mixed planner profile fixes nv=32");
+    assert_singleton_mode("onehot_fp128_mixed_d_planner", num_polys);
+
+    let planned = planner_mixed_fp128_onehot_plan(nv).expect("mixed planner schedule");
+    let selected_dims = std::iter::once(
+        planned
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+    )
+    .chain(
+        planned
+            .schedule
+            .recursive_folds
+            .iter()
+            .map(|fold| fold.params.witness.role_dims()),
+    )
+    .collect::<Vec<_>>();
+    tracing::info!(
+        selected_dims = ?selected_dims,
+        setup_ring_elements = planned.estimate.estimated_setup_envelope_ring_elements,
+        estimated_proof_bytes = planned
+            .estimate
+            .estimated_proof_payload_bytes()
+            .expect("mixed planner proof estimate"),
+        "mixed planner selection"
+    );
+
+    let layout = resolve_layout::<F, Cfg>(nv);
+    tracing::info!(
+        "=== onehot_fp128_mixed_d_planner (fp128, setup D256, planner-selected per-level dimensions, 1-of-256) ==="
+    );
+    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    // `Cfg::runtime_schedule` returns the same planner-selected schedule used
+    // by the PCS prover and verifier. The benchmark intentionally reports the
+    // schedule and measured proof size without comparing against the uniform
+    // DP fallback, which is a different schedule.
+    run_onehot::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_mixed_d_planner",
+        nv,
+        &layout,
+        Some(&planned.schedule),
+        false,
+    );
 }
 
 /// Shared driver for the recursive multi-group profiles. Every such profile

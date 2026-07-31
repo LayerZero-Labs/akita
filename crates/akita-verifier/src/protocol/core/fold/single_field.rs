@@ -141,6 +141,7 @@ where
         role_d_a,
         |D| {
             let mut prepared_points = Vec::with_capacity(opening_batch.num_groups());
+            let final_group_index = opening_batch.root_final_group_index()?;
             for group_index in 0..opening_batch.num_groups() {
                 let group_lp = lp.group_params(opening_batch, group_index)?;
                 let target_len = alpha_bits
@@ -150,7 +151,12 @@ where
                         AkitaError::InvalidSetup("group opening point length overflow".to_string())
                     })?;
                 let group_protocol_point = block_claims.group_point(group_index)?;
-                if group_protocol_point.len() != target_len {
+                let point_width_is_valid = if group_index == final_group_index {
+                    group_protocol_point.len() <= target_len
+                } else {
+                    group_protocol_point.len() == target_len
+                };
+                if !point_width_is_valid {
                     return Err(AkitaError::InvalidInput(format!(
                         "suffix group point width mismatch: group={group_index}, \
                          groups={}, setup_prefix={}, target_len={target_len}, actual_len={}",
