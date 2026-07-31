@@ -75,6 +75,7 @@ pub struct GeneratedRootFold {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GeneratedSetupPrefixInput {
     pub natural_len: u64,
+    pub num_digits_fold: u32,
     pub commitment: GeneratedCommittedGroup,
 }
 

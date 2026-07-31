@@ -1191,7 +1191,7 @@ mod geometry_tests {
         );
         assert_eq!(
             selected.estimate.estimated_num_setup_field_elements,
-            67_108_864
+            45_088_768
         );
         assert_eq!(
             selected.estimate.estimated_proof_payload_bytes().unwrap(),
