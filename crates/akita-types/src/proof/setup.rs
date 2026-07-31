@@ -2,8 +2,6 @@
 
 use super::setup_prefix::SetupPrefixVerifierRegistry;
 use crate::FlatMatrix;
-#[cfg(test)]
-use akita_algebra::CyclotomicRing;
 #[allow(unused_imports)]
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
@@ -27,8 +25,9 @@ pub type PublicMatrixSeed = [u8; 32];
 /// decoding from allocating directly from attacker-controlled seed metadata.
 pub const MAX_SETUP_MATRIX_FIELD_ELEMENTS: usize = 1 << 26;
 
-const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-matrix-1d";
-const SHARED_MATRIX_LABEL: &[u8] = b"shared";
+const PUBLIC_MATRIX_DOMAIN: &[u8] = b"akita/commitment/public-field-stream";
+const PUBLIC_MATRIX_DERIVATION_TAG: &[u8] = b"shake256-paged-v1";
+const PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS: usize = 4096;
 
 /// Packed capacity envelope for the shared public setup vector.
 ///
@@ -192,7 +191,7 @@ impl<F: FieldCore> AkitaExpandedSetup<F> {
 
 impl<F> AkitaExpandedSetup<F>
 where
-    F: FieldCore + RandomSampling + Valid,
+    F: FieldCore + CanonicalField + RandomSampling + Valid,
 {
     /// Build an expanded setup from untrusted parts and verify the materialized
     /// matrix against the public seed.
@@ -224,26 +223,29 @@ pub fn sample_public_matrix_seed() -> PublicMatrixSeed {
 
 /// Derive a flat public vector of ring elements from a seed.
 ///
-/// All role matrices (A, B, D) share one backing vector with a fixed label
-/// (`"shared"`). Each role views a prefix of this vector reshaped with its
-/// own `(num_rows, num_cols)` dimensions.
+/// The coefficient stream is paged in fixed groups of 4096 field elements.
+/// Ring dimension `D` determines only how many coefficients the caller asks
+/// for and how the returned matrix storage is shaped; it is not absorbed into
+/// the XOF. Equal field-length requests therefore derive equal coefficient
+/// prefixes at every ring dimension.
 ///
-/// Domain separation uses a single flat index so that a vector of length N is
-/// a prefix of any vector of length M > N derived from the same seed.
+/// Each page owns one SHAKE256 stream and repeated [`RandomSampling::random`]
+/// calls consume that stream sequentially. Pages may be derived in parallel,
+/// while concatenation in page-index order preserves deterministic prefix
+/// semantics.
 #[tracing::instrument(skip_all, name = "derive_public_matrix_flat")]
 #[must_use]
-pub fn derive_public_matrix_flat<F: FieldCore + RandomSampling, const D: usize>(
+pub fn derive_public_matrix_flat<F: FieldCore + CanonicalField + RandomSampling, const D: usize>(
     total_ring_elements: usize,
     seed: &PublicMatrixSeed,
 ) -> FlatMatrix<F> {
-    let xof = LabeledMatrixXof::new(seed, SHARED_MATRIX_LABEL);
     let mut data = vec![F::zero(); total_ring_elements * D];
-    cfg_chunks_mut!(data, D)
+    cfg_chunks_mut!(data, PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS)
         .enumerate()
-        .for_each(|(idx, coeffs)| {
-            let mut entry_rng = xof.entry_rng(idx);
+        .for_each(|(page_index, coeffs)| {
+            let mut page_rng = PublicMatrixPageXof::new::<F>(seed, page_index);
             for coeff in coeffs.iter_mut() {
-                *coeff = F::random(&mut entry_rng);
+                *coeff = F::random(&mut page_rng);
             }
         });
 
@@ -284,24 +286,24 @@ pub fn validate_public_matrix_shape_matches_seed<F: FieldCore + Valid>(
 ///
 /// Returns an error if the matrix shape is malformed or if any coefficient
 /// differs from the seed-derived public matrix.
-pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid>(
+pub fn validate_public_matrix_matches_seed<
+    F: FieldCore + CanonicalField + RandomSampling + Valid,
+>(
     shared_matrix: &FlatMatrix<F>,
     seed: &AkitaSetupSeed,
 ) -> Result<(), SerializationError> {
     validate_public_matrix_shape_matches_seed(shared_matrix, seed)?;
-    let gen_ring_dim = shared_matrix.gen_ring_dim();
-    let xof = LabeledMatrixXof::new(&seed.public_matrix_seed, SHARED_MATRIX_LABEL);
-    let mut expected = vec![F::zero(); gen_ring_dim];
-    for (idx, coeffs) in shared_matrix
+    let mut expected = [F::zero(); PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS];
+    for (page_index, coeffs) in shared_matrix
         .as_field_slice()
-        .chunks_exact(gen_ring_dim)
+        .chunks(PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS)
         .enumerate()
     {
-        let mut entry_rng = xof.entry_rng(idx);
-        for value in expected.iter_mut() {
-            *value = F::random(&mut entry_rng);
+        let mut page_rng = PublicMatrixPageXof::new::<F>(&seed.public_matrix_seed, page_index);
+        for value in &mut expected[..coeffs.len()] {
+            *value = F::random(&mut page_rng);
         }
-        if coeffs != expected.as_slice() {
+        if coeffs != &expected[..coeffs.len()] {
             return Err(SerializationError::InvalidData(
                 "setup shared_matrix does not match public matrix seed".to_string(),
             ));
@@ -310,61 +312,35 @@ pub fn validate_public_matrix_matches_seed<F: FieldCore + RandomSampling + Valid
     Ok(())
 }
 
-/// Concrete SHAKE256 XOF reader for public-matrix derivation. Naming it via the
-/// `ExtendableOutput` associated type lets each per-element RNG hold the reader
-/// inline instead of behind a `Box<dyn XofReader>`, removing one heap
-/// allocation per derived ring element.
+/// Concrete SHAKE256 XOF reader for one public-matrix page.
 type PublicMatrixXofReader = <Shake256 as ExtendableOutput>::Reader;
 
-struct ShakeXofRng {
+struct PublicMatrixPageXof {
     reader: PublicMatrixXofReader,
 }
 
-impl ShakeXofRng {
-    /// Independent full-prefix constructor retained for tests that cross-check
-    /// the prefix-reuse derivation against a from-scratch absorb.
-    #[cfg(test)]
-    fn new_labeled(seed: &PublicMatrixSeed, matrix_label: &[u8], indices: &[u64]) -> Self {
+impl PublicMatrixPageXof {
+    fn new<F: CanonicalField>(seed: &PublicMatrixSeed, page_index: usize) -> Self {
         let mut xof = Shake256::default();
         absorb_len_prefixed(&mut xof, b"domain", PUBLIC_MATRIX_DOMAIN);
+        absorb_len_prefixed(&mut xof, b"derivation", PUBLIC_MATRIX_DERIVATION_TAG);
         absorb_len_prefixed(&mut xof, b"seed", seed);
-        absorb_len_prefixed(&mut xof, b"matrix", matrix_label);
-        for index in indices {
-            absorb_len_prefixed(&mut xof, b"index", &index.to_le_bytes());
-        }
+        absorb_len_prefixed(&mut xof, b"field", &field_modulus_bytes::<F>());
+        absorb_len_prefixed(&mut xof, b"page", &(page_index as u64).to_le_bytes());
         Self {
             reader: xof.finalize_xof(),
         }
     }
 }
 
-/// Pre-absorbs the fixed `domain‖seed‖matrix` prefix of the public-matrix XOF
-/// once. Each per-element RNG then clones the sponge state and absorbs only the
-/// element index, so the absorbed byte stream (and therefore every derived ring
-/// element) is bit-for-bit identical to absorbing the full prefix per element.
-struct LabeledMatrixXof {
-    base: Shake256,
+fn field_modulus_bytes<F: CanonicalField>() -> [u8; 32] {
+    let modulus = crate::field_modulus::<F>().to_be_bytes();
+    let mut encoded = [0u8; 32];
+    encoded[16..].copy_from_slice(&modulus);
+    encoded
 }
 
-impl LabeledMatrixXof {
-    fn new(seed: &PublicMatrixSeed, matrix_label: &[u8]) -> Self {
-        let mut base = Shake256::default();
-        absorb_len_prefixed(&mut base, b"domain", PUBLIC_MATRIX_DOMAIN);
-        absorb_len_prefixed(&mut base, b"seed", seed);
-        absorb_len_prefixed(&mut base, b"matrix", matrix_label);
-        Self { base }
-    }
-
-    fn entry_rng(&self, flat_index: usize) -> ShakeXofRng {
-        let mut xof = self.base.clone();
-        absorb_len_prefixed(&mut xof, b"index", &(flat_index as u64).to_le_bytes());
-        ShakeXofRng {
-            reader: xof.finalize_xof(),
-        }
-    }
-}
-
-impl RngCore for ShakeXofRng {
+impl RngCore for PublicMatrixPageXof {
     fn next_u32(&mut self) -> u32 {
         let mut buf = [0u8; 4];
         self.fill_bytes(&mut buf);
@@ -387,7 +363,7 @@ impl RngCore for ShakeXofRng {
     }
 }
 
-impl CryptoRng for ShakeXofRng {}
+impl CryptoRng for PublicMatrixPageXof {}
 
 fn absorb_len_prefixed(xof: &mut Shake256, label: &[u8], data: &[u8]) {
     xof.update(&(label.len() as u64).to_le_bytes());
@@ -474,7 +450,7 @@ impl AkitaDeserialize for AkitaSetupSeed {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
+impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaExpandedSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.seed.check()?;
         self.shared_matrix.check()?;
@@ -500,8 +476,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaExpandedSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaExpandedSetup<F>
+impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<Context = ()>>
+    AkitaDeserialize for AkitaExpandedSetup<F>
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
@@ -531,7 +507,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
+impl<F: FieldCore + CanonicalField + RandomSampling + Valid> Valid for AkitaVerifierSetup<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.expanded.check()?;
         self.prefix_slots.check()
@@ -554,8 +530,8 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaVerifierSetup<F> {
     }
 }
 
-impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> AkitaDeserialize
-    for AkitaVerifierSetup<F>
+impl<F: FieldCore + CanonicalField + RandomSampling + Valid + AkitaDeserialize<Context = ()>>
+    AkitaDeserialize for AkitaVerifierSetup<F>
 {
     type Context = ();
     fn deserialize_with_mode<R: Read>(
@@ -586,7 +562,7 @@ impl<F: FieldCore + RandomSampling + Valid + AkitaDeserialize<Context = ()>> Aki
 #[cfg(test)]
 mod tests {
     use super::*;
-    use akita_field::{Fp64, Prime128Offset275};
+    use akita_field::{Fp32, Fp64, Prime128Offset275, Prime32Offset99, Prime64Offset59};
 
     type F = Prime128Offset275;
     const D: usize = 4;
@@ -807,17 +783,92 @@ mod tests {
     }
 
     #[test]
-    fn flat_derivation_matches_ring_random_stream() {
+    fn flat_derivation_matches_sequential_page_stream() {
         let seed = [5u8; 32];
         let got = derive_public_matrix_flat::<SmallF, SMALL_D>(6, &seed);
-        let expected = (0..6)
-            .flat_map(|idx| {
-                let mut rng = ShakeXofRng::new_labeled(&seed, SHARED_MATRIX_LABEL, &[idx as u64]);
-                CyclotomicRing::<SmallF, SMALL_D>::random(&mut rng).coeffs
-            })
+        let mut page = PublicMatrixPageXof::new::<SmallF>(&seed, 0);
+        let expected = (0..6 * SMALL_D)
+            .map(|_| SmallF::random(&mut page))
             .collect::<Vec<_>>();
 
         assert_eq!(got.as_field_slice(), expected.as_slice());
+    }
+
+    #[test]
+    fn flat_derivation_is_independent_of_ring_dimension() {
+        let seed = [17u8; 32];
+        let d64 = derive_public_matrix_flat::<SmallF, 64>(8, &seed);
+        let d128 = derive_public_matrix_flat::<SmallF, 128>(4, &seed);
+
+        assert_eq!(d64.as_field_slice(), d128.as_field_slice());
+    }
+
+    #[test]
+    fn flat_derivation_is_prefix_stable_across_page_boundary() {
+        let seed = [23u8; 32];
+        let through_page_zero =
+            derive_public_matrix_flat::<SmallF, 64>(PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS / 64, &seed);
+        let into_page_one = derive_public_matrix_flat::<SmallF, 64>(
+            PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS / 64 + 1,
+            &seed,
+        );
+
+        assert_eq!(
+            through_page_zero.as_field_slice(),
+            &into_page_one.as_field_slice()[..PUBLIC_MATRIX_PAGE_FIELD_ELEMENTS]
+        );
+    }
+
+    #[test]
+    fn paged_derivation_golden_vector() {
+        let seed = [31u8; 32];
+        fn samples<F: FieldCore + CanonicalField + RandomSampling>(
+            seed: &PublicMatrixSeed,
+        ) -> [u128; 3] {
+            let derived = derive_public_matrix_flat::<F, 64>(65, seed);
+            let canonical = derived
+                .as_field_slice()
+                .iter()
+                .map(|value| value.to_canonical_u128())
+                .collect::<Vec<_>>();
+            [canonical[0], canonical[4095], canonical[4096]]
+        }
+
+        assert_eq!(
+            samples::<Prime32Offset99>(&seed),
+            [255_517_783, 2_142_789_885, 1_161_894_421]
+        );
+        assert_eq!(
+            samples::<Prime64Offset59>(&seed),
+            [
+                4_157_171_832_243_090_710,
+                14_864_763_170_781_746_235,
+                13_931_373_751_692_620_283,
+            ]
+        );
+        assert_eq!(
+            samples::<Prime128Offset275>(&seed),
+            [
+                269_293_368_020_540_374_588_116_416_492_885_113_509,
+                154_565_423_045_356_607_192_238_116_901_934_766_314,
+                244_487_241_212_882_315_968_210_516_255_684_293_330,
+            ]
+        );
+    }
+
+    #[test]
+    fn page_xof_binds_the_field_modulus() {
+        type OtherF = Fp32<4294967291>;
+
+        let seed = [29u8; 32];
+        let mut small = PublicMatrixPageXof::new::<SmallF>(&seed, 0);
+        let mut other = PublicMatrixPageXof::new::<OtherF>(&seed, 0);
+        let mut small_bytes = [0u8; 32];
+        let mut other_bytes = [0u8; 32];
+        small.fill_bytes(&mut small_bytes);
+        other.fill_bytes(&mut other_bytes);
+
+        assert_ne!(small_bytes, other_bytes);
     }
 
     #[test]
