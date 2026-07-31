@@ -150,6 +150,51 @@ fn mixed_domain_search_beats_or_ties_uniform_d64() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn grouped_scalar_fallback_preserves_mixed_domain() {
+    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+    use akita_types::AkitaScheduleLookupKey;
+
+    let base_policy = policy_of::<D256OneHot>();
+    let dimensions = [
+        CommitmentRingDims::uniform(64),
+        CommitmentRingDims {
+            inner: 128,
+            outer: 64,
+            opening: 64,
+        },
+    ];
+    let domain = RingDimensionSearchDomain::new(base_policy.ring_dimension, dimensions).unwrap();
+    let policy = policy_for_domain(base_policy, &domain);
+    let key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(16));
+
+    let grouped = crate::find_group_batch_schedule(
+        &key,
+        &policy,
+        D256OneHot::ring_challenge_config,
+        D256OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+    let direct = find_schedule(
+        key.final_group,
+        &policy,
+        &domain,
+        D256OneHot::ring_challenge_config,
+        D256OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+
+    assert_eq!(
+        grouped.schedule.canonical_descriptor_bytes(),
+        direct.schedule.canonical_descriptor_bytes()
+    );
+    assert_eq!(
+        grouped.estimate.estimated_proof_payload_bytes(),
+        direct.estimate.estimated_proof_payload_bytes()
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
 
