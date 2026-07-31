@@ -37,7 +37,11 @@ pub(super) fn projected_collision_role_price(
         role_dimension,
         log_basis,
     )?;
-    let physical_width = native_width.checked_mul(carrier_dimension / role_dimension)?;
+    let physical_width = akita_types::sis::projected_role_ring_count(
+        carrier_dimension,
+        role_dimension,
+        native_width,
+    )?;
     Some((
         sis_key_at_dimension(policy, role, role_dimension, coeff_linf_bound),
         physical_width,
