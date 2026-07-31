@@ -5,7 +5,7 @@
 | Author(s)     | Quang Dao |
 | Created       | 2026-07-31 |
 | Status        | active |
-| PR            | stacked follow-up to #338 (number TBD) |
+| PR            | #341, stacked on #338 |
 | Supersedes    | The setup-generation-dimension and full-envelope NTT-cache contracts in `runtime-ring-cutover.md`, `mixed-ring-dimension-per-level.md`, and `setup-layout-repack.md`; the packed overlapping-prefix matrix layout itself remains authoritative |
 | Superseded-by | |
 | Book-chapter  | book/src/usage/commitment-api.md |
