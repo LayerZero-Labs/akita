@@ -11,7 +11,7 @@ pub(in crate::protocol::core) use extension_claim::{
     verify_extension_claim_terminal_suffix,
 };
 pub(in crate::protocol::core) use single_field::{
-    absorb_prepared_opening_points, prepare_single_field_suffix_groups,
+    absorb_protocol_opening_points, prepare_single_field_suffix_groups,
     prepare_single_field_terminal_suffix, verify_single_field_root_prefix,
 };
 
@@ -206,51 +206,32 @@ fn verify_stage3<F, E, T>(
     transcript: &mut T,
     rs: &RingSwitchVerifyOutput<E>,
     sumcheck_challenges: &[E],
-    stage2_next_w_eval: E,
     stage3: Option<(&SetupSumcheckProof<E>, &CommittedGroupParams)>,
-) -> Result<Option<FoldVerifyOutput<E>>, AkitaError>
+) -> Result<Option<(Vec<E>, E)>, AkitaError>
 where
     F: FieldCore + CanonicalField,
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
     if let Some((proof, next_fold_level_params)) = stage3 {
-        let witness_rounds = rs.relation_address_geometry.relation_point_variable_count();
-        if sumcheck_challenges.len() != witness_rounds {
-            return Err(AkitaError::InvalidSize {
-                expected: witness_rounds,
-                actual: sumcheck_challenges.len(),
-            });
-        }
         let setup_coefficient_bits = rs
             .relation_address_geometry
             .common_relation_witness_variable_count();
         let setup_x_challenges = sumcheck_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
-        let eta = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
         let verifier = SetupSumcheckVerifier::new::<F>(
             &rs.relation_matrix_evaluator,
             setup_x_challenges,
             &rs.tau1,
             rs.alpha,
         )?;
-        let (rho_w, rho_setup) = verifier.verify_batched_stage3::<F, T>(
-            setup,
-            next_fold_level_params,
-            proof,
-            stage2_next_w_eval,
-            sumcheck_challenges,
-            witness_rounds,
-            eta,
-            transcript,
-        )?;
-        transcript.absorb_and_record_serde(ABSORB_STAGE3_NEXT_W_EVAL, &proof.next_w_eval);
-        let setup_prefix_opening = next_fold_level_params
+        let setup_point =
+            verifier.verify_stage3::<F, T>(setup, next_fold_level_params, proof, transcript)?;
+        return Ok(next_fold_level_params
             .setup_prefix
             .as_ref()
-            .map(|_| (rho_setup, proof.setup_prefix_eval));
-        return Ok(Some((rho_w, setup_prefix_opening)));
+            .map(|_| (setup_point, proof.setup_prefix_eval)));
     }
     Ok(None)
 }
@@ -470,18 +451,7 @@ where
         evaluation_trace_weight,
         evaluation_trace_opening_claim,
     )?;
-    let stage2_next_w_eval = if stage3.is_some() {
-        stage2.next_w_eval()
-    } else {
-        E::zero()
-    };
-    let stage3_output = verify_stage3::<F, E, T>(
-        setup,
-        transcript,
-        &rs,
-        &sumcheck_challenges,
-        stage2_next_w_eval,
-        stage3,
-    )?;
-    Ok(stage3_output.unwrap_or((sumcheck_challenges, None)))
+    let setup_prefix_opening =
+        verify_stage3::<F, E, T>(setup, transcript, &rs, &sumcheck_challenges, stage3)?;
+    Ok((sumcheck_challenges, setup_prefix_opening))
 }

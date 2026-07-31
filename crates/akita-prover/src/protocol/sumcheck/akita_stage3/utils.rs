@@ -1,4 +1,3 @@
-use akita_algebra::offset_eq::eq_eval_at_index;
 use akita_field::parallel::*;
 use akita_field::FieldCore;
 
@@ -65,32 +64,6 @@ pub(super) fn accumulate_left_round<E: FieldCore>(
             let s1 = table[2 * pair_idx + 1];
             let f0 = left_factor[2 * pair_idx] * right_weight;
             let f1 = left_factor[2 * pair_idx + 1] * right_weight;
-            let ds = s1 - s0;
-            let df = f1 - f0;
-            constant += s0 * f0;
-            linear += s0 * df + ds * f0;
-            quadratic += ds * df;
-            (constant, linear, quadratic)
-        },
-        |lhs, rhs| (lhs.0 + rhs.0, lhs.1 + rhs.1, lhs.2 + rhs.2)
-    )
-}
-
-pub(super) fn accumulate_left_round_eq<E: FieldCore>(
-    table: &[E],
-    point: &[E],
-    scale: E,
-    right_weight: E,
-) -> (E, E, E) {
-    let half = table.len() / 2;
-    cfg_fold_reduce!(
-        0..half,
-        || (E::zero(), E::zero(), E::zero()),
-        |(mut constant, mut linear, mut quadratic), pair_idx| {
-            let s0 = table[2 * pair_idx];
-            let s1 = table[2 * pair_idx + 1];
-            let f0 = scale * eq_eval_at_index(point, 2 * pair_idx) * right_weight;
-            let f1 = scale * eq_eval_at_index(point, 2 * pair_idx + 1) * right_weight;
             let ds = s1 - s0;
             let df = f1 - f0;
             constant += s0 * f0;

@@ -27,7 +27,6 @@ pub mod proof_size;
 pub mod schedule;
 pub mod setup_contribution;
 pub mod sis;
-pub mod stage3_geometry;
 pub mod tail_golomb_rice_low_bits;
 pub mod trace_weight;
 pub mod transcript;
@@ -107,16 +106,16 @@ pub use proof::{
     CommitmentVerifier, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
     ExtensionOpeningReductionShape, FoldLevelProof, LevelProofShape, NextWitnessBinding,
     NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
-    PointVariableSelection, PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint,
-    ProverCommitmentRows, PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows,
-    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RingCommitment,
-    RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths, RingVec, RingView, SetupMatrixEnvelope, SetupPrefixProverRegistry,
-    SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
-    SetupPrefixVerifierSlot, SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout,
-    TailSegmentLayout, TerminalLevelProof, TerminalLevelProofShape, TerminalResponse,
-    TerminalResponseGroupParts, TerminalResponseShape, TerminalWitnessTranscriptParts,
-    MAX_SETUP_MATRIX_FIELD_ELEMENTS, SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
+    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
+    PublicMatrixSeed, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan, RelationRhsLayout, RingCommitment, RingMultiplierOpeningPoint,
+    RingRelationInstance, RingRelationOpeningCounts, RingRelationSegmentLengths, RingVec, RingView,
+    SetupMatrixEnvelope, SetupPrefixProverRegistry, SetupPrefixPublicCommitment, SetupPrefixSlot,
+    SetupPrefixSlotId, SetupPrefixVerifierRegistry, SetupPrefixVerifierSlot,
+    SetupProductSumcheckShape, SetupSumcheckProof, TailSegmentGroupLayout, TailSegmentLayout,
+    TerminalLevelProof, TerminalLevelProofShape, TerminalResponse, TerminalResponseGroupParts,
+    TerminalResponseShape, TerminalWitnessTranscriptParts, MAX_SETUP_MATRIX_FIELD_ELEMENTS,
+    SETUP_OFFLOAD_D_SETUP, SETUP_SUMCHECK_DEGREE,
 };
 pub use proof::{
     append_digit_range_child_claims, DigitRangeEqualityPoint, DigitRangePlan, FlatBooleanDomain,
@@ -143,7 +142,6 @@ pub use sis::{
     SisMatrixRole, SisModulusProfileId, SisRoleCell, SisSecurityPolicyId, SisTableDigest,
     SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
 };
-pub use stage3_geometry::BatchedStage3Geometry;
 pub use tail_golomb_rice_low_bits::{
     cap_rice_low_bits, wire_rice_low_bits, wire_rice_low_bits_from_rule, WIRE_RICE_LOW_BITS_DELTA,
     WIRE_RICE_LOW_BITS_RULE_SECURITY_MINUS_DELTA,

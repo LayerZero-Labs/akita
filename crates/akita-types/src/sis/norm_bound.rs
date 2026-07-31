@@ -279,21 +279,20 @@ pub fn fold_witness_digit_plan(
     // Optional digit snap-down: walk `δ_fold` downward while the symmetric
     // honest-prover digit envelope at `δ-1` still clears
     // `retain_num/retain_den · t*`.
+    //
+    // The protocol binding owns the field-width-specific retain floor.
     if let (
         FoldWitnessLinfCapPolicy::TailBoundWithGrind
         | FoldWitnessLinfCapPolicy::TensorTailBoundWithGrind,
         Some(rademacher_inf_norm_bound),
     ) = (cap_config.policy, rademacher_inf_norm_bound)
     {
-        if FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den > 0
-            && fold_decomposed_digits > 1
-            && rademacher_inf_norm_bound > 0
-        {
-            let floor =
-                (rademacher_inf_norm_bound.saturating_mul(u128::from(
-                    FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_num,
-                )) / u128::from(FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain_den))
-                .max(1);
+        let (retain_num, retain_den) =
+            FoldLinfProtocolBinding::CURRENT.snap_min_tstar_retain(field_bits);
+        if retain_den > 0 && fold_decomposed_digits > 1 && rademacher_inf_norm_bound > 0 {
+            let floor = (rademacher_inf_norm_bound.saturating_mul(u128::from(retain_num))
+                / u128::from(retain_den))
+            .max(1);
             while fold_decomposed_digits > 1 {
                 let positive_lower = balanced_digit_max(log_basis, fold_decomposed_digits - 1);
                 if positive_lower < floor {

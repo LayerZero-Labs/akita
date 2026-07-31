@@ -8,8 +8,7 @@ use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::{ComputeBackendSetup, CpuBackend, DensePoly, OneHotPoly, ProverOpeningData};
 use akita_transcript::AkitaTranscript;
 use akita_types::{
-    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PointVariableSelection,
-    PolynomialGroupClaims,
+    AkitaCommitmentHint, BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
 };
 use criterion::measurement::WallTime;
 use criterion::{black_box, criterion_group, BatchSize, BenchmarkGroup, Criterion};
@@ -49,13 +48,12 @@ fn prover_claims<'a, P, CommitF: FieldCore>(
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, F, P, CommitF> {
     let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        point.to_vec(),
         vec![F::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
-    let opening_claims =
-        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
@@ -65,15 +63,12 @@ fn verifier_claims<'a, C>(
     openings: &[F],
     commitment: &'a C,
 ) -> OpeningClaims<'static, F, &'a C> {
-    OpeningClaims::from_groups(
+    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
-            openings.to_vec(),
-            commitment,
-        )
-        .expect("valid verifier claims group")],
+        openings.to_vec(),
+        commitment,
     )
+    .expect("valid verifier claims group")])
     .expect("valid verifier claims")
 }
 

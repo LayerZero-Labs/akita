@@ -1,14 +1,13 @@
 # Extension-opening reduction
 
-> **Status:** stub. Part of the initial Akita Book scaffold.
-
-How Akita wires in the extension-opening reduction (EOR) when
-`CommitmentConfig::EXT_DEGREE > 1` (claim field is a proper extension of the
-coefficient field): it turns a base-field evaluation claim at an extension-field
-point into a single claim on a packed polynomial over the extension, with fewer
-variables. Single-field presets (`EXT_DEGREE == 1`, including production fp128)
-never run this path; see [Fold path and field geometry](./fold-path.md).
-The generic reduction and its soundness live in
+How Akita wires in the extension-opening reduction (EOR): it turns a base-field
+evaluation claim at an extension-field point into a single claim on a packed
+polynomial over the extension, with fewer variables. This path is used only
+when `CommitmentConfig::EXT_DEGREE > 1`, meaning that the claim field is a
+proper extension of the coefficient field. Single-field presets
+(`EXT_DEGREE == 1`, including production fp128) never run EOR; see
+[Fold path and field geometry](./fold-path.md). The generic reduction and its
+soundness live in
 [Foundations → Extension-opening reduction](../../foundations/extension-opening-reduction.md);
 this page is about Akita's prover paths, scheduling, and efficiency.
 
@@ -19,21 +18,28 @@ representatives visible to the hot loop.
 ## Multi-group openings
 
 A multi-group root still emits one EOR proof and runs one degree-two sumcheck.
-Group `g` contributes its own native packed witness and transparent factor:
+Group `g` contributes its own complete public point, native packed witness, and
+transparent factor:
 
 \\[
 \sum_g A_{\eta,g}(x)
   \left(\sum_{i \in g}\gamma_i\,W_{g,i}(x)\right).
 \\]
 
-All terms share one maximum-arity Boolean domain and one challenge vector. If a
-group has fewer variables, Akita treats its witness as independent of the
+The public points are independent; equal, nested, and unrelated values use the
+same per-group preparation path.
+The reduction embeds all terms in one maximum-arity Boolean domain and samples
+one internal sumcheck challenge vector.
+If a group has fewer variables, Akita treats its witness as independent of the
 additional high variables and multiplies it by equality to a fixed zero point
-on those variables. That equality factor has Boolean sum one. The prover stores
-this cylindrical extension as folding state; it does not allocate repeated
-witness evaluations. After sumcheck, the prover and verifier truncate the
-shared challenge vector to each group's native tail before preparing that
-group's opening point.
+on those variables.
+That equality factor has Boolean sum one.
+The prover stores this cylindrical extension as folding state; it does not
+allocate repeated witness evaluations.
+After sumcheck, the prover and verifier truncate the internal challenge vector
+to each group's native tail before preparing that group's resulting relation
+point.
+This internal shared reduction challenge is not an ambient public opening point.
 
 **Sources to fold in**
 

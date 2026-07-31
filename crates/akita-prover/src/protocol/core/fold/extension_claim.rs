@@ -15,11 +15,9 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     stack: &ProverComputeStack<'_, F, C, O, TS, R>,
     run_eor: bool,
     block_claims: ProverOpeningData<'a, E, P, F>,
-    eor_polys: &[&P],
-    eor_opening_batch: &OpeningClaims<'_, E>,
+    eor_polynomial_groups: Vec<Vec<&'a P>>,
     pad_base_evals: bool,
     transcript: &mut T,
-    non_eor_protocol_point: Vec<E>,
     validate_non_eor: V,
     level_params: &CommittedGroupParams,
     basis: BasisMode,
@@ -50,37 +48,39 @@ where
         .map_err(|err| AkitaError::InvalidInput(format!("opening batch layout failed: {err:?}")))?;
     let fold_polys = block_claims.flat_polys();
     let tensor = stack.tensor();
-    let ring_d = level_params.role_dims().d_a();
     let (protocol_points, row_coefficients, reduction) = if run_eor {
-        let proved = if opening_batch.num_groups() > 1 {
-            prove_grouped_extension_opening_reduction::<F, E, T, P, TS>(
-                tensor.backend(),
-                Some(tensor.prepared()),
-                &block_claims,
-                &opening_batch,
-                level_params,
-                pad_base_evals,
-                transcript,
-                if pad_base_evals { "recursive" } else { "root" },
-            )
-        } else {
-            dispatch_for_field!(
-                ProtocolDispatchSlot::Role(RingRole::Inner),
-                F,
-                ring_d,
-                |D| {
-                    prove_extension_opening_reduction::<F, E, T, P, TS, D>(
-                        tensor.backend(),
-                        Some(tensor.prepared()),
-                        eor_polys,
-                        eor_opening_batch,
-                        pad_base_evals,
-                        transcript,
-                        if pad_base_evals { "recursive" } else { "root" },
-                    )
-                }
-            )
+        if eor_polynomial_groups.len() != opening_batch.num_groups() {
+            return Err(AkitaError::InvalidInput(
+                "extension-opening source group count mismatch".to_string(),
+            ));
         }
+        let eor_inputs = eor_polynomial_groups
+            .into_iter()
+            .enumerate()
+            .map(|(group_index, polynomials)| {
+                let group_layout = opening_batch.group_layout(group_index)?;
+                if polynomials.len() != group_layout.num_polynomials() {
+                    return Err(AkitaError::InvalidInput(
+                        "extension-opening source polynomial count mismatch".to_string(),
+                    ));
+                }
+                Ok(ExtensionOpeningGroupInput {
+                    polynomials,
+                    point: block_claims.opening_claims().group_point(group_index)?,
+                    ring_dimension: level_params
+                        .group_role_dims(&opening_batch, group_index)?
+                        .d_a(),
+                })
+            })
+            .collect::<Result<Vec<_>, AkitaError>>()?;
+        let proved = prove_extension_opening_reduction::<F, E, T, P, TS>(
+            tensor.backend(),
+            Some(tensor.prepared()),
+            &eor_inputs,
+            pad_base_evals,
+            transcript,
+            if pad_base_evals { "recursive" } else { "root" },
+        )
         .map_err(|err| {
             AkitaError::InvalidInput(format!("root opening preparation failed: {err:?}"))
         })?;
@@ -94,7 +94,6 @@ where
             &block_claims,
             &opening_batch,
             pad_base_evals,
-            &non_eor_protocol_point,
             validate_non_eor,
         )?;
         (protocol_points, row_coefficients, None)

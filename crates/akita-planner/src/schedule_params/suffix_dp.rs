@@ -237,11 +237,8 @@ fn consider_child_suffixes(
         )?
         .checked_add(edge.eor_bytes)
         .ok_or_else(|| AkitaError::InvalidSetup("level proof size overflow".to_string()))?;
-        let stage3_payload_bytes = stage3_payload_bytes_for_successor(
-            edge.policy,
-            suffix.first_fold_params.as_ref(),
-            edge.next_witness_len,
-        )?;
+        let stage3_payload_bytes =
+            stage3_payload_bytes_for_successor(edge.policy, suffix.first_fold_params.as_ref())?;
         if edge.offloaded != (stage3_payload_bytes != 0) {
             return Err(AkitaError::InvalidSetup(
                 "setup edge topology disagrees with Stage-3 accounting".to_string(),

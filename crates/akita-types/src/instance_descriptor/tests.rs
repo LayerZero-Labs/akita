@@ -95,6 +95,49 @@ fn descriptor_roundtrip_preserves_typed_schedule_binding() {
 }
 
 #[test]
+fn call_section_rejects_oversized_group_count_before_allocation() {
+    let mut bytes = Vec::new();
+    u32::MAX
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize oversized count");
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn call_section_rejects_mismatched_arity_count_before_allocation() {
+    let mut bytes = Vec::new();
+    1u32.serialize_uncompressed(&mut bytes)
+        .expect("serialize group count");
+    u32::MAX
+        .serialize_uncompressed(&mut bytes)
+        .expect("serialize oversized arity count");
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
+fn call_section_rejects_mismatched_polynomial_count_before_allocation() {
+    let mut bytes = Vec::new();
+    for value in [1u32, 1, 5, u32::MAX] {
+        value
+            .serialize_uncompressed(&mut bytes)
+            .expect("serialize call section prefix");
+    }
+
+    assert!(matches!(
+        CallSection::deserialize_uncompressed(&bytes[..], &()),
+        Err(SerializationError::InvalidData(_))
+    ));
+}
+
+#[test]
 fn rejects_non_v1_descriptor_version() {
     let mut descriptor = sample_descriptor();
     descriptor.version = AKITA_INSTANCE_DESCRIPTOR_VERSION - 1;

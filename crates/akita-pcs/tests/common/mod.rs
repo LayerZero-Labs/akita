@@ -3,7 +3,9 @@
 pub(super) use akita_config::proof_optimized::fp128;
 pub(super) use akita_config::CommitmentConfig;
 use akita_config::{PrecommittedCommitmentConfig, RecursiveCommitmentConfig};
-pub(super) use akita_field::{CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge};
+pub(super) use akita_field::{
+    AkitaError, CanonicalBytes, CanonicalField, FieldCore, TranscriptChallenge,
+};
 use akita_pcs::AkitaCommitmentScheme;
 use akita_prover::compute::{OpeningFoldKernel, OpeningFoldPlan, RootOpeningSource, RootPolyShape};
 pub(super) use akita_prover::DensePoly;
@@ -13,11 +15,11 @@ use akita_prover::{ComputeBackendSetup, CpuBackend};
 use akita_serialization::{AkitaDeserialize, AkitaSerialize, Compress};
 pub(super) use akita_types::{
     reduce_inner_opening_to_ring_element, ring_opening_point_from_field, AkitaCommitmentHint,
-    BasisMode, Commitment, OpeningClaims, PointVariableSelection, PolynomialGroupClaims,
+    BasisMode, Commitment, OpeningClaims, PolynomialGroupClaims,
 };
 use akita_types::{
     AkitaBatchedProof, AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
-    PrecommittedGroupDescriptor,
+    PrecommittedGroupDescriptor, SetupSumcheckProof,
 };
 pub(super) use akita_types::{CommittedGroupParams, FoldSchedule};
 pub(super) use rand::rngs::StdRng;
@@ -165,13 +167,12 @@ pub(super) fn prove_input<'a, FF: FieldCore + Clone, P, CommitF: FieldCore>(
     hint: AkitaCommitmentHint<CommitF>,
 ) -> ProverOpeningData<'a, FF, P, CommitF> {
     let group = PolynomialGroupClaims::new(
-        PointVariableSelection::prefix(point.len(), point.len()).expect("full-point prover group"),
+        point.to_vec(),
         vec![FF::zero(); polynomials.len()],
         commitment.clone(),
     )
     .expect("valid prover claims group");
-    let opening_claims =
-        OpeningClaims::from_groups(point.to_vec(), vec![group]).expect("valid prover claims");
+    let opening_claims = OpeningClaims::from_groups(vec![group]).expect("valid prover claims");
     ProverOpeningData::new(opening_claims, vec![hint], vec![polynomials])
         .expect("valid prover opening data")
 }
@@ -181,15 +182,12 @@ pub(super) fn verify_input<'a, FF: FieldCore, C>(
     openings: &'a [FF],
     commitment: &'a C,
 ) -> OpeningClaims<'static, FF, &'a C> {
-    OpeningClaims::from_groups(
+    OpeningClaims::from_groups(vec![PolynomialGroupClaims::new(
         point.to_vec(),
-        vec![PolynomialGroupClaims::new(
-            PointVariableSelection::prefix(point.len(), point.len()).expect("full-point group"),
-            openings.to_vec(),
-            commitment,
-        )
-        .expect("valid verifier claims group")],
+        openings.to_vec(),
+        commitment,
     )
+    .expect("valid verifier claims group")])
     .expect("valid verifier input")
 }
 
@@ -308,6 +306,18 @@ fn proof_has_recursive_setup_sumcheck(proof: &AkitaBatchedProof<F, F>) -> bool {
             .any(|step| step.stage3_sumcheck_proof.is_some())
 }
 
+fn first_stage3_proof_mut(
+    proof: &mut AkitaBatchedProof<F, F>,
+) -> Option<&mut SetupSumcheckProof<F>> {
+    if let Some(stage3) = proof.root.stage3_sumcheck_proof.as_mut() {
+        return Some(stage3);
+    }
+    proof
+        .recursive_folds
+        .iter_mut()
+        .find_map(|fold| fold.stage3_sumcheck_proof.as_mut())
+}
+
 /// Drives the shared recursive setup-offload profile end to end: two precommitted
 /// singleton groups at `nv=16` frozen with exact fixed-root ranks, a two-polynomial
 /// main group at `nv=32`, a recursive proof that offloads the setup contribution,
@@ -420,7 +430,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         for (group_idx, openings) in pre_openings.iter().enumerate() {
             prover_groups.push(
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                    point[..PRE_NV].to_vec(),
                     openings.clone(),
                     pre_commitments[group_idx].clone(),
                 )
@@ -429,7 +439,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         }
         prover_groups.push(
             PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
+                point.clone(),
                 final_openings.clone(),
                 final_commitment.clone(),
             )
@@ -445,7 +455,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
         prover_hints.push(final_hint);
 
         let prover_claims = ProverOpeningData::new(
-            OpeningClaims::from_groups(point.clone(), prover_groups).expect("prover claims"),
+            OpeningClaims::from_groups(prover_groups).expect("prover claims"),
             prover_hints,
             prover_polys,
         )
@@ -482,7 +492,7 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             for (group_idx, openings) in pre_openings.iter().enumerate() {
                 verifier_groups.push(
                     PolynomialGroupClaims::new(
-                        PointVariableSelection::prefix(PRE_NV, FINAL_NV).expect("pre point vars"),
+                        point[..PRE_NV].to_vec(),
                         openings.clone(),
                         &pre_commitments[group_idx],
                     )
@@ -490,14 +500,10 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
                 );
             }
             verifier_groups.push(
-                PolynomialGroupClaims::new(
-                    PointVariableSelection::prefix(FINAL_NV, FINAL_NV).expect("final point vars"),
-                    final_openings,
-                    &final_commitment,
-                )
-                .expect("final verifier group"),
+                PolynomialGroupClaims::new(point.clone(), final_openings, &final_commitment)
+                    .expect("final verifier group"),
             );
-            OpeningClaims::from_groups(point.clone(), verifier_groups).expect("verifier claims")
+            OpeningClaims::from_groups(verifier_groups).expect("verifier claims")
         };
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(transcript_domain);
@@ -509,6 +515,47 @@ pub(super) fn recursive_multi_group_round_trip<BaseCfg>(
             BasisMode::Lagrange,
         )
         .expect("generated-profile recursive verify");
+
+        let reject_stage3_tamper = |tampered_proof: AkitaBatchedProof<F, F>, label: &str| {
+            let mut transcript = AkitaTranscript::<F>::new(transcript_domain);
+            let result = Recursive::<BaseCfg>::batched_verify(
+                &tampered_proof,
+                &verifier_setup,
+                &mut transcript,
+                verify_claims(final_openings.clone()),
+                BasisMode::Lagrange,
+            );
+            assert!(
+                matches!(result, Err(AkitaError::InvalidProof)),
+                "{label} must return InvalidProof without panicking, got {result:?}"
+            );
+        };
+
+        let mut tampered_claim = proof.clone();
+        first_stage3_proof_mut(&mut tampered_claim)
+            .expect("recursive profile Stage 3 proof")
+            .claim += F::one();
+        reject_stage3_tamper(tampered_claim, "tampered Stage 3 claim");
+
+        let mut tampered_prefix_eval = proof.clone();
+        first_stage3_proof_mut(&mut tampered_prefix_eval)
+            .expect("recursive profile Stage 3 proof")
+            .setup_prefix_eval += F::one();
+        reject_stage3_tamper(
+            tampered_prefix_eval,
+            "tampered Stage 3 setup-prefix evaluation",
+        );
+
+        let mut tampered_round = proof.clone();
+        let coefficient = first_stage3_proof_mut(&mut tampered_round)
+            .and_then(|stage3| stage3.sumcheck.round_polys.first_mut())
+            .and_then(|round| round.coeffs_except_linear_term.first_mut())
+            .expect("recursive profile Stage 3 round coefficient");
+        *coefficient += F::one();
+        reject_stage3_tamper(
+            tampered_round,
+            "tampered Stage 3 round polynomial and derived point",
+        );
 
         let mut tampered = final_openings;
         tampered[0] += F::from_canonical_u128_reduced(1);

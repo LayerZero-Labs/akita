@@ -18,6 +18,12 @@ use std::marker::PhantomData;
 use std::mem;
 use std::panic::Location;
 
+#[cfg(test)]
+thread_local! {
+    static LAGRANGE_SPLIT_OPERATION_COUNTS: std::cell::Cell<(usize, usize)> =
+        const { std::cell::Cell::new((0, 0)) };
+}
+
 /// Maximum memory budget for one materialized equality-table allocation family.
 ///
 /// This is deliberately separate from serialization's generic sequence cap:
@@ -29,6 +35,18 @@ pub const MAX_MATERIALIZED_EQ_TABLE_BYTES: usize = 1 << 30;
 pub struct EqPolynomial<E: FieldCore>(PhantomData<E>);
 
 impl<E: FieldCore> EqPolynomial<E> {
+    #[inline]
+    fn split_lagrange_parent(value: E, coordinate: E) -> (E, E) {
+        let right = value * coordinate;
+        let left = value - right;
+        #[cfg(test)]
+        LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+            let (multiplications, subtractions) = counts.get();
+            counts.set((multiplications + 1, subtractions + 1));
+        });
+        (left, right)
+    }
+
     fn table_len(num_vars: usize) -> Result<usize, AkitaError> {
         let shift = u32::try_from(num_vars).map_err(|_| AkitaError::InvalidSize {
             expected: usize::BITS as usize,
@@ -151,10 +169,10 @@ impl<E: FieldCore> EqPolynomial<E> {
         evals[0] = scaling_factor.unwrap_or(E::one());
         let mut len = 1usize;
         for &t in r.iter().rev() {
-            let one_minus_t = E::one() - t;
             for j in (0..len).rev() {
-                evals[2 * j + 1] = evals[j] * t;
-                evals[2 * j] = evals[j] * one_minus_t;
+                let (left, right) = Self::split_lagrange_parent(evals[j], t);
+                evals[2 * j] = left;
+                evals[2 * j + 1] = right;
             }
             len *= 2;
         }
@@ -197,11 +215,11 @@ impl<E: FieldCore> EqPolynomial<E> {
         for j in 0..r.len() {
             let idx = r.len() - 1 - j;
             let t = r[idx];
-            let one_minus_t = E::one() - t;
             let prev_len = 1 << j;
             for i in (0..prev_len).rev() {
-                result[j + 1][2 * i + 1] = result[j][i] * t;
-                result[j + 1][2 * i] = result[j][i] * one_minus_t;
+                let (left, right) = Self::split_lagrange_parent(result[j][i], t);
+                result[j + 1][2 * i] = left;
+                result[j + 1][2 * i + 1] = right;
             }
         }
         Ok(result)
@@ -230,8 +248,7 @@ impl<E: FieldCore> EqPolynomial<E> {
                 .par_iter_mut()
                 .zip(evals_right.par_iter_mut())
                 .for_each(|(x, y)| {
-                    *y = *x * r_i;
-                    *x -= *y;
+                    (*x, *y) = Self::split_lagrange_parent(*x, r_i);
                 });
 
             size *= 2;
@@ -413,6 +430,26 @@ mod tests {
             assert_eq!(cached.len(), n + 1);
             assert_eq!(cached[0], vec![F::one()]);
             assert_eq!(*cached.last().unwrap(), table);
+        }
+    }
+
+    #[test]
+    fn serial_expansions_use_one_multiply_and_subtract_per_parent() {
+        for num_vars in 0..9 {
+            let point = vec![F::from_u64(7); num_vars];
+            let expected = (1usize << num_vars) - 1;
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_serial(&point, None).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "serial n={num_vars}");
+            });
+
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| counts.set((0, 0)));
+            EqPolynomial::evals_cached(&point).unwrap();
+            LAGRANGE_SPLIT_OPERATION_COUNTS.with(|counts| {
+                assert_eq!(counts.get(), (expected, expected), "cached n={num_vars}");
+            });
         }
     }
 

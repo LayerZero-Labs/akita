@@ -1,11 +1,16 @@
 //! Extension-claim fold verifier prefix: extension-opening reduction replay.
 
 use super::super::*;
-use super::{absorb_prepared_opening_points, FoldPrefix};
+use super::{absorb_protocol_opening_points, FoldPrefix};
 use akita_types::{dispatch_for_field, Commitment, TerminalCommittedGroupParams};
 
+pub(in crate::protocol::core) struct PreparedProtocolPoint<F: FieldCore, E: FieldCore> {
+    pub(in crate::protocol::core) prepared: PreparedOpeningPoint<F, E>,
+    pub(in crate::protocol::core) protocol: Vec<E>,
+}
+
 pub(in crate::protocol::core) struct FoldEorReplay<F: FieldCore, E: FieldCore> {
-    pub(in crate::protocol::core) prepared_points: Vec<PreparedOpeningPoint<F, E>>,
+    pub(in crate::protocol::core) groups: Vec<PreparedProtocolPoint<F, E>>,
     pub(in crate::protocol::core) final_relation: Option<(E, Vec<E>)>,
 }
 
@@ -79,7 +84,7 @@ where
 
 fn verify_eor_sumcheck<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    group_points: &[Vec<E>],
+    group_points: &[&[E]],
     openings: &[E],
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -252,14 +257,14 @@ where
     eor_point.resize(opening_batch.max_num_vars(), E::zero());
     let replay = verify_eor_sumcheck::<F, E, T>(
         extension_opening_reduction,
-        &[eor_point],
+        &[eor_point.as_slice()],
         openings,
         row_coefficients,
         opening_batch,
         requires_reduction,
         transcript,
     )?;
-    let prepared_points = if let Some(replay) = &replay {
+    let groups = if let Some(replay) = &replay {
         let protocol_point =
             ring_subfield_packed_extension_opening_point::<F, E, D>(replay.rho.len(), &replay.rho)?;
         let prepared = prepare_opening_point::<F, E, D>(
@@ -269,12 +274,15 @@ where
             num_live_blocks,
             alpha_bits,
         )?;
-        vec![prepared]
+        vec![PreparedProtocolPoint {
+            prepared,
+            protocol: protocol_point,
+        }]
     } else {
         Vec::new()
     };
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -286,7 +294,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_fold_eor<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    group_points: &[Vec<E>],
+    group_points: &[&[E]],
     openings: &[E],
     row_coefficients: &[E],
     opening_batch: &OpeningClaimsLayout,
@@ -309,9 +317,9 @@ where
         requires_reduction,
         transcript,
     )?;
-    let mut prepared_points = Vec::new();
+    let mut groups = Vec::new();
     if let Some(replay) = &replay {
-        prepared_points.reserve(group_points.len());
+        groups.reserve(group_points.len());
         for (group_index, group_point) in group_points.iter().enumerate() {
             let group_lp = lp.group_params(opening_batch, group_index)?;
             let group_dims = lp.group_role_dims(opening_batch, group_index)?;
@@ -324,7 +332,7 @@ where
                 .rho
                 .get(..tail_vars)
                 .ok_or(AkitaError::InvalidProof)?;
-            let prepared = dispatch_for_field!(
+            let (prepared, protocol_point) = dispatch_for_field!(
                 ProtocolDispatchSlot::Role(RingRole::Inner),
                 F,
                 group_dims.d_a(),
@@ -333,20 +341,24 @@ where
                         local_rho.len(),
                         local_rho,
                     )?;
-                    prepare_opening_point::<F, E, D>(
+                    let prepared = prepare_opening_point::<F, E, D>(
                         &protocol_point,
                         basis,
                         group_lp.num_positions_per_block(),
                         group_lp.num_live_blocks(),
                         alpha_bits,
-                    )
+                    )?;
+                    Ok::<_, AkitaError>((prepared, protocol_point))
                 }
             )?;
-            prepared_points.push(prepared);
+            groups.push(PreparedProtocolPoint {
+                prepared,
+                protocol: protocol_point,
+            });
         }
     }
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation: replay.map(|replay| (replay.final_claim, replay.final_factors)),
     })
 }
@@ -381,11 +393,11 @@ where
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("group opening point length overflow".to_string())
             })?;
-        let point_vars = claims.group_point_vars(group_index)?;
-        if point_vars.num_vars() != target_len {
+        let group_point = claims.group_point(group_index)?;
+        if group_point.len() != target_len {
             return Err(AkitaError::InvalidProof);
         }
-        group_points.push(claims.group_point(group_index)?);
+        group_points.push(group_point);
     }
     let requires_reduction = root_tensor_projection_enabled::<F, E>(
         root_lp.role_dims().d_a(),
@@ -411,9 +423,6 @@ where
                     )
                 }
             )?;
-            for pt in &prepared.padded_point {
-                append_ext_field::<F, E, T>(transcript, ABSORB_EVALUATION_CLAIMS, pt);
-            }
             prepared_points.push(prepared);
         }
     }
@@ -431,8 +440,11 @@ where
         transcript,
     )?;
     if requires_reduction {
-        prepared_points = eor_replay.prepared_points;
-        absorb_prepared_opening_points(&prepared_points, transcript);
+        prepared_points = eor_replay
+            .groups
+            .into_iter()
+            .map(|group| group.prepared)
+            .collect();
     }
     let eor_final_relation = eor_replay.final_relation;
     if prepared_points.len() != opening_batch.num_groups() {
@@ -474,7 +486,7 @@ where
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     } = verify_terminal_fold_eor::<F, E, T>(
         extension_opening_reduction,
@@ -494,9 +506,13 @@ where
             "terminal extension-opening replay failed: {error:?}"
         ))
     })?;
-    absorb_prepared_opening_points(&prepared_points, transcript);
+    let protocol_point_refs = groups
+        .iter()
+        .map(|group| group.protocol.as_slice())
+        .collect::<Vec<_>>();
+    absorb_protocol_opening_points(&protocol_point_refs, transcript);
     Ok(FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     })
 }
@@ -507,7 +523,7 @@ where
 #[allow(clippy::too_many_arguments)]
 pub(in crate::protocol::core) fn verify_extension_claim_suffix_prefix<F, E, T>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
-    group_points: &[Vec<E>],
+    group_points: &[&[E]],
     openings: &[E],
     row_coefficients: Vec<E>,
     opening_batch: &OpeningClaimsLayout,
@@ -521,7 +537,7 @@ where
     T: Transcript<F>,
 {
     let FoldEorReplay {
-        prepared_points,
+        groups,
         final_relation,
     } = verify_fold_eor::<F, E, T>(
         extension_opening_reduction,
@@ -534,12 +550,16 @@ where
         E::EXT_DEGREE > 1,
         transcript,
     )?;
-    absorb_prepared_opening_points(&prepared_points, transcript);
+    let protocol_point_refs = groups
+        .iter()
+        .map(|group| group.protocol.as_slice())
+        .collect::<Vec<_>>();
+    absorb_protocol_opening_points(&protocol_point_refs, transcript);
     let (final_claim, factors_by_group) = final_relation.ok_or(AkitaError::InvalidProof)?;
     let trace_claim_coefficients =
         opening_batch.scale_row_coefficients_by_group(&row_coefficients, &factors_by_group)?;
     Ok(FoldPrefix {
-        prepared_points,
+        prepared_points: groups.into_iter().map(|group| group.prepared).collect(),
         row_coefficients,
         trace_eval_target: final_claim,
         trace_claim_coefficients,
@@ -581,10 +601,11 @@ mod tests {
             PolynomialGroupLayout::singleton(WITNESS_VARS),
         ])
         .expect("recursive setup-prefix opening layout");
-        let group_points = vec![
+        let group_points = [
             extension_point(SETUP_PREFIX_VARS, 10),
             extension_point(WITNESS_VARS, 100),
         ];
+        let group_point_refs = [group_points[0].as_slice(), group_points[1].as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
@@ -606,7 +627,7 @@ mod tests {
         let mut transcript = AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let replay = verify_eor_sumcheck::<F, E, _>(
             Some(&reduction),
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -624,7 +645,7 @@ mod tests {
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let tampered_result = verify_eor_sumcheck::<F, E, _>(
             Some(&tampered),
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -640,7 +661,7 @@ mod tests {
             AkitaTranscript::<F>::new(b"test/recursive-setup-prefix-grouped-eor");
         let missing_result = verify_eor_sumcheck::<F, E, _>(
             None,
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -659,7 +680,8 @@ mod tests {
         let opening_batch =
             OpeningClaimsLayout::from_groups(vec![PolynomialGroupLayout::singleton(NUM_VARS)])
                 .expect("single-group opening layout");
-        let group_points = vec![extension_point(NUM_VARS, 10)];
+        let group_point = extension_point(NUM_VARS, 10);
+        let group_point_refs = [group_point.as_slice()];
         let openings = vec![E::zero(); opening_batch.num_total_polynomials()];
         let row_coefficients = vec![E::one(); opening_batch.num_total_polynomials()];
         let (split_bits, width) = tensor_opening_split::<F, E>().expect("tensor split");
@@ -681,7 +703,7 @@ mod tests {
         let mut idle_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
         let idle_replay = verify_eor_sumcheck::<F, E, _>(
             None,
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,
@@ -695,7 +717,7 @@ mod tests {
         let mut unsolicited_transcript = AkitaTranscript::<F>::new(b"test/eor-exact-presence");
         let unsolicited_result = verify_eor_sumcheck::<F, E, _>(
             Some(&reduction),
-            &group_points,
+            &group_point_refs,
             &openings,
             &row_coefficients,
             &opening_batch,

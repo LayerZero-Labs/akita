@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{BatchedStage3Geometry, OpeningClaimsLayout, RingView};
+use akita_types::{OpeningClaimsLayout, RingView};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -206,9 +206,7 @@ where
         };
         current_state = SuffixVerifierState {
             opening_point: challenges,
-            opening: fold
-                .stage3_sumcheck_proof()
-                .map_or_else(|| fold.next_w_eval(), |proof| proof.next_w_eval),
+            opening: fold.next_w_eval(),
             witness: next_witness,
             basis: BasisMode::Lagrange,
             witness_len: step.output_witness_len,
@@ -280,14 +278,14 @@ where
     params.validate_fold_grind_nonce(&scheduled.sparse_challenge_config, proof.fold_grind_nonce)?;
 
     let recursive_num_vars = params.recursive_opening_num_vars()?;
-    if current_state.opening_point.len() > recursive_num_vars
-        || current_state.setup_prefix_opening.is_some()
-    {
+    if current_state.setup_prefix_opening.is_some() {
         return Err(AkitaError::InvalidProof);
     }
-    let mut protocol_point = current_state.opening_point.clone();
-    protocol_point.resize(recursive_num_vars, E::zero());
-    let opening_batch = OpeningClaimsLayout::new(recursive_num_vars, 1)?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let protocol_point = current_state.opening_point.clone();
+    let opening_batch = OpeningClaimsLayout::new(protocol_point.len(), 1)?;
     let (prepared_points, final_relation) = if const { <E as ExtField<F>>::EXT_DEGREE == 1 } {
         if proof.extension_opening_reduction.is_some() {
             return Err(AkitaError::InvalidProof);
@@ -310,7 +308,14 @@ where
             params,
             transcript,
         )?;
-        (replay.prepared_points, replay.final_relation)
+        (
+            replay
+                .groups
+                .into_iter()
+                .map(|group| group.prepared)
+                .collect(),
+            replay.final_relation,
+        )
     };
     let terminal_replay = prepare_terminal_witness_replay::<F, T>(
         transcript,
@@ -393,43 +398,30 @@ where
         _ => return Err(AkitaError::InvalidProof),
     }
     let recursive_num_vars = lp.recursive_opening_num_vars()?;
+    if current_state.opening_point.len() > recursive_num_vars {
+        return Err(AkitaError::InvalidProof);
+    }
+    let witness_point = current_state.opening_point.clone();
+
     let block_claims = match (
         &current_state.setup_prefix_opening,
         lp.setup_prefix.as_ref(),
     ) {
-        (Some((setup_prefix_point, setup_prefix_eval)), Some(setup_prefix_id)) => {
-            let (shared_point, setup_offset) = BatchedStage3Geometry::shared_suffix_point(
-                setup_prefix_point,
-                current_state.opening_point.as_slice(),
-            )?;
-            let setup_point_vars = BatchedStage3Geometry::setup_prefix_point_vars(
-                setup_prefix_point.len(),
-                setup_prefix_id,
-                setup_offset,
-                shared_point.len(),
-            )?;
+        (Some((setup_prefix_point, setup_prefix_eval)), Some(_)) => {
             let groups = vec![
-                PolynomialGroupClaims::new(setup_point_vars, vec![*setup_prefix_eval], ())?,
                 PolynomialGroupClaims::new(
-                    PointVariableSelection::suffix(
-                        current_state.opening_point.len(),
-                        shared_point.len(),
-                    )?,
-                    vec![current_state.opening],
+                    setup_prefix_point.clone(),
+                    vec![*setup_prefix_eval],
                     (),
                 )?,
+                PolynomialGroupClaims::new(witness_point.clone(), vec![current_state.opening], ())?,
             ];
-            OpeningClaims::from_groups_allow_custom_routing(shared_point, groups)?
+            OpeningClaims::from_groups(groups)?
         }
         (None, None) => {
-            let mut padded_point = current_state.opening_point.clone();
-            padded_point.resize(recursive_num_vars, E::zero());
-            let claims = PolynomialGroupClaims::new(
-                PointVariableSelection::prefix(recursive_num_vars, recursive_num_vars)?,
-                vec![current_state.opening],
-                (),
-            )?;
-            OpeningClaims::from_groups(padded_point, vec![claims])?
+            let claims =
+                PolynomialGroupClaims::new(witness_point, vec![current_state.opening], ())?;
+            OpeningClaims::from_groups(vec![claims])?
         }
         _ => return Err(AkitaError::InvalidProof),
     };
@@ -457,7 +449,10 @@ where
             role_dims.d_a(),
             alpha_bits,
         )?;
-        absorb_prepared_opening_points(&prepared_points, transcript);
+        let group_points = (0..opening_batch.num_groups())
+            .map(|group_index| block_claims.group_point(group_index))
+            .collect::<Result<Vec<_>, _>>()?;
+        absorb_protocol_opening_points(&group_points, transcript);
         let trace_eval_target = opening_batch.batched_eval_target(&row_coefficients, &openings)?;
         FoldPrefix {
             prepared_points,
