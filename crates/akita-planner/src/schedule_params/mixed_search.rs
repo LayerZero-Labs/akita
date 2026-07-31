@@ -13,8 +13,10 @@ fn score(candidate: &ScheduleCandidate) -> MixedScore {
 
 fn dominates_score(left: MixedScore, right: MixedScore) -> bool {
     left.setup_field_elements <= right.setup_field_elements
-        && left.proof_bytes <= right.proof_bytes
-        && left != right
+        // A setup-only improvement is not safe to prune: a parent can mask
+        // both setup footprints with the same envelope, after which the
+        // descriptor tie-break must still see both candidates.
+        && left.proof_bytes < right.proof_bytes
 }
 
 fn dominates(left: &ScheduleCandidate, right: &ScheduleCandidate) -> bool {
@@ -435,5 +437,26 @@ mod tests {
             proof_bytes: lower_payload.proof_bytes,
         };
         assert!(lower_payload_complete < lower_setup_complete);
+    }
+
+    #[test]
+    fn frontier_keeps_equal_payload_alternatives_for_descriptor_ties() {
+        let lower_setup = MixedScore {
+            setup_field_elements: 10,
+            proof_bytes: 20,
+        };
+        let higher_setup = MixedScore {
+            setup_field_elements: 15,
+            proof_bytes: 20,
+        };
+
+        assert!(!dominates_score(lower_setup, higher_setup));
+        assert!(!dominates_score(higher_setup, lower_setup));
+
+        let parent_setup = 20;
+        assert_eq!(
+            parent_setup.max(lower_setup.setup_field_elements),
+            parent_setup.max(higher_setup.setup_field_elements)
+        );
     }
 }
