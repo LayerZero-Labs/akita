@@ -1354,7 +1354,7 @@ mod geometry_tests {
             .to_string()
             .contains("opening group layouts must be nonempty"));
 
-        let mut invalid_policy = policy.clone();
+        let mut invalid_policy = policy;
         invalid_policy.max_setup_envelope_field_elements = 0;
         let error = find_schedule(
             PolynomialGroupLayout::singleton(16),
