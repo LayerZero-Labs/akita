@@ -15,6 +15,8 @@ use akita_config::CommitmentConfig;
 use akita_field::unreduced::{HasWide, ReduceTo};
 use akita_field::{AkitaError, CanonicalField, FieldCore, FromPrimitiveInt};
 use akita_prover::backend::DenseView;
+#[cfg(feature = "compression-diagnostics")]
+use akita_prover::compute::CompressionDiagnosticBackend;
 use akita_prover::compute::{
     CommitInnerPlan, ComputeBackendSetup, DigitRowsComputeBackend, OperationCtx, RootCommitKernel,
     RootCommitSource, RootPolyShape,
@@ -139,6 +141,24 @@ where
         log_basis: u32,
     ) -> Result<Vec<CyclotomicRing<F, RING_D>>, AkitaError> {
         CpuBackend.digit_rows(prepared, row_len, digits, log_basis)
+    }
+}
+
+#[cfg(feature = "compression-diagnostics")]
+impl<F> CompressionDiagnosticBackend<F> for ContractCommitBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+        CpuBackend.compression_cache_bytes(prepared)
+    }
+
+    fn compression_rows<const RING_D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; RING_D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, RING_D>>>, AkitaError> {
+        CpuBackend.compression_rows(prepared, digit_vectors)
     }
 }
 

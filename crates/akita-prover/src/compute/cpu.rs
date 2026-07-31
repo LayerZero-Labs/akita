@@ -1,5 +1,7 @@
 use crate::backend::onehot::{column_sweep_ajtai_onehot, MultiChunkEntry, SingleChunkEntry};
 use crate::backend::sparse_ring::column_sweep_sparse;
+#[cfg(feature = "compression-diagnostics")]
+use crate::compute::backend::CompressionDiagnosticBackend;
 use crate::compute::backend::{
     CommitmentComputeBackend, ComputeBackendSetup, CyclicRowsComputeBackend,
     DigitRowsComputeBackend, RingSwitchComputeBackend,
@@ -9,6 +11,8 @@ use crate::compute::plans::{
     RecursiveWitnessCommitRowsPlan, RingSwitchQuotientRowsPlan, RingSwitchRelationRows,
     RingSwitchRelationRowsPlan, SparseRingCommitRowsPlan,
 };
+#[cfg(feature = "compression-diagnostics")]
+use crate::kernels::linear::validate_compression_batch_shape;
 use crate::kernels::linear::{
     digit_blocks_are_balanced, fused_split_eq_quotients_prover_bounds,
     mat_vec_mul_ntt_dense_digits_i8, mat_vec_mul_ntt_digits_i8, mat_vec_mul_ntt_i8,
@@ -30,6 +34,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[cfg(feature = "compression-diagnostics")]
+mod compression_cache;
+
+#[cfg(feature = "compression-diagnostics")]
+use compression_cache::CompressionNttCache;
+
 /// CPU backend using the existing Rust/Rayon kernels.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct CpuBackend;
@@ -42,11 +52,14 @@ type NttSlotCell = OnceLock<Result<Arc<ErasedCpuNttCache>, AkitaError>>;
 /// registers the minimum envelope slot on the setup contract; additional slots may
 /// be built lazily via [`ComputeBackendSetup::ensure_ntt_slot`]. Every full-envelope
 /// slot serves all matrix prefixes at its ring dimension, and its cell makes concurrent
-/// first use single-flight.
+/// first use single-flight. Diagnostic compression caches are kept in a separate
+/// exact-shape namespace because they contain only the negacyclic transform.
 #[derive(Debug)]
 pub struct CpuPreparedSetup<F: FieldCore> {
     expanded: Arc<AkitaExpandedSetup<F>>,
     shared_ntt: Mutex<HashMap<NttCacheKey, Arc<NttSlotCell>>>,
+    #[cfg(feature = "compression-diagnostics")]
+    compression_ntt: CompressionNttCache,
     ntt_i8_capacity_by_ring_d: Mutex<HashMap<usize, CrtI8CapacityProfile>>,
     /// Keys promised at [`ComputeBackendSetup::prepare_setup`]; lazy builds outside
     /// this set emit a diagnostic warning.
@@ -142,6 +155,16 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
         f(typed)
     }
 
+    #[cfg(feature = "compression-diagnostics")]
+    fn with_compression_ntt<const D: usize, R>(
+        &self,
+        input_width: usize,
+        f: impl FnOnce(&PreparedNttCache<D>) -> Result<R, AkitaError>,
+    ) -> Result<R, AkitaError> {
+        self.compression_ntt
+            .with_ntt(self.expanded.as_ref(), input_width, f)
+    }
+
     /// In-memory byte footprint of all shared setup NTT caches.
     pub fn shared_ntt_cache_bytes(&self) -> usize {
         self.shared_ntt
@@ -152,6 +175,12 @@ impl<F: FieldCore + CanonicalField> CpuPreparedSetup<F> {
             .filter_map(|result| result.as_ref().ok())
             .map(|slot| slot.cache_bytes)
             .sum()
+    }
+
+    /// In-memory byte footprint of exact-prefix compression NTT caches.
+    #[cfg(feature = "compression-diagnostics")]
+    pub fn compression_ntt_cache_bytes(&self) -> usize {
+        self.compression_ntt.cache_bytes()
     }
 
     /// CRT/NTT profile and universal i8 capacity metadata for ring degree `D`.
@@ -314,6 +343,8 @@ where
         Ok(CpuPreparedSetup {
             expanded,
             shared_ntt: Mutex::new(HashMap::new()),
+            #[cfg(feature = "compression-diagnostics")]
+            compression_ntt: CompressionNttCache::default(),
             ntt_i8_capacity_by_ring_d: Mutex::new(HashMap::new()),
             setup_contract_ntt_keys: Mutex::new(HashSet::new()),
             #[cfg(test)]
@@ -560,6 +591,32 @@ where
         )?;
         prepared.with_shared_ntt::<D, _>(|ntt| {
             mat_vec_mul_ntt_single_i8(ntt, row_len, digits.len(), digits, log_basis)
+        })
+    }
+}
+
+#[cfg(feature = "compression-diagnostics")]
+impl<F> CompressionDiagnosticBackend<F> for CpuBackend
+where
+    F: FieldCore + CanonicalField,
+{
+    fn compression_cache_bytes(&self, prepared: &Self::PreparedSetup) -> Option<usize> {
+        Some(prepared.compression_ntt_cache_bytes())
+    }
+
+    fn compression_rows<const D: usize>(
+        &self,
+        prepared: &Self::PreparedSetup,
+        digit_vectors: &[&[[i8; D]]],
+    ) -> Result<Vec<Vec<CyclotomicRing<F, D>>>, AkitaError> {
+        let input_width = validate_compression_batch_shape(digit_vectors)?;
+        let total_ring_elements = prepared
+            .expanded
+            .shared_matrix
+            .total_ring_elements_at::<D>()?;
+        validate_digit_row_request(1, input_width, total_ring_elements)?;
+        prepared.with_compression_ntt::<D, _>(input_width, |ntt| {
+            mat_vec_mul_ntt_digits_i8(ntt, 1, input_width, digit_vectors, 1)
         })
     }
 }

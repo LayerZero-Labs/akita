@@ -142,6 +142,7 @@ fn schoolbook_digit_mat_vec<F: FieldCore + CanonicalField, const D: usize>(
 
 mod api;
 mod chunking;
+mod compression;
 mod crt_dense;
 mod digit_matvec;
 mod fused;
