@@ -1,3 +1,4 @@
+use crate::ntt_prewarm::prewarm_uniform_profile_execution;
 use crate::parallel::ProfileThreadPools;
 use crate::report::{
     emit_proof_tail_report, emit_runtime_schedule_summary, observed_stage3_setup_product_bytes,
@@ -692,9 +693,28 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
+    if let Some(schedule) = plan {
+        prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+    }
+    let prepared_ntt_metrics = prepared
+        .shared_ntt_cache_metrics()
+        .expect("prepared setup NTT cache metrics");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
+    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+    report_setup_sizes(
+        label,
+        num_setup_field_elements,
+        num_setup_field_elements * std::mem::size_of::<FF>(),
+        &prepared_ntt_metrics,
+    );
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
+    );
     run_prove::<FF, D, Cfg, DensePoly<FF>>(
         label,
         &setup,
@@ -705,20 +725,12 @@ pub(crate) fn run_dense_for<FF, const D: usize, Cfg: CommitmentConfig<Field = FF
         plan,
         validate_against_planner,
     );
-    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
-    report_setup_sizes(
-        label,
-        num_setup_field_elements,
-        num_setup_field_elements * std::mem::size_of::<FF>(),
-        &prepared
-            .shared_ntt_cache_metrics()
-            .expect("prepared setup NTT cache metrics"),
-    );
-    report_crt_profile(
-        label,
+    assert_eq!(
         prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
+            .shared_ntt_cache_metrics()
+            .expect("post-execution setup NTT cache metrics"),
+        prepared_ntt_metrics,
+        "commit/prove grew the prewarmed profile NTT cache"
     );
 }
 
@@ -782,9 +794,28 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
     let stack =
         akita_prover::UniformProverStack::uniform(&CpuBackend, &prepared, setup.expanded.as_ref())
             .expect("stack");
+    if let Some(schedule) = plan {
+        prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+    }
+    let prepared_ntt_metrics = prepared
+        .shared_ntt_cache_metrics()
+        .expect("prepared setup NTT cache metrics");
     report_timing(label, "setup_expand", setup_expand_secs);
     report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
     report_timing(label, "setup", t0.elapsed().as_secs_f64());
+    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+    report_setup_sizes(
+        label,
+        num_setup_field_elements,
+        num_setup_field_elements * std::mem::size_of::<FF>(),
+        &prepared_ntt_metrics,
+    );
+    report_crt_profile(
+        label,
+        prepared
+            .shared_ntt_profile::<D>()
+            .expect("prepared setup CRT profile"),
+    );
     run_prove::<FF, D, Cfg, OneHotPoly<FF, u8>>(
         label,
         &setup,
@@ -795,20 +826,12 @@ pub(crate) fn run_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field = FF>>(
         plan,
         validate_against_planner,
     );
-    let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
-    report_setup_sizes(
-        label,
-        num_setup_field_elements,
-        num_setup_field_elements * std::mem::size_of::<FF>(),
-        &prepared
-            .shared_ntt_cache_metrics()
-            .expect("prepared setup NTT cache metrics"),
-    );
-    report_crt_profile(
-        label,
+    assert_eq!(
         prepared
-            .shared_ntt_profile::<D>()
-            .expect("prepared setup CRT profile"),
+            .shared_ntt_cache_metrics()
+            .expect("post-execution setup NTT cache metrics"),
+        prepared_ntt_metrics,
+        "commit/prove grew the prewarmed profile NTT cache"
     );
 }
 
@@ -879,9 +902,28 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
             setup.expanded.as_ref(),
         )
         .expect("stack");
+        if let Some(schedule) = plan {
+            prewarm_uniform_profile_execution(&stack, schedule).expect("prewarm profile execution");
+        }
+        let prepared_ntt_metrics = prepared
+            .shared_ntt_cache_metrics()
+            .expect("prepared setup NTT cache metrics");
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
+        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        report_setup_sizes(
+            label,
+            num_setup_field_elements,
+            num_setup_field_elements * std::mem::size_of::<FF>(),
+            &prepared_ntt_metrics,
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
         let t0 = Instant::now();
         let (commitment, hint) =
             AkitaCommitmentScheme::<Cfg>::commit::<_, _>(&setup, &polys, &stack).unwrap();
@@ -918,20 +960,12 @@ pub(crate) fn run_batched_onehot<FF, const D: usize, Cfg: CommitmentConfig<Field
         )
         .unwrap();
         report_timing(label, "prove", t0.elapsed().as_secs_f64());
-        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
-        report_setup_sizes(
-            label,
-            num_setup_field_elements,
-            num_setup_field_elements * std::mem::size_of::<FF>(),
-            &prepared
-                .shared_ntt_cache_metrics()
-                .expect("prepared setup NTT cache metrics"),
-        );
-        report_crt_profile(
-            label,
+        assert_eq!(
             prepared
-                .shared_ntt_profile::<D>()
-                .expect("prepared setup CRT profile"),
+                .shared_ntt_cache_metrics()
+                .expect("post-execution setup NTT cache metrics"),
+            prepared_ntt_metrics,
+            "commit/prove grew the prewarmed profile NTT cache"
         );
         (commitments, proof, setup)
     };
@@ -1210,9 +1244,26 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
             setup.expanded.as_ref(),
         )
         .expect("stack");
+        prewarm_uniform_profile_execution(&stack, &schedule).expect("prewarm profile execution");
+        let prepared_ntt_metrics = prepared
+            .shared_ntt_cache_metrics()
+            .expect("prepared setup NTT cache metrics");
         report_timing(label, "setup_expand", setup_expand_secs);
         report_timing(label, "backend_prepare", t_prepare.elapsed().as_secs_f64());
         report_timing(label, "setup", t0.elapsed().as_secs_f64());
+        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
+        report_setup_sizes(
+            label,
+            num_setup_field_elements,
+            num_setup_field_elements * std::mem::size_of::<FF>(),
+            &prepared_ntt_metrics,
+        );
+        report_crt_profile(
+            label,
+            prepared
+                .shared_ntt_profile::<D>()
+                .expect("prepared setup CRT profile"),
+        );
         let mut pre_keys = Vec::with_capacity(PRE_GROUPS);
         let mut pre_commitments = Vec::with_capacity(PRE_GROUPS);
         let mut pre_hints = Vec::with_capacity(PRE_GROUPS);
@@ -1331,20 +1382,12 @@ fn run_recursive_multi_group_onehot_with_proof_cfg<FF, const D: usize, Cfg, Proo
         )
         .expect("multi-group prove");
         report_timing(label, "prove", t_prove.elapsed().as_secs_f64());
-        let num_setup_field_elements = setup.expanded.shared_matrix().num_field_elements();
-        report_setup_sizes(
-            label,
-            num_setup_field_elements,
-            num_setup_field_elements * std::mem::size_of::<FF>(),
-            &prepared
-                .shared_ntt_cache_metrics()
-                .expect("prepared setup NTT cache metrics"),
-        );
-        report_crt_profile(
-            label,
+        assert_eq!(
             prepared
-                .shared_ntt_profile::<D>()
-                .expect("prepared setup CRT profile"),
+                .shared_ntt_cache_metrics()
+                .expect("post-execution setup NTT cache metrics"),
+            prepared_ntt_metrics,
+            "commit/prove grew the prewarmed profile NTT cache"
         );
         (
             proof,

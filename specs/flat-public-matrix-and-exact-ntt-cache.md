@@ -915,8 +915,9 @@ This follow-up is not complete until all merge-blocking criteria below are satis
 - [x] `parallel`, no-default-feature, and `disk-persistence` feature graphs use
   identical public stream coefficients.
 - [x] The fp128 one-hot nv32 mixed-dimension CI bench runs through production
-  schedule resolution and reports exact setup fields plus per-D/domain/cluster
-  NTT bytes.
+  schedule resolution, prewarms the exact shared-owner commit-and-prove union
+  in its preparation phase, rejects online cache growth, and reports exact
+  setup fields plus per-D/domain/cluster NTT bytes.
 - [x] No setup code uses a config/preset D or `D512OneHot` as public-matrix
   identity or allocation unit.
 
