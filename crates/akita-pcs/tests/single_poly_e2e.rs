@@ -132,10 +132,10 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
         let expected_opening = opening_from_poly::<DENSE_D, _>(&poly, &pt, &layout);
 
         let setup = AkitaCommitmentScheme::<DenseCfg>::setup_prover(nv, 1).unwrap();
-        let prepared = CpuBackend.prepare_setup(&setup).unwrap();
-        let stack = akita_prover::UniformProverStack::uniform(
+        let commit_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let commit_stack = akita_prover::UniformProverStack::uniform(
             &CpuBackend,
-            &prepared,
+            &commit_prepared,
             setup.expanded.as_ref(),
         )
         .expect("stack");
@@ -143,7 +143,7 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
             AkitaCommitmentScheme::<DenseCfg>::setup_verifier(&setup).expect("verifier setup");
         let commit_input = std::slice::from_ref(&poly);
         let (commitment, hint) =
-            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &stack)
+            AkitaCommitmentScheme::<DenseCfg>::commit::<_, _>(&setup, commit_input, &commit_stack)
                 .expect("commit");
 
         let poly_refs: [&DensePoly<F>; 1] = [&poly];
@@ -151,6 +151,13 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
         let openings = [expected_opening];
         let opening_groups = [&openings[..]];
         let hints = vec![hint];
+        let prove_prepared = CpuBackend.prepare_setup(&setup).unwrap();
+        let prove_stack = akita_prover::UniformProverStack::uniform(
+            &CpuBackend,
+            &prove_prepared,
+            setup.expanded.as_ref(),
+        )
+        .expect("prove stack");
 
         let mut prover_transcript = AkitaTranscript::<F>::new(b"single_poly_e2e/dense");
         let proof = AkitaCommitmentScheme::<DenseCfg>::batched_prove::<_, _, _>(
@@ -161,7 +168,7 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
                 &commitments[0],
                 hints.into_iter().next().unwrap(),
             ),
-            &stack,
+            &prove_stack,
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
@@ -171,12 +178,12 @@ fn run_single_dense(nv: usize, expected_uncompressed_proof_bytes: usize) {
         )
         .expect("resolved schedule");
         let requirements =
-            NttExecutionRequirements::from_schedule(&schedule).expect("NTT requirements");
-        let metrics =
-            planned_ntt_cache_metrics::<F, _>(&stack, &requirements).expect("planned NTT metrics");
+            NttExecutionRequirements::from_prove_schedule(&schedule).expect("NTT requirements");
+        let metrics = planned_ntt_cache_metrics::<F, _>(&prove_stack, &requirements)
+            .expect("planned NTT metrics");
         assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");
         assert_eq!(
-            prepared.shared_ntt_cache_bytes(),
+            prove_prepared.shared_ntt_cache_bytes(),
             metrics[0].cache_bytes,
             "lazy kernels and prewarm requirement compiler diverged"
         );

@@ -88,7 +88,7 @@ where
     let resolved = effective_batched_schedule::<Cfg>(resolved, &opening_batch, final_group_point)?;
     let schedule = resolved.schedule();
     ensure_schedule_fits_setup::<Cfg>(expanded.as_ref(), schedule, &opening_batch)?;
-    let ntt_requirements = NttExecutionRequirements::from_schedule(schedule)?;
+    let ntt_requirements = NttExecutionRequirements::from_prove_schedule(schedule)?;
     prewarm_ntt_requirements::<Cfg::Field, _>(stacks, &ntt_requirements)?;
     bind_transcript_instance_descriptor::<Cfg::Field, T, Cfg>(
         expanded.as_ref(),

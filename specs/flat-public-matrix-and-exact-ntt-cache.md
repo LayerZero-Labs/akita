@@ -516,8 +516,9 @@ The implementation realizes that contract as follows:
 
 - `NttCacheKey::from_matrix_shape` is the sole rows/active-width derivation
   primitive used by both the execution compiler and lazy kernel acquisition;
-- `NttExecutionRequirements::from_schedule` compiles the normal
-  commit-and-prove call layout, while `add_setup_prefix_commitment` adds the
+- `NttExecutionRequirements::from_prove_schedule` compiles only work inside a
+  `batched_prove` call. Prior root commitments are source- and backend-shaped
+  separate API calls; `add_setup_prefix_commitment` likewise adds the
   independently invoked setup-prefix preprocessing call layout;
 - `prewarm_ntt_requirements` routes each level through its selected
   `ProverComputeStack` cluster before transcript binding; and
@@ -540,6 +541,13 @@ They do not sum because every matrix is an overlapping prefix of the same
 stream. Different dimensions, domains, or physical owners remain separate.
 Levels and clusters remain separate only when routing assigns them different
 prepared owners; aliases of one prepared setup share one cache entry.
+
+A requirement set is scoped to one API phase. Planned-versus-resident equality
+therefore uses an initially empty owner or measures that phase's resident-state
+delta. A cross-phase total requires a source- and backend-aware union; a
+schedule alone cannot derive it because root source kernels differ in whether
+their A path uses an NTT. `from_prove_schedule` MUST NOT charge a root
+commitment that completed before the proof call.
 
 The cache MUST support covering-prefix lookup: a slot of length `m` covers any
 request `n <= m` with the same keys. Growth SHOULD transform only the missing

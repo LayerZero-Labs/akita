@@ -37,12 +37,14 @@ pub struct NttExecutionRequirements {
 }
 
 impl NttExecutionRequirements {
-    /// Compile the matrix work performed by a normal commit-and-prove execution.
-    pub fn from_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
+    /// Compile matrix work performed inside one `batched_prove` invocation.
+    ///
+    /// Root commitments and setup-prefix preprocessing are separate API calls
+    /// that may use different prepared owners and are intentionally excluded.
+    pub fn from_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
         let root = &schedule.root.params;
-        requirements.add_group_commit(0, &root.final_group.commitment)?;
         requirements.add_group_relation(0, &root.final_group.commitment)?;
         for precommitted in &root.precommitted_groups {
             requirements.add_precommitted_relation(0, &precommitted.commitment)?;
@@ -69,6 +71,9 @@ impl NttExecutionRequirements {
             let level = index + 1;
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
             requirements.add_group_relation(level, &step.params.witness)?;
+            if let Some(prefix) = &step.params.incoming_setup_prefix {
+                requirements.add_precommitted_relation(level, &prefix.commitment_params)?;
+            }
             requirements.add_matrix(
                 level,
                 NttOperationCluster::RingSwitch,
@@ -349,13 +354,33 @@ mod tests {
 
     #[test]
     #[cfg(feature = "schedules-default")]
-    fn generated_mixed_schedule_compiles_only_consuming_clusters() {
+    fn generated_schedule_excludes_prior_root_commitment() {
         let schedule = fp128::D64OneHot::runtime_schedule(AkitaScheduleLookupKey::single(
             PolynomialGroupLayout::singleton(32),
         ))
         .expect("generated schedule");
         let requirements =
-            NttExecutionRequirements::from_schedule(&schedule).expect("compile requirements");
+            NttExecutionRequirements::from_prove_schedule(&schedule).expect("compile requirements");
+        let mut expected_root_level_commits = NttExecutionRequirements::default();
+        if let Some(first_recursive) = schedule.recursive_folds.first() {
+            expected_root_level_commits
+                .add_group_commit(0, &first_recursive.params.witness)
+                .expect("recursive witness requirements");
+        } else {
+            expected_root_level_commits
+                .add_terminal(0, &schedule.terminal.params.witness)
+                .expect("terminal witness requirements");
+        }
+        let actual_root_level_commits = requirements
+            .entries()
+            .iter()
+            .filter(|entry| entry.fold_level == 0 && entry.cluster == NttOperationCluster::Commit)
+            .copied()
+            .collect::<Vec<_>>();
+        assert_eq!(
+            actual_root_level_commits, expected_root_level_commits.entries,
+            "prove planning must not charge the already-completed root commitment"
+        );
 
         assert!(!requirements.entries().is_empty());
         assert!(requirements.entries().iter().all(|entry| !matches!(
