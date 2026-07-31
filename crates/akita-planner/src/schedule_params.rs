@@ -36,8 +36,10 @@ mod mixed_search;
 mod setup_score;
 mod suffix_dp;
 #[cfg(feature = "test-support")]
+#[path = "schedule_params/tests/test_support.rs"]
 pub(crate) mod test_support;
 #[cfg(all(test, feature = "catalog-gen"))]
+#[path = "schedule_params/tests/unpruned_search.rs"]
 mod unpruned_search;
 
 pub use candidate::suffix_opening_layout;
