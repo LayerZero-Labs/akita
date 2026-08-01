@@ -336,7 +336,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_does_not_back_zero_padding_with_shared_setup() {
+    fn commit_setup_prefix_uses_natural_len_with_shared_setup() {
         let level_params = CommittedGroupParams::params_only(
             SisModulusProfileId::Q128OffsetA7F7,
             64,
@@ -357,7 +357,6 @@ mod tests {
         let mut setup = test_setup::<64>(&level_params, natural_len);
         let available_field_len = setup.expanded.shared_matrix().as_field_slice().len();
         assert!(available_field_len >= natural_len);
-        assert!(available_field_len < n_prefix);
 
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");

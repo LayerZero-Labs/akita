@@ -1,7 +1,7 @@
 //! Per-matrix ring-dimension E2E acceptance test.
 //!
-//! The root fold uses distinct per-matrix ring dimensions
-//! `d_a/d_b/d_d = 128/32/64` (A at the envelope dimension, with B/D in
+//! The root fold uses a smaller outer and larger opening ring dimension
+//! `d_a/d_b/d_d = 128/64/128` (A at the envelope dimension, with B/D in
 //! deliberately non-monotone order);
 //! later folds retain the shipped `D128Dense` schedule. The proof is produced
 //! and checked exclusively through the public PCS API
@@ -9,7 +9,7 @@
 //!
 //! This is the correctness oracle for the verifier's per-matrix ring-dimension relation
 //! evaluation: verifying the honest proof exercises whichever relation path the
-//! verifier selects for `role_dims = {128, 32, 64}` (mixed scan or the succinct
+//! verifier selects for `role_dims = {128, 64, 128}` (mixed scan or the succinct
 //! fast path), and the tamper cases confirm soundness.
 
 #![allow(missing_docs)]
@@ -29,16 +29,16 @@ use common::*;
 
 /// Envelope preset: uniform `D = 128`, generation ring dimension 128.
 type Envelope = fp128::D128Dense;
-/// Root commits at A=128 while B=32 and D=64 exercise D > B.
-type Cfg = PerMatrixRingDimsRootConfig<Envelope, 32, 64>;
+/// Root commits at A=128 while B=64 and D=128 exercise D > B.
+type Cfg = PerMatrixRingDimsRootConfig<Envelope, 64, 128>;
 type Scheme = AkitaCommitmentScheme<Cfg>;
 
 const NUM_VARS: usize = 16;
 const ENVELOPE_D: usize = 128;
 const ROOT_MATRIX_DIMS: CommitmentRingDims = CommitmentRingDims {
     inner: 128,
-    outer: 32,
-    opening: 64,
+    outer: 64,
+    opening: 128,
 };
 const LABEL: &[u8] = b"test/per_matrix_ring_dims_root_e2e";
 
@@ -81,7 +81,7 @@ fn per_matrix_ring_dims_root_proves_verifies_and_rejects_tamper() {
         assert_eq!(
             schedule.root.params.final_group.commitment.role_dims(),
             ROOT_MATRIX_DIMS,
-            "root must commit at d_a=128, d_b=32, d_d=64"
+            "root must commit at d_a=128, d_b=64, d_d=128"
         );
 
         let poly = dense_poly(0xc0de_5501);

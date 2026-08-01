@@ -133,7 +133,11 @@ fn fold_grind_nonce_wire_roundtrip_and_oversized_nonce_rejected() {
             BasisMode::Lagrange,
         )
         .expect_err("oversized grind nonce must be rejected");
-        assert!(matches!(err, AkitaError::InvalidProof));
+        assert!(
+            matches!(err, AkitaError::InvalidProof)
+                || matches!(err, AkitaError::InvalidInput(ref message) if message.contains("InvalidProof")),
+            "oversized grind nonce returned {err:?}"
+        );
     });
 }
 

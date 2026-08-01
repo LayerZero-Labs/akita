@@ -168,15 +168,15 @@ fn d512_root_uses_additive_a_matrix_sis_table() {
 
 #[test]
 fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
-    let schedule = per_matrix_ring_dims_root_schedule::<fp128::D128OneHot>(NUM_VARS, 1, 32, 64)
+    let schedule = per_matrix_ring_dims_root_schedule::<fp128::D128OneHot>(NUM_VARS, 1, 64, 128)
         .expect("per-matrix ring-dimension root schedule");
     let root = &schedule.root.params.final_group.commitment;
     assert_eq!(
         root.role_dims(),
         CommitmentRingDims {
             inner: 128,
-            outer: 32,
-            opening: 64,
+            outer: 64,
+            opening: 128,
         }
     );
     assert_exact_matrix_widths(root, 1);
@@ -190,7 +190,7 @@ fn per_matrix_ring_dims_root_replans_its_complete_suffix() {
 
     let required = setup_matrix_capacity_for_schedule(&schedule).expect("schedule envelope");
     let configured =
-        <PerMatrixRingDimsRootConfig<fp128::D128OneHot, 32, 64> as CommitmentConfig>::
+        <PerMatrixRingDimsRootConfig<fp128::D128OneHot, 64, 128> as CommitmentConfig>::
             setup_matrix_capacity(NUM_VARS, 1)
             .expect("configured envelope");
     assert_eq!(configured, required);
