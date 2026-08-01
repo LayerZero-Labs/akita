@@ -280,7 +280,7 @@ where
     let num_digits_open = params.num_digits_outer;
     let log_basis = params.log_basis_outer;
     let n_b = params.outer_commit_matrix.output_rank();
-    let (commitment, inner_rows, compression_witness) = dispatch_for_field!(
+    let (commitment, inner_rows, compression_witness, compression_quotients) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         F,
         dims.d_a(),
@@ -362,6 +362,7 @@ where
                             .map(|(rows, _)| rows)
                             .collect::<Vec<_>>(),
                         output.witness,
+                        output.quotients,
                     ))
                 }
             )
@@ -371,6 +372,7 @@ where
         dims.d_a(),
         inner_rows,
         &compression_witness,
+        &compression_quotients,
     )?;
     Ok((commitment, hint))
 }

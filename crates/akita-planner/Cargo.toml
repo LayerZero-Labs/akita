@@ -27,6 +27,9 @@ default = []
 catalog-gen = ["dep:akita-config"]
 test-support = []
 
+[dev-dependencies]
+akita-config = { version = "0.1.0", path = "../akita-config", default-features = false }
+
 [[bin]]
 name = "gen_schedule_tables"
 path = "src/bin/gen_schedule_tables.rs"

@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 use super::*;
 
-#[cfg(all(test, feature = "catalog-gen"))]
+#[cfg(test)]
 fn policy_for_domain(
     mut policy: PlannerPolicy,
     domain: &RingDimensionSearchDomain,
@@ -271,6 +271,42 @@ fn pruned_mixed_search_matches_unpruned_traversal_and_is_canonical() {
     );
 }
 
+#[test]
+fn uniform_suffix_dp_matches_unpruned_exact_cutover_search() {
+    use akita_config::{policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig};
+
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let policy = policy_for_domain(policy_of::<D64OneHot>(), &domain);
+    let key = PolynomialGroupLayout::singleton(16);
+    let selected = find_schedule(
+        key,
+        &policy,
+        D64OneHot::root_honest_fold_policy(),
+        &domain,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+    let unpruned = unpruned_search::find_schedule(
+        key,
+        &policy,
+        D64OneHot::root_honest_fold_policy(),
+        &domain,
+        D64OneHot::ring_challenge_config,
+        D64OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        unpruned.estimate.estimated_proof_payload_bytes().unwrap()
+    );
+    assert_eq!(
+        selected.schedule.canonical_descriptor_bytes(),
+        unpruned.schedule.canonical_descriptor_bytes()
+    );
+}
+
 #[cfg(feature = "catalog-gen")]
 #[test]
 fn mixed_search_parallel_generation_is_descriptor_deterministic() {
@@ -480,7 +516,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        96_604
+        90_312
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -662,7 +698,7 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
-fn preserved_recursive_proof_size_is_documented() {
+fn recursive_exact_cutover_proof_size_is_documented() {
     use akita_config::{
         policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,
     };
@@ -705,6 +741,6 @@ fn preserved_recursive_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        103_440
+        94_680
     );
 }

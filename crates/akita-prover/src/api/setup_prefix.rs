@@ -160,6 +160,7 @@ where
     let hint = AkitaCommitmentHint::singleton_with_outer_compression(
         RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?,
         &output.witness,
+        &output.quotients,
     )?;
     let id = setup_prefix_slot_id(natural_len, level_params.clone());
     Ok(SetupPrefixSlot {

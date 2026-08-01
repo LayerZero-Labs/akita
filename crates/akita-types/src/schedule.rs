@@ -748,30 +748,35 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
-        if self.root.params.final_group.commitment.payload_mode
-            != crate::scheduled_payload_mode(0, false)
+        if !self
+            .root
+            .params
+            .final_group
+            .commitment
+            .payload_mode
+            .is_compressed()
         {
             return Err(AkitaError::InvalidSetup(
                 "root fold payload must be compressed".into(),
             ));
         }
-        let mut raw_suffix_started = false;
+        let mut payload_phase = crate::CommitmentPayloadPhase::CompressedPrefix;
         for (index, step) in self.recursive_folds.iter().enumerate() {
             let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
-            if raw_suffix_started && consumes_setup_prefix {
+            if payload_phase == crate::CommitmentPayloadPhase::RawSuffix && consumes_setup_prefix {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
                 )));
             }
-            let expected = crate::scheduled_payload_mode(index + 1, consumes_setup_prefix);
-            if step.params.witness.payload_mode != expected {
+            if !payload_phase
+                .candidate_modes(index + 1, consumes_setup_prefix)
+                .contains(&step.params.witness.payload_mode)
+            {
                 return Err(AkitaError::InvalidSetup(format!(
                     "recursive fold {index} payload mode disagrees with the compression cutover policy"
                 )));
             }
-            if !step.params.witness.payload_mode.is_compressed() {
-                raw_suffix_started = true;
-            }
+            payload_phase = payload_phase.after(step.params.witness.payload_mode);
         }
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(

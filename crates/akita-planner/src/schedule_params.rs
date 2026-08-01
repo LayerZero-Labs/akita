@@ -10,7 +10,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-#[cfg(all(test, feature = "catalog-gen"))]
+#[cfg(test)]
 use akita_types::extension_opening_reduction_level_bytes;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -37,7 +37,7 @@ mod setup_score;
 mod suffix_dp;
 #[cfg(feature = "test-support")]
 pub(crate) mod test_support;
-#[cfg(all(test, feature = "catalog-gen"))]
+#[cfg(test)]
 mod unpruned_search;
 
 pub use akita_types::suffix_opening_layout;
@@ -648,6 +648,7 @@ pub fn plan_optimal_suffix(
             current_witness_len: start_witness_len,
             current_lb: start_lb,
             incoming_setup_prefix: None,
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
     )?;
@@ -804,6 +805,7 @@ fn find_schedule_inner(
                     current_witness_len: output_witness_len,
                     current_lb: candidate_log_basis,
                     incoming_setup_prefix: None,
+                    payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
                 },
                 0,
             )?;

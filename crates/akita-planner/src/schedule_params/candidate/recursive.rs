@@ -127,7 +127,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let params = CommittedGroupParams {
-        payload_mode: akita_types::scheduled_payload_mode(fold_level, false),
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,

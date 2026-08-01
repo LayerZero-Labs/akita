@@ -238,15 +238,11 @@ fn schedule_rejects_compression_after_raw_suffix_starts() {
 }
 
 #[test]
-fn schedule_rejects_unplanned_compression_after_two_fold_prefix() {
+fn schedule_accepts_extended_compressed_prefix() {
     let mut schedule = recursive_schedule(64, 64, false);
     append_recursive_fold(&mut schedule);
 
-    assert!(matches!(
-        schedule.validate_structure(),
-        Err(AkitaError::InvalidSetup(message))
-            if message.contains("cutover policy")
-    ));
+    schedule.validate_structure().unwrap();
 }
 
 #[test]

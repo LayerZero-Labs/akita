@@ -13,6 +13,7 @@ pub struct AkitaCommitmentHint<F: FieldCore> {
     inner_rows: Vec<RingVec<F>>,
     ring_dim: usize,
     outer_compression_stages: Vec<Vec<u8>>,
+    outer_compression_quotients: Vec<RingVec<F>>,
 }
 
 impl<F: FieldCore> AkitaCommitmentHint<F> {
@@ -27,6 +28,7 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
             inner_rows,
             ring_dim,
             outer_compression_stages: Vec::new(),
+            outer_compression_quotients: Vec::new(),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -43,6 +45,7 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         ring_dim: usize,
         inner_rows: Vec<RingVec<F>>,
         witness: &CompressionChainWitness,
+        quotients: &[RingVec<F>],
     ) -> Result<Self, AkitaError> {
         let hint = Self {
             inner_rows,
@@ -52,6 +55,7 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
                 .iter()
                 .map(|stage| stage.bytes().to_vec())
                 .collect(),
+            outer_compression_quotients: quotients.to_vec(),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -62,8 +66,14 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     pub fn singleton_with_outer_compression(
         inner_rows: RingVec<F>,
         witness: &CompressionChainWitness,
+        quotients: &[RingVec<F>],
     ) -> Result<Self, AkitaError> {
-        Self::new_with_outer_compression(inner_rows.ring_dim(), vec![inner_rows], witness)
+        Self::new_with_outer_compression(
+            inner_rows.ring_dim(),
+            vec![inner_rows],
+            witness,
+            quotients,
+        )
     }
 
     /// Shared A ring dimension.
@@ -96,6 +106,38 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         CompressionChainWitness::new(plan.clone(), stages)
     }
 
+    /// Recover the retained quotient rows under the derived compression plan.
+    pub fn outer_compression_quotients(
+        &self,
+        plan: &CompressionChainPlan,
+    ) -> Result<Vec<RingVec<F>>, AkitaError> {
+        if self.outer_compression_quotients.len() != plan.maps().len() {
+            return Err(AkitaError::InvalidInput(
+                "commitment hint compression quotient count disagrees with the derived plan".into(),
+            ));
+        }
+        for (quotient, map) in self.outer_compression_quotients.iter().zip(plan.maps()) {
+            if quotient.ring_dim() != map.ring_dimension()
+                || quotient.coeff_len() != map.output_coefficients()
+            {
+                return Err(AkitaError::InvalidInput(
+                    "commitment hint compression quotient shape disagrees with the derived plan"
+                        .into(),
+                ));
+            }
+        }
+        Ok(self.outer_compression_quotients.clone())
+    }
+
+    /// Validate every retained outer-compression component against one plan.
+    pub fn validate_outer_compression(
+        &self,
+        plan: &CompressionChainPlan,
+    ) -> Result<(), AkitaError> {
+        self.outer_compression_witness(plan)?;
+        self.outer_compression_quotients(plan).map(|_| ())
+    }
+
     /// Consume the hint and return semantic A rows in polynomial order.
     pub fn into_rows(self) -> Vec<RingVec<F>> {
         self.inner_rows
@@ -116,6 +158,11 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
                 "commitment hint must contain zero or exactly two compression stages".into(),
             ));
         }
+        if self.outer_compression_quotients.len() != self.outer_compression_stages.len() {
+            return Err(SerializationError::InvalidData(
+                "commitment hint compression stages and quotients must have equal counts".into(),
+            ));
+        }
         let mut packed_bytes = 0usize;
         for stage in &self.outer_compression_stages {
             packed_bytes = packed_bytes.checked_add(stage.len()).ok_or_else(|| {
@@ -127,6 +174,27 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         if packed_bytes > MAX_COMPRESSION_INPUT_BYTES + COMPRESSION_TARGET_BYTES * 2 {
             return Err(SerializationError::InvalidData(
                 "commitment hint packed compression data exceeds the protocol envelope".into(),
+            ));
+        }
+        let mut quotient_coefficients = 0usize;
+        for quotient in &self.outer_compression_quotients {
+            if quotient.ring_dim() == 0 || !quotient.coeff_len().is_multiple_of(quotient.ring_dim())
+            {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint compression quotient has malformed ring storage".into(),
+                ));
+            }
+            quotient_coefficients = quotient_coefficients
+                .checked_add(quotient.coeff_len())
+                .ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint compression quotient length overflow".into(),
+                    )
+                })?;
+        }
+        if quotient_coefficients > MAX_COMPRESSION_INPUT_BYTES {
+            return Err(SerializationError::InvalidData(
+                "commitment hint compression quotients exceed the protocol envelope".into(),
             ));
         }
         let mut expected_coefficients = None;
@@ -161,7 +229,8 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
 impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
     fn check(&self) -> Result<(), SerializationError> {
         self.validate_shape()?;
-        self.inner_rows.check()
+        self.inner_rows.check()?;
+        self.outer_compression_quotients.check()
     }
 }
 
@@ -190,6 +259,20 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
             stage.len().serialize_with_mode(&mut writer, compress)?;
             writer.write_all(stage)?;
         }
+        self.outer_compression_quotients
+            .len()
+            .serialize_with_mode(&mut writer, compress)?;
+        for quotient in &self.outer_compression_quotients {
+            quotient
+                .ring_dim()
+                .serialize_with_mode(&mut writer, compress)?;
+            quotient
+                .coeff_len()
+                .serialize_with_mode(&mut writer, compress)?;
+            for coefficient in quotient.coeffs() {
+                coefficient.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
         Ok(())
     }
 
@@ -217,6 +300,23 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
                 .outer_compression_stages
                 .len()
                 .serialized_size(compress)
+            + self
+                .outer_compression_quotients
+                .len()
+                .serialized_size(compress)
+            + self
+                .outer_compression_quotients
+                .iter()
+                .map(|quotient| {
+                    quotient.ring_dim().serialized_size(compress)
+                        + quotient.coeff_len().serialized_size(compress)
+                        + quotient
+                            .coeffs()
+                            .iter()
+                            .map(|coefficient| coefficient.serialized_size(compress))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
     }
 }
 
@@ -317,10 +417,64 @@ where
             outer_compression_stages.push(bytes);
         }
 
+        let compression_quotient_count =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if compression_quotient_count != compression_stage_count {
+            return Err(SerializationError::InvalidData(
+                "commitment hint compression stages and quotients must have equal counts".into(),
+            ));
+        }
+        let mut outer_compression_quotients = Vec::new();
+        reserve_shape_len(&mut outer_compression_quotients, compression_quotient_count)?;
+        let mut quotient_coefficients = 0usize;
+        for _ in 0..compression_quotient_count {
+            let quotient_ring_dim =
+                usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            let quotient_coeff_len =
+                usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            if quotient_ring_dim == 0 || !quotient_coeff_len.is_multiple_of(quotient_ring_dim) {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint compression quotient has malformed ring storage".into(),
+                ));
+            }
+            quotient_coefficients = quotient_coefficients
+                .checked_add(quotient_coeff_len)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint compression quotient length overflow".into(),
+                    )
+                })?;
+            if quotient_coefficients > MAX_COMPRESSION_INPUT_BYTES {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint compression quotients exceed the protocol envelope".into(),
+                ));
+            }
+            let mut coefficients = Vec::new();
+            reserve_shape_len(&mut coefficients, quotient_coeff_len)?;
+            for _ in 0..quotient_coeff_len {
+                coefficients.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            outer_compression_quotients.push(
+                RingVec::from_coeffs_with_ring_dim(coefficients, quotient_ring_dim).map_err(
+                    |_| {
+                        SerializationError::InvalidData(
+                            "commitment hint compression quotient is malformed".into(),
+                        )
+                    },
+                )?,
+            );
+        }
+
         let hint = Self {
             inner_rows,
             ring_dim,
             outer_compression_stages,
+            outer_compression_quotients,
         };
         hint.validate_shape()?;
         if validate == Validate::Yes {
@@ -366,6 +520,7 @@ mod tests {
             }
         }
         0usize.serialize_uncompressed(&mut expected).unwrap();
+        0usize.serialize_uncompressed(&mut expected).unwrap();
         assert_eq!(encoded, expected);
 
         let decoded =
@@ -410,9 +565,24 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
         let witness = CompressionChainWitness::new(plan.clone(), stages).unwrap();
-        let hint =
-            AkitaCommitmentHint::new_with_outer_compression(4, vec![rows(10, 8, 4)], &witness)
-                .unwrap();
+        let quotients = plan
+            .maps()
+            .iter()
+            .map(|map| {
+                RingVec::from_coeffs_with_ring_dim(
+                    vec![F::zero(); map.output_coefficients()],
+                    map.ring_dimension(),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let hint = AkitaCommitmentHint::new_with_outer_compression(
+            4,
+            vec![rows(10, 8, 4)],
+            &witness,
+            &quotients,
+        )
+        .unwrap();
 
         let mut encoded = Vec::new();
         hint.serialize_uncompressed(&mut encoded).unwrap();
@@ -420,10 +590,23 @@ mod tests {
             AkitaCommitmentHint::<F>::deserialize_uncompressed(&encoded[..], &()).unwrap();
         assert_eq!(decoded, hint);
         assert_eq!(decoded.outer_compression_witness(&plan).unwrap(), witness);
+        assert_eq!(
+            decoded.outer_compression_quotients(&plan).unwrap(),
+            quotients
+        );
 
         let mut wrong_count = hint.clone();
         wrong_count.outer_compression_stages.pop();
         assert!(wrong_count.serialize_uncompressed(Vec::new()).is_err());
+
+        let mut wrong_quotient_dimension = hint.clone();
+        let quotient = &wrong_quotient_dimension.outer_compression_quotients[0];
+        wrong_quotient_dimension.outer_compression_quotients[0] =
+            RingVec::from_coeffs_with_ring_dim(quotient.coeffs().to_vec(), quotient.ring_dim() / 2)
+                .unwrap();
+        assert!(wrong_quotient_dimension
+            .outer_compression_quotients(&plan)
+            .is_err());
 
         let mut wrong_length = hint;
         wrong_length.outer_compression_stages[0].pop();

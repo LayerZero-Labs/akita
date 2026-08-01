@@ -156,7 +156,7 @@ where
                             packed_witness,
                             inner.into_inner_rows(),
                             payload,
-                            Some(output.witness),
+                            Some((output.witness, output.quotients)),
                         ))
                     }
                 }
@@ -164,8 +164,12 @@ where
         }
     )?;
     let hint = match compression_witness {
-        Some(compression_witness) => {
-            AkitaCommitmentHint::singleton_with_outer_compression(inner_rows, &compression_witness)?
+        Some((compression_witness, compression_quotients)) => {
+            AkitaCommitmentHint::singleton_with_outer_compression(
+                inner_rows,
+                &compression_witness,
+                &compression_quotients,
+            )?
         }
         None => AkitaCommitmentHint::singleton(inner_rows)?,
     };

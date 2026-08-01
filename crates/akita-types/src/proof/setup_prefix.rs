@@ -854,8 +854,7 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
         }
         self.hint.check()?;
         self.hint
-            .outer_compression_witness(&compression_plan)
-            .map(|_| ())
+            .validate_outer_compression(&compression_plan)
             .map_err(|error| SerializationError::InvalidData(error.to_string()))
     }
 }
@@ -924,7 +923,7 @@ impl<F: FieldCore> SetupPrefixSlot<F> {
     fn validate_compression_hint(&self) -> Result<(), AkitaError> {
         let plan = setup_prefix_compression_plan(&self.id.commitment_params)
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
-        self.hint.outer_compression_witness(&plan).map(|_| ())
+        self.hint.validate_outer_compression(&plan)
     }
 
     /// Strip prover-only hint material for verifier metadata.

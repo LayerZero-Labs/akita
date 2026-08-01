@@ -493,7 +493,7 @@ fn multi_group_root_main_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
-        payload_mode: akita_types::scheduled_payload_mode(0, false),
+        payload_mode: akita_types::CommitmentPayloadMode::Compressed,
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -605,6 +605,7 @@ fn find_group_batch_schedule_inner(
             current_witness_len: root_input_witness_len,
             current_lb: 0,
             incoming_setup_prefix: None,
+            payload_phase: akita_types::CommitmentPayloadPhase::CompressedPrefix,
         },
         0,
     )?;

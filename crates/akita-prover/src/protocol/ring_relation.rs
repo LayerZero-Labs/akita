@@ -32,7 +32,8 @@ mod compression_witness;
 mod relation_quotient;
 
 pub(crate) use compression_witness::{
-    materialize_compression_witness, CompressionSourceId, CompressionWitnessMaterialization,
+    materialize_compression_witness, CompressionSourceId, CompressionSourceWitness,
+    CompressionWitnessMaterialization,
 };
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
@@ -637,10 +638,29 @@ impl RingRelationProver {
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
         let compression = if lp.payload_mode.is_compressed() {
+            let retained_outer_sources = commit_group_order
+                .iter()
+                .enumerate()
+                .map(|(relation_group_index, &group_index)| {
+                    let (planned_group_index, plan) =
+                        relation_rhs_layout.group_compression_plan(relation_group_index)?;
+                    if planned_group_index != group_index {
+                        return Err(AkitaError::InvalidSetup(
+                            "compression group order disagrees with the relation layout".into(),
+                        ));
+                    }
+                    CompressionSourceWitness::from_outer_hint(
+                        group_index,
+                        plan,
+                        &hints[group_index],
+                        group_payloads[relation_group_index].clone(),
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             let (compression, compression_report) = materialize_compression_witness(
                 ring_switch_ctx,
                 &relation_rhs_layout,
-                &commitment_rows,
+                retained_outer_sources,
                 &v,
             )
             .map_err(|err| {
@@ -648,18 +668,6 @@ impl RingRelationProver {
                     "compression witness materialization failed: {err:?}"
                 ))
             })?;
-            for (relation_group_index, payload) in group_payloads.iter().enumerate() {
-                let (group_index, plan) =
-                    relation_rhs_layout.group_compression_plan(relation_group_index)?;
-                let source = compression.source(CompressionSourceId::Outer { group_index })?;
-                if source.witness != hints[group_index].outer_compression_witness(plan)?
-                    || source.terminal.coefficients() != payload
-                {
-                    return Err(AkitaError::InvalidInput(
-                        "commitment hint does not open the compressed public payload".into(),
-                    ));
-                }
-            }
             let opening_source = compression.source(CompressionSourceId::Opening)?;
             let opening_terminal_ring_dim = opening_source
                 .witness

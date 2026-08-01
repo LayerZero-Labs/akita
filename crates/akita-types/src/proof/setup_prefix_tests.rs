@@ -435,8 +435,21 @@ fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
             .expect("packed stages");
         let witness =
             crate::CompressionChainWitness::new(plan.clone(), stages).expect("compression witness");
-        let hint = AkitaCommitmentHint::<F>::singleton_with_outer_compression(inner_rows, &witness)
-            .expect("hint");
+        let quotients = plan
+            .maps()
+            .iter()
+            .map(|map| {
+                RingVec::from_coeffs_with_ring_dim(
+                    vec![F::zero(); map.output_coefficients()],
+                    map.ring_dimension(),
+                )
+                .expect("quotient")
+            })
+            .collect::<Vec<_>>();
+        let hint = AkitaCommitmentHint::<F>::singleton_with_outer_compression(
+            inner_rows, &witness, &quotients,
+        )
+        .expect("hint");
         SetupPrefixSlot {
             id: id.clone(),
             natural_len: id.natural_len,

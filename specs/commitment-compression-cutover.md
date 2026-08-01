@@ -10,19 +10,20 @@ Paper authority: `sections/akita/6_commitment_and_fold.tex`,
 
 ## Decision
 
-Akita uses compressed standalone and root commitments, followed by a guided
-monotone cutover from compressed recursive payloads to raw recursive payloads:
+Akita uses compressed standalone and root commitments, followed by a
+planner-selected monotone cutover from compressed recursive payloads to raw
+recursive payloads:
 
 ```text
 compressed, compressed, ..., compressed, raw, raw, ..., raw
 ```
 
-The root fold and first recursive fold are compressed whenever they exist. An
-ordinary recursive fold at level two or later is raw. A fold that consumes a
-recursive setup prefix remains compressed, which may extend the compressed
-prefix; its first direct successor is raw. Compression cannot resume after
-that point. The schedule descriptor binds every level's mode; the proof carries
-no mode tag.
+The root fold and first recursive fold are compressed whenever they exist. At
+every later level in the compressed prefix, the planner evaluates both another
+compressed fold and the start of a raw suffix. A fold that consumes a recursive
+setup prefix remains compressed. Compression cannot resume after raw mode
+begins. The schedule descriptor binds every level's mode; the proof carries no
+mode tag.
 
 Each source image must contain at most 8 KiB of canonical field elements. The
 bound is inclusive. The protocol rejects a larger source during schedule
@@ -180,7 +181,7 @@ count.
 The protocol defines one cutover policy identifier:
 
 ```text
-NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2
+NegativeBinaryTwoMapExactMonotoneCutover8KiBV3
 ```
 
 The instance descriptor binds this identifier once. Standalone committed group
@@ -225,13 +226,18 @@ It retains:
 1. The existing inner A rows.
 2. The packed negative binary digits for `F_1`.
 3. The packed negative binary digits for `F_2`.
+4. The cyclic quotient for each F map.
 
 The hint does not retain the raw B image or the intermediate F image. Both are
-recomposed from the retained digits when the group is opened.
+recomposed from the retained digits when the group is opened. Retaining the F
+quotients avoids repeating the commitment-time ring division during every
+opening. The H digits and quotients remain fold-time witnesses and are not
+persisted in the commitment hint.
 
-Hint persistence derives the expected map shapes from the frozen group profile.
-Decoded byte lengths must match those shapes exactly. The serialized hint does
-not carry an independent compression plan.
+Hint persistence derives the expected digit and quotient shapes from the frozen
+group profile. Decoded byte lengths, quotient counts, and quotient ring
+dimensions must match those shapes exactly. The serialized hint does not carry
+an independent compression plan.
 
 ### Fold proof
 
@@ -431,10 +437,12 @@ required operation of every backend that supports the affected field profile.
 ## Planner And Generated Schedules
 
 The planner does not search over compression maps or arbitrary per-level mode
-strings. It applies one schedule policy: levels zero and one are compressed;
-a later setup-prefix consumer is compressed; every other level is raw. Under
-that mode policy, suffix DP still optimizes fold geometry, fold count, setup
-offload, and terminal geometry jointly.
+strings. It carries one monotone phase bit. Levels zero and one are compressed.
+At every later compressed-prefix state, suffix DP prices a compressed edge and
+a raw edge. A raw edge permanently enters the raw suffix. A setup-prefix
+consumer is compressed and cannot occur after that transition. The same DP
+jointly optimizes fold geometry, fold count, setup offload, terminal geometry,
+and the cutover.
 
 For every compressed candidate it must:
 
@@ -463,13 +471,13 @@ the child mode's B encoding. A `TerminalInnerState` edge charges no duplicate B
 payload. Successor witness length comes only from `WitnessLayout`. Setup
 capacity includes compression prefixes only for compressed levels.
 
-An exact monotone cutover search was evaluated as an offline policy experiment.
-Its proof-byte-only optimum retained four compressed folds for fp128 dense and
-five for fp128 onehot. That made onehot use two additional folds and regressed
-dense proving by about five percent. The guided two-fold policy kept measured
-CI-profile prove and verify time roughly flat or improved while reducing proof
-bytes by 2.6--3.0% relative to PR 341. A future change to this rule requires a
-new policy identifier and regenerated schedules.
+The planner uses the exact monotone cutover search with proof bytes as its
+primary objective. The measured optimum retained four compressed folds for
+fp128 dense and five for fp128 onehot. This can add prover work and fold levels,
+but proof size takes priority. Performance work must preserve the selected
+proof bytes and schedule-bound monotone compressed-prefix/raw-suffix contract.
+A future change to this rule requires a new policy identifier and regenerated
+schedules.
 
 ## Incremental Implementation Sequence
 
@@ -533,12 +541,14 @@ This slice prepares the authoritative schedules for activation.
 
 ### Slice 5: Prover witness and relation
 
-1. Create `p_F` and retain packed F digits during standalone commitment.
-2. Recompose F digits from the hint when the group is opened.
+1. Create `p_F` and retain packed F digits and cyclic quotients during
+   standalone commitment.
+2. Recompose F sources from the hint when the group is opened, reusing the
+   retained quotients.
 3. Create `p_H` and both H digit vectors during each nonterminal fold.
 4. Insert every F and H digit vector through `WitnessLayout`.
 5. Build the B, D, F, and H relation rows.
-6. Compute the matching cyclic quotients.
+6. Compute the matching H cyclic quotients at fold time.
 7. Add the support restricted negative binary term to stage 2.
 
 Focused internal tests compare every produced relation against direct
@@ -607,8 +617,8 @@ The final cutover must include:
 ## Completion Condition
 
 The cutover is complete only when standalone/root commitments are compressed,
-every schedule obeys the two-fold compressed-prefix and monotone raw-suffix
-rules, both recursive payload modes prove and verify end to end, every emitted
+every schedule obeys the minimum two-fold compressed prefix and monotone raw
+suffix, both recursive payload modes prove and verify end to end, every emitted
 compression digit is bound by both the relation and negative-binary proof, and
-the planner selects the smallest modeled schedule within the guided payload
-policy without a material prover or verifier regression.
+the planner selects the smallest modeled proof schedule. Prover performance is
+secondary but must not retain avoidable duplicate work.

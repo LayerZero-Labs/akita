@@ -44,19 +44,45 @@ impl CommitmentPayloadMode {
     }
 }
 
-/// Payload mode fixed by the recursive cutover policy at one absolute fold level.
-///
-/// The root and first recursive fold are compressed. A later fold is compressed
-/// only when it consumes a recursive setup prefix; every other later fold is raw.
-#[must_use]
-pub const fn scheduled_payload_mode(
-    absolute_fold_level: usize,
-    consumes_setup_prefix: bool,
-) -> CommitmentPayloadMode {
-    if absolute_fold_level < 2 || consumes_setup_prefix {
-        CommitmentPayloadMode::Compressed
-    } else {
-        CommitmentPayloadMode::Raw
+/// Monotone planner phase for recursive commitment payloads.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CommitmentPayloadPhase {
+    /// The planner may keep compressing or begin the raw suffix.
+    #[default]
+    CompressedPrefix,
+    /// Compression cannot resume after this point.
+    RawSuffix,
+}
+
+impl CommitmentPayloadPhase {
+    /// Payload modes admitted by the protocol at this schedule state.
+    #[must_use]
+    pub const fn candidate_modes(
+        self,
+        absolute_fold_level: usize,
+        consumes_setup_prefix: bool,
+    ) -> &'static [CommitmentPayloadMode] {
+        if absolute_fold_level < 2 || consumes_setup_prefix {
+            &[CommitmentPayloadMode::Compressed]
+        } else {
+            match self {
+                Self::CompressedPrefix => &[
+                    CommitmentPayloadMode::Compressed,
+                    CommitmentPayloadMode::Raw,
+                ],
+                Self::RawSuffix => &[CommitmentPayloadMode::Raw],
+            }
+        }
+    }
+
+    /// Advance the monotone phase after selecting one payload mode.
+    #[must_use]
+    pub const fn after(self, mode: CommitmentPayloadMode) -> Self {
+        if mode.is_compressed() {
+            self
+        } else {
+            Self::RawSuffix
+        }
     }
 }
 
@@ -159,23 +185,23 @@ impl CommitmentPayloadGeometry {
 /// Stable identity of the commitment-compression protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CompressionPolicyId {
-    /// Two-map two-fold prefix, with setup consumers compressed, followed by a raw suffix.
+    /// Two-map exact monotone cutover with a minimum two-fold compressed prefix.
     #[default]
-    NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2,
+    NegativeBinaryTwoMapExactMonotoneCutover8KiBV3,
 }
 
 impl CompressionPolicyId {
     /// Stable descriptor tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2 => 2,
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => 3,
         }
     }
 
     /// Parse the stable descriptor tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            2 => Some(Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2),
+            3 => Some(Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3),
             _ => None,
         }
     }
@@ -183,8 +209,8 @@ impl CompressionPolicyId {
     /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2 => {
-                "NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2"
+            Self::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3 => {
+                "NegativeBinaryTwoMapExactMonotoneCutover8KiBV3"
             }
         }
     }
@@ -192,7 +218,7 @@ impl CompressionPolicyId {
 
 /// The only compression policy supported by this protocol epoch.
 pub const COMPRESSION_POLICY: CompressionPolicyId =
-    CompressionPolicyId::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2;
+    CompressionPolicyId::NegativeBinaryTwoMapExactMonotoneCutover8KiBV3;
 
 /// The two compression-only ring dimensions for one modulus profile.
 ///

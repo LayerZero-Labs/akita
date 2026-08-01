@@ -2,7 +2,18 @@ use std::collections::HashMap;
 
 use super::*;
 
-type MixedMemo = HashMap<(usize, usize, u32, usize, usize, usize), Vec<ScheduleCandidate>>;
+type MixedMemo = HashMap<
+    (
+        usize,
+        usize,
+        u32,
+        usize,
+        usize,
+        usize,
+        akita_types::CommitmentPayloadPhase,
+    ),
+    Vec<ScheduleCandidate>,
+>;
 
 fn score(candidate: &ScheduleCandidate) -> MixedScore {
     MixedScore {
@@ -57,6 +68,7 @@ fn suffix_frontier(
     input_witness_len: usize,
     current_log_basis: u32,
     dimension_ceiling: CommitmentRingDims,
+    payload_phase: akita_types::CommitmentPayloadPhase,
     memo: &mut MixedMemo,
 ) -> Result<Vec<ScheduleCandidate>, AkitaError> {
     if level > MAX_RECURSION_DEPTH {
@@ -69,6 +81,7 @@ fn suffix_frontier(
         dimension_ceiling.d_a(),
         dimension_ceiling.d_b(),
         dimension_ceiling.d_d(),
+        payload_phase,
     );
     if let Some(cached) = memo.get(&memo_key) {
         return Ok(cached.clone());
@@ -108,54 +121,126 @@ fn suffix_frontier(
             let Ok(ring_challenge) = ring_challenge_config(candidate_dimensions.d_a()) else {
                 continue;
             };
-            let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
-                derive_candidate_level_params_all_splits(
-                    policy,
-                    akita_types::scheduled_payload_mode(level, false),
-                    &ring_challenge,
-                    *candidate_dimensions,
-                    input_witness_len,
-                    log_basis,
-                    level,
-                    None,
-                    requested_fold_shape,
-                )?
-            } else {
-                derive_candidate_level_params(
-                    policy,
-                    akita_types::scheduled_payload_mode(level, false),
-                    &ring_challenge,
-                    *candidate_dimensions,
-                    input_witness_len,
-                    log_basis,
-                    level,
-                    None,
-                    requested_fold_shape,
-                )?
-                .into_iter()
-                .collect()
-            };
+            for &payload_mode in payload_phase.candidate_modes(level, false) {
+                let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
+                    derive_candidate_level_params_all_splits(
+                        policy,
+                        payload_mode,
+                        &ring_challenge,
+                        *candidate_dimensions,
+                        input_witness_len,
+                        log_basis,
+                        level,
+                        None,
+                        requested_fold_shape,
+                    )?
+                } else {
+                    derive_candidate_level_params(
+                        policy,
+                        payload_mode,
+                        &ring_challenge,
+                        *candidate_dimensions,
+                        input_witness_len,
+                        log_basis,
+                        level,
+                        None,
+                        requested_fold_shape,
+                    )?
+                    .into_iter()
+                    .collect()
+                };
 
-            for (params, output_witness_len) in candidates {
-                if level >= MIXED_SEARCH_FOLD_LEVELS {
-                    if let Some((mut terminal, terminal_bytes)) =
-                        suffix_dp::try_terminal_direct_suffix_cost(
-                            input_witness_len,
-                            &params,
+                for (params, output_witness_len) in candidates {
+                    if level >= MIXED_SEARCH_FOLD_LEVELS {
+                        if let Some((mut terminal, terminal_bytes)) =
+                            suffix_dp::try_terminal_direct_suffix_cost(
+                                input_witness_len,
+                                &params,
+                                field_bits,
+                                key,
+                                level,
+                                None,
+                            )?
+                        {
+                            let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
+                                .checked_add(eor_bytes)
+                                .ok_or_else(|| {
+                                    AkitaError::InvalidSetup(
+                                        "mixed terminal proof size overflow".into(),
+                                    )
+                                })?;
+                            terminal.estimated_direct_payload_bytes = direct_bytes;
+                            insert_supported(
+                                policy,
+                                &mut frontier,
+                                ScheduleCandidate {
+                                    first_direct_setup_field_len: Some(
+                                        akita_types::active_setup_field_len(
+                                            &params,
+                                            &suffix_opening_layout(input_witness_len, None)?,
+                                        )?,
+                                    ),
+                                    total_bytes: direct_bytes
+                                        .checked_add(terminal_bytes)
+                                        .ok_or_else(|| {
+                                            AkitaError::InvalidSetup(
+                                                "mixed terminal proof size overflow".into(),
+                                            )
+                                        })?,
+                                    setup_field_elements: terminal_setup_field_elements(
+                                        &terminal.params,
+                                    )?,
+                                    folds: Vec::new(),
+                                    terminal,
+                                },
+                            );
+                        }
+                    }
+
+                    let child_ceiling = if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
+                        CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
+                    } else {
+                        params.role_dims()
+                    };
+                    for child in suffix_frontier(
+                        policy,
+                        dimensions,
+                        ring_challenge_config,
+                        fold_shape,
+                        key,
+                        level + 1,
+                        output_witness_len,
+                        log_basis,
+                        child_ceiling,
+                        payload_phase.after(params.payload_mode),
+                        memo,
+                    )? {
+                        let child_is_terminal = child.folds.is_empty();
+                        let direct_bytes = level_proof_bytes(
                             field_bits,
-                            key,
-                            level,
-                            None,
+                            challenge_field_bits,
+                            &params,
+                            child.first_fold_params(),
+                            output_witness_len,
+                            Some(if child_is_terminal {
+                                akita_types::NextWitnessBindingPolicy::TerminalInnerState
+                            } else {
+                                akita_types::NextWitnessBindingPolicy::OuterPayload
+                            }),
                         )?
-                    {
-                        let direct_bytes = akita_types::proof_size::FOLD_GRIND_NONCE_BYTES
-                            .checked_add(eor_bytes)
-                            .ok_or_else(|| {
-                                AkitaError::InvalidSetup(
-                                    "mixed terminal proof size overflow".into(),
-                                )
-                            })?;
-                        terminal.estimated_direct_payload_bytes = direct_bytes;
+                        .checked_add(eor_bytes)
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup("mixed fold proof size overflow".into())
+                        })?;
+                        let mut folds = Vec::with_capacity(child.folds.len() + 1);
+                        folds.push(CandidateFoldStep {
+                            params: params.clone(),
+                            input_witness_len,
+                            output_witness_len,
+                            estimated_direct_payload_bytes: direct_bytes,
+                            estimated_stage3_payload_bytes: 0,
+                        });
+                        folds.extend(child.folds.iter().cloned());
                         insert_supported(
                             policy,
                             &mut frontier,
@@ -166,85 +251,18 @@ fn suffix_frontier(
                                         &suffix_opening_layout(input_witness_len, None)?,
                                     )?,
                                 ),
-                                total_bytes: direct_bytes.checked_add(terminal_bytes).ok_or_else(
-                                    || {
-                                        AkitaError::InvalidSetup(
-                                            "mixed terminal proof size overflow".into(),
-                                        )
-                                    },
-                                )?,
-                                setup_field_elements: terminal_setup_field_elements(
-                                    &terminal.params,
-                                )?,
-                                folds: Vec::new(),
-                                terminal,
+                                total_bytes: direct_bytes
+                                    .checked_add(child.total_bytes)
+                                    .ok_or_else(|| {
+                                        AkitaError::InvalidSetup("mixed proof size overflow".into())
+                                    })?,
+                                setup_field_elements: level_setup_field_elements(&params)?
+                                    .max(child.setup_field_elements),
+                                folds,
+                                terminal: child.terminal,
                             },
                         );
                     }
-                }
-
-                let child_ceiling = if level + 1 >= MIXED_SEARCH_FOLD_LEVELS {
-                    CommitmentRingDims::uniform(MIXED_SEARCH_SUFFIX_RING_DIMENSION)
-                } else {
-                    params.role_dims()
-                };
-                for child in suffix_frontier(
-                    policy,
-                    dimensions,
-                    ring_challenge_config,
-                    fold_shape,
-                    key,
-                    level + 1,
-                    output_witness_len,
-                    log_basis,
-                    child_ceiling,
-                    memo,
-                )? {
-                    let child_is_terminal = child.folds.is_empty();
-                    let direct_bytes = level_proof_bytes(
-                        field_bits,
-                        challenge_field_bits,
-                        &params,
-                        child.first_fold_params(),
-                        output_witness_len,
-                        Some(if child_is_terminal {
-                            akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                        } else {
-                            akita_types::NextWitnessBindingPolicy::OuterPayload
-                        }),
-                    )?
-                    .checked_add(eor_bytes)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("mixed fold proof size overflow".into())
-                    })?;
-                    let mut folds = Vec::with_capacity(child.folds.len() + 1);
-                    folds.push(CandidateFoldStep {
-                        params: params.clone(),
-                        input_witness_len,
-                        output_witness_len,
-                        estimated_direct_payload_bytes: direct_bytes,
-                        estimated_stage3_payload_bytes: 0,
-                    });
-                    folds.extend(child.folds.iter().cloned());
-                    insert_supported(
-                        policy,
-                        &mut frontier,
-                        ScheduleCandidate {
-                            first_direct_setup_field_len: Some(
-                                akita_types::active_setup_field_len(
-                                    &params,
-                                    &suffix_opening_layout(input_witness_len, None)?,
-                                )?,
-                            ),
-                            total_bytes: direct_bytes.checked_add(child.total_bytes).ok_or_else(
-                                || AkitaError::InvalidSetup("mixed proof size overflow".into()),
-                            )?,
-                            setup_field_elements: level_setup_field_elements(&params)?
-                                .max(child.setup_field_elements),
-                            folds,
-                            terminal: child.terminal,
-                        },
-                    );
                 }
             }
         }
@@ -343,6 +361,7 @@ pub(super) fn find_schedule(
                     output_witness_len,
                     log_basis,
                     *root_dimensions,
+                    akita_types::CommitmentPayloadPhase::CompressedPrefix,
                     &mut memo,
                 )? {
                     let child_is_terminal = suffix.folds.is_empty();

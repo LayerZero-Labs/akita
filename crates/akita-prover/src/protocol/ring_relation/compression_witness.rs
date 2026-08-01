@@ -7,7 +7,8 @@ use crate::compute::compression::{
 use crate::compute::{CompressionComputeBackend, OperationCtx};
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
-    CompressionChainWitness, CompressionTerminalPayload, RelationRhsLayout, RingVec,
+    AkitaCommitmentHint, CompressionChainPlan, CompressionChainWitness, CompressionTerminalPayload,
+    RelationRhsLayout, RingVec,
 };
 
 /// Semantic source of one compression chain.
@@ -43,6 +44,22 @@ impl<F: FieldCore> CompressionWitnessMaterialization<F> {
     }
 }
 
+impl<F: FieldCore + CanonicalField> CompressionSourceWitness<F> {
+    pub(crate) fn from_outer_hint(
+        group_index: usize,
+        plan: &CompressionChainPlan,
+        hint: &AkitaCommitmentHint<F>,
+        terminal_coefficients: Vec<F>,
+    ) -> Result<Self, AkitaError> {
+        Ok(Self {
+            id: CompressionSourceId::Outer { group_index },
+            witness: hint.outer_compression_witness(plan)?,
+            terminal: CompressionTerminalPayload::new(plan.clone(), terminal_coefficients)?,
+            quotients: hint.outer_compression_quotients(plan)?,
+        })
+    }
+}
+
 fn into_source<F: FieldCore>(
     output: CompressionExecutionOutput<CompressionSourceId, F>,
 ) -> CompressionSourceWitness<F> {
@@ -58,7 +75,7 @@ fn into_source<F: FieldCore>(
 pub(crate) fn materialize_compression_witness<F, B>(
     ctx: &OperationCtx<'_, F, B>,
     layout: &RelationRhsLayout,
-    commitment_rows: &RingVec<F>,
+    mut outer_sources: Vec<CompressionSourceWitness<F>>,
     opening_rows: &RingVec<F>,
 ) -> Result<
     (
@@ -71,30 +88,22 @@ where
     F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
 {
-    let mut inputs = Vec::with_capacity(layout.groups.len() + 1);
-    let mut commitment_offset = 0usize;
-    for relation_group_index in 0..layout.groups.len() {
-        let (group_index, plan) = layout.group_compression_plan(relation_group_index)?;
-        let end = commitment_offset
-            .checked_add(plan.source_coefficients())
-            .ok_or_else(|| AkitaError::InvalidSetup("compression source offset overflow".into()))?;
-        let coefficients = commitment_rows
-            .coeffs()
-            .get(commitment_offset..end)
-            .ok_or(AkitaError::InvalidProof)?
-            .to_vec();
-        inputs.push(CompressionExecutionInput {
-            id: CompressionSourceId::Outer { group_index },
-            plan: plan.clone(),
-            coefficients,
-        });
-        commitment_offset = end;
+    if outer_sources.len() != layout.groups.len() {
+        return Err(AkitaError::InvalidSetup(
+            "retained outer compression source count disagrees with the relation layout".into(),
+        ));
     }
-    if commitment_offset != commitment_rows.coeff_len() {
-        return Err(AkitaError::InvalidSize {
-            expected: commitment_offset,
-            actual: commitment_rows.coeff_len(),
-        });
+    for (relation_group_index, source) in outer_sources.iter().enumerate() {
+        let (group_index, plan) = layout.group_compression_plan(relation_group_index)?;
+        if source.id != (CompressionSourceId::Outer { group_index })
+            || source.witness.plan() != plan
+            || source.terminal.plan() != plan
+            || source.quotients.len() != plan.maps().len()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "retained outer compression source disagrees with the relation layout".into(),
+            ));
+        }
     }
 
     let opening_plan = layout.opening_compression_plan()?;
@@ -104,18 +113,23 @@ where
             actual: opening_rows.coeff_len(),
         });
     }
-    inputs.push(CompressionExecutionInput {
+    let inputs = vec![CompressionExecutionInput {
         id: CompressionSourceId::Opening,
         plan: opening_plan.clone(),
         coefficients: opening_rows.coeffs().to_vec(),
-    });
+    }];
 
     let (outputs, report) = execute_compression_chains(ctx, inputs)?;
-    let sources = outputs.into_iter().map(into_source).collect::<Vec<_>>();
-    if sources.len() != layout.groups.len() + 1 {
+    outer_sources.extend(outputs.into_iter().map(into_source));
+    if outer_sources.len() != layout.groups.len() + 1 {
         return Err(AkitaError::InvalidSetup(
             "compression executor omitted a relation source".into(),
         ));
     }
-    Ok((CompressionWitnessMaterialization { sources }, report))
+    Ok((
+        CompressionWitnessMaterialization {
+            sources: outer_sources,
+        },
+        report,
+    ))
 }
