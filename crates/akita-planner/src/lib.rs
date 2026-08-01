@@ -44,7 +44,5 @@ pub use schedule_params::{
 /// Helpers available only to synthetic schedule fixtures and profile experiments.
 #[cfg(feature = "test-support")]
 pub mod test_support {
-    pub use crate::schedule_params::test_support::{
-        plan_setup_prefix_commitment, SetupPrefixPlanRequest,
-    };
+    pub use crate::schedule_params::derive_setup_prefix_group;
 }

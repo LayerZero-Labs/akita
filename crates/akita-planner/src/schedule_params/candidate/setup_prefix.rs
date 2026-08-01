@@ -1,7 +1,10 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
-pub(in crate::schedule_params) fn derive_setup_prefix_group(
+/// Derive one secure setup-prefix commitment candidate.
+///
+/// Returns `None` when the requested geometry has no audited feasible candidate.
+pub fn derive_setup_prefix_group(
     policy: &PlannerPolicy,
     ring_challenge_cfg: &SparseChallengeConfig,
     requested_fold_shape: TensorChallengeShape,
@@ -11,6 +14,7 @@ pub(in crate::schedule_params) fn derive_setup_prefix_group(
     num_chunks: usize,
     outer_ring_dimension: usize,
 ) -> Result<Option<PrecommittedLevelParams>, AkitaError> {
+    validate_policy(policy)?;
     if outer_ring_dimension == 0
         || !outer_ring_dimension.is_power_of_two()
         || !policy.ring_dimension.is_multiple_of(outer_ring_dimension)

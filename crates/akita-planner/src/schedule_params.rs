@@ -34,9 +34,6 @@ mod candidate;
 mod mixed_search;
 mod setup_score;
 mod suffix_dp;
-#[cfg(feature = "test-support")]
-#[path = "schedule_params/tests/test_support.rs"]
-pub(crate) mod test_support;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "schedule_params/tests/unpruned_search.rs"]
 mod unpruned_search;
@@ -47,6 +44,8 @@ pub(crate) use akita_schedules::planner_support::{
     validate_policy, CandidateFoldStep, CandidateTerminalResponse,
 };
 pub use akita_schedules::suffix_opening_layout;
+#[cfg(feature = "test-support")]
+pub use candidate::derive_setup_prefix_group;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
     scalar_root_fold_level_params_candidate,

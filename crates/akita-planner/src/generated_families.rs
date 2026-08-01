@@ -155,11 +155,6 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
     plan_regen::<Cfg>(&AkitaScheduleLookupKey::single(key))
 }
 
-/// Offline mixed-dimension regeneration for the catalog-backed fp128 profile.
-fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
-    plan_regen::<fp128::MixedDimFp128OneHot>(&AkitaScheduleLookupKey::single(key))
-}
-
 /// Pure multi-group DP regeneration for `Cfg` — never consults the generated table.
 fn regen_group_batch<Cfg: CommitmentConfig + 'static>(
     key: AkitaScheduleLookupKey,
@@ -565,7 +560,7 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         min_num_vars: 32,
         max_num_vars: 32,
         num_polys: &[1],
-        regen: regen_mixed_dim_fp128_onehot,
+        regen: regen::<fp128::MixedDimFp128OneHot>,
         regen_group_batch: regen_group_batch::<fp128::MixedDimFp128OneHot>,
         emit_group_batch: false,
         group_batch_keys: group_batch_keys::<fp128::MixedDimFp128OneHot>,
