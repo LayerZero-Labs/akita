@@ -22,7 +22,7 @@ pub struct PlannedSuffixTerminal {
     /// Field-element witness length entering the terminal fold.
     pub input_witness_len: usize,
     /// Cleartext response wire shape.
-    pub response_shape: TerminalResponseShape,
+    pub response_shape: akita_types::TerminalResponseShape,
 }
 
 /// Optimal recursive suffix planned from an intermediate witness for synthetic tests.
