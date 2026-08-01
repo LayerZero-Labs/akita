@@ -147,7 +147,7 @@ fn fold_recursive_handle_tamper_rejected() {
             .recursive_folds
             .first_mut()
             .expect("tail-bound-with-grind onehot should include an intermediate fold");
-        bump_flat_ring_vec(&mut recursive.v);
+        bump_flat_ring_vec(&mut recursive.opening_payload);
 
         let mut verifier_transcript = AkitaTranscript::<F>::new(b"fold-linf/onehot");
         let result = Scheme::batched_verify(

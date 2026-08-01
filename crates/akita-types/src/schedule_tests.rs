@@ -564,12 +564,12 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
 
     let proof = FoldLevelProof {
         extension_opening_reduction: None,
-        v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+        opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
-            next_witness_binding: NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+            next_witness_binding: NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
                 F::zero();
                 next_commit_coeffs
             ])),
@@ -614,7 +614,7 @@ fn planned_level_bytes_match_non_offloaded_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(&lp, &next_lp, output_witness_len).unwrap(),
@@ -716,7 +716,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
             dummy_stage1_proof(rounds, b),
             AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
-                next_witness_binding: NextWitnessBinding::OuterCommitment(next_commitment),
+                next_witness_binding: NextWitnessBinding::OuterPayload(next_commitment),
                 next_w_eval: F::zero(),
             },
         );
@@ -727,7 +727,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 level_proof.serialized_size(Compress::No),

@@ -9,8 +9,9 @@ use crate::descriptor_bytes::sis_modulus_profile_tag;
 use crate::proof::{AkitaCommitmentHint, RingVec, MAX_UNTRUSTED_COMMITMENT_COEFFICIENTS};
 use crate::sis::{SisMatrixRole, SisModulusProfileId, SisSecurityPolicyId, SisTableDigest};
 use crate::{
-    CommittedGroupParams, CommittedGroupProfile, InnerCommitMatrixParams, OpeningClaimsLayout,
-    OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams, PublicMatrixId,
+    CommittedGroupParams, CommittedGroupProfile, CompressionChainPlan, InnerCommitMatrixParams,
+    OpeningClaimsLayout, OuterCommitMatrixParams, PolynomialGroupLayout, PrecommittedLevelParams,
+    PublicMatrixId,
 };
 use akita_field::{AkitaError, FieldCore};
 use akita_serialization::{
@@ -122,6 +123,26 @@ fn n_prefix_from_commitment_params(
                 "setup prefix slot commitment domain overflows usize".to_string(),
             )
         })
+}
+
+fn setup_prefix_payload_coefficients(
+    params: &PrecommittedLevelParams,
+) -> Result<usize, SerializationError> {
+    let matrix = &params.layout.outer_commit_matrix;
+    let source_coefficients = matrix
+        .output_rank()
+        .checked_mul(matrix.ring_dimension())
+        .ok_or_else(|| {
+            SerializationError::InvalidData(
+                "setup prefix compression source length overflow".into(),
+            )
+        })?;
+    CompressionChainPlan::for_complete_source(
+        matrix.sis_table_key().modulus_profile,
+        source_coefficients,
+    )
+    .map(|plan| plan.terminal_coefficients())
+    .map_err(|error| SerializationError::InvalidData(error.to_string()))
 }
 
 impl Ord for SetupPrefixSlotId {
@@ -759,12 +780,19 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixVerifierSlot<F> {
             ));
         }
         self.commitment.check()?;
+        let expected_payload_coefficients =
+            setup_prefix_payload_coefficients(&self.id.commitment_params)?;
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup() {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
                     "setup prefix commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup()
+                    expected_payload_coefficients
                 )));
             }
         }
@@ -864,15 +892,19 @@ impl<F: FieldCore + Valid> Valid for SetupPrefixSlot<F> {
             ));
         }
         self.commitment.check()?;
-        // Re-assert the invariant the const generic `D` used to enforce: every
-        // commitment row must have exactly `d_setup` coefficients.
+        let expected_payload_coefficients =
+            setup_prefix_payload_coefficients(&self.id.commitment_params)?;
+        if self.commitment.rows.len() != 1 {
+            return Err(SerializationError::InvalidData(
+                "setup prefix commitment must contain one compressed payload".into(),
+            ));
+        }
         for row in &self.commitment.rows {
-            if row.coeff_len() != self.id.d_setup() {
+            if row.coeff_len() != expected_payload_coefficients {
                 return Err(SerializationError::InvalidData(format!(
-                    "setup prefix prover slot commitment row has {} coefficients, expected \
-                     d_setup={}",
+                    "setup prefix prover slot commitment row has {} coefficients, expected {}",
                     row.coeff_len(),
-                    self.id.d_setup()
+                    expected_payload_coefficients
                 )));
             }
         }

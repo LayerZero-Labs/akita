@@ -1,4 +1,8 @@
 use super::*;
+use crate::{
+    CompressionChainPlan, CompressionChainWitness, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
+    COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
+};
 
 /// Prover-side semantic inner rows for one commitment bundle.
 ///
@@ -8,6 +12,7 @@ use super::*;
 pub struct AkitaCommitmentHint<F: FieldCore> {
     inner_rows: Vec<RingVec<F>>,
     ring_dim: usize,
+    outer_compression_stages: Vec<Vec<u8>>,
 }
 
 impl<F: FieldCore> AkitaCommitmentHint<F> {
@@ -21,6 +26,7 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         let hint = Self {
             inner_rows,
             ring_dim,
+            outer_compression_stages: Vec::new(),
         };
         hint.validate_shape()
             .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
@@ -32,6 +38,34 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
         Self::new(inner_rows.ring_dim(), vec![inner_rows])
     }
 
+    /// Construct a hint carrying the two packed outer-compression stages.
+    pub fn new_with_outer_compression(
+        ring_dim: usize,
+        inner_rows: Vec<RingVec<F>>,
+        witness: &CompressionChainWitness,
+    ) -> Result<Self, AkitaError> {
+        let hint = Self {
+            inner_rows,
+            ring_dim,
+            outer_compression_stages: witness
+                .stages()
+                .iter()
+                .map(|stage| stage.bytes().to_vec())
+                .collect(),
+        };
+        hint.validate_shape()
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        Ok(hint)
+    }
+
+    /// Construct a one-polynomial hint carrying outer-compression stages.
+    pub fn singleton_with_outer_compression(
+        inner_rows: RingVec<F>,
+        witness: &CompressionChainWitness,
+    ) -> Result<Self, AkitaError> {
+        Self::new_with_outer_compression(inner_rows.ring_dim(), vec![inner_rows], witness)
+    }
+
     /// Shared A ring dimension.
     pub fn ring_dim(&self) -> usize {
         self.ring_dim
@@ -40,6 +74,26 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
     /// Borrow semantic A rows in polynomial order.
     pub fn inner_rows(&self) -> &[RingVec<F>] {
         &self.inner_rows
+    }
+
+    /// Rebuild the checked packed witness under the plan derived from the
+    /// frozen commitment profile.
+    pub fn outer_compression_witness(
+        &self,
+        plan: &CompressionChainPlan,
+    ) -> Result<CompressionChainWitness, AkitaError> {
+        if self.outer_compression_stages.len() != plan.maps().len() {
+            return Err(AkitaError::InvalidInput(
+                "commitment hint compression stage count disagrees with the derived plan".into(),
+            ));
+        }
+        let stages = self
+            .outer_compression_stages
+            .iter()
+            .zip(plan.maps())
+            .map(|(bytes, map)| PackedNegativeBinary::from_bytes(*map, bytes.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        CompressionChainWitness::new(plan.clone(), stages)
     }
 
     /// Consume the hint and return semantic A rows in polynomial order.
@@ -54,6 +108,27 @@ impl<F: FieldCore> AkitaCommitmentHint<F> {
             ));
         }
         checked_shape_len(self.inner_rows.len())?;
+        if !matches!(
+            self.outer_compression_stages.len(),
+            0 | COMPRESSION_MAP_COUNT
+        ) {
+            return Err(SerializationError::InvalidData(
+                "commitment hint must contain zero or exactly two compression stages".into(),
+            ));
+        }
+        let mut packed_bytes = 0usize;
+        for stage in &self.outer_compression_stages {
+            packed_bytes = packed_bytes.checked_add(stage.len()).ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "commitment hint packed compression length overflow".into(),
+                )
+            })?;
+        }
+        if packed_bytes > MAX_COMPRESSION_INPUT_BYTES + COMPRESSION_TARGET_BYTES * 2 {
+            return Err(SerializationError::InvalidData(
+                "commitment hint packed compression data exceeds the protocol envelope".into(),
+            ));
+        }
         let mut expected_coefficients = None;
         let mut total_coefficients = 0usize;
         for rows in &self.inner_rows {
@@ -108,6 +183,13 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
                 coefficient.serialize_with_mode(&mut writer, compress)?;
             }
         }
+        self.outer_compression_stages
+            .len()
+            .serialize_with_mode(&mut writer, compress)?;
+        for stage in &self.outer_compression_stages {
+            stage.len().serialize_with_mode(&mut writer, compress)?;
+            writer.write_all(stage)?;
+        }
         Ok(())
     }
 
@@ -126,6 +208,15 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
                             .sum::<usize>()
                 })
                 .sum::<usize>()
+            + self
+                .outer_compression_stages
+                .iter()
+                .map(|stage| stage.len().serialized_size(compress) + stage.len())
+                .sum::<usize>()
+            + self
+                .outer_compression_stages
+                .len()
+                .serialized_size(compress)
     }
 }
 
@@ -199,9 +290,37 @@ where
             );
         }
 
+        let compression_stage_count =
+            usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if !matches!(compression_stage_count, 0 | COMPRESSION_MAP_COUNT) {
+            return Err(SerializationError::InvalidData(
+                "commitment hint must contain zero or exactly two compression stages".into(),
+            ));
+        }
+        let mut outer_compression_stages = Vec::new();
+        reserve_shape_len(&mut outer_compression_stages, compression_stage_count)?;
+        let mut packed_bytes = 0usize;
+        for _ in 0..compression_stage_count {
+            let byte_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            packed_bytes = packed_bytes.checked_add(byte_count).ok_or_else(|| {
+                SerializationError::InvalidData(
+                    "commitment hint packed compression length overflow".into(),
+                )
+            })?;
+            if packed_bytes > MAX_COMPRESSION_INPUT_BYTES + COMPRESSION_TARGET_BYTES * 2 {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint packed compression data exceeds the protocol envelope".into(),
+                ));
+            }
+            let mut bytes = vec![0u8; byte_count];
+            reader.read_exact(&mut bytes)?;
+            outer_compression_stages.push(bytes);
+        }
+
         let hint = Self {
             inner_rows,
             ring_dim,
+            outer_compression_stages,
         };
         hint.validate_shape()?;
         if validate == Validate::Yes {
@@ -245,6 +364,7 @@ mod tests {
                 coefficient.serialize_uncompressed(&mut expected).unwrap();
             }
         }
+        0usize.serialize_uncompressed(&mut expected).unwrap();
         assert_eq!(encoded, expected);
 
         let decoded =

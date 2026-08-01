@@ -740,7 +740,10 @@ fn batched_onehot_roundtrip_matches_public_shape_context() {
 
     let expected_shape = expected_same_point_batched_shape(NV, BATCH_SIZE, &proof);
     let actual_shape = proof.shape();
-    assert_eq!(expected_shape.root.v_coeffs, actual_shape.root.v_coeffs);
+    assert_eq!(
+        expected_shape.root.opening_payload_coeffs,
+        actual_shape.root.opening_payload_coeffs
+    );
     assert_eq!(
         expected_shape.root.stage1_stages,
         actual_shape.root.stage1_stages

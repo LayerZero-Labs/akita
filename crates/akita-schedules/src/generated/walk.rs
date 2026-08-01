@@ -209,7 +209,7 @@ pub(crate) fn walk_generated_schedule_entry(
             if binds_terminal {
                 Some(akita_types::NextWitnessBindingPolicy::TerminalInnerState)
             } else {
-                Some(akita_types::NextWitnessBindingPolicy::OuterCommitment)
+                Some(akita_types::NextWitnessBindingPolicy::OuterPayload)
             },
         )?
         .checked_add(extension_opening_reduction_level_bytes(

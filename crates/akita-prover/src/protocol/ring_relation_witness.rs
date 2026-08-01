@@ -195,6 +195,24 @@ impl<F: FieldCore> RingRelationWitness<F> {
         })
     }
 
+    /// Public terminal payload of the shared opening-compression chain.
+    pub(crate) fn opening_payload(&self) -> Result<RingVec<F>, AkitaError>
+    where
+        F: akita_field::CanonicalField,
+    {
+        let source = self
+            .compression
+            .source(crate::protocol::ring_relation::CompressionSourceId::Opening)?;
+        let ring_dim = source
+            .witness
+            .plan()
+            .maps()
+            .last()
+            .ok_or(AkitaError::InvalidProof)?
+            .ring_dimension();
+        RingVec::from_coeffs_with_ring_dim(source.terminal.coefficients().to_vec(), ring_dim)
+    }
+
     /// Validate one role carrier against dispatch `D` for every group.
     pub fn ensure_role_dim<const D: usize>(&self, role: RingRole) -> Result<(), AkitaError> {
         for group in &self.groups {

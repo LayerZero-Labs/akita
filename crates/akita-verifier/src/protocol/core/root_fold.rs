@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{Commitment, RingView};
+use akita_types::{Commitment, CompressionChainPlan};
 
 /// Verify the folded root proof payload.
 ///
@@ -44,14 +44,30 @@ where
     let stage3_sumcheck_proof = proof
         .stage3_for_mode(setup_contribution_mode, next_fold_level_params)?
         .map(|(proof, _)| proof);
-    let next_witness = match (proof.next_w_commitment(), next_t_state) {
-        (Some(commitment), None) => PreparedNextWitness::Commitment {
-            commitment,
-            ring_dim: next_fold_level_params
-                .ok_or(AkitaError::InvalidProof)?
-                .role_dims()
-                .d_b(),
-        },
+    let next_witness = match (proof.next_w_payload(), next_t_state) {
+        (Some(commitment), None) => {
+            let next_params = next_fold_level_params.ok_or(AkitaError::InvalidProof)?;
+            let source_coefficients = next_params
+                .outer_commit_matrix
+                .output_rank()
+                .checked_mul(next_params.role_dims().d_b())
+                .ok_or(AkitaError::InvalidProof)?;
+            let plan = CompressionChainPlan::for_complete_source(
+                next_params
+                    .outer_commit_matrix
+                    .sis_table_key()
+                    .modulus_profile,
+                source_coefficients,
+            )?;
+            PreparedNextWitness::Commitment {
+                commitment,
+                ring_dim: plan
+                    .maps()
+                    .last()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .ring_dimension(),
+            }
+        }
         (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
         _ => return Err(AkitaError::InvalidProof),
     };
@@ -68,15 +84,19 @@ where
     // validated against its (final vs frozen-precommit) params before the
     // absorb, so a swapped/truncated group commitment rejects here.
     opening_batch.append_batch_shape_to_transcript::<F, T>(transcript)?;
+    let relation_layout = relation_rhs_layout_for(root_lp, &opening_batch)?;
     for group_index in 0..opening_batch.num_groups() {
         let commitment = claims.group_commitment(group_index)?;
-        let ring_dim = root_lp.group_role_dims(&opening_batch, group_index)?.d_b();
-        let expected_rows = root_lp.group_commitment_rows(&opening_batch, group_index)?;
-        let commitment_view = RingView::new(commitment.rows().coeffs(), ring_dim)?;
-        if commitment_view.num_rings() != expected_rows {
+        let plan = relation_layout.compression_plan_for_group(group_index)?;
+        if commitment.rows().coeff_len() != plan.terminal_coefficients() {
             return Err(AkitaError::InvalidProof);
         }
-        commitment_view.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, transcript)?;
+        let ring_dim = plan
+            .maps()
+            .last()
+            .ok_or(AkitaError::InvalidProof)?
+            .ring_dimension();
+        commitment.append_to_transcript(ABSORB_COMMITMENT, ring_dim, transcript)?;
     }
     for group in claims.groups() {
         for coord in group.point() {
@@ -160,7 +180,10 @@ where
             basis,
             root_lp,
             transcript,
-        )?
+        )
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("single-field root prefix failed: {error:?}"))
+        })?
     } else {
         verify_extension_claim_root_prefix::<F, E, T>(
             claims,
@@ -170,30 +193,32 @@ where
             basis,
             root_lp,
             transcript,
-        )?
+        )
+        .map_err(|error| {
+            AkitaError::InvalidInput(format!("extension root prefix failed: {error:?}"))
+        })?
     };
     // Concatenate group commitment rows in relation-matrix row (final-first) order, matching
     // the prover's `RingRelationProver` commitment-row concatenation and
     // `relation_rhs_layout_for` block order.
     let order = opening_batch.root_group_order()?;
-    let mut commitment_coeffs = Vec::new();
+    let mut commitment_payloads = Vec::with_capacity(order.len());
     for &group_index in &order {
         let commitment = claims.group_commitment(group_index)?;
-        commitment_coeffs.extend_from_slice(commitment.rows().coeffs());
+        commitment_payloads.push(commitment.rows().clone());
     }
-    let commitment_rows = RingVec::from_coeffs(commitment_coeffs);
 
     let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
-    let v_storage = proof.v.clone();
+    let opening_payload = proof.opening_payload.clone();
     let committed_witness_len =
         akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         fold_grind_nonce,
-        v: v_storage,
+        opening_payload,
         opening_shape: opening_batch.clone(),
-        commitment_rows,
+        commitment_payloads,
         prefix,
         w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
@@ -206,5 +231,7 @@ where
         },
         evaluation_trace_basis: basis,
     };
-    verify_fold::<F, E, T>(setup, transcript, prepared)
+    verify_fold::<F, E, T>(setup, transcript, prepared).map_err(|error| {
+        AkitaError::InvalidInput(format!("compressed root fold failed: {error:?}"))
+    })
 }

@@ -522,6 +522,7 @@ fn emit_r_rows<F: CanonicalField>(
             });
         }
         let digits = match row.ring_dim() {
+            8 => decompose_r_row::<F, 8>(row.coeffs(), levels, &decompose_params)?,
             16 => decompose_r_row::<F, 16>(row.coeffs(), levels, &decompose_params)?,
             32 => decompose_r_row::<F, 32>(row.coeffs(), levels, &decompose_params)?,
             64 => decompose_r_row::<F, 64>(row.coeffs(), levels, &decompose_params)?,

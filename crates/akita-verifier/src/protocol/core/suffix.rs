@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{OpeningClaimsLayout, RingView};
+use akita_types::{CompressionChainPlan, OpeningClaimsLayout};
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -21,13 +21,13 @@ pub(super) enum SuffixWitnessState<'a, F: FieldCore> {
     TerminalT(Vec<u8>),
 }
 
-fn suffix_commitment_rows<F: FieldCore>(
+fn suffix_commitment_payloads<F: FieldCore>(
     setup: &AkitaVerifierSetup<F>,
     lp: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
     witness_commitment: &RingVec<F>,
-) -> Result<RingVec<F>, AkitaError> {
-    let mut group_rows = Vec::with_capacity(opening_batch.num_groups());
+) -> Result<Vec<RingVec<F>>, AkitaError> {
+    let mut group_payloads = Vec::with_capacity(opening_batch.num_groups());
     if let Some(setup_prefix_id) = lp.setup_prefix.as_ref() {
         let slot = setup.prefix_slots.get(setup_prefix_id).ok_or_else(|| {
             AkitaError::InvalidSetup(
@@ -38,37 +38,26 @@ fn suffix_commitment_rows<F: FieldCore>(
         for row in &slot.commitment.rows {
             coeffs.extend_from_slice(row.coeffs());
         }
-        group_rows.push(RingVec::from_coeffs(coeffs));
+        group_payloads.push(RingVec::from_coeffs(coeffs));
     }
-    group_rows.push(RingVec::from_coeffs(witness_commitment.coeffs().to_vec()));
-    if group_rows.len() != opening_batch.num_groups() {
+    group_payloads.push(RingVec::from_coeffs(witness_commitment.coeffs().to_vec()));
+    if group_payloads.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidProof);
     }
 
-    let commitment_ring_dim = lp.role_dims().d_b();
-    let mut group_order = (0..opening_batch.num_groups())
-        .map(|group_index| {
-            let range = lp.commitment_row_range(opening_batch, group_index)?;
-            Ok((range.start, range.len(), group_index))
-        })
-        .collect::<Result<Vec<_>, AkitaError>>()?;
-    group_order.sort_by_key(|(start, _, _)| *start);
-
-    let mut coeffs = Vec::new();
-    for (_, expected_rows, group_index) in group_order {
-        let rows = group_rows
+    let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+    let mut ordered = Vec::with_capacity(group_payloads.len());
+    for group_index in opening_batch.root_group_order()? {
+        let payload = group_payloads
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        if !rows.can_decode_vec(commitment_ring_dim) {
+        let plan = relation_layout.compression_plan_for_group(group_index)?;
+        if payload.coeff_len() != plan.terminal_coefficients() {
             return Err(AkitaError::InvalidProof);
         }
-        let actual_rows = rows.coeff_len() / commitment_ring_dim;
-        if actual_rows != expected_rows {
-            return Err(AkitaError::InvalidProof);
-        }
-        coeffs.extend_from_slice(rows.coeffs());
+        ordered.push(payload.clone());
     }
-    Ok(RingVec::from_coeffs(coeffs))
+    Ok(ordered)
 }
 
 struct FoldReplayPayload<'a, F: FieldCore, E: FieldCore> {
@@ -137,13 +126,19 @@ where
             SuffixWitnessState::Commitment(commitment) => *commitment,
             SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
         };
-        if !current_commitment.can_decode_vec(role_dims.d_b())
-            || !fold.v.can_decode_vec(role_dims.d_d())
-        {
-            return Err(AkitaError::InvalidProof);
-        }
-        let commitment_view = RingView::new(current_commitment.coeffs(), role_dims.d_b())?;
-        if commitment_view.num_rings() != current_lp.outer_commit_matrix.output_rank() {
+        let current_source_coefficients = current_lp
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(role_dims.d_b())
+            .ok_or(AkitaError::InvalidProof)?;
+        let current_plan = CompressionChainPlan::for_complete_source(
+            current_lp
+                .outer_commit_matrix
+                .sis_table_key()
+                .modulus_profile,
+            current_source_coefficients,
+        )?;
+        if current_commitment.coeff_len() != current_plan.terminal_coefficients() {
             return Err(AkitaError::InvalidProof);
         }
 
@@ -157,14 +152,30 @@ where
         } else {
             None
         };
-        let next_witness = match (fold.next_w_commitment(), next_t_state.as_deref()) {
-            (Some(commitment), None) => PreparedNextWitness::Commitment {
-                commitment,
-                ring_dim: next_params
-                    .ok_or(AkitaError::InvalidProof)?
-                    .role_dims()
-                    .d_b(),
-            },
+        let next_witness = match (fold.next_w_payload(), next_t_state.as_deref()) {
+            (Some(commitment), None) => {
+                let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
+                let source_coefficients = next_params
+                    .outer_commit_matrix
+                    .output_rank()
+                    .checked_mul(next_params.role_dims().d_b())
+                    .ok_or(AkitaError::InvalidProof)?;
+                let plan = CompressionChainPlan::for_complete_source(
+                    next_params
+                        .outer_commit_matrix
+                        .sis_table_key()
+                        .modulus_profile,
+                    source_coefficients,
+                )?;
+                PreparedNextWitness::Commitment {
+                    commitment,
+                    ring_dim: plan
+                        .maps()
+                        .last()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .ring_dimension(),
+                }
+            }
             (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
             _ => return Err(AkitaError::InvalidProof),
         };
@@ -177,7 +188,7 @@ where
                 extension_opening_reduction: fold.extension_opening_reduction(),
                 fold_grind_nonce: fold.fold_grind_nonce,
                 kind: FoldReplayKind::Recursive {
-                    v: &fold.v,
+                    v: &fold.opening_payload,
                     stage1: &fold.stage1,
                     stage2: &fold.stage2,
                     next_witness,
@@ -198,7 +209,7 @@ where
                 ))
             })?;
 
-        let next_commitment = fold.next_w_commitment();
+        let next_commitment = fold.next_w_payload();
         let next_witness = match (next_commitment, next_t_state) {
             (Some(commitment), None) => SuffixWitnessState::Commitment(commitment),
             (None, Some(t_state)) => SuffixWitnessState::TerminalT(t_state),
@@ -387,7 +398,20 @@ where
     T: Transcript<F>,
 {
     let role_dims = lp.role_dims();
-    let commit_d = role_dims.d_b();
+    let commitment_source_coefficients = lp
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(role_dims.d_b())
+        .ok_or(AkitaError::InvalidProof)?;
+    let commitment_plan = CompressionChainPlan::for_complete_source(
+        lp.outer_commit_matrix.sis_table_key().modulus_profile,
+        commitment_source_coefficients,
+    )?;
+    let commit_d = commitment_plan
+        .maps()
+        .last()
+        .ok_or(AkitaError::InvalidProof)?
+        .ring_dimension();
     let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(
@@ -479,7 +503,7 @@ where
 
     let witness_len = output_witness_len;
     let fold_grind_nonce = proof.fold_grind_nonce;
-    let (v_storage, payload, next_opening_ring_dim) = match proof.kind {
+    let (opening_payload, payload) = match proof.kind {
         FoldReplayKind::Recursive {
             v,
             stage1,
@@ -488,9 +512,11 @@ where
             next_witness_ring_dim,
             stage3,
         } => {
-            if next_witness_ring_dim == 0 || !witness_len.is_multiple_of(next_witness_ring_dim) {
+            if next_witness_ring_dim == 0 || !next_witness_ring_dim.is_power_of_two() {
                 return Err(AkitaError::InvalidProof);
             }
+            let committed_witness_len =
+                akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
             (
                 v.clone(),
                 PreparedFoldPayload::Recursive {
@@ -498,10 +524,9 @@ where
                     stage2,
                     next_witness,
                     next_witness_ring_dim,
-                    next_opening_source_len: witness_len / next_witness_ring_dim,
+                    next_opening_source_len: committed_witness_len / next_witness_ring_dim,
                     stage3,
                 },
-                next_witness_ring_dim,
             )
         }
     };
@@ -509,16 +534,14 @@ where
         SuffixWitnessState::Commitment(commitment) => *commitment,
         SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
     };
-    let commitment_rows = suffix_commitment_rows(setup, lp, &opening_batch, current_commitment)?;
-    if !witness_len.is_multiple_of(next_opening_ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
+    let commitment_payloads =
+        suffix_commitment_payloads(setup, lp, &opening_batch, current_commitment)?;
     Ok(PreparedFoldReplay {
         lp,
         fold_grind_nonce,
-        v: v_storage,
+        opening_payload,
         opening_shape: opening_batch,
-        commitment_rows,
+        commitment_payloads,
         prefix,
         w_len: witness_len,
         payload,

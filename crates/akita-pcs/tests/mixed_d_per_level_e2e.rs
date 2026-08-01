@@ -377,7 +377,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         {
             let mut proof = fixture.proof.clone();
             let stage2 = &mut proof.root.stage2;
-            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+            let NextWitnessBinding::OuterPayload(next_w_commitment) =
                 &mut stage2.next_witness_binding
             else {
                 panic!("mixed-D fixture root must carry an outer commitment");
@@ -395,7 +395,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
             let level = idx + 1;
             let mut proof = fixture.proof.clone();
             let inner = &mut proof.recursive_folds[idx].stage2;
-            let NextWitnessBinding::OuterCommitment(next_w_commitment) =
+            let NextWitnessBinding::OuterPayload(next_w_commitment) =
                 &mut inner.next_witness_binding
             else {
                 continue;
@@ -420,7 +420,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
         // Fold `v` vector length (D · ŵ at the level's own dim).
         {
             let mut proof = fixture.proof.clone();
-            let v = &mut proof.recursive_folds[0].v;
+            let v = &mut proof.recursive_folds[0].opening_payload;
             let len = v.coeffs().len();
             truncate_ring_vec(v, len / 2);
             verify_mixed(&fixture, &proof, &fixture.commitment)

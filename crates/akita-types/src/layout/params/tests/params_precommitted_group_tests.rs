@@ -511,14 +511,14 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 layout.compression_layers().len(),
                 crate::COMPRESSION_MAP_COUNT
             );
-            for map_index in 0..crate::COMPRESSION_MAP_COUNT {
-                let layer_alignment = cursor..support[map_index].start;
+            for (map_index, support_interval) in support.iter().enumerate() {
+                let layer_alignment = cursor..support_interval.start;
                 if !layer_alignment.is_empty() {
                     assert!(layout
                         .compression_alignment_ranges()
                         .contains(&layer_alignment));
                 }
-                cursor = support[map_index].start;
+                cursor = support_interval.start;
                 let layer = &layout.compression_layers()[map_index];
                 assert_eq!(layer.map_index(), map_index);
                 assert_eq!(layer.f_spans().len(), group_order.len());
@@ -546,7 +546,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     cursor..cursor + h_map.padded_digit_count()
                 );
                 cursor += h_map.padded_digit_count();
-                assert_eq!(support[map_index].end, cursor);
+                assert_eq!(support_interval.end, cursor);
                 for &(group_index, row_index) in layer.f_quotient_rows() {
                     assert!(group_order.contains(&group_index));
                     let row = &layout.r_rows()[row_index];

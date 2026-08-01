@@ -227,7 +227,7 @@ fn child_choice(
         Some(if child_is_terminal {
             akita_types::NextWitnessBindingPolicy::TerminalInnerState
         } else {
-            akita_types::NextWitnessBindingPolicy::OuterCommitment
+            akita_types::NextWitnessBindingPolicy::OuterPayload
         }),
     )?
     .checked_add(edge.eor_bytes)

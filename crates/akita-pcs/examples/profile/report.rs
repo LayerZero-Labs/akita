@@ -543,7 +543,7 @@ where
 {
     let (extension_opening_partials_size, extension_opening_sumcheck_size) =
         extension_opening_reduction_sizes(level.extension_opening_reduction.as_ref());
-    let v_size = level.v.serialized_size(Compress::No);
+    let v_size = level.opening_payload.serialized_size(Compress::No);
     let total = level.serialized_size(Compress::No);
     let stage2_intermediate = &level.stage2;
 
@@ -551,7 +551,7 @@ where
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), ring_d),
+        ring_elem_count(level.opening_payload.coeff_len(), ring_d),
         ring_d,
     );
     let stage1 = &level.stage1;
@@ -572,7 +572,7 @@ where
         .sumcheck_proof
         .serialized_size(Compress::No);
     let stage3_sumcheck_size = stage3_sumcheck_size(level.stage3_sumcheck_proof.as_ref());
-    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_commitment();
+    let next_w_commitment = stage2_intermediate.next_witness_binding.outer_payload();
     let next_w_commitment_size = next_w_commitment
         .map(|commitment| commitment.serialized_size(Compress::No))
         .unwrap_or(0);

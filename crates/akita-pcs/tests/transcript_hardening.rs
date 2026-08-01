@@ -249,20 +249,18 @@ impl ProofTamper {
             }
             Self::ExtraZPayload => terminal_response_mut(proof).z_payloads.push(vec![0]),
             Self::OversizedRootV => {
-                let mut coeffs = proof.root.v.coeffs().to_vec();
+                let mut coeffs = proof.root.opening_payload.coeffs().to_vec();
                 coeffs.push(F::zero());
-                proof.root.v = RingVec::from_coeffs(coeffs);
+                proof.root.opening_payload = RingVec::from_coeffs(coeffs);
             }
             Self::WrongOutgoingBinding => {
                 proof.root.stage2.next_witness_binding =
                     match &proof.root.stage2.next_witness_binding {
-                        NextWitnessBinding::OuterCommitment(_) => {
+                        NextWitnessBinding::OuterPayload(_) => {
                             NextWitnessBinding::TerminalInnerState
                         }
                         NextWitnessBinding::TerminalInnerState => {
-                            NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
-                                F::zero(),
-                            ]))
+                            NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![F::zero()]))
                         }
                     };
             }

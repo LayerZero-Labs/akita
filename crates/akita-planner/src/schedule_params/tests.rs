@@ -364,7 +364,7 @@ fn mixed_root_prices_eor_at_candidate_a_dimension() {
         .first()
         .map(|step| &step.params.witness);
     let next_binding = if next_params.is_some() {
-        akita_types::NextWitnessBindingPolicy::OuterCommitment
+        akita_types::NextWitnessBindingPolicy::OuterPayload
     } else {
         akita_types::NextWitnessBindingPolicy::TerminalInnerState
     };

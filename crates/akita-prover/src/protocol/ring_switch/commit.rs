@@ -1,12 +1,13 @@
 use super::*;
+use crate::compute::compression::{execute_compression_chains, CompressionExecutionInput};
 use crate::compute::{CommitInnerPlan, OperationCtx};
 use crate::kernels::linear::decompose_commit_blocks_into;
-use akita_types::{dispatch_for_field, TerminalCommittedGroupParams};
+use akita_types::{dispatch_for_field, CompressionChainPlan, TerminalCommittedGroupParams};
 
 /// Public state bound for the witness produced by one intermediate fold.
 pub enum NextWitnessState<F: FieldCore> {
-    /// Ordinary recursive edge, bound by the outer image `u = B * decompose(t)`.
-    OuterCommitment(RingVec<F>),
+    /// Ordinary recursive edge, bound by the terminal compressed payload.
+    OuterPayload(RingVec<F>),
     /// Last recursive edge, bound directly by the canonical inner `t` state.
     TerminalInnerState,
 }
@@ -41,7 +42,7 @@ pub fn commit_w<Cfg, B>(
 ) -> Result<NextWitnessStateOutput<Cfg::Field>, AkitaError>
 where
     Cfg: CommitmentConfig,
-    Cfg::Field: FieldCore + CanonicalField + RandomSampling,
+    Cfg::Field: FieldCore + CanonicalField + RandomSampling + HalvingField,
     B: CommitmentComputeBackend<Cfg::Field>,
 {
     let dims = commit_params.role_dims();
@@ -50,7 +51,7 @@ where
     backend.validate_prepared_setup(prepared, expanded.as_ref())?;
     validate_commit_level_params::<Cfg::Field>(commit_params, expanded.as_ref())?;
 
-    let (packed_witness, inner_rows, commitment) = dispatch_for_field!(
+    let (packed_witness, inner_rows, commitment, compression_witness) = dispatch_for_field!(
         ProtocolDispatchSlot::Role(RingRole::Inner),
         Cfg::Field,
         dims.d_a(),
@@ -120,19 +121,49 @@ where
                     if u.len() != commit_params.outer_commit_matrix.output_rank() {
                         return Err(AkitaError::InvalidProof);
                     }
+                    let source = RingVec::from_ring_elems(&u);
+                    let plan = CompressionChainPlan::for_complete_source(
+                        commit_params
+                            .outer_commit_matrix
+                            .sis_table_key()
+                            .modulus_profile,
+                        source.coeff_len(),
+                    )?;
+                    let (mut outputs, _) = execute_compression_chains(
+                        commit_ctx,
+                        vec![CompressionExecutionInput {
+                            id: (),
+                            plan,
+                            coefficients: source.into_coeffs(),
+                        }],
+                    )?;
+                    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+                    let terminal_ring_dim = output
+                        .witness
+                        .plan()
+                        .maps()
+                        .last()
+                        .ok_or(AkitaError::InvalidProof)?
+                        .ring_dimension();
+                    let payload = RingVec::from_coeffs_with_ring_dim(
+                        output.terminal.coefficients().to_vec(),
+                        terminal_ring_dim,
+                    )?;
                     Ok::<_, AkitaError>((
                         packed_witness,
                         inner.into_inner_rows(),
-                        RingVec::from_ring_elems(&u),
+                        payload,
+                        output.witness,
                     ))
                 }
             )
         }
     )?;
-    let hint = AkitaCommitmentHint::singleton(inner_rows)?;
+    let hint =
+        AkitaCommitmentHint::singleton_with_outer_compression(inner_rows, &compression_witness)?;
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
-        binding: NextWitnessState::OuterCommitment(commitment),
+        binding: NextWitnessState::OuterPayload(commitment),
         hint,
     })
 }

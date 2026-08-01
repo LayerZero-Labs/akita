@@ -815,7 +815,7 @@ fn find_schedule_inner(
                 let next_witness_binding = if suffix_fold.folds.is_empty() {
                     akita_types::NextWitnessBindingPolicy::TerminalInnerState
                 } else {
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment
+                    akita_types::NextWitnessBindingPolicy::OuterPayload
                 };
                 let root_proof_size = level_proof_bytes(
                     field_bits,

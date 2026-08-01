@@ -11,7 +11,7 @@ use akita_field::{
 };
 use akita_types::{
     gadget_row_scalars, r_decomp_levels, relation_rhs_layout_for, AkitaExpandedSetup,
-    FpExtEncoding, RelationAddressGeometry,
+    FpExtEncoding, RelationAddressGeometry, RelationRowFamily,
 };
 
 pub(super) fn evaluate_relation_at_point<F, E>(
@@ -29,8 +29,18 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let quotient_row_dims =
-        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_ring_dims()?;
+    let row_families =
+        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_families()?;
+    let quotient_row_dims = row_families
+        .iter()
+        .filter(|family| {
+            !matches!(
+                family,
+                RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+            )
+        })
+        .map(|family| family.ring_dim())
+        .collect::<Vec<_>>();
     let prepared_point = PreparedRelationPoint::new(
         point,
         alpha,
@@ -115,9 +125,9 @@ where
         .flat_context
         .as_ref()
         .ok_or(AkitaError::InvalidProof)?;
-    let quotient_row_dims =
-        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_ring_dims()?;
-    let rows = quotient_row_dims.len();
+    let row_families =
+        relation_rhs_layout_for(&context.level_params, &context.opening_batch)?.row_families()?;
+    let rows = row_families.len();
     if rows
         != context
             .level_params
@@ -130,7 +140,14 @@ where
     let levels = r_decomp_levels::<F>(evaluator.log_basis);
     let quotient_gadget = gadget_row_scalars::<F>(levels, evaluator.log_basis);
     let mut evaluation = E::zero();
-    for (row, &row_dimension) in quotient_row_dims.iter().enumerate() {
+    for (row, family) in row_families.iter().enumerate() {
+        if matches!(
+            family,
+            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+        ) {
+            continue;
+        }
+        let row_dimension = family.ring_dim();
         let role_factors = prepared_point.for_dimension(row_dimension)?;
         let denominator = role_factors
             .powers

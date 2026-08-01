@@ -311,10 +311,9 @@ where
     .expect_err("tampering predecessor-bound terminal t must be rejected");
 
     let mut wrong_binding = proof.clone();
-    wrong_binding.root.stage2.next_witness_binding =
-        akita_types::NextWitnessBinding::OuterCommitment(akita_types::RingVec::from_coeffs(
-            Vec::new(),
-        ));
+    wrong_binding.root.stage2.next_witness_binding = akita_types::NextWitnessBinding::OuterPayload(
+        akita_types::RingVec::from_coeffs(Vec::new()),
+    );
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"setup-tests/onehot");
     AkitaCommitmentScheme::<Cfg>::batched_verify(
         &wrong_binding,

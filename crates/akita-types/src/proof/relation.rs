@@ -7,7 +7,9 @@ use crate::proof::RingVec;
 use crate::{CompressionChainPlan, SisModulusProfileId};
 use akita_algebra::eq_poly::EqPolynomial;
 use akita_algebra::offset_eq::eq_eval_at_index;
-use akita_algebra::ring::{eval_ring_at, eval_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::{
+    eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows_fast, scalar_powers,
+};
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, CanonicalField, FieldCore, MulBaseUnreduced};
 use std::iter::repeat_n;
@@ -265,6 +267,25 @@ impl RelationRhsLayout {
                 AkitaError::InvalidSetup("relation compression group is missing".into())
             })?;
         Ok((group_index, plan))
+    }
+
+    /// Canonical B-compression plan for one opening-batch group index.
+    pub fn compression_plan_for_group(
+        &self,
+        group_index: usize,
+    ) -> Result<&CompressionChainPlan, AkitaError> {
+        let compression = self.compression.as_ref().ok_or_else(|| {
+            AkitaError::InvalidSetup("relation layout has no compression geometry".into())
+        })?;
+        let relation_index = compression
+            .group_indices
+            .iter()
+            .position(|&candidate| candidate == group_index)
+            .ok_or_else(|| AkitaError::InvalidInput("opening group index is invalid".into()))?;
+        compression
+            .group_plans
+            .get(relation_index)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation compression group is missing".into()))
     }
 
     /// Canonical compression plan for the shared D image.
@@ -998,6 +1019,91 @@ where
         }
     )?;
     Ok(acc)
+}
+
+/// Evaluate a heterogeneous canonical relation RHS at `(tau1, alpha)`.
+pub fn relation_claim_from_compressed_rhs_extension<F, E>(
+    layout: &RelationRhsLayout,
+    tau1: &[E],
+    alpha: E,
+    rhs: &RingVec<F>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBaseUnreduced<F>,
+{
+    relation_claim_from_rhs_matching(layout, tau1, alpha, rhs, |_| true)
+}
+
+/// Evaluate only the F/H rows of a compressed relation RHS.
+pub fn compression_relation_claim_from_rhs_extension<F, E>(
+    layout: &RelationRhsLayout,
+    tau1: &[E],
+    alpha: E,
+    rhs: &RingVec<F>,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBaseUnreduced<F>,
+{
+    relation_claim_from_rhs_matching(layout, tau1, alpha, rhs, |family| {
+        matches!(
+            family,
+            RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+        )
+    })
+}
+
+fn relation_claim_from_rhs_matching<F, E>(
+    layout: &RelationRhsLayout,
+    tau1: &[E],
+    alpha: E,
+    rhs: &RingVec<F>,
+    include: impl Fn(RelationRowFamily) -> bool,
+) -> Result<E, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    E: FieldCore + MulBaseUnreduced<F>,
+{
+    let row_families = layout.row_families()?;
+    if rhs.coeff_len() != relation_rhs_coeff_len(layout)? {
+        return Err(AkitaError::InvalidSize {
+            expected: relation_rhs_coeff_len(layout)?,
+            actual: rhs.coeff_len(),
+        });
+    }
+    let row_weights = EqPolynomial::evals_prefix(tau1, row_families.len())?;
+    let mut alpha_powers = Vec::<(usize, Vec<E>)>::new();
+    let mut offset = 0usize;
+    let mut claim = E::zero();
+    for (row_index, family) in row_families.into_iter().enumerate() {
+        let ring_dim = family.ring_dim();
+        let end = offset
+            .checked_add(ring_dim)
+            .ok_or_else(|| AkitaError::InvalidSetup("relation RHS offset overflow".into()))?;
+        let row = rhs
+            .coeffs()
+            .get(offset..end)
+            .ok_or(AkitaError::InvalidProof)?;
+        let power_index = alpha_powers
+            .iter()
+            .position(|(dimension, _)| *dimension == ring_dim)
+            .unwrap_or_else(|| {
+                let index = alpha_powers.len();
+                alpha_powers.push((ring_dim, scalar_powers(alpha, ring_dim)));
+                index
+            });
+        let powers = &alpha_powers
+            .get(power_index)
+            .ok_or(AkitaError::InvalidProof)?
+            .1;
+        if include(family) {
+            claim += *row_weights.get(row_index).ok_or(AkitaError::InvalidProof)?
+                * eval_flat_ring_at_pows_fast(row, powers);
+        }
+        offset = end;
+    }
+    Ok(claim)
 }
 
 /// Row-index weight for the trailing EvaluationTrace row: `eq(row_index, last)`.

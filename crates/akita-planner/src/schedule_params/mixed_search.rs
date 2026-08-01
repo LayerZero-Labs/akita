@@ -208,7 +208,7 @@ fn suffix_frontier(
                         Some(if child_is_terminal {
                             akita_types::NextWitnessBindingPolicy::TerminalInnerState
                         } else {
-                            akita_types::NextWitnessBindingPolicy::OuterCommitment
+                            akita_types::NextWitnessBindingPolicy::OuterPayload
                         }),
                     )?
                     .checked_add(eor_bytes)
@@ -353,7 +353,7 @@ pub(super) fn find_schedule(
                         Some(if child_is_terminal {
                             akita_types::NextWitnessBindingPolicy::TerminalInnerState
                         } else {
-                            akita_types::NextWitnessBindingPolicy::OuterCommitment
+                            akita_types::NextWitnessBindingPolicy::OuterPayload
                         }),
                     )?
                     .checked_add(eor_bytes)

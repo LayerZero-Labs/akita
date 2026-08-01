@@ -86,7 +86,7 @@ pub fn level_proof_bytes(
         )?,
     )?;
     let next_commit_bytes = match next_witness_binding {
-        Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
+        Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
             let next_lp = next_lp.ok_or_else(|| {
                 AkitaError::InvalidSetup(
                     "outer-commitment level proof is missing successor params".to_string(),
@@ -315,14 +315,14 @@ mod tests {
 
         let proof = FoldLevelProof {
             extension_opening_reduction: None,
-            v: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
+            opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
                 next_witness_binding: match next_witness_binding {
-                    crate::NextWitnessBindingPolicy::OuterCommitment => {
-                        crate::NextWitnessBinding::OuterCommitment(RingVec::from_coeffs(vec![
+                    crate::NextWitnessBindingPolicy::OuterPayload => {
+                        crate::NextWitnessBinding::OuterPayload(RingVec::from_coeffs(vec![
                             F::zero();
                             next_commit_coeffs
                         ]))
@@ -373,7 +373,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 exact_level_proof_bytes::<F>(
@@ -381,7 +381,7 @@ mod tests {
                     &next_lp,
                     output_witness_len,
                     None,
-                    crate::NextWitnessBindingPolicy::OuterCommitment,
+                    crate::NextWitnessBindingPolicy::OuterPayload,
                 )
                 .unwrap(),
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
@@ -458,7 +458,7 @@ mod tests {
             &lp,
             Some(&next_lp),
             output_witness_len,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
         let serialized = exact_level_proof_bytes::<F>(
@@ -466,7 +466,7 @@ mod tests {
             &next_lp,
             output_witness_len,
             None,
-            crate::NextWitnessBindingPolicy::OuterCommitment,
+            crate::NextWitnessBindingPolicy::OuterPayload,
         )
         .unwrap();
         assert_eq!(planned, serialized);
@@ -504,7 +504,7 @@ mod tests {
             &lp,
             Some(&next_lp),
             output_witness_len,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         )
         .unwrap();
         let terminal_inner = level_proof_bytes(
@@ -551,7 +551,7 @@ mod tests {
             &lp,
             None,
             D * 8,
-            Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
         );
         assert!(matches!(
             missing_successor,
@@ -624,7 +624,7 @@ mod tests {
                 &next_lp,
                 output_witness_len,
                 None,
-                crate::NextWitnessBindingPolicy::OuterCommitment,
+                crate::NextWitnessBindingPolicy::OuterPayload,
             )
             .unwrap();
             let recursive_bytes = exact_level_proof_bytes::<F>(
@@ -632,7 +632,7 @@ mod tests {
                 &next_lp,
                 output_witness_len,
                 Some(setup_ring_len),
-                crate::NextWitnessBindingPolicy::OuterCommitment,
+                crate::NextWitnessBindingPolicy::OuterPayload,
             )
             .unwrap();
 
@@ -643,7 +643,7 @@ mod tests {
                     &lp,
                     Some(&next_lp),
                     output_witness_len,
-                    Some(crate::NextWitnessBindingPolicy::OuterCommitment),
+                    Some(crate::NextWitnessBindingPolicy::OuterPayload),
                 )
                 .unwrap(),
                 terminal_bytes,

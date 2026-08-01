@@ -187,11 +187,9 @@ where
 {
     let root_params = &schedule.root.params.final_group.commitment;
     {
-        // §6 invariant — commitment vector length == num_rings · ring_dim.
-        // The flat `Commitment` stores raw coefficients; validate its ring count
-        // against the scheduled root params under the schedule-derived ring
-        // dimension via `RingView::new` (no-panic gate, mirrors the verifier's
-        // commitment-length check) before interpreting it as ring rows.
+        // Every public group commitment is the fixed terminal F payload. The
+        // frozen B geometry derives the complete compression plan and therefore
+        // the only accepted coefficient count.
         let opening_batch = claims.opening_claims().layout()?;
         let commitments = claims.commitments();
         if commitments.len() != opening_batch.num_groups() {
@@ -199,15 +197,12 @@ where
                 "root commitment group count does not match opening batch".to_string(),
             ));
         }
+        let relation_layout = relation_rhs_layout_for(root_params, &opening_batch)?;
         for (group_index, commitment) in commitments.iter().enumerate() {
-            let group_ring_dim = root_params
-                .group_role_dims(&opening_batch, group_index)?
-                .d_b();
-            let expected_rows = root_params.group_commitment_rows(&opening_batch, group_index)?;
-            let view = RingView::new(commitment.rows().coeffs(), group_ring_dim)?;
-            if view.num_rings() != expected_rows {
+            let plan = relation_layout.compression_plan_for_group(group_index)?;
+            if commitment.rows().coeff_len() != plan.terminal_coefficients() {
                 return Err(AkitaError::InvalidInput(
-                    "root commitment row count does not match scheduled root params".to_string(),
+                    "root compressed commitment does not match scheduled root params".to_string(),
                 ));
             }
         }
@@ -227,7 +222,7 @@ where
         |step| {
             (
                 super::fold::FoldSuccessorParams::Recursive(&step.params),
-                akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                akita_types::NextWitnessBindingPolicy::OuterPayload,
             )
         },
     );

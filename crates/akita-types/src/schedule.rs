@@ -26,8 +26,8 @@ pub struct AkitaScheduleInputs {
 /// suffix fold as a public inner `t` state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NextWitnessBindingPolicy {
-    /// Bind `u = B * decompose(t)` and recurse through another committed fold.
-    OuterCommitment,
+    /// Bind the terminal compressed commitment payload and recurse.
+    OuterPayload,
     /// Bind canonical inner-state `t` bytes for the following suffix-terminal
     /// fold. No outer `u` is present on this edge.
     TerminalInnerState,
@@ -62,7 +62,7 @@ pub struct CommittedGroupProfile {
 
 impl CommittedGroupProfile {
     /// Current committed-profile format.
-    pub const VERSION: u8 = 1;
+    pub const VERSION: u8 = 2;
 
     /// Build frozen group metadata from the concrete commit params.
     pub fn from_params(group: PolynomialGroupLayout, params: &CommittedGroupParams) -> Self {

@@ -47,6 +47,8 @@ pub struct RingSwitchOutput<E: FieldCore> {
     pub(crate) relation_address_geometry: akita_types::RelationAddressGeometry,
     /// Exact common-alpha factorization of the tau1-weighted relation table.
     pub(crate) relation_weight_factorization: RelationWeightFactorization<E>,
+    /// Dense additive compact-geometry F/H relation weights.
+    pub(crate) compression_relation_weights: Vec<E>,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
     pub digit_range_equality_low_variable_count: usize,
     /// Challenge tau0 for F_0 sumcheck.

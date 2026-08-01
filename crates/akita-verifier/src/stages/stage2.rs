@@ -8,7 +8,9 @@ use akita_field::{
     MulBaseUnreduced,
 };
 use akita_sumcheck::SumcheckInstanceVerifier;
-use akita_types::{AkitaExpandedSetup, FpExtEncoding};
+use akita_types::{
+    AkitaExpandedSetup, CompressionRelationWeights, FpExtEncoding, NegativeBinarySupport,
+};
 
 /// Verifier for the stage-2 fused virtual-claim and relation sumcheck.
 pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
@@ -17,6 +19,9 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+    compression_relation_weights: &'a CompressionRelationWeights<E>,
+    negative_binary_support: &'a NegativeBinarySupport,
+    binary_batching: E,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
@@ -43,6 +48,9 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
+        compression_relation_weights: &'a CompressionRelationWeights<E>,
+        negative_binary_support: &'a NegativeBinarySupport,
+        binary_batching: E,
         setup: &'a AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
@@ -68,6 +76,9 @@ where
             witness_eval,
             stage1_point,
             relation_matrix_evaluator,
+            compression_relation_weights,
+            negative_binary_support,
+            binary_batching,
             setup_claim,
             setup,
             alpha,
@@ -116,7 +127,12 @@ where
                 self.setup_claim,
             )?
         };
-        let relation_oracle = w_eval * relation_weight;
+        let compression_relation_weight = self
+            .compression_relation_weights
+            .evaluate_at_point(challenges)?;
+        let binary_weight = self.negative_binary_support.evaluate_at_point(challenges)?;
+        let relation_oracle = w_eval * (relation_weight + compression_relation_weight)
+            + self.binary_batching * binary_weight * w_eval * (w_eval + E::one());
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
             let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;

@@ -130,7 +130,7 @@ where
             |next| {
                 (
                     super::fold::FoldSuccessorParams::Recursive(&next.params),
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment,
+                    akita_types::NextWitnessBindingPolicy::OuterPayload,
                 )
             },
         );
@@ -255,7 +255,7 @@ where
     }
     match binding {
         NextWitnessState::TerminalInnerState => {}
-        NextWitnessState::OuterCommitment(_) => return Err(AkitaError::InvalidProof),
+        NextWitnessState::OuterPayload(_) => return Err(AkitaError::InvalidProof),
     }
     let mut terminal_rows = hint.into_rows();
     if terminal_rows.len() != 1 {
@@ -460,12 +460,28 @@ where
         .map(Arc::new)
         .unwrap_or_else(|| Arc::clone(&witness));
     let role_dims = level_params.role_dims();
-    let commit_d = role_dims.d_b();
+    let source_coefficients = level_params
+        .outer_commit_matrix
+        .output_rank()
+        .checked_mul(role_dims.d_b())
+        .ok_or(AkitaError::InvalidProof)?;
+    let compression_plan = CompressionChainPlan::for_complete_source(
+        level_params
+            .outer_commit_matrix
+            .sis_table_key()
+            .modulus_profile,
+        source_coefficients,
+    )?;
+    let commit_d = compression_plan
+        .maps()
+        .last()
+        .ok_or(AkitaError::InvalidProof)?
+        .ring_dimension();
     let witness_commitment = match binding {
-        NextWitnessState::OuterCommitment(commitment) => {
-            if !commitment.can_decode_vec(commit_d) {
+        NextWitnessState::OuterPayload(commitment) => {
+            if commitment.coeff_len() != compression_plan.terminal_coefficients() {
                 return Err(AkitaError::InvalidInput(format!(
-                    "suffix commitment length {} is not decodable at B-role dimension {}",
+                    "suffix compressed commitment length {} does not match payload dimension {}",
                     commitment.coeffs().len(),
                     commit_d,
                 )));
