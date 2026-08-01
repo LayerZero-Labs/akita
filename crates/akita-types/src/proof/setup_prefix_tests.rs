@@ -281,7 +281,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     registry.insert(slot).expect("insert slot");
 
     let selection = select_setup_prefix_slot(
-        5,
+        Some(5 * source_ring_dimension),
         |candidate| {
             registry
                 .get(candidate)
@@ -298,8 +298,24 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert_eq!(selection.0.id.d_setup(), 64);
     assert_eq!(selection.1, 8);
 
+    let external_selection = select_setup_prefix_slot(
+        None,
+        |candidate| {
+            registry
+                .get(candidate)
+                .map(|slot| (slot, slot.natural_len, slot.padded_len))
+        },
+        &level_params,
+        natural_len,
+        source_ring_dimension,
+        "slot does not cover request",
+    )
+    .expect("external committed source selection succeeds")
+    .expect("external committed source selects the slot");
+    assert_eq!(external_selection.1, 8);
+
     let err = select_setup_prefix_slot(
-        5,
+        Some(5 * source_ring_dimension),
         |candidate| {
             registry
                 .get(candidate)
@@ -316,7 +332,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
         .contains("setup prefix padded length must be divisible"));
 
     let err = select_setup_prefix_slot(
-        5,
+        Some(5 * source_ring_dimension),
         |candidate| {
             registry
                 .get(candidate)
@@ -331,7 +347,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     assert!(err.to_string().contains("slot does not cover request"));
 
     let err = select_setup_prefix_slot(
-        5,
+        Some(5 * source_ring_dimension),
         |candidate| {
             registry
                 .get(candidate)
@@ -348,7 +364,7 @@ fn select_setup_prefix_slot_uses_exact_registry_match() {
     ));
 
     let err = select_setup_prefix_slot(
-        5,
+        Some(5 * source_ring_dimension),
         |candidate| {
             registry
                 .get(candidate)
@@ -379,7 +395,7 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
     ));
 
     let err = select_setup_prefix_slot::<SetupPrefixVerifierSlot<F>, _>(
-        2,
+        Some(2 * d_setup),
         |_: &SetupPrefixSlotId| None,
         &level_params,
         natural_len,

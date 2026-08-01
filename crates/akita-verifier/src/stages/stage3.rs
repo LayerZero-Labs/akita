@@ -12,9 +12,9 @@ use akita_transcript::labels::{
 };
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
-    dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan,
-    SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
+    dispatch_for_field, select_setup_prefix_slot, AkitaExpandedSetup, AkitaVerifierSetup,
+    CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan, SetupSumcheckProof,
+    SETUP_SUMCHECK_DEGREE,
 };
 
 /// Verifier counterpart to `AkitaStage3Prover`: replays the setup product
@@ -142,9 +142,8 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         if next_fold_level_params.setup_prefix.is_some() {
             let geometry = self.setup_contribution_plan.projection_geometry();
             let natural_field_len = geometry.natural_field_len();
-            ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
-                setup_len,
+                None,
                 |id| {
                     setup
                         .prefix_slots

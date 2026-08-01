@@ -1416,8 +1416,14 @@ pub fn setup_prefix_slot_id(
 /// digest, padded prefix length, prefix commitment parameters, slot id, natural
 /// source coverage, and the producer-ring evaluation length used for setup
 /// MLEs. The slot's commitment dimension is independent of that producer view.
+///
+/// `shared_matrix_field_elements` is `Some` when the natural source prefix must
+/// be resident in the shared matrix, as in the prover. It is `None` when the
+/// source is represented by the registered setup-prefix commitment, as in the
+/// schedule-scoped verifier. In both cases the slot's exact natural and padded
+/// lengths are checked.
 pub fn select_setup_prefix_slot<'a, Slot, Lookup>(
-    setup_ring_slots_at_d: usize,
+    shared_matrix_field_elements: Option<usize>,
     lookup_slot: Lookup,
     level_params: &CommittedGroupParams,
     natural_field_len: usize,
@@ -1432,15 +1438,12 @@ where
         return Ok(None);
     };
     let n_prefix = padded_setup_prefix_len(natural_field_len);
-    let setup_field_len = setup_ring_slots_at_d
-        .checked_mul(source_ring_dimension)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup("setup matrix field length overflow".to_string())
-        })?;
-    if natural_field_len > setup_field_len {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix request exceeds shared matrix capacity".to_string(),
-        ));
+    if let Some(shared_matrix_field_elements) = shared_matrix_field_elements {
+        if natural_field_len > shared_matrix_field_elements {
+            return Err(AkitaError::InvalidSetup(
+                "setup prefix request exceeds shared matrix capacity".to_string(),
+            ));
+        }
     }
     let template_n_prefix = template.n_prefix()?;
     if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
