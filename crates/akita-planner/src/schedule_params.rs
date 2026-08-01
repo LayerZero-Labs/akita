@@ -10,7 +10,7 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-#[cfg(test)]
+#[cfg(all(test, feature = "catalog-gen"))]
 use akita_types::extension_opening_reduction_level_bytes;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
@@ -634,7 +634,7 @@ pub fn plan_optimal_suffix(
         fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
         num_vars,
         key: PolynomialGroupLayout::singleton(num_vars),
-        setup_field_budget: None,
+        setup_field_budget: policy.setup_field_budget,
         root_lookup_key: None,
         root_honest_fold_policy: None,
         precommitted_honest_fold_policies: &[],
@@ -699,7 +699,7 @@ fn find_schedule_inner(
         fold_challenge_shape_at_level: fold_shape,
         num_vars: key.num_vars(),
         key,
-        setup_field_budget: None,
+        setup_field_budget: policy.setup_field_budget,
         root_lookup_key: None,
         root_honest_fold_policy: None,
         precommitted_honest_fold_policies: &[],
@@ -830,6 +830,9 @@ fn find_schedule_inner(
                 let total = root_proof_size + suffix_fold.total_bytes;
                 let root_envelope = level_setup_field_elements(&candidate_params)?;
                 let setup_envelope = root_envelope.max(suffix_fold.setup_field_elements);
+                if !policy.admits_setup_field_elements(setup_envelope) {
+                    continue;
+                }
                 let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
                 folds.push(CandidateFoldStep {
                     params: candidate_params.clone(),
@@ -848,7 +851,10 @@ fn find_schedule_inner(
                 };
                 let replace = match &best {
                     None => true,
-                    Some(current) => candidate.total_bytes < current.total_bytes,
+                    Some(current) => {
+                        (candidate.total_bytes, candidate.setup_field_elements)
+                            < (current.total_bytes, current.setup_field_elements)
+                    }
                 };
                 if replace {
                     best = Some(candidate);

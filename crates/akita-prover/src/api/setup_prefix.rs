@@ -414,7 +414,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_setup_prefix_dispatches_smaller_outer_dimension() {
+    fn commit_setup_prefix_rejects_unsupported_outer_dimension() {
         let level_params = prefix_level_params(64);
         let witness_ring_slots = level_params
             .num_live_blocks
@@ -437,7 +437,7 @@ mod tests {
         let setup = test_setup::<64>(&level_params, n_prefix);
         let backend = CpuBackend;
         let prepared = backend.prepare_setup(&setup).expect("prepared setup");
-        let slot = commit_setup_prefix::<F, 64, _>(
+        let error = commit_setup_prefix::<F, 64, _>(
             &setup.expanded,
             &backend,
             &prepared,
@@ -445,18 +445,7 @@ mod tests {
             n_prefix,
             n_prefix,
         )
-        .expect("commit mixed-D prefix");
-
-        let source_coefficients = prefix_params.layout.outer_commit_matrix.output_rank() * 32;
-        let expected = CompressionChainPlan::for_complete_source(
-            prefix_params
-                .layout
-                .outer_commit_matrix
-                .sis_modulus_profile(),
-            source_coefficients,
-        )
-        .expect("compression plan")
-        .terminal_coefficients();
-        assert_eq!(slot.commitment.rows[0].coeff_len(), expected);
+        .expect_err("ordinary outer D32 must reject");
+        assert!(error.to_string().contains("unsupported ring dimension 32"));
     }
 }

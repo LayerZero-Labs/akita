@@ -698,6 +698,35 @@ fn mixed_search_applies_setup_budget_in_physical_fields() {
 
 #[cfg(feature = "catalog-gen")]
 #[test]
+fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
+    use akita_config::{
+        policy_of, proof_optimized::fp128::D64OneHotMultiChunkW4R2, CommitmentConfig,
+    };
+
+    let policy = policy_of::<D64OneHotMultiChunkW4R2>();
+    let domain = RingDimensionSearchDomain::uniform(64).unwrap();
+    let selected = find_schedule(
+        PolynomialGroupLayout::singleton(32),
+        &policy,
+        D64OneHotMultiChunkW4R2::root_honest_fold_policy(),
+        &domain,
+        D64OneHotMultiChunkW4R2::ring_challenge_config,
+        D64OneHotMultiChunkW4R2::fold_challenge_shape_at_level,
+    )
+    .expect("W4R2 schedule");
+
+    assert_eq!(
+        selected.estimate.estimated_num_setup_field_elements,
+        20_971_520
+    );
+    assert_eq!(
+        selected.estimate.estimated_proof_payload_bytes().unwrap(),
+        91_016
+    );
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
 fn recursive_exact_cutover_proof_size_is_documented() {
     use akita_config::{
         policy_of, proof_optimized::fp128::D64OneHot, CommitmentConfig, RecursiveCommitmentConfig,

@@ -629,7 +629,7 @@ fn multi_group_root_opens_multi_polynomial_precommitted_group() {
 
 #[test]
 fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
-    const PRE_NV: usize = 12;
+    const PRE_NV: usize = 14;
     const FINAL_NV: usize = 24;
     type ProtocolCfg =
         crate::test_support::EnvelopeFinalGroupConfig<fp128::D128OneHot, fp128::D64OneHot>;

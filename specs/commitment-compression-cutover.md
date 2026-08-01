@@ -472,12 +472,13 @@ payload. Successor witness length comes only from `WitnessLayout`. Setup
 capacity includes compression prefixes only for compressed levels.
 
 The planner uses the exact monotone cutover search with proof bytes as its
-primary objective. The measured optimum retained four compressed folds for
-fp128 dense and five for fp128 onehot. This can add prover work and fold levels,
-but proof size takes priority. Performance work must preserve the selected
-proof bytes and schedule-bound monotone compressed-prefix/raw-suffix contract.
-A future change to this rule requires a new policy identifier and regenerated
-schedules.
+primary objective. Equal-byte complete schedules are ranked by the smaller
+physical setup envelope before the canonical descriptor tie-break. This avoids
+paying setup, prover, verifier, or memory cost that buys no proof reduction.
+The measured optimum retained four compressed folds for fp128 dense and five
+for fp128 onehot. Performance work must preserve the selected proof bytes and
+schedule-bound monotone compressed-prefix/raw-suffix contract. A future change
+to this rule requires a new policy identifier and regenerated schedules.
 
 ## Incremental Implementation Sequence
 

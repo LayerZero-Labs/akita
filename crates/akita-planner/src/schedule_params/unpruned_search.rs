@@ -380,7 +380,7 @@ pub(super) fn find_schedule(
         .collect::<Result<Vec<_>, AkitaError>>()?;
     scored.sort_by(|left, right| match policy.selection_policy {
         crate::SelectionPolicyId::MinEstimatedProofPayload => {
-            (&left.1, &left.2).cmp(&(&right.1, &right.2))
+            (&left.1, &left.0, &left.2).cmp(&(&right.1, &right.0, &right.2))
         }
         crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
         | crate::SelectionPolicyId::MinFirstDirectSetupThenPayload => {
