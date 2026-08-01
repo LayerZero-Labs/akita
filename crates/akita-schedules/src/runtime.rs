@@ -47,6 +47,23 @@ pub enum SelectionPolicyId {
 }
 
 impl SelectionPolicyId {
+    /// Canonical selection objective for one schedule policy shape.
+    pub fn for_policy(
+        recursive_setup_planning: bool,
+        setup_generation_dimension: usize,
+        ring_dimension_candidates: &[CommitmentRingDims],
+    ) -> Self {
+        if recursive_setup_planning {
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else if ring_dimension_candidates
+            != [CommitmentRingDims::uniform(setup_generation_dimension)]
+        {
+            Self::MinSetupMatrixFieldElementsThenProofPayload
+        } else {
+            Self::MinEstimatedProofPayload
+        }
+    }
+
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
@@ -138,11 +155,11 @@ impl PlannerPolicy {
     pub fn direct_only(self) -> Self {
         Self {
             recursive_setup_planning: false,
-            selection_policy: if self.ring_dimension_candidates.len() > 1 {
-                SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-            } else {
-                SelectionPolicyId::MinEstimatedProofPayload
-            },
+            selection_policy: SelectionPolicyId::for_policy(
+                false,
+                self.ring_dimension,
+                self.ring_dimension_candidates,
+            ),
             ..self
         }
     }
@@ -192,13 +209,11 @@ pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     validate_ring_dimension_candidates(policy)?;
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else if policy.ring_dimension_candidates.len() > 1 {
-        SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        SelectionPolicyId::MinEstimatedProofPayload
-    };
+    let expected_selection_policy = SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with recursive setup capability".to_string(),

@@ -6,11 +6,11 @@ fn policy_for_domain(
     domain: &RingDimensionSearchDomain,
 ) -> PlannerPolicy {
     policy.ring_dimension_candidates = Box::leak(domain.candidates().to_vec().into_boxed_slice());
-    policy.selection_policy = if domain.candidates().len() > 1 {
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        crate::SelectionPolicyId::MinEstimatedProofPayload
-    };
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(
+        false,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
     policy
 }
 
@@ -76,6 +76,45 @@ fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
     )
     .is_err());
     assert!(RingDimensionSearchDomain::new(128, [CommitmentRingDims::uniform(256)]).is_err());
+}
+
+#[cfg(feature = "catalog-gen")]
+#[test]
+fn public_planner_uses_setup_first_objective_for_singleton_lower_dimension() {
+    use akita_config::{policy_of, proof_optimized::fp128::D256OneHot, CommitmentConfig};
+
+    static D64_DOMAIN: [CommitmentRingDims; 1] = [CommitmentRingDims::uniform(64)];
+
+    let mut policy = policy_of::<D256OneHot>();
+    policy.ring_dimension_candidates = &D64_DOMAIN;
+    policy.selection_policy = crate::SelectionPolicyId::for_policy(
+        false,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
+    assert_eq!(
+        policy.selection_policy,
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
+    );
+
+    let key = PolynomialGroupLayout::singleton(16);
+    let selected = crate::find_schedule(
+        &akita_types::AkitaScheduleLookupKey::single(key),
+        &policy,
+        D256OneHot::ring_challenge_config,
+        D256OneHot::fold_challenge_shape_at_level,
+    )
+    .unwrap();
+    assert_eq!(
+        selected
+            .schedule
+            .root
+            .params
+            .final_group
+            .commitment
+            .role_dims(),
+        D64_DOMAIN[0]
+    );
 }
 
 #[cfg(feature = "catalog-gen")]

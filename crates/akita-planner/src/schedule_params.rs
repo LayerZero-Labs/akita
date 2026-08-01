@@ -355,13 +355,11 @@ pub(crate) fn materialize_candidate_schedule(
 /// `num_activated_levels` beyond the planner recursion cap. Verifier-reachable: never panics.
 pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else if policy.ring_dimension_candidates.len() > 1 {
-        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        crate::SelectionPolicyId::MinEstimatedProofPayload
-    };
+    let expected_selection_policy = crate::SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "planner selection policy disagrees with recursive setup capability".to_string(),

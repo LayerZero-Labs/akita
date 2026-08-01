@@ -133,13 +133,11 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     let recursive_setup_planning = Cfg::recursive_setup_planning();
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if recursive_setup_planning {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else if Cfg::ring_dimension_candidates().len() > 1 {
-            akita_schedules::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        } else {
-            akita_schedules::SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: akita_schedules::SelectionPolicyId::for_policy(
+            recursive_setup_planning,
+            Cfg::D,
+            Cfg::ring_dimension_candidates(),
+        ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,

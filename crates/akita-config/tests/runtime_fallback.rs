@@ -113,13 +113,11 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if Cfg::recursive_setup_planning() {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else if Cfg::ring_dimension_candidates().len() > 1 {
-            SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        } else {
-            SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: SelectionPolicyId::for_policy(
+            Cfg::recursive_setup_planning(),
+            Cfg::D,
+            Cfg::ring_dimension_candidates(),
+        ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
