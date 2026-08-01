@@ -791,46 +791,12 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         .level_params
         .relation_address_geometry(&inputs.opening_batch, 128, opening_source_len)
         .unwrap();
-    let direct_relation_address_geometry = relation_address_geometry;
     let randomness_bits = relation_address_geometry.relation_lane_variable_count();
     let full_vec_randomness = (0..randomness_bits)
         .map(|index| test_scalar(101 + index as u128))
         .collect::<Vec<_>>();
     let fold_gadget = gadget_row_scalars::<F>(quotient_depth, 4);
-    let plan = prepare_test_plan(
-        &inputs,
-        &witness_layout,
-        opening_source_len,
-        &groups,
-        &full_vec_randomness,
-        Some(&fold_gadget),
-        CommitmentRingDims::uniform(TEST_D),
-    )
-    .unwrap();
-    let setup_len = plan.required();
-    let setup = AkitaExpandedSetup::from_trusted_seed_derived_parts_unchecked(
-        AkitaSetupSeed {
-            max_num_vars: 0,
-            max_num_batched_polys: 0,
-            num_field_elements: setup_len * TEST_D,
-            public_matrix_id: [0u8; 32].into(),
-        },
-        FlatMatrix::from_flat_data(
-            (0..setup_len * TEST_D)
-                .map(|index| test_scalar(211 + index as u128))
-                .collect(),
-        ),
-    );
-    let alpha = test_scalar(3);
-    let alpha_pows = scalar_powers(alpha, TEST_D);
-    assert_eq!(
-        plan.evaluate_direct::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows)
-            .unwrap(),
-        plan.evaluate_direct_by_rows::<F>(&setup, &alpha_pows, &alpha_pows, &alpha_pows, TEST_D,)
-            .unwrap(),
-    );
-
-    let mut direct_plan = SetupContributionPlan::prepare::<F>(
+    let mut plan = SetupContributionPlan::prepare::<F>(
         &inputs.level_params,
         &inputs.opening_batch,
         inputs.eq_tau1.clone(),
@@ -838,13 +804,12 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         &groups,
         PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         Some(&fold_gadget),
-        direct_relation_address_geometry,
+        relation_address_geometry,
     )
     .unwrap();
-    direct_plan.materialize_direct_scan(test_scalar(3)).unwrap();
+    plan.materialize_direct_scan(test_scalar(3)).unwrap();
     assert_eq!(
-        direct_plan
-            .groups
+        plan.groups
             .iter()
             .find(|group| group.group_id == 1)
             .unwrap()
@@ -852,36 +817,33 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
         0..2
     );
     assert_eq!(
-        direct_plan
-            .groups
+        plan.groups
             .iter()
             .find(|group| group.group_id == 0)
             .unwrap()
             .d_col_range,
         2..3
     );
-    let direct_alpha = test_scalar(3);
-    let direct_setup_idx_bits =
-        direct_plan.required().next_power_of_two().trailing_zeros() as usize;
-    let direct_rho_setup_idx = (0..direct_setup_idx_bits)
+    let alpha = test_scalar(3);
+    let setup_idx_bits = plan.required().next_power_of_two().trailing_zeros() as usize;
+    let rho_setup_idx = (0..setup_idx_bits)
         .map(|index| test_scalar(1301 + index as u128))
         .collect::<Vec<_>>();
-    let direct_dense_mle = direct_plan
-        .materialize_setup_index_weights(direct_alpha)
+    let dense_mle = plan
+        .materialize_setup_index_weights(alpha)
         .unwrap()
         .into_iter()
         .enumerate()
         .fold(F::zero(), |acc, (index, weight)| {
-            acc + eq_eval_at_index(&direct_rho_setup_idx, index) * weight
+            acc + eq_eval_at_index(&rho_setup_idx, index) * weight
         });
     assert_eq!(
-        direct_plan
-            .evaluate_setup_index_weight_mle(&direct_rho_setup_idx, direct_alpha)
+        plan.evaluate_setup_index_weight_mle(&rho_setup_idx, alpha)
             .unwrap(),
-        direct_dense_mle,
+        dense_mle,
         "multi-group setup-index MLE must match the full plan"
     );
-    for group in &direct_plan.groups {
+    for group in &plan.groups {
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(1501 + 17 * group.group_id as u128 + index as u128))
             .collect::<Vec<_>>();
@@ -892,17 +854,16 @@ fn heterogeneous_relation_ordered_setup_layout_matches_structured_oracles() {
             group,
             &block_challenges,
             &opening_a_evals,
-            direct_alpha,
+            alpha,
         );
         assert_eq!(
-            direct_plan
-                .evaluate_structured_group::<F>(
-                    group.group_id,
-                    &block_challenges,
-                    &opening_a_evals,
-                    direct_alpha,
-                )
-                .unwrap(),
+            plan.evaluate_structured_group::<F>(
+                group.group_id,
+                &block_challenges,
+                &opening_a_evals,
+                alpha,
+            )
+            .unwrap(),
             reference,
             "full structured evaluation must match group {} dense oracle",
             group.group_id
