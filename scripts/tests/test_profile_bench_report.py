@@ -224,6 +224,7 @@ class ProfileBenchReportTests(unittest.TestCase):
                 "num_digits_outer": 5,
                 "num_digits_open": 5,
                 "delta_fold": 6,
+                "unchecked_l2_collision_sq": 0,
                 # Legacy scalar `current_w_len` is not a group breakdown.
                 "current_w_len": [],
                 "next_w_len": 2048,
@@ -341,13 +342,14 @@ class ProfileBenchReportTests(unittest.TestCase):
         )
 
         log = (
-            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=20 '
+            'INFO proof fold level label=onehot_fp128_d64 level=0 d=64 total_bytes=324 '
             'fold_grind_nonce_bytes=4 grind_nonce=3 grind_attempts=4 '
+            'unchecked_l2_diagnostic_bytes=304 '
             'stage1_range_image_evaluation_bytes=16 '
             'root_variant=terminal\n'
         )
         levels = extract_summary(log, "onehot_fp128_d64", 24, 1)["proof_levels"]
-        self.assertEqual(proof_level_component_bytes(levels[0]), 20)
+        self.assertEqual(proof_level_component_bytes(levels[0]), 324)
 
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
@@ -355,6 +357,7 @@ class ProfileBenchReportTests(unittest.TestCase):
         report = output.getvalue()
 
         self.assertIn("Fold-level bytes", report)
+        self.assertIn("Unchecked L2 diagnostic", report)
         self.assertIn("Range-image evaluation", report)
         self.assertIn("—", report)
         self.assertIn("+0.00% vs main", report)

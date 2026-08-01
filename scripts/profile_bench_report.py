@@ -52,6 +52,7 @@ PROOF_LEVEL_BYTE_FIELDS = (
     "extension_opening_partials_bytes",
     "extension_opening_sumcheck_bytes",
     "fold_grind_nonce_bytes",
+    "unchecked_l2_diagnostic_bytes",
     "opening_payload_bytes",
     "stage1_sumcheck_bytes",
     "stage1_interstage_claims_bytes",
@@ -910,6 +911,9 @@ def extract_summary(
                 "num_digits_outer": int(kvs.get("num_digits_outer") or kvs["delta_open"]),
                 "num_digits_open": int(kvs.get("num_digits_open") or kvs["delta_open"]),
                 "delta_fold": int(kvs["delta_fold"]),
+                "unchecked_l2_collision_sq": int(
+                    kvs.get("unchecked_l2_collision_sq", "0")
+                ),
                 "current_w_len": planned_current_w_len(kvs),
                 "next_w_len": output_witness_len,
                 "setup_prefix_natural_field_elements": int(
@@ -2006,14 +2010,15 @@ def render_proof_levels(
     print()
     print(
         "| Fold level | Proof step | Fold-level bytes | Extension-opening partials | "
-        "Extension-opening sumcheck | Grinding nonce | Opening payload (`p_H`) | "
+        "Extension-opening sumcheck | Grinding nonce | Unchecked L2 diagnostic | "
+        "Opening payload (`p_H`) | "
         "Stage 1 sumcheck | Stage 1 transition claims | Range-image evaluation | "
         "Stage 2 sumcheck | Stage 3 sumcheck | Next-witness payload | "
         "Next-witness evaluation |"
     )
     print(
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | "
-        "---: | ---: | ---: |"
+        "---: | ---: | ---: | ---: |"
     )
     for level in levels:
         baseline = level_by_index(baseline_levels, level["level"])
@@ -2029,6 +2034,7 @@ def render_proof_levels(
             f"{proof_component_value(level, baseline, 'extension_opening_partials_bytes')} | "
             f"{proof_component_value(level, baseline, 'extension_opening_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'fold_grind_nonce_bytes')} | "
+            f"{proof_component_value(level, baseline, 'unchecked_l2_diagnostic_bytes')} | "
             f"{proof_component_value(level, baseline, 'opening_payload_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_sumcheck_bytes')} | "
             f"{proof_component_value(level, baseline, 'stage1_interstage_claims_bytes')} | "
