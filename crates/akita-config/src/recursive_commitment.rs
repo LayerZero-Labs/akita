@@ -128,8 +128,8 @@ mod tests {
     use akita_field::Prime128OffsetA7F7;
     use akita_types::{
         r_decomp_levels, shared_setup_fold_gadget, AkitaScheduleLookupKey, CommittedGroupProfile,
-        PolynomialGroupLayout, RelationAddressGeometry, SetupContributionGroupInputs,
-        SetupContributionPlan, WitnessLayout,
+        PolynomialGroupLayout, PreparedRelationAddress, RelationAddressGeometry,
+        SetupContributionGroupInputs, SetupContributionPlan, WitnessLayout,
     };
 
     fn scalar(value: u128) -> Prime128OffsetA7F7 {
