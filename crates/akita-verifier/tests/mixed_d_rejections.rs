@@ -14,9 +14,9 @@ use akita_types::{
 #[test]
 fn role_dims_accept_either_b_d_order_below_a() {
     let dims = CommitmentRingDims {
-        inner: 128,
-        outer: 32,
-        opening: 64,
+        inner: 256,
+        outer: 64,
+        opening: 128,
     };
     validate_role_dims(dims).expect("D may be larger than B");
 }

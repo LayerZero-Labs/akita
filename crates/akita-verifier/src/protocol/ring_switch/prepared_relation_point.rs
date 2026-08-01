@@ -399,7 +399,7 @@ mod tests {
         let role_dims = CommitmentRingDims {
             inner: 256,
             outer: 128,
-            opening: 64,
+            opening: 128,
         };
         let geometry = RelationAddressGeometry::new_for_groups(
             role_dims,
