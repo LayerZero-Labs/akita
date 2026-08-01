@@ -254,16 +254,26 @@ The canonical order is:
 
 ```text
 [all chunk units Z | E | T]
+[relation quotient digits R, with compression rows last]
+[derived zero alignment padding]
 [F_1 digits for each relation group]
 [H_1 digits]
 [F_2 digits for each relation group]
 [H_2 digits]
-[relation quotient digits R]
+[derived zero suffix padding, when needed]
 ```
 
 Within one F layer, groups use the same order as the relation layout. The final
 group comes first. Precommitted groups follow in their canonical order. The H
 chain is shared by the level and appears once.
+
+Compression is the final physical witness tail because its native dimensions
+are smaller. The R block stays contiguous. Its existing A, B, and D quotient
+rows come first and its F and H quotient rows come last, immediately before the
+compression digit tail except for zero padding derived by `WitnessLayout`.
+The padding aligns the flat witness length to the unchanged A, B, and D common
+coefficient block. It is witness data, not serialized metadata. This avoids a
+small-dimension to large-dimension reset in the physical layout.
 
 Digits remain the innermost coordinate. The layout stores the complete padded
 ring rows for every map. `WitnessLayout` is the only authority for all F, H,
@@ -271,7 +281,8 @@ and R coefficient addresses.
 
 The negative binary support is the union of all F and H digit ranges. The
 support is represented as sorted intervals derived from `WitnessLayout`. It is
-not materialized as a witness sized bitmap.
+not materialized as a witness sized bitmap. Alignment padding is outside this
+support and is fixed to zero by witness construction.
 
 ## Relation Layout
 
@@ -315,6 +326,11 @@ field row and has no quotient.
 Every ring row gets one quotient row in the same order. The prover computes
 the quotient from the cyclic and negacyclic products. Compression setup caches
 must therefore contain both transforms before the relation path is active.
+
+F and H use an independent compact relation-address geometry. They never lower
+the common coefficient block used by the existing A, B, and D roles. The two
+address geometries share the same flat witness domain and are combined only at
+the semantic relation evaluation boundary.
 
 The right hand side contains zero for the B, D, first F, and first H rows. It
 contains `p_F` and `p_H` only on the terminal F and H rows. The evaluation row
@@ -423,7 +439,8 @@ This slice changes no proof bytes.
 
 1. Extend `WitnessLayout` with the layer major F and H spans.
 2. Extend `RelationRhsLayout` with F and H row families and native dimensions.
-3. Extend relation address generation and quotient row layout.
+3. Add an independent compact F/H address geometry and extend quotient row
+   layout without changing the A/B/D coefficient block.
 4. Add the support interval projection for all compression spans.
 5. Add pure layout tests for scalar, multi group, mixed dimension, and chunked
    witnesses.

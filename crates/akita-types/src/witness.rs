@@ -9,7 +9,10 @@ use std::ops::Range;
 
 use akita_field::AkitaError;
 
-use crate::{relation_rhs_layout_for, CommittedGroupParams, OpeningClaimsLayout};
+use crate::{
+    relation_rhs_layout_for, CommittedGroupParams, CompressionMapPlan, OpeningClaimsLayout,
+    COMPRESSION_MAP_COUNT,
+};
 
 /// One physical `[z_hat | e_hat | t_hat]` group-and-chunk unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,9 +30,27 @@ pub struct WitnessUnitLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WitnessLayout {
     units: Vec<WitnessUnitLayout>,
+    compression_layers: Vec<CompressionWitnessLayerLayout>,
+    compression_range: Range<usize>,
+    compression_alignment_ranges: Vec<Range<usize>>,
     r_rows: Vec<WitnessQuotientRowLayout>,
     r_range: Range<usize>,
     quotient_depth: usize,
+}
+
+/// One padded negative-binary digit span in the global witness tail.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompressionWitnessSpan {
+    map: CompressionMapPlan,
+    range: Range<usize>,
+}
+
+/// One layer-major family of F spans followed by the shared H span.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompressionWitnessLayerLayout {
+    map_index: usize,
+    f_spans: Vec<(usize, CompressionWitnessSpan)>,
+    h_span: CompressionWitnessSpan,
 }
 
 /// One native relation-quotient row in the shared R tail.
@@ -269,6 +290,53 @@ impl WitnessQuotientRowLayout {
     }
 }
 
+impl CompressionWitnessSpan {
+    /// Checked canonical map represented by this span.
+    #[must_use]
+    pub fn map(&self) -> CompressionMapPlan {
+        self.map
+    }
+
+    /// Complete padded coefficient range, with digit coordinates innermost.
+    #[must_use]
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
+    fn coefficient_index(&self, row: usize, coefficient: usize) -> Result<usize, AkitaError> {
+        if row >= self.map.input_width() || coefficient >= self.map.ring_dimension() {
+            return Err(AkitaError::InvalidInput(
+                "compression witness semantic index out of range".into(),
+            ));
+        }
+        let local = row
+            .checked_mul(self.map.ring_dimension())
+            .and_then(|base| base.checked_add(coefficient))
+            .ok_or_else(|| AkitaError::InvalidSetup("compression witness index overflow".into()))?;
+        checked_range_index(&self.range, local, "compression witness")
+    }
+}
+
+impl CompressionWitnessLayerLayout {
+    /// Zero-based compression map index.
+    #[must_use]
+    pub fn map_index(&self) -> usize {
+        self.map_index
+    }
+
+    /// Relation-ordered F spans, tagged by opening group index.
+    #[must_use]
+    pub fn f_spans(&self) -> &[(usize, CompressionWitnessSpan)] {
+        &self.f_spans
+    }
+
+    /// Shared H span for this layer.
+    #[must_use]
+    pub fn h_span(&self) -> &CompressionWitnessSpan {
+        &self.h_span
+    }
+}
+
 impl WitnessLayout {
     #[cfg(test)]
     pub(crate) fn new_for_test(
@@ -283,6 +351,9 @@ impl WitnessLayout {
         let r_end = r_rows.last().map_or(r_start, |row| row.range.end);
         Self {
             units,
+            compression_layers: Vec::new(),
+            compression_range: r_start..r_start,
+            compression_alignment_ranges: Vec::new(),
             r_rows,
             r_range: r_start..r_end,
             quotient_depth,
@@ -415,7 +486,8 @@ impl WitnessLayout {
                 });
             }
         }
-        let row_ring_dims = relation_rhs_layout_for(lp, opening_batch)?.row_ring_dims()?;
+        let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
+        let row_ring_dims = relation_layout.row_ring_dims()?;
         let r_start = cursor;
         let mut r_rows = Vec::with_capacity(row_ring_dims.len());
         for ring_dim in row_ring_dims {
@@ -426,10 +498,68 @@ impl WitnessLayout {
             cursor = range.end;
             r_rows.push(WitnessQuotientRowLayout { ring_dim, range });
         }
+        let r_range = r_start..cursor;
+        let relation_coefficient_block = relation_layout
+            .groups
+            .iter()
+            .map(|group| group.role_dims.common_relation_coeff_count())
+            .min()
+            .ok_or_else(|| AkitaError::InvalidSetup("relation groups are empty".into()))?;
+        let mut compression_alignment_ranges = Vec::with_capacity(2);
+        let aligned_compression_start = checked_align_up(
+            cursor,
+            relation_coefficient_block,
+            "compression witness alignment overflow",
+        )?;
+        if aligned_compression_start != cursor {
+            compression_alignment_ranges.push(cursor..aligned_compression_start);
+            cursor = aligned_compression_start;
+        }
+        let compression_start = cursor;
+        let mut compression_layers = Vec::with_capacity(COMPRESSION_MAP_COUNT);
+        for map_index in 0..COMPRESSION_MAP_COUNT {
+            let mut f_spans = Vec::with_capacity(num_groups);
+            for relation_group_index in 0..num_groups {
+                let (group_index, plan) =
+                    relation_layout.group_compression_plan(relation_group_index)?;
+                let map = plan.maps()[map_index];
+                let range =
+                    checked_range(cursor, map.padded_digit_count(), "witness F range overflow")?;
+                cursor = range.end;
+                f_spans.push((group_index, CompressionWitnessSpan { map, range }));
+            }
+            let h_map = relation_layout.opening_compression_plan()?.maps()[map_index];
+            let h_range = checked_range(
+                cursor,
+                h_map.padded_digit_count(),
+                "witness H range overflow",
+            )?;
+            cursor = h_range.end;
+            compression_layers.push(CompressionWitnessLayerLayout {
+                map_index,
+                f_spans,
+                h_span: CompressionWitnessSpan {
+                    map: h_map,
+                    range: h_range,
+                },
+            });
+        }
+        let compression_range = compression_start..cursor;
+        let aligned_witness_end = checked_align_up(
+            cursor,
+            relation_coefficient_block,
+            "compression witness suffix alignment overflow",
+        )?;
+        if aligned_witness_end != cursor {
+            compression_alignment_ranges.push(cursor..aligned_witness_end);
+        }
         Ok(Self {
             units,
+            compression_layers,
+            compression_range,
+            compression_alignment_ranges,
             r_rows,
-            r_range: r_start..cursor,
+            r_range,
             quotient_depth,
         })
     }
@@ -491,6 +621,61 @@ impl WitnessLayout {
         self.r_range.clone()
     }
 
+    /// Layer-major compression witness geometry.
+    #[must_use]
+    pub fn compression_layers(&self) -> &[CompressionWitnessLayerLayout] {
+        &self.compression_layers
+    }
+
+    /// Sorted support intervals for the negative-binary constraint.
+    #[must_use]
+    pub fn negative_binary_support_intervals(&self) -> Vec<Range<usize>> {
+        (!self.compression_range.is_empty())
+            .then(|| self.compression_range.clone())
+            .into_iter()
+            .collect()
+    }
+
+    /// Zero ranges used only to preserve the existing A/B/D coefficient block.
+    #[must_use]
+    pub fn compression_alignment_ranges(&self) -> &[Range<usize>] {
+        &self.compression_alignment_ranges
+    }
+
+    /// F digit coefficient address for one group and map.
+    pub fn f_compression_coefficient_index(
+        &self,
+        group_index: usize,
+        map_index: usize,
+        row: usize,
+        coefficient: usize,
+    ) -> Result<usize, AkitaError> {
+        let layer = self
+            .compression_layers
+            .get(map_index)
+            .ok_or_else(|| AkitaError::InvalidInput("compression map index is invalid".into()))?;
+        let span = layer
+            .f_spans
+            .iter()
+            .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
+            .ok_or_else(|| AkitaError::InvalidInput("compression group index is invalid".into()))?;
+        span.coefficient_index(row, coefficient)
+    }
+
+    /// Shared H digit coefficient address for one map.
+    pub fn h_compression_coefficient_index(
+        &self,
+        map_index: usize,
+        row: usize,
+        coefficient: usize,
+    ) -> Result<usize, AkitaError> {
+        self.compression_layers
+            .get(map_index)
+            .ok_or_else(|| AkitaError::InvalidInput("compression map index is invalid".into()))?
+            .h_span
+            .coefficient_index(row, coefficient)
+    }
+
     pub fn r_rows(&self) -> &[WitnessQuotientRowLayout] {
         &self.r_rows
     }
@@ -500,7 +685,11 @@ impl WitnessLayout {
     }
 
     pub fn live_coeff_len(&self) -> usize {
-        self.r_range.end
+        self.compression_alignment_ranges
+            .last()
+            .map_or(self.r_range.end.max(self.compression_range.end), |range| {
+                range.end
+            })
     }
 
     pub fn num_chunks_for_group(&self, group_index: usize) -> usize {
@@ -606,6 +795,21 @@ fn checked_range(start: usize, len: usize, context: &str) -> Result<Range<usize>
         .checked_add(len)
         .ok_or_else(|| AkitaError::InvalidSetup(context.into()))?;
     Ok(start..end)
+}
+
+fn checked_align_up(value: usize, alignment: usize, context: &str) -> Result<usize, AkitaError> {
+    if alignment == 0 || !alignment.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "witness alignment must be a nonzero power of two".into(),
+        ));
+    }
+    let remainder = value % alignment;
+    if remainder == 0 {
+        return Ok(value);
+    }
+    value
+        .checked_add(alignment - remainder)
+        .ok_or_else(|| AkitaError::InvalidSetup(context.into()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -994,7 +1198,39 @@ mod tests {
         assert_eq!(first.global_block_range(), 0..4);
         assert_eq!(second.global_block_range(), 4..7);
         assert_eq!(first.t_range().end, second.z_range().start);
+        let support = layout.negative_binary_support_intervals();
+        assert_eq!(support.len(), 1);
         assert_eq!(second.t_range().end, layout.r_range().start);
+        assert!(layout.r_range().end <= support[0].start);
+        assert!(support[0].end <= layout.live_coeff_len());
+        let expected_alignment = [
+            layout.r_range().end..support[0].start,
+            support[0].end..layout.live_coeff_len(),
+        ]
+        .into_iter()
+        .filter(|range| !range.is_empty())
+        .collect::<Vec<_>>();
+        assert_eq!(layout.compression_alignment_ranges(), expected_alignment);
+        assert_eq!(layout.compression_layers().len(), COMPRESSION_MAP_COUNT);
+        for (map_index, layer) in layout.compression_layers().iter().enumerate() {
+            assert_eq!(layer.map_index(), map_index);
+            assert_eq!(layer.f_spans().len(), 1);
+            let (group_index, span) = &layer.f_spans()[0];
+            assert_eq!(*group_index, 0);
+            assert_eq!(span.range().len(), span.map().padded_digit_count());
+            assert_eq!(
+                layout
+                    .f_compression_coefficient_index(0, map_index, 1, 2)
+                    .expect("F address"),
+                span.range().start + span.map().ring_dimension() + 2
+            );
+            assert_eq!(
+                layout
+                    .h_compression_coefficient_index(map_index, 1, 2)
+                    .expect("H address"),
+                layer.h_span().range().start + layer.h_span().map().ring_dimension() + 2
+            );
+        }
         assert_eq!(layout.group_num_live_blocks(0).expect("fold count"), 7);
     }
 

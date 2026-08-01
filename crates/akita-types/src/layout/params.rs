@@ -10,11 +10,27 @@ use akita_field::{AkitaError, CanonicalField};
 use crate::descriptor_bytes::{push_u32, push_usize};
 use crate::layout::ring_dims::CommitmentRingDims;
 use crate::opening_claims::OpeningClaimsLayout;
-use crate::proof::{RelationAddressGeometry, SetupPrefixSlotId};
+use crate::proof::{
+    CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
+    SetupPrefixSlotId,
+};
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
 };
+
+fn compression_relation_row_count(
+    num_commitments: usize,
+    base_rows: usize,
+) -> Result<usize, AkitaError> {
+    let compression_rows = num_commitments
+        .checked_add(1)
+        .and_then(|chains| chains.checked_mul(crate::COMPRESSION_MAP_COUNT))
+        .ok_or_else(CommittedGroupParams::relation_matrix_row_overflow)?;
+    base_rows
+        .checked_add(compression_rows)
+        .ok_or_else(CommittedGroupParams::relation_matrix_row_overflow)
+}
 
 pub(crate) fn recursive_opening_num_vars_for_geometry(
     d_a: usize,
@@ -644,6 +660,31 @@ impl CommittedGroupParams {
         )
     }
 
+    /// Resolve the independent compact address geometry for F/H rows.
+    pub fn compression_relation_address_geometry(
+        &self,
+        opening_batch: &OpeningClaimsLayout,
+        outgoing_witness_ring_dimension: usize,
+        live_witness_coeff_len: usize,
+    ) -> Result<CompressionRelationAddressGeometry, AkitaError> {
+        let compression_row_dims = crate::relation_rhs_layout_for(self, opening_batch)?
+            .row_families()?
+            .into_iter()
+            .filter_map(|row| {
+                matches!(
+                    row,
+                    RelationRowFamily::CompressionF { .. } | RelationRowFamily::CompressionH { .. }
+                )
+                .then_some(row.ring_dim())
+            })
+            .collect::<Vec<_>>();
+        CompressionRelationAddressGeometry::new(
+            &compression_row_dims,
+            outgoing_witness_ring_dimension,
+            live_witness_coeff_len,
+        )
+    }
+
     /// Sent commitment row count for one opening group.
     pub fn group_commitment_rows(
         &self,
@@ -701,8 +742,10 @@ impl CommittedGroupParams {
                 .checked_add(group.layout.outer_commit_matrix.output_rank())
                 .ok_or_else(Self::relation_matrix_row_overflow)?;
         }
-        rows.checked_add(self.open_commit_matrix.output_rank())
-            .ok_or_else(Self::relation_matrix_row_overflow)
+        let base = rows
+            .checked_add(self.open_commit_matrix.output_rank())
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        compression_relation_row_count(num_commitments, base)
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
@@ -873,9 +916,10 @@ impl CommittedGroupParams {
         let after_commitment = after_a
             .checked_add(commitment_rows)
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        after_commitment
+        let base = after_commitment
             .checked_add(self.open_commit_matrix.output_rank())
-            .ok_or_else(Self::relation_matrix_row_overflow)
+            .ok_or_else(Self::relation_matrix_row_overflow)?;
+        compression_relation_row_count(num_commitments, base)
     }
 
     /// Logical row index of the shared EvaluationTrace row (last padded row).

@@ -110,12 +110,13 @@ pub use proof::{
     AkitaBatchedProof, AkitaBatchedProofShape, AkitaCommitment, AkitaCommitmentHint,
     AkitaExpandedSetup, AkitaSetupSeed, AkitaStage1Proof, AkitaStage1StageProof,
     AkitaStage1StageShape, AkitaStage2Proof, AkitaVerifierSetup, Commitment, CommitmentVerifier,
-    CommittedGroup, DigitBlockIter, DigitBlocks, DummyProof, ExtensionOpeningReductionProof,
-    ExtensionOpeningReductionShape, FoldLevelProof, GroupBatchStatement, LevelProofShape,
-    NextWitnessBinding, NextWitnessBindingShape, OpeningClaims, OpeningClaimsLayout, OpeningPoints,
-    PolynomialGroupClaims, PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows,
-    PublicMatrixDerivation, PublicMatrixId, RelationAddressGeometry, RelationGroupRows,
-    RelationRangeImageGroupPlan, RelationRangeImagePlan, RelationRhsLayout, RingCommitment,
+    CommittedGroup, CompressionRelationAddressGeometry, DigitBlockIter, DigitBlocks, DummyProof,
+    ExtensionOpeningReductionProof, ExtensionOpeningReductionShape, FoldLevelProof,
+    GroupBatchStatement, LevelProofShape, NextWitnessBinding, NextWitnessBindingShape,
+    OpeningClaims, OpeningClaimsLayout, OpeningPoints, PolynomialGroupClaims,
+    PolynomialGroupLayout, PreparedOpeningPoint, ProverCommitmentRows, PublicMatrixDerivation,
+    PublicMatrixId, RelationAddressGeometry, RelationGroupRows, RelationRangeImageGroupPlan,
+    RelationRangeImagePlan, RelationRhsLayout, RelationRowFamily, RingCommitment,
     RingMultiplierOpeningPoint, RingRelationInstance, RingRelationOpeningCounts,
     RingRelationSegmentLengths, RingVec, RingView, SetupMatrixCapacity, SetupPrefixProverRegistry,
     SetupPrefixPublicCommitment, SetupPrefixSlot, SetupPrefixSlotId, SetupPrefixVerifierRegistry,
@@ -164,6 +165,6 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout,
-    WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    ChunkedWitnessCfg, CompressionWitnessLayerLayout, CompressionWitnessSpan, MultiChunkProfileId,
+    WitnessLayout, WitnessQuotientRowLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };
