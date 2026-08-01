@@ -83,6 +83,7 @@ pub struct GeneratedSetupPrefixInput {
 pub struct GeneratedRecursiveFold {
     pub payload_mode: akita_types::CommitmentPayloadMode,
     pub witness: GeneratedCommittedGroup,
+    pub unchecked_l2_collision_sq: Option<u128>,
     pub num_digits_fold: u32,
     pub open_commit_matrix: GeneratedOpenCommitMatrix,
     pub incoming_setup_prefix: Option<GeneratedSetupPrefixInput>,

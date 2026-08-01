@@ -159,6 +159,11 @@ fn generated_entry(
         .map(|step| GeneratedRecursiveFold {
             payload_mode: step.params.witness.payload_mode,
             witness: committed_group(&step.params.witness),
+            unchecked_l2_collision_sq: step
+                .params
+                .witness
+                .inner_commit_matrix
+                .unchecked_l2_collision_sq(),
             num_digits_fold: step.params.witness.num_digits_fold as u32,
             open_commit_matrix: open_matrix_params(
                 &step.params.open_commit_matrix,
@@ -418,9 +423,10 @@ fn emit_schedule_entry(
         for fold in entry.recursive_folds {
             writeln!(
                 out,
-                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
+                "            GeneratedRecursiveFold {{ payload_mode: {}, witness: {}, unchecked_l2_collision_sq: {:?}, num_digits_fold: {}, open_commit_matrix: {}, incoming_setup_prefix: {}, witness_partition: {} }},",
                 emit_payload_mode(fold.payload_mode),
                 emit_committed_group(fold.witness),
+                fold.unchecked_l2_collision_sq,
                 fold.num_digits_fold,
                 emit_open_matrix(fold.open_commit_matrix),
                 emit_setup_prefix(fold.incoming_setup_prefix),

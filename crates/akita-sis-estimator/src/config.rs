@@ -216,12 +216,17 @@ impl EstimateConfig {
         }
     }
 
-    /// Akita Euclidean table generation profile: BDGL16 with the Euclidean
-    /// SIS lattice path used by the shipped 128-bit L2 table.
+    /// Akita Euclidean table generation profile: ADPS16 quantum at 128 bits.
+    ///
+    /// The Euclidean SIS geometry determines the required BKZ block size. The
+    /// security cost of that reduction is priced with the same ADPS16 quantum
+    /// model as the production coefficient-L∞ table.
     #[must_use]
     pub fn akita_euclidean_table() -> Self {
         Self {
-            red_cost_model: ReductionCostModel::Bdgl16,
+            red_cost_model: ReductionCostModel::Adps16 {
+                mode: Adps16Mode::Quantum,
+            },
             ..Self::default()
         }
     }

@@ -40,6 +40,39 @@ fn balanced_chunk_geometry_prices_exact_work_and_residual_imbalance() {
 }
 
 #[test]
+fn unchecked_l2_candidate_cannot_terminate_directly() {
+    let mut params = CommittedGroupParams::params_only(
+        akita_types::SisModulusProfileId::Q128OffsetA7F7,
+        64,
+        4,
+        2,
+        2,
+        2,
+        SparseChallengeConfig::pm1_only(3),
+    );
+    params.inner_commit_matrix =
+        InnerCommitMatrixParams::try_new_with_unchecked_l2_diagnostic_min_rank(
+            params.inner_commit_matrix.sis_table_key(),
+            1,
+            1u128 << 50,
+        )
+        .expect("diagnostic A matrix");
+
+    let error = suffix_dp::terminal_direct_suffix_cost(
+        1,
+        &params,
+        128,
+        PolynomialGroupLayout::singleton(1),
+        3,
+        None,
+    )
+    .expect_err("the unchecked claim has no terminal proof payload");
+    assert!(error
+        .to_string()
+        .contains("requires a recursive fold proof"));
+}
+
+#[test]
 fn ring_dimension_domain_is_canonical_and_rejects_invalid_carriers() {
     let domain = RingDimensionSearchDomain::new([
         CommitmentRingDims {
@@ -516,7 +549,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        90_312
+        89_064
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -721,7 +754,7 @@ fn exact_payload_ties_prefer_the_smaller_setup_envelope() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        91_016
+        89_064
     );
 }
 
@@ -770,6 +803,6 @@ fn recursive_exact_cutover_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        94_680
+        93_432
     );
 }

@@ -25,8 +25,8 @@ use akita_sumcheck::SumcheckInstanceVerifierExt;
 use akita_transcript::labels::{
     ABSORB_COMMITMENT, ABSORB_EVALUATION_CLAIMS, ABSORB_NEXT_LEVEL_WITNESS_BINDING,
     ABSORB_RANGE_IMAGE_EVALUATION, ABSORB_STAGE2_NEXT_W_EVAL, ABSORB_TERMINAL_E_HAT,
-    ABSORB_TERMINAL_W_REMAINDER, CHALLENGE_COMPRESSION_BINARY, CHALLENGE_SUMCHECK_BATCH,
-    CHALLENGE_SUMCHECK_ROUND,
+    ABSORB_TERMINAL_W_REMAINDER, ABSORB_UNCHECKED_L2_DIAGNOSTIC, CHALLENGE_COMPRESSION_BINARY,
+    CHALLENGE_SUMCHECK_BATCH, CHALLENGE_SUMCHECK_ROUND,
 };
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
@@ -42,6 +42,7 @@ use akita_types::{
     FpExtEncoding, OpeningClaims, OpeningClaimsLayout, PolynomialGroupClaims, PreparedOpeningPoint,
     RecursiveFoldParams, RingRelationInstance, RingVec, SetupContributionMode, SetupSumcheckProof,
     TerminalFoldParams, TerminalLevelProof, TerminalResponse, TerminalWitnessTranscriptParts,
+    UncheckedL2NormDiagnostic,
 };
 use akita_types::{
     tensor_opening_split, tensor_reduction_claim_from_rows, tensor_row_partials_from_columns,

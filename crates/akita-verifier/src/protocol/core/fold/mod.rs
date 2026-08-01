@@ -51,6 +51,7 @@ pub(in crate::protocol::core) enum PreparedNextWitness<'a, F: FieldCore> {
 
 pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: FieldCore> {
     Recursive {
+        unchecked_l2_diagnostic: Option<&'a UncheckedL2NormDiagnostic<E>>,
         stage1: &'a AkitaStage1Proof<E>,
         stage2: &'a AkitaStage2Proof<F, E>,
         next_witness: PreparedNextWitness<'a, F>,
@@ -377,24 +378,33 @@ where
         }
         (relation_rhs_layout, relation_instance)
     };
-    let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =
-        match prepared.payload {
-            PreparedFoldPayload::Recursive {
-                stage1,
-                stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len,
-                stage3,
-            } => (
-                stage1,
-                stage2,
-                next_witness,
-                next_witness_ring_dim,
-                next_opening_source_len,
-                stage3,
-            ),
-        };
+    let (
+        unchecked_l2_diagnostic,
+        stage1,
+        stage2,
+        next_witness,
+        next_witness_ring_dim,
+        next_opening_source_len,
+        stage3,
+    ) = match prepared.payload {
+        PreparedFoldPayload::Recursive {
+            unchecked_l2_diagnostic,
+            stage1,
+            stage2,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len,
+            stage3,
+        } => (
+            unchecked_l2_diagnostic,
+            stage1,
+            stage2,
+            next_witness,
+            next_witness_ring_dim,
+            next_opening_source_len,
+            stage3,
+        ),
+    };
     let ring_switch_replay = RingSwitchReplay {
         setup: &setup.expanded,
         relation: &relation_instance,
@@ -425,6 +435,26 @@ where
         .map_err(|error| {
             AkitaError::InvalidInput(format!("compressed ring-switch replay failed: {error:?}"))
         })?;
+    match (
+        prepared.lp.inner_commit_matrix.unchecked_l2_collision_sq(),
+        unchecked_l2_diagnostic,
+    ) {
+        (Some(_), Some(diagnostic)) => {
+            let expected = rs.relation_address_geometry.relation_point_variable_count();
+            if diagnostic.leaf_round_coefficients.len() != expected {
+                return Err(AkitaError::InvalidProof);
+            }
+            // UNSOUND DIAGNOSTIC: transcript-bind the claim and simulated
+            // final-stage coefficients, but intentionally perform no norm or
+            // sumcheck verification in this rollout.
+            transcript.append_serde(ABSORB_UNCHECKED_L2_DIAGNOSTIC, &diagnostic.norm_squared);
+            for coefficient in &diagnostic.leaf_round_coefficients {
+                transcript.append_serde(ABSORB_UNCHECKED_L2_DIAGNOSTIC, coefficient);
+            }
+        }
+        (None, None) => {}
+        _ => return Err(AkitaError::InvalidProof),
+    }
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,

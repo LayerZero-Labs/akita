@@ -575,24 +575,13 @@ mod sis_schedule_width_audit {
         {
             let d = u32::try_from(lp.d_a()).expect("ring dimension fits in u32");
 
-            let a_rank = min_secure_rank(
-                lp.inner_commit_matrix.sis_table_key(),
-                u64::try_from(lp.inner_width()).expect("inner width should fit in u64"),
-            )
-            .unwrap_or_else(|| {
+            lp.inner_commit_matrix.validate().unwrap_or_else(|error| {
                 panic!(
-                    "missing audited A-row SIS width for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}",
+                    "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}: {error}",
                     lp.log_basis_inner,
-                    lp.inner_width()
+                    lp.inner_width(),
                 )
             });
-            assert!(
-                a_rank <= lp.inner_commit_matrix.output_rank(),
-                "A-row SIS audit failed for D={d}, num_vars={num_vars}, level={level_idx}, lb={}, width={}, required_rank={a_rank}, actual_rank={}",
-                lp.log_basis_inner,
-                lp.inner_width(),
-                lp.inner_commit_matrix.output_rank(),
-            );
 
             let b_rank = min_secure_rank(
                 lp.outer_commit_matrix.sis_table_key(),

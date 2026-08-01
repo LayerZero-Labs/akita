@@ -224,13 +224,16 @@ regenerating the SIS-floor security tables and one deferred follow-up:
   `collision_A = 2·ω̄·β̄·ν` reaches ~10^6 for the densest high-`ω` levels —
   far above the old maximum tabulated collision bucket (`2047`). The
   `akita_types::sis_floor` tables were regenerated with
-  `scripts/gen_sis_table.py` (lattice-estimator, BDGL16 + lgsa) for **all
+  `scripts/gen_sis_table.py` for **all
   families and dimensions (D = 32/64/128/256), ranks 1..=20, and collision
   buckets `2 … 1_048_575` (`2^k − 1` up to `2^20 − 1`)**. The estimator's
   `sis_lattice.cost_euclidean` trivial-easy bound is evaluated in log-space to
   avoid a float overflow at high rank / large `q` (an exact reformulation of
   its `min(term1, term2)`); all pre-existing table values are reproduced
   bit-for-bit.
+  This sentence records the historical 2026-06-02 regeneration. The current
+  L2 diagnostic uses the 128 bit quantum ADPS16 model and a whole-vector
+  squared norm key.
 - **Q16 dense presets ship cleartext-only.** The 16-bit modulus cannot
   securely commit the dense fold-witness widths at the corrected collision
   norms (the SIS-secure widths it admits are too small), so `fp16::*Full`

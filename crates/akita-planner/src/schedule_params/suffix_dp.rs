@@ -91,6 +91,15 @@ pub(crate) fn terminal_direct_suffix_cost(
     terminal_fold_level: usize,
     opening_layout: Option<&OpeningClaimsLayout>,
 ) -> Result<(CandidateTerminalResponse, usize), AkitaError> {
+    if terminal_lp
+        .inner_commit_matrix
+        .unchecked_l2_collision_sq()
+        .is_some()
+    {
+        return Err(AkitaError::InvalidSetup(
+            "unchecked L2 diagnostic requires a recursive fold proof".to_string(),
+        ));
+    }
     // Scalar same-point root fold: polynomial count at the root, 1 recursively.
     let num_polynomials = if terminal_fold_level == 0 {
         key.num_polynomials()

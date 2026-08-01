@@ -84,6 +84,7 @@ fn level_shape_validation_checks_extension_opening_reduction() {
             1,
         )),
         opening_payload_coeffs: 1,
+        unchecked_l2_diagnostic_coefficients: None,
         stage1_stages: Vec::new(),
         stage2_sumcheck_proof: Vec::new(),
         stage3_sumcheck: None,
@@ -113,6 +114,7 @@ fn level_shape_deserialization_rejects_vector_length_before_allocation() {
     let mut bytes = Vec::new();
     false.serialize_compressed(&mut bytes).unwrap(); // extension_opening_reduction
     0usize.serialize_compressed(&mut bytes).unwrap(); // opening_payload_coeffs
+    false.serialize_compressed(&mut bytes).unwrap(); // unchecked_l2_diagnostic
     (MAX_PROOF_SHAPE_SEQUENCE_LEN as u64 + 1)
         .serialize_compressed(&mut bytes)
         .unwrap(); // stage1_stages
@@ -185,6 +187,7 @@ fn extension_opening_reduction_none_is_zero_proof_wire_bytes() {
         extension_opening_reduction: Some(tiny_reduction()),
         opening_payload: RingVec::from_ring_elems(&[CyclotomicRing::<F, D>::zero()]).into_compact(),
         fold_grind_nonce: 0,
+        unchecked_l2_norm_diagnostic: None,
         stage1: tiny_stage1(),
         stage2: AkitaStage2Proof {
             sumcheck_proof: SumcheckProof {

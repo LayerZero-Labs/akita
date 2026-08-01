@@ -288,6 +288,7 @@ impl GeneratedCommittedGroup {
         num_claims: usize,
         open_commit_matrix: GeneratedOpenCommitMatrix,
         setup_prefix_group: Option<GeneratedSetupPrefixInput>,
+        unchecked_l2_collision_sq: Option<u128>,
     ) -> Result<CommittedGroupParams, AkitaError> {
         let dimensions = CommitmentRingDims {
             inner: self.inner_commit_matrix.ring_dimension as usize,
@@ -401,16 +402,23 @@ impl GeneratedCommittedGroup {
             policy.ring_subfield_norm_bound,
         )
         .ok_or_else(|| no_layout("A"))?;
-        let n_a = secure_rank(
-            "a",
-            sis_key(
-                policy,
-                akita_types::SisMatrixRole::Inner,
-                ring_d as u32,
-                a_bucket,
-            ),
-            inner_width,
-        )?;
+        let inner_key = sis_key(
+            policy,
+            akita_types::SisMatrixRole::Inner,
+            ring_d as u32,
+            a_bucket,
+        );
+        let inner_commit_matrix = match unchecked_l2_collision_sq {
+            Some(collision_l2_sq) => {
+                InnerCommitMatrixParams::try_new_with_unchecked_l2_diagnostic_min_rank(
+                    inner_key,
+                    inner_width,
+                    collision_l2_sq,
+                )?
+            }
+            None => InnerCommitMatrixParams::try_new_with_min_rank(inner_key, inner_width)?,
+        };
+        let n_a = inner_commit_matrix.output_rank();
 
         let b_bucket = rounded_up_collision_inf_norm(
             sis_policy,
@@ -507,15 +515,7 @@ impl GeneratedCommittedGroup {
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::try_new(
-                sis_policy,
-                policy.sis_table_digest,
-                sis_modulus_profile,
-                n_a,
-                inner_width,
-                a_bucket,
-                ring_d,
-            )?,
+            inner_commit_matrix,
             outer_commit_matrix: OuterCommitMatrixParams::try_new(
                 sis_policy,
                 policy.sis_table_digest,

@@ -255,6 +255,7 @@ where
     lp.validate_opening_batch(opening_batch)?;
     let order = opening_batch.root_group_order()?;
     let mut owned = Vec::with_capacity(groups.len());
+    let mut exact_fold_l2_squared_norm = 0u128;
     for (group_index, group) in groups.into_iter().enumerate() {
         let group_lp = lp.group_params(opening_batch, group_index)?;
         let group_dims = lp.group_role_dims(opening_batch, group_index)?;
@@ -283,6 +284,14 @@ where
             hint,
             ..
         } = group;
+        for coefficient in z_folded_centered_per_chunk.iter().flatten().flatten() {
+            let magnitude = u128::from(coefficient.unsigned_abs());
+            exact_fold_l2_squared_norm = exact_fold_l2_squared_norm
+                .checked_add(magnitude.checked_mul(magnitude).ok_or_else(|| {
+                    AkitaError::InvalidInput("folded-witness L2 square overflow".into())
+                })?)
+                .ok_or_else(|| AkitaError::InvalidInput("folded-witness L2 sum overflow".into()))?;
+        }
         if hint.ring_dim() != group_dims.d_a() {
             return Err(AkitaError::InvalidSize {
                 expected: group_dims.d_a(),
@@ -446,7 +455,12 @@ where
             ]
         })
         .fold(lp.log_basis_open, u32::max);
-    RecursiveWitnessFlat::from_witness_layout(out, &witness_layout, known_balanced_log_basis)
+    RecursiveWitnessFlat::from_witness_layout(
+        out,
+        &witness_layout,
+        known_balanced_log_basis,
+        exact_fold_l2_squared_norm,
+    )
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(

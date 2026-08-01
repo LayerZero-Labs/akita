@@ -325,7 +325,20 @@ fn first_jointly_accepted_nonce<T>(
     max_grind_attempts: u32,
     mut probe: impl FnMut(u32) -> Result<Option<T>, AkitaError>,
 ) -> Result<(u32, T), AkitaError> {
-    for nonce in 0..max_grind_attempts {
+    if max_grind_attempts == 0 {
+        return Err(AkitaError::InvalidInput(
+            "fold grind requires at least one attempt".into(),
+        ));
+    }
+    // Diagnostic-only profile lever: vary every level's fold challenges while
+    // keeping the polynomial, opening point, and prefix work fixed. Production
+    // behavior is unchanged when the environment variable is absent.
+    let first_nonce = std::env::var("AKITA_L2_DIAGNOSTIC_GRIND_START")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .map_or(0, |value| value % max_grind_attempts);
+    for offset in 0..max_grind_attempts {
+        let nonce = first_nonce.wrapping_add(offset) % max_grind_attempts;
         if let Some(value) = probe(nonce)? {
             return Ok((nonce, value));
         }

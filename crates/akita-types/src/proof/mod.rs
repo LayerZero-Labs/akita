@@ -61,7 +61,7 @@ pub use hints::AkitaCommitmentHint;
 pub use levels::{
     AkitaBatchedProof, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
     ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, SetupSumcheckProof,
-    TerminalLevelProof,
+    TerminalLevelProof, UncheckedL2NormDiagnostic,
 };
 pub use relation::{
     assemble_compressed_relation_rhs, assemble_relation_rhs,

@@ -37,6 +37,8 @@ pub const ABSORB_SUMCHECK_ROUND: &[u8] = b"ak/a/scr";
 pub const CHALLENGE_SUMCHECK_ROUND: &[u8] = b"ak/c/scr";
 /// Absorb the stage-1 final `range_image_evaluation` before the batching challenge.
 pub const ABSORB_RANGE_IMAGE_EVALUATION: &[u8] = b"ak/a/scs";
+/// Absorb the deliberately unchecked late-fold L2 planning diagnostic.
+pub const ABSORB_UNCHECKED_L2_DIAGNOSTIC: &[u8] = b"ak/a/l2d";
 /// Absorb the stage-2 next-witness evaluation handoff before recursion continues.
 pub const ABSORB_STAGE2_NEXT_W_EVAL: &[u8] = b"ak/a/s2w";
 /// Absorb stage-1 inter-stage claims before batching them into the next stage.
@@ -119,6 +121,7 @@ pub const ALL_LABELS: &[&[u8]] = &[
     ABSORB_SUMCHECK_ROUND,
     CHALLENGE_SUMCHECK_ROUND,
     ABSORB_RANGE_IMAGE_EVALUATION,
+    ABSORB_UNCHECKED_L2_DIAGNOSTIC,
     ABSORB_STAGE2_NEXT_W_EVAL,
     ABSORB_SUMCHECK_INTERSTAGE_CLAIM,
     CHALLENGE_SUMCHECK_BATCH,

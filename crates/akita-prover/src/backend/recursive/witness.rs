@@ -32,6 +32,7 @@ pub struct RecursiveWitnessFlat {
     commitment_digits: Option<Arc<[i8]>>,
     commitment_ring_dim: Option<usize>,
     known_balanced_log_basis: Option<u32>,
+    exact_fold_l2_squared_norm: Option<u128>,
 }
 
 impl RecursiveWitnessFlat {
@@ -41,6 +42,7 @@ impl RecursiveWitnessFlat {
             commitment_digits: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: None,
+            exact_fold_l2_squared_norm: None,
         }
     }
 
@@ -48,6 +50,7 @@ impl RecursiveWitnessFlat {
         digits: Vec<i8>,
         layout: &WitnessLayout,
         log_basis: u32,
+        exact_fold_l2_squared_norm: u128,
     ) -> Result<Self, AkitaError> {
         let expected = layout.live_coeff_len();
         if digits.len() != expected {
@@ -61,6 +64,7 @@ impl RecursiveWitnessFlat {
             commitment_digits: None,
             commitment_ring_dim: None,
             known_balanced_log_basis: Some(log_basis),
+            exact_fold_l2_squared_norm: Some(exact_fold_l2_squared_norm),
         })
     }
 
@@ -97,6 +101,12 @@ impl RecursiveWitnessFlat {
 
     pub fn live_coeff_len(&self) -> usize {
         self.digits.len()
+    }
+
+    /// Exact squared L2 norm of the undecomposed folded witness `z`, when this
+    /// witness came directly from a ring-switch fold.
+    pub fn exact_fold_l2_squared_norm(&self) -> Option<u128> {
+        self.exact_fold_l2_squared_norm
     }
 
     pub(crate) fn committed_coeff_len(&self) -> Result<usize, AkitaError> {

@@ -74,6 +74,7 @@ struct FoldReplayPayload<'a, F: FieldCore, E: FieldCore> {
 enum FoldReplayKind<'a, F: FieldCore, E: FieldCore> {
     Recursive {
         v: &'a RingVec<F>,
+        unchecked_l2_diagnostic: Option<&'a UncheckedL2NormDiagnostic<E>>,
         stage1: &'a AkitaStage1Proof<E>,
         stage2: &'a AkitaStage2Proof<F, E>,
         next_witness: PreparedNextWitness<'a, F>,
@@ -172,6 +173,7 @@ where
                 fold_grind_nonce: fold.fold_grind_nonce,
                 kind: FoldReplayKind::Recursive {
                     v: &fold.opening_payload,
+                    unchecked_l2_diagnostic: fold.unchecked_l2_norm_diagnostic.as_ref(),
                     stage1: &fold.stage1,
                     stage2: &fold.stage2,
                     next_witness,
@@ -476,6 +478,7 @@ where
     let (opening_payload, payload) = match proof.kind {
         FoldReplayKind::Recursive {
             v,
+            unchecked_l2_diagnostic,
             stage1,
             stage2,
             next_witness,
@@ -490,6 +493,7 @@ where
             (
                 v.clone(),
                 PreparedFoldPayload::Recursive {
+                    unchecked_l2_diagnostic,
                     stage1,
                     stage2,
                     next_witness,

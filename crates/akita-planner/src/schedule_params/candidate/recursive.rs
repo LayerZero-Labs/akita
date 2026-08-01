@@ -75,17 +75,41 @@ pub(crate) fn recursive_fold_level_params_candidate(
     ) else {
         return Ok(None);
     };
-    let Ok(inner_commit_matrix) = InnerCommitMatrixParams::try_new_with_min_rank(
-        sis_key_at_dimension(
-            policy,
-            akita_types::SisMatrixRole::Inner,
-            dimensions.d_a(),
-            norm_s,
-        ),
-        width_s,
-    ) else {
+    let inner_key = sis_key_at_dimension(
+        policy,
+        akita_types::SisMatrixRole::Inner,
+        dimensions.d_a(),
+        norm_s,
+    );
+    let Ok(mut inner_commit_matrix) =
+        InnerCommitMatrixParams::try_new_with_min_rank(inner_key, width_s)
+    else {
         return Ok(None);
     };
+    // UNSOUND DIAGNOSTIC: late, single-chunk folds may price A against a fixed
+    // whole-witness L2 cap. The proof carries the observed norm but the
+    // verifier intentionally does not check it yet. Retain the L∞ candidate
+    // whenever it is at least as good.
+    if fold_level >= 3 && num_chunks == 1 {
+        let challenge = FoldChallengeNorms::new(ring_challenge_cfg, fold_challenge_shape);
+        if let Some(collision_l2_sq) = role_a_collision_l2_sq_for_response_bound(
+            challenge.l1_norm,
+            policy.ring_subfield_norm_bound,
+            UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
+        ) {
+            if let Ok(l2_matrix) =
+                InnerCommitMatrixParams::try_new_with_unchecked_l2_diagnostic_min_rank(
+                    inner_key,
+                    width_s,
+                    collision_l2_sq,
+                )
+            {
+                if l2_matrix.output_rank() < inner_commit_matrix.output_rank() {
+                    inner_commit_matrix = l2_matrix;
+                }
+            }
+        }
+    }
     let Some(native_width_t) = decomposed_t_ring_count(
         inner_commit_matrix.output_rank(),
         delta_open,

@@ -435,6 +435,27 @@ where
         prepared_fold.instance.opening_batch(),
     )?;
 
+    let unchecked_l2_norm_diagnostic =
+        if lp.inner_commit_matrix.unchecked_l2_collision_sq().is_some() {
+            let norm_squared = logical_w
+                .exact_fold_l2_squared_norm()
+                .ok_or_else(|| AkitaError::InvalidInput("missing folded-witness L2 norm".into()))?;
+            let leaf_round_coefficients =
+                vec![E::zero(); rs.relation_address_geometry.relation_point_variable_count()];
+            // UNSOUND DIAGNOSTIC: bind the claimed norm and the wire-cost
+            // placeholders, but do not prove the norm relation in this rollout.
+            transcript.append_serde(ABSORB_UNCHECKED_L2_DIAGNOSTIC, &norm_squared);
+            for coefficient in &leaf_round_coefficients {
+                transcript.append_serde(ABSORB_UNCHECKED_L2_DIAGNOSTIC, coefficient);
+            }
+            Some(akita_types::UncheckedL2NormDiagnostic {
+                norm_squared,
+                leaf_round_coefficients,
+            })
+        } else {
+            None
+        };
+
     let relation_rhs_layout = relation_rhs_layout_for(lp, prepared_fold.instance.opening_batch())?;
     let relation_claim = relation_claim_from_compressed_rhs_extension::<F, E>(
         &relation_rhs_layout,
@@ -562,6 +583,7 @@ where
         extension_opening_reduction: prepared_fold.extension_opening_reduction,
         opening_payload: prepared_fold.opening_payload.into_compact(),
         fold_grind_nonce,
+        unchecked_l2_norm_diagnostic,
         stage1: stage1_proof,
         stage2: AkitaStage2Proof {
             sumcheck_proof: stage2_sumcheck_proof,

@@ -101,8 +101,13 @@ pub fn level_proof_bytes(
     let next_eval_bytes = challenge_elem_bytes;
     let b = 1usize << lp.log_basis_open;
     let stage1_bytes = stage1_proof_bytes(rounds, b, challenge_elem_bytes);
+    let unchecked_l2_diagnostic_bytes = lp
+        .inner_commit_matrix
+        .unchecked_l2_collision_sq()
+        .map_or(0, |_| 16 + rounds * challenge_elem_bytes);
     Ok(v_bytes
         + FOLD_GRIND_NONCE_BYTES
+        + unchecked_l2_diagnostic_bytes
         + stage1_bytes
         + sumcheck
         + next_commit_bytes
@@ -174,7 +179,7 @@ mod tests {
     use crate::{
         terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
         FoldLevelProof, RingVec, SetupSumcheckProof, SisModulusProfileId, TerminalLevelProof,
-        TerminalResponse, TerminalResponseShape, SETUP_SUMCHECK_DEGREE,
+        TerminalResponse, TerminalResponseShape, UncheckedL2NormDiagnostic, SETUP_SUMCHECK_DEGREE,
     };
 
     type F = Prime128OffsetA7F7;
@@ -288,6 +293,12 @@ mod tests {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
             fold_grind_nonce: 0,
+            unchecked_l2_norm_diagnostic: lp.inner_commit_matrix.unchecked_l2_collision_sq().map(
+                |_| UncheckedL2NormDiagnostic {
+                    norm_squared: 123,
+                    leaf_round_coefficients: vec![F::zero(); rounds],
+                },
+            ),
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -358,6 +369,58 @@ mod tests {
                 "planned level bytes should match the serialized non-offloaded body at log_basis={log_basis}"
             );
         }
+    }
+
+    #[test]
+    fn planned_l2_probe_bytes_match_the_headerless_wire() {
+        const D: usize = 64;
+        let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
+        let mut lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            4,
+            2,
+            2,
+            2,
+            fold_challenge_config,
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .unwrap();
+        lp.inner_commit_matrix =
+            crate::InnerCommitMatrixParams::try_new_with_unchecked_l2_diagnostic_min_rank(
+                lp.inner_commit_matrix.sis_table_key(),
+                lp.inner_commit_matrix.input_width(),
+                1u128 << 50,
+            )
+            .expect("diagnostic A matrix");
+        let next_lp = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            D,
+            2,
+            2,
+            3,
+            2,
+            fold_challenge_config,
+        );
+        let output_witness_len = D * 8;
+        let planned = level_proof_bytes(
+            128,
+            128,
+            &lp,
+            Some(&next_lp),
+            output_witness_len,
+            Some(crate::NextWitnessBindingPolicy::OuterPayload),
+        )
+        .unwrap();
+        let serialized = exact_level_proof_bytes::<F>(
+            &lp,
+            &next_lp,
+            output_witness_len,
+            None,
+            crate::NextWitnessBindingPolicy::OuterPayload,
+        )
+        .unwrap();
+        assert_eq!(planned, serialized);
     }
 
     #[test]

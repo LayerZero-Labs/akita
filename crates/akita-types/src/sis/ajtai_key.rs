@@ -423,6 +423,41 @@ pub fn min_secure_rank(key: SisTableKey, width: u64) -> Option<usize> {
     None
 }
 
+/// Round a complete scalar collision-vector squared L2 norm to the generated
+/// ADPS16 quantum table ladder.
+#[must_use]
+pub fn ceil_supported_l2_collision_sq(collision_l2_sq: u128) -> Option<u128> {
+    if collision_l2_sq == 0 {
+        return None;
+    }
+    let bucket = collision_l2_sq.checked_next_power_of_two()?;
+    (bucket <= (1u128 << 84)).then_some(bucket.max(2))
+}
+
+/// Minimum module rank under the generated 128-bit quantum ADPS16 L2 model.
+///
+/// `collision_l2_sq` is the squared norm of the complete scalar collision
+/// vector. It is not a per-ring-row bound.
+#[must_use]
+pub fn min_secure_l2_rank(
+    policy: SisSecurityPolicyId,
+    modulus_profile: SisModulusProfileId,
+    ring_dimension: u32,
+    collision_l2_sq: u128,
+    width: u64,
+) -> Option<usize> {
+    if policy != DEFAULT_SIS_SECURITY_POLICY || width == 0 {
+        return None;
+    }
+    let bucket = ceil_supported_l2_collision_sq(collision_l2_sq)?;
+    let widths =
+        super::generated_l2_sis_table::sis_max_widths(modulus_profile, ring_dimension, bucket)?;
+    widths
+        .iter()
+        .position(|&max_width| width <= max_width)
+        .map(|index| index + 1)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct AuditedCommitMatrixFields {
     output_rank: usize,
@@ -531,6 +566,7 @@ macro_rules! define_commit_matrix_params {
             pub(crate) output_rank: usize,
             pub(crate) input_width: usize,
             pub(crate) sis_table_key: SisTableKey,
+            pub(crate) unchecked_l2_collision_sq: Option<u128>,
         }
 
         impl $name {
@@ -558,6 +594,7 @@ macro_rules! define_commit_matrix_params {
                     output_rank: fields.output_rank,
                     input_width: fields.input_width,
                     sis_table_key: fields.sis_table_key,
+                    unchecked_l2_collision_sq: None,
                 })
             }
 
@@ -570,12 +607,40 @@ macro_rules! define_commit_matrix_params {
                     output_rank: fields.output_rank,
                     input_width: fields.input_width,
                     sis_table_key: fields.sis_table_key,
+                    unchecked_l2_collision_sq: None,
                 })
             }
 
             /// Re-audit all security-sensitive matrix fields against the
             /// canonical SIS table and rank floor.
             pub fn validate(&self) -> Result<(), AkitaError> {
+                if let Some(collision_l2_sq) = self.unchecked_l2_collision_sq {
+                    if $role != SisMatrixRole::Inner {
+                        return Err(AkitaError::InvalidSetup(
+                            "unchecked L2 diagnostic is only valid for the A matrix".into(),
+                        ));
+                    }
+                    let floor = min_secure_l2_rank(
+                        self.security_policy(),
+                        self.sis_modulus_profile(),
+                        self.sis_table_key.ring_dimension,
+                        collision_l2_sq,
+                        self.input_width as u64,
+                    )
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup(
+                            "unchecked L2 diagnostic has no ADPS16 table row".into(),
+                        )
+                    })?;
+                    if self.output_rank < floor {
+                        return Err(AkitaError::InvalidSetup(format!(
+                            "{} matrix output_rank {} is below unchecked L2 diagnostic floor {floor}",
+                            $role.name(),
+                            self.output_rank
+                        )));
+                    }
+                    return Ok(());
+                }
                 let fields = audit_commit_matrix_fields(
                     $role,
                     self.security_policy(),
@@ -616,6 +681,14 @@ macro_rules! define_commit_matrix_params {
                         ring_dimension: ring_dimension as u32,
                         coeff_linf_bound,
                     },
+                    unchecked_l2_collision_sq: None,
+                }
+            }
+
+            pub(crate) const fn with_input_width_unchecked(self, input_width: usize) -> Self {
+                Self {
+                    input_width,
+                    ..self
                 }
             }
 
@@ -649,6 +722,13 @@ macro_rules! define_commit_matrix_params {
                 self.sis_table_key
             }
 
+            /// Whole-vector squared collision bound used only by the
+            /// deliberately unchecked L2 planning diagnostic.
+            #[inline]
+            pub fn unchecked_l2_collision_sq(&self) -> Option<u128> {
+                self.unchecked_l2_collision_sq
+            }
+
             #[inline]
             pub fn ring_dimension(&self) -> usize {
                 self.sis_table_key.ring_dimension as usize
@@ -679,6 +759,10 @@ macro_rules! define_commit_matrix_params {
                 push_usize(bytes, self.output_rank());
                 push_usize(bytes, self.input_width());
                 push_u128(bytes, self.coeff_linf_bound());
+                if let Some(collision_l2_sq) = self.unchecked_l2_collision_sq {
+                    bytes.extend_from_slice(b"akita-unchecked-l2-diagnostic");
+                    push_u128(bytes, collision_l2_sq);
+                }
             }
         }
     };
@@ -689,6 +773,42 @@ define_commit_matrix_params!(
     SisMatrixRole::Inner,
     "Parameters for the inner commitment matrix (A)."
 );
+
+impl InnerCommitMatrixParams {
+    /// Construct an A matrix using the deliberately unchecked L2 diagnostic
+    /// floor. The retained SIS key records the normal L∞ fallback identity;
+    /// `unchecked_l2_collision_sq` selects the separate ADPS16 quantum table.
+    pub fn try_new_with_unchecked_l2_diagnostic_min_rank(
+        fallback_key: SisTableKey,
+        input_width: usize,
+        collision_l2_sq: u128,
+    ) -> Result<Self, AkitaError> {
+        if fallback_key.role != SisMatrixRole::Inner || input_width == 0 {
+            return Err(AkitaError::InvalidSetup(
+                "unchecked L2 diagnostic requires an A key and nonzero width".into(),
+            ));
+        }
+        let bucket = ceil_supported_l2_collision_sq(collision_l2_sq).ok_or_else(|| {
+            AkitaError::InvalidSetup("unchecked L2 collision is outside the table".into())
+        })?;
+        let width = u64::try_from(input_width)
+            .map_err(|_| AkitaError::InvalidSetup("A width exceeds u64".into()))?;
+        let output_rank = min_secure_l2_rank(
+            fallback_key.policy,
+            fallback_key.modulus_profile,
+            fallback_key.ring_dimension,
+            bucket,
+            width,
+        )
+        .ok_or_else(|| AkitaError::InvalidSetup("unchecked L2 rank is unavailable".into()))?;
+        Ok(Self {
+            output_rank,
+            input_width,
+            sis_table_key: fallback_key,
+            unchecked_l2_collision_sq: Some(bucket),
+        })
+    }
+}
 define_commit_matrix_params!(
     OuterCommitMatrixParams,
     SisMatrixRole::Outer,
@@ -763,6 +883,55 @@ mod tests {
                 "capacity must be the largest bucket supported by the fixed matrix"
             );
         }
+    }
+
+    #[test]
+    fn l2_table_has_the_expected_q128_d64_rank_boundary() {
+        let policy = DEFAULT_SIS_SECURITY_POLICY;
+        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        let collision_l2_sq = 1u128 << 50;
+        assert_eq!(
+            min_secure_l2_rank(policy, profile, 64, collision_l2_sq, 21),
+            Some(3)
+        );
+        assert_eq!(
+            min_secure_l2_rank(policy, profile, 64, collision_l2_sq, 22),
+            Some(4)
+        );
+        assert_eq!(
+            min_secure_l2_rank(policy, profile, 64, collision_l2_sq, 512),
+            Some(4)
+        );
+    }
+
+    #[test]
+    fn unchecked_l2_matrix_reaudits_its_adps16_floor() {
+        let fallback_key = SisTableKey {
+            policy: DEFAULT_SIS_SECURITY_POLICY,
+            table_digest: SisTableDigest::CURRENT,
+            modulus_profile: SisModulusProfileId::Q128OffsetA7F7,
+            role: SisMatrixRole::Inner,
+            ring_dimension: 64,
+            coeff_linf_bound: 1_048_575,
+        };
+        let matrix = InnerCommitMatrixParams::try_new_with_unchecked_l2_diagnostic_min_rank(
+            fallback_key,
+            512,
+            1u128 << 50,
+        )
+        .expect("diagnostic matrix");
+        assert_eq!(matrix.output_rank(), 4);
+        assert_eq!(matrix.unchecked_l2_collision_sq(), Some(1u128 << 50));
+        matrix.validate().expect("ADPS16 floor must validate");
+
+        let below_floor = InnerCommitMatrixParams {
+            output_rank: 3,
+            ..matrix
+        };
+        assert!(matches!(
+            below_floor.validate(),
+            Err(AkitaError::InvalidSetup(_))
+        ));
     }
 
     #[test]

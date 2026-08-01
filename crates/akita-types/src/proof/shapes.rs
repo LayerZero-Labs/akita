@@ -100,6 +100,8 @@ pub struct LevelProofShape {
     pub extension_opening_reduction: Option<ExtensionOpeningReductionShape>,
     /// Number of field coefficients in the compressed opening payload.
     pub opening_payload_coeffs: usize,
+    /// Placeholder count for the optional unchecked L2 diagnostic.
+    pub unchecked_l2_diagnostic_coefficients: Option<usize>,
     /// Stage-1 tree stage shapes in root-to-leaf order.
     pub stage1_stages: Vec<AkitaStage1StageShape>,
     /// Stage-2 sumcheck shape: `(num_rounds, degree)`.
@@ -142,6 +144,7 @@ fn eq_factored_sumcheck_shape<F: FieldCore>(
 pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
     extension_opening_reduction: Option<&ExtensionOpeningReductionProof<E>>,
     opening_payload: &RingVec<F>,
+    unchecked_l2_norm_diagnostic: Option<&UncheckedL2NormDiagnostic<E>>,
     stage1: &AkitaStage1Proof<E>,
     stage2: &AkitaStage2Proof<F, E>,
     stage3_sumcheck_proof: Option<&SetupSumcheckProof<E>>,
@@ -150,6 +153,8 @@ pub(super) fn level_proof_shape<F: FieldCore, E: FieldCore>(
         extension_opening_reduction: extension_opening_reduction
             .map(ExtensionOpeningReductionProof::shape),
         opening_payload_coeffs: opening_payload.coeff_len(),
+        unchecked_l2_diagnostic_coefficients: unchecked_l2_norm_diagnostic
+            .map(|diagnostic| diagnostic.leaf_round_coefficients.len()),
         stage1_stages: stage1
             .stages
             .iter()
@@ -266,6 +271,9 @@ impl Valid for LevelProofShape {
             reduction.check()?;
         }
         checked_shape_len(self.opening_payload_coeffs)?;
+        if let Some(coefficients) = self.unchecked_l2_diagnostic_coefficients {
+            checked_shape_len(coefficients)?;
+        }
         checked_shape_sequence_len(self.stage1_stages.len())?;
         self.stage1_stages.check()?;
         checked_shape_sequence_len(self.stage2_sumcheck_proof.len())?;
@@ -301,6 +309,12 @@ impl AkitaSerialize for LevelProofShape {
         }
         self.opening_payload_coeffs
             .serialize_with_mode(&mut writer, compress)?;
+        self.unchecked_l2_diagnostic_coefficients
+            .is_some()
+            .serialize_with_mode(&mut writer, compress)?;
+        if let Some(coefficients) = self.unchecked_l2_diagnostic_coefficients {
+            coefficients.serialize_with_mode(&mut writer, compress)?;
+        }
         self.stage1_stages
             .serialize_with_mode(&mut writer, compress)?;
         self.stage2_sumcheck_proof
@@ -336,6 +350,10 @@ impl AkitaSerialize for LevelProofShape {
                 });
         reduction_size
             + self.opening_payload_coeffs.serialized_size(compress)
+            + true.serialized_size(compress)
+            + self
+                .unchecked_l2_diagnostic_coefficients
+                .map_or(0, |coefficients| coefficients.serialized_size(compress))
             + self.stage1_stages.serialized_size(compress)
             + self.stage2_sumcheck_proof.serialized_size(compress)
             + true.serialized_size(compress)
@@ -372,6 +390,18 @@ impl AkitaDeserialize for LevelProofShape {
         };
         let opening_payload_coeffs =
             usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let has_unchecked_l2_diagnostic =
+            bool::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        let unchecked_l2_diagnostic_coefficients = if has_unchecked_l2_diagnostic {
+            Some(usize::deserialize_with_mode(
+                &mut reader,
+                compress,
+                validate,
+                &(),
+            )?)
+        } else {
+            None
+        };
         let stage1_stages = deserialize_shape_vec(&mut reader, compress, validate)?;
         let stage2_sumcheck = deserialize_shape_vec(&mut reader, compress, validate)?;
         let has_stage3_sumcheck =
@@ -398,6 +428,7 @@ impl AkitaDeserialize for LevelProofShape {
         let out = Self {
             extension_opening_reduction,
             opening_payload_coeffs,
+            unchecked_l2_diagnostic_coefficients,
             stage1_stages,
             stage2_sumcheck_proof: stage2_sumcheck,
             stage3_sumcheck,

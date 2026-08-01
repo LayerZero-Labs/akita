@@ -397,6 +397,10 @@ pub(crate) fn emit_runtime_schedule_summary(
             n_a = lp.inner_commit_matrix.output_rank(),
             n_b = lp.outer_commit_matrix.output_rank(),
             n_d = lp.open_commit_matrix.output_rank(),
+            unchecked_l2_collision_sq = lp
+                .inner_commit_matrix
+                .unchecked_l2_collision_sq()
+                .unwrap_or(0),
             challenge_l1_mass = lp.challenge_l1_mass(),
             log_basis_inner = lp.log_basis_inner,
             log_basis_outer = lp.log_basis_outer,
@@ -582,6 +586,22 @@ where
         .next_w_eval()
         .serialized_size(Compress::No);
     let fold_grind_nonce_size = fold_grind_nonce_wire_bytes();
+    let unchecked_l2_diagnostic_size =
+        level
+            .unchecked_l2_norm_diagnostic
+            .as_ref()
+            .map_or(0, |diagnostic| {
+                diagnostic.norm_squared.serialized_size(Compress::No)
+                    + diagnostic
+                        .leaf_round_coefficients
+                        .iter()
+                        .map(|coefficient| coefficient.serialized_size(Compress::No))
+                        .sum::<usize>()
+            });
+    let unchecked_l2_norm_squared = level
+        .unchecked_l2_norm_diagnostic
+        .as_ref()
+        .map_or(0, |diagnostic| diagnostic.norm_squared);
     let grind_nonce = level.fold_grind_nonce;
 
     tracing::info!(
@@ -594,6 +614,8 @@ where
         opening_payload_bytes = opening_payload_size,
         fold_grind_nonce_bytes = fold_grind_nonce_size,
         grind_nonce,
+        unchecked_l2_diagnostic_bytes = unchecked_l2_diagnostic_size,
+        unchecked_l2_norm_squared,
         stage1_sumcheck_bytes = stage1_sumcheck_size,
         stage1_interstage_claims_bytes = stage1_interstage_claims_size,
         stage1_range_image_evaluation_bytes = stage1_range_image_evaluation_size,
@@ -606,6 +628,9 @@ where
     eprintln!("[{label}]     extension_opening_partials={extension_opening_partials_size} bytes");
     eprintln!("[{label}]     extension_opening_sumcheck={extension_opening_sumcheck_size} bytes");
     eprintln!("[{label}]     fold_grind_nonce={fold_grind_nonce_size} bytes");
+    eprintln!(
+        "[{label}]     unchecked_l2_diagnostic={unchecked_l2_diagnostic_size} bytes, norm_squared={unchecked_l2_norm_squared}"
+    );
     eprintln!("[{label}]     stage1_sumcheck={stage1_sumcheck_size} bytes");
     eprintln!("[{label}]     stage1_interstage_claims={stage1_interstage_claims_size} bytes");
     eprintln!(
@@ -624,6 +649,7 @@ where
             + extension_opening_sumcheck_size
             + opening_payload_size
             + fold_grind_nonce_size
+            + unchecked_l2_diagnostic_size
             + stage1_sumcheck_size
             + stage1_interstage_claims_size
             + stage1_range_image_evaluation_size

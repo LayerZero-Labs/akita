@@ -94,6 +94,73 @@ fn fold_grind_nonce_serialized_size(compress: Compress) -> usize {
     0u32.serialized_size(compress)
 }
 
+fn serialize_unchecked_l2_diagnostic<E, W>(
+    diagnostic: Option<&UncheckedL2NormDiagnostic<E>>,
+    mut writer: W,
+    compress: Compress,
+) -> Result<(), SerializationError>
+where
+    E: FieldCore + AkitaSerialize,
+    W: Write,
+{
+    if let Some(diagnostic) = diagnostic {
+        diagnostic
+            .norm_squared
+            .serialize_with_mode(&mut writer, compress)?;
+        for coefficient in &diagnostic.leaf_round_coefficients {
+            coefficient.serialize_with_mode(&mut writer, compress)?;
+        }
+    }
+    Ok(())
+}
+
+fn unchecked_l2_diagnostic_serialized_size<E>(
+    diagnostic: Option<&UncheckedL2NormDiagnostic<E>>,
+    compress: Compress,
+) -> usize
+where
+    E: FieldCore + AkitaSerialize,
+{
+    diagnostic.map_or(0, |diagnostic| {
+        diagnostic.norm_squared.serialized_size(compress)
+            + diagnostic
+                .leaf_round_coefficients
+                .iter()
+                .map(|coefficient| coefficient.serialized_size(compress))
+                .sum::<usize>()
+    })
+}
+
+fn deserialize_unchecked_l2_diagnostic<E, R>(
+    mut reader: R,
+    compress: Compress,
+    validate: Validate,
+    coefficient_count: Option<usize>,
+) -> Result<Option<UncheckedL2NormDiagnostic<E>>, SerializationError>
+where
+    E: FieldCore + Valid + AkitaDeserialize<Context = ()>,
+    R: Read,
+{
+    let Some(coefficient_count) = coefficient_count else {
+        return Ok(None);
+    };
+    let norm_squared = u128::deserialize_with_mode(&mut reader, compress, validate, &())?;
+    let mut leaf_round_coefficients = Vec::new();
+    reserve_shape_len(&mut leaf_round_coefficients, coefficient_count)?;
+    for _ in 0..coefficient_count {
+        leaf_round_coefficients.push(E::deserialize_with_mode(
+            &mut reader,
+            compress,
+            validate,
+            &(),
+        )?);
+    }
+    Ok(Some(UncheckedL2NormDiagnostic {
+        norm_squared,
+        leaf_round_coefficients,
+    }))
+}
+
 fn serialize_next_witness_binding<F, W>(
     binding: &NextWitnessBinding<F>,
     writer: W,
@@ -403,6 +470,11 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
             self.fold_grind_nonce,
             compress,
         )?;
+        serialize_unchecked_l2_diagnostic(
+            self.unchecked_l2_norm_diagnostic.as_ref(),
+            &mut writer,
+            compress,
+        )?;
         for stage in &self.stage1.stages {
             stage
                 .sumcheck_proof
@@ -429,6 +501,9 @@ impl<F: FieldCore + CanonicalField + AkitaSerialize, E: FieldCore + AkitaSeriali
         intermediate_fold_wire_prefix_serialized_size(
             self.extension_opening_reduction.as_ref(),
             &self.opening_payload,
+            compress,
+        ) + unchecked_l2_diagnostic_serialized_size(
+            self.unchecked_l2_norm_diagnostic.as_ref(),
             compress,
         ) + self
             .stage1
@@ -458,6 +533,9 @@ impl<F: FieldCore + Valid, E: FieldCore + Valid> Valid for FoldLevelProof<F, E> 
             reduction.sumcheck.check()?;
         }
         self.opening_payload.check()?;
+        if let Some(diagnostic) = &self.unchecked_l2_norm_diagnostic {
+            diagnostic.leaf_round_coefficients.check()?;
+        }
         for stage in &self.stage1.stages {
             stage.sumcheck_proof.check()?;
             stage.child_claims.check()?;
@@ -496,6 +574,12 @@ impl<
                 ctx.extension_opening_reduction.as_ref(),
                 &ctx.opening_payload_coeffs,
             )?;
+        let unchecked_l2_norm_diagnostic = deserialize_unchecked_l2_diagnostic(
+            &mut reader,
+            compress,
+            validate,
+            ctx.unchecked_l2_diagnostic_coefficients,
+        )?;
         reject_eor_when_single_field::<F, E>(&extension_opening_reduction)?;
         let mut stage1_stages = Vec::new();
         reserve_shape_len(&mut stage1_stages, ctx.stage1_stages.len())?;
@@ -551,6 +635,7 @@ impl<
             extension_opening_reduction,
             opening_payload,
             fold_grind_nonce,
+            unchecked_l2_norm_diagnostic,
             stage1,
             stage2,
             stage3_sumcheck_proof,

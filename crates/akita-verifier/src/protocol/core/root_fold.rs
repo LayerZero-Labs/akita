@@ -209,6 +209,7 @@ where
         prefix,
         w_len: witness_len,
         payload: PreparedFoldPayload::Recursive {
+            unchecked_l2_diagnostic: proof.unchecked_l2_norm_diagnostic.as_ref(),
             stage1: &proof.stage1,
             stage2: &proof.stage2,
             next_witness,

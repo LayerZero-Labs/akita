@@ -24,6 +24,19 @@ pub struct AkitaStage1Proof<F: FieldCore> {
     pub range_image_evaluation: F,
 }
 
+/// Deliberately unchecked payload for measuring a future stage-1 L2
+/// sumcheck's planner and wire impact.
+///
+/// The verifier transcript-binds this payload but does not validate either
+/// the claimed norm or the placeholder coefficients. This is not sound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncheckedL2NormDiagnostic<E: FieldCore> {
+    /// Prover-claimed exact squared L2 norm of the undecomposed folded `z`.
+    pub norm_squared: u128,
+    /// One placeholder challenge-field coefficient per final stage-1 round.
+    pub leaf_round_coefficients: Vec<E>,
+}
+
 /// FoldSchedule-shaped outgoing witness binding for an intermediate fold.
 ///
 /// The proof stream carries no variant tag. Headerless decoding obtains the
@@ -125,6 +138,8 @@ pub struct FoldLevelProof<F: FieldCore, E: FieldCore> {
     pub opening_payload: RingVec<F>,
     /// Accepted fold-l∞ grind nonce (`0` under deterministic policy).
     pub fold_grind_nonce: u32,
+    /// Unsound L2 planning diagnostic, present only on selected late folds.
+    pub unchecked_l2_norm_diagnostic: Option<UncheckedL2NormDiagnostic<E>>,
     /// Stage-1 norm-check payload.
     pub stage1: AkitaStage1Proof<E>,
     /// Stage-2 fused payload.
@@ -145,6 +160,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
             extension_opening_reduction: None,
             opening_payload: RingVec::from_ring_elems(&opening_payload).into_compact(),
             fold_grind_nonce: 0,
+            unchecked_l2_norm_diagnostic: None,
             stage1,
             stage2,
             stage3_sumcheck_proof: None,
@@ -249,6 +265,7 @@ impl<F: FieldCore, E: FieldCore> FoldLevelProof<F, E> {
         level_proof_shape(
             self.extension_opening_reduction.as_ref(),
             &self.opening_payload,
+            self.unchecked_l2_norm_diagnostic.as_ref(),
             &self.stage1,
             &self.stage2,
             self.stage3_sumcheck_proof.as_ref(),

@@ -9,10 +9,10 @@
 
 ## Summary
 
-Akita currently generates SIS security tables through Sage and the pinned Python
-`lattice-estimator` checkout. The current generated table path prices SIS with a
-Euclidean norm bound and the `BDGL16` reduction cost model. That path is useful,
-but it is not the main model we want for the next sizing work.
+Akita generates its production infinity norm SIS table with the Rust estimator
+and checks selected cells against the pinned Python `lattice-estimator`. The
+separate Euclidean diagnostic table uses the 128 bit quantum `ADPS16` reduction
+cost model. Akita does not use `BDGL16` to make an L2 security claim.
 
 We want a standalone Rust crate that implements the SIS lattice estimator API
 for infinity norm estimates first. The crate must expose a general API that is
@@ -151,7 +151,8 @@ The crate must support:
 1. `ADPS16`. This is the key Akita target. It prices BKZ as `2^(c * beta)` with
    modes `classical`, `quantum`, and `paranoid`.
 
-2. `BDGL16`. This is the current Akita Euclidean table model.
+2. `BDGL16`. Keep this model for general estimator API coverage and historical
+   replay. Do not use it for an Akita L2 security table.
 
 3. `MATZOV`. This is the current default in `lattice-estimator`.
 
@@ -754,13 +755,17 @@ Keep the Python replay path for audit until the new tables have been reviewed.
 
 Port Euclidean `norm=2` support after the infinity path is stable.
 
-The Euclidean path should support the current table profile:
+The Euclidean path uses this table profile:
 
 ```text
 norm = Euclidean
-red_cost_model = BDGL16
-length_bound = sqrt(width * collision_l2_sq)
+red_cost_model = ADPS16(mode = quantum)
+length_bound = sqrt(collision_l2_sq)
 ```
+
+The value `collision_l2_sq` bounds the complete scalar collision vector across
+all input ring rows. The matrix width changes the scalar column count `m`. It
+must not multiply the norm again.
 
 ## Table Design for Akita
 

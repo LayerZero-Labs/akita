@@ -1085,33 +1085,15 @@ impl CommittedGroupParams {
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                inner_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                self.outer_commit_matrix.security_policy(),
-                self.outer_commit_matrix.sis_table_key().table_digest,
-                self.outer_commit_matrix.sis_modulus_profile(),
-                self.outer_commit_matrix.output_rank,
-                outer_width,
-                self.outer_commit_matrix.coeff_linf_bound(),
-                self.outer_commit_matrix.ring_dimension(),
-            ),
-            open_commit_matrix: OpenCommitMatrixParams::new_unchecked(
-                self.open_commit_matrix.security_policy(),
-                self.open_commit_matrix.sis_table_key().table_digest,
-                self.open_commit_matrix.sis_modulus_profile(),
-                self.open_commit_matrix.output_rank,
-                d_matrix_width,
-                self.open_commit_matrix.coeff_linf_bound(),
-                self.open_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self
+                .inner_commit_matrix
+                .with_input_width_unchecked(inner_width),
+            outer_commit_matrix: self
+                .outer_commit_matrix
+                .with_input_width_unchecked(outer_width),
+            open_commit_matrix: self
+                .open_commit_matrix
+                .with_input_width_unchecked(d_matrix_width),
             num_live_ring_elements_per_claim,
             num_positions_per_block,
             num_live_blocks,
@@ -1150,33 +1132,15 @@ impl CommittedGroupParams {
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,
-            inner_commit_matrix: InnerCommitMatrixParams::new_unchecked(
-                self.inner_commit_matrix.security_policy(),
-                self.inner_commit_matrix.sis_table_key().table_digest,
-                self.inner_commit_matrix.sis_modulus_profile(),
-                self.inner_commit_matrix.output_rank,
-                other.inner_commit_matrix.input_width,
-                self.inner_commit_matrix.coeff_linf_bound(),
-                self.inner_commit_matrix.ring_dimension(),
-            ),
-            outer_commit_matrix: OuterCommitMatrixParams::new_unchecked(
-                self.outer_commit_matrix.security_policy(),
-                self.outer_commit_matrix.sis_table_key().table_digest,
-                self.outer_commit_matrix.sis_modulus_profile(),
-                self.outer_commit_matrix.output_rank,
-                other.outer_commit_matrix.input_width,
-                self.outer_commit_matrix.coeff_linf_bound(),
-                self.outer_commit_matrix.ring_dimension(),
-            ),
-            open_commit_matrix: OpenCommitMatrixParams::new_unchecked(
-                self.open_commit_matrix.security_policy(),
-                self.open_commit_matrix.sis_table_key().table_digest,
-                self.open_commit_matrix.sis_modulus_profile(),
-                self.open_commit_matrix.output_rank,
-                other.open_commit_matrix.input_width,
-                self.open_commit_matrix.coeff_linf_bound(),
-                self.open_commit_matrix.ring_dimension(),
-            ),
+            inner_commit_matrix: self
+                .inner_commit_matrix
+                .with_input_width_unchecked(other.inner_commit_matrix.input_width),
+            outer_commit_matrix: self
+                .outer_commit_matrix
+                .with_input_width_unchecked(other.outer_commit_matrix.input_width),
+            open_commit_matrix: self
+                .open_commit_matrix
+                .with_input_width_unchecked(other.open_commit_matrix.input_width),
             num_live_ring_elements_per_claim: other.num_live_ring_elements_per_claim,
             num_positions_per_block: other.num_positions_per_block,
             num_live_blocks: other.num_live_blocks,

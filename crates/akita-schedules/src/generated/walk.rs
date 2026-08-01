@@ -110,6 +110,7 @@ pub(crate) fn walk_generated_schedule_entry(
                 key.final_group.num_polynomials(),
                 entry.root.open_commit_matrix,
                 None,
+                None,
             )?
     };
     let distributed_levels = distributed_activation_depth(
@@ -147,6 +148,7 @@ pub(crate) fn walk_generated_schedule_entry(
             1,
             fold.open_commit_matrix,
             fold.incoming_setup_prefix,
+            fold.unchecked_l2_collision_sq,
         )?;
         params.witness_chunk = partition_to_chunk(fold.witness_partition, distributed_levels)?;
         let output_witness_len =

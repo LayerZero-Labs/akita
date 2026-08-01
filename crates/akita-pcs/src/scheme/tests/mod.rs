@@ -166,6 +166,10 @@ fn expected_same_point_batched_shape(
     let root_shape = LevelProofShape {
         extension_opening_reduction: None,
         opening_payload_coeffs: opening_payload_coeffs(root_params),
+        unchecked_l2_diagnostic_coefficients: root_params
+            .inner_commit_matrix
+            .unchecked_l2_collision_sq()
+            .map(|_| root_rounds),
         stage1_stages: DigitRangePlan::new(1usize << root_params.log_basis_open)
             .expect("scheduled root range basis")
             .stage_shapes(root_rounds),
@@ -194,6 +198,10 @@ fn expected_same_point_batched_shape(
         recursive_folds.push(LevelProofShape {
             extension_opening_reduction: None,
             opening_payload_coeffs: opening_payload_coeffs(level_params),
+            unchecked_l2_diagnostic_coefficients: level_params
+                .inner_commit_matrix
+                .unchecked_l2_collision_sq()
+                .map(|_| rounds),
             stage1_stages: DigitRangePlan::new(1usize << level_params.log_basis_open)
                 .expect("scheduled range basis")
                 .stage_shapes(rounds),

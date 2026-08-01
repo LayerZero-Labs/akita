@@ -676,6 +676,7 @@ fn exact_level_proof_bytes<F: FieldCore + CanonicalField + AkitaSerialize>(
         extension_opening_reduction: None,
         opening_payload: RingVec::from_coeffs(vec![F::zero(); current_coeffs]),
         fold_grind_nonce: 0,
+        unchecked_l2_norm_diagnostic: None,
         stage1: dummy_stage1_proof(rounds, b),
         stage2: AkitaStage2Proof {
             sumcheck_proof: dummy_sumcheck(rounds, 3),
@@ -827,6 +828,7 @@ fn planned_batched_root_bytes_match_non_offloaded_payload_at_all_bases() {
                 .terminal_coefficients()
             ]),
             fold_grind_nonce: 0,
+            unchecked_l2_norm_diagnostic: None,
             stage1: dummy_stage1_proof(rounds, b),
             stage2: AkitaStage2Proof {
                 sumcheck_proof: dummy_sumcheck(rounds, 3),

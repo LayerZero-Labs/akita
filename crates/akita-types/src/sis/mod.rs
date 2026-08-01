@@ -26,6 +26,7 @@ pub mod ajtai_key;
 pub mod compression;
 pub mod decomposition_digits;
 pub mod fold_linf_cap;
+mod generated_l2_sis_table;
 mod generated_sis_table;
 pub mod honest_fold_policy;
 pub mod norm_bound;
@@ -38,6 +39,7 @@ pub use ajtai_key::{
     COEFF_LINF_BUCKETS, DEFAULT_SIS_SECURITY_POLICY, GADGET_COEFF_LINF_ANCHORS, SIS_MATRIX_ROLES,
     SUPPORTED_SIS_SECURITY_POLICIES,
 };
+pub use ajtai_key::{ceil_supported_l2_collision_sq, min_secure_l2_rank};
 pub use decomposition_digits::{
     balanced_digit_abs_max, compute_num_digits_field_width, decomposed_s_block_ring_count,
     decomposed_t_ring_count, decomposed_w_ring_count, fold_witness_representable_linf_bounds,
@@ -54,11 +56,11 @@ pub use norm_bound::{
     fold_witness_linf_cap_policy, fold_witness_unsnapped_linf_cap,
     max_response_linf_for_role_a_collision, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
-    role_a_collision_inf_norm_for_response_bound, rounded_up_collision_inf_norm,
-    rounded_up_role_a_inf_norm, weak_binding_inf_norm, FoldChallengeNorms,
-    FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
+    role_a_collision_inf_norm_for_response_bound, role_a_collision_l2_sq_for_response_bound,
+    rounded_up_collision_inf_norm, rounded_up_role_a_inf_norm, weak_binding_inf_norm,
+    FoldChallengeNorms, FoldWitnessLinfCapConfig, FoldWitnessLinfCapPolicy, FoldWitnessNorms,
     FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_FP32_SNAP_MIN_TSTAR_RETAIN_NUM,
     FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_DEN, FOLD_LINF_GRIND_TARGET_ACCEPT_PROB_NUM,
     FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_DEN, FOLD_LINF_SNAP_MIN_TSTAR_RETAIN_NUM,
-    MAX_FOLD_GRIND_ATTEMPTS,
+    MAX_FOLD_GRIND_ATTEMPTS, UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP,
 };

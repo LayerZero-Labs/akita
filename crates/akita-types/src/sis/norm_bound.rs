@@ -17,6 +17,10 @@ use super::decomposition_digits::balanced_digit_abs_max;
 use super::decomposition_digits::{balanced_digit_max, num_digits_for_bound};
 use crate::layout::digit_math::isqrt_ceil;
 
+/// Counterfactual whole-witness squared-L2 cap used by the unchecked planning
+/// probe. No verifier check enforces this value in the diagnostic rollout.
+pub const UNCHECKED_L2_DIAGNOSTIC_NORM_SQ_CAP: u128 = 1u128 << 32;
+
 pub use super::fold_linf_cap::{
     fold_witness_linf_cap_policy, rademacher_proxy_variance,
     rademacher_proxy_variance_flat_challenges, rademacher_proxy_variance_tensor_challenges,
@@ -76,6 +80,23 @@ pub fn role_a_collision_inf_norm_for_response_bound(
         ring_subfield_norm_bound,
         response_linf_bound.checked_mul(2)?,
     )
+}
+
+/// Whole-vector squared-L2 collision bound for two accepted folded responses.
+///
+/// If each response has squared norm at most `response_l2_sq_bound`, the same
+/// Lemma 7 factors used by [`role_a_collision_inf_norm_for_response_bound`]
+/// give collision length at most `8 * omega * nu * ||z||_2`.
+#[must_use]
+pub fn role_a_collision_l2_sq_for_response_bound(
+    challenge_l1_norm: u128,
+    ring_subfield_norm_bound: u32,
+    response_l2_sq_bound: u128,
+) -> Option<u128> {
+    let scale = 8u128
+        .checked_mul(challenge_l1_norm)?
+        .checked_mul(u128::from(ring_subfield_norm_bound))?;
+    scale.checked_mul(scale)?.checked_mul(response_l2_sq_bound)
 }
 
 /// Largest raw folded-response `L∞` bound fitting an A-role collision bucket.
@@ -390,6 +411,18 @@ mod tests {
                 subfield_norm,
             ),
             Some(response_bound)
+        );
+    }
+
+    #[test]
+    fn l2_collision_scales_the_complete_witness_norm_once() {
+        let challenge_l1 = 51u128;
+        let subfield_norm = 1u32;
+        let response_l2_sq = 1u128 << 32;
+        let scale = 8 * challenge_l1 * u128::from(subfield_norm);
+        assert_eq!(
+            role_a_collision_l2_sq_for_response_bound(challenge_l1, subfield_norm, response_l2_sq,),
+            Some(scale * scale * response_l2_sq),
         );
     }
 
