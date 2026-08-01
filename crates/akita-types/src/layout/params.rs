@@ -624,18 +624,6 @@ impl CommittedGroupParams {
         Ok(dims)
     }
 
-    /// Ring dimension of the batch-owned recursive-witness carrier.
-    ///
-    /// Every group keeps its native A dimension for fold and relation
-    /// arithmetic. The physical witness carrier uses the largest group A
-    /// dimension so support is independent of caller group order.
-    #[must_use]
-    pub fn relation_witness_carrier_ring_dimension(&self) -> usize {
-        self.precommitted_group_iter()
-            .map(|group| group.layout.inner_commit_matrix.ring_dimension())
-            .fold(self.d_a(), usize::max)
-    }
-
     /// Resolve flat relation-address geometry across every opening group's
     /// native A/B dimensions and this level's shared D dimension.
     pub fn relation_address_geometry(
