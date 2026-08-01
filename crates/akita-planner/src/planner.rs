@@ -288,18 +288,13 @@ pub(crate) fn multi_group_root_next_w_len(
 ) -> Result<usize, AkitaError> {
     params.witness_chunk.validate()?;
     params.validate_opening_batch(opening_batch)?;
-    let relation_rows = params.relation_matrix_row_count(opening_batch.num_groups())?;
     let witness_layout = WitnessLayout::new(
         params,
         opening_batch,
         params.witness_chunk.num_chunks,
-        relation_rows,
         compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    witness_layout
-        .total_len()
-        .checked_mul(params.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("multi-group next witness length overflow".into()))
+    Ok(witness_layout.live_coeff_len())
 }
 
 pub(crate) fn multi_group_root_level_candidates_for_basis(
@@ -601,6 +596,7 @@ pub fn find_schedule(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
+        level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

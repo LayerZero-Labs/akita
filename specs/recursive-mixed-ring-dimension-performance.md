@@ -65,7 +65,7 @@ footprints, but verification is still about twice as slow.
 ### 1. Mixed root projections create more verifier work
 
 The root changes from uniform D64 to `256/128/128`. A is twice the common
-relation dimension, so each A carrier contains two D128 relation lanes. The B
+relation dimension, so each A-native source ring projects to two D128 relation lanes. The B
 and D portions of the relation require corresponding projected subcolumns.
 
 The setup-prefix geometry changes as follows:
@@ -82,7 +82,7 @@ has:
 
 - twice the flat field domain;
 - an additional coefficient-axis sumcheck round;
-- extra B/D subcolumns induced by the A carrier ratio;
+- extra B/D subcolumns induced by the A-to-role projection ratio;
 - more setup-index weight evaluation work.
 
 This explains why proof bytes are a poor proxy for verifier work here. The
@@ -146,7 +146,7 @@ requested dimension tuple.
 
 Uniform D64 had hidden two independent-dimension assumptions:
 
-1. `active_setup_field_len` omitted B/D carrier subcolumns. For the mixed root
+1. `active_setup_field_len` omitted B/D projection subcolumns. For the mixed root
    it planned exactly half of the required prefix.
 2. `commit_setup_prefix` used the prefix source dimension for its B
    commitment. A D128 source with a D64 B matrix serialized rows at twice the
@@ -160,7 +160,7 @@ or dimension-mismatched prefix slots.
 
 The following costs are inherent to this exact schedule:
 
-- the `256/128/128` root has two A-carrier lanes over the D128 relation base;
+- the `256/128/128` root has two A-native lanes over the D128 relation base;
 - its setup prefix has a 67,108,864-field padded domain;
 - committing root/precommit matrices invokes D256 and D128 kernels;
 - crossing three dimensions requires prepared setup support for each one.
@@ -236,7 +236,7 @@ That policy can legitimately choose a verifier-slower schedule, because proof
 bytes do not price:
 
 - setup-projection evaluation terms;
-- carrier subcolumns;
+- native projection subcolumns;
 - sumcheck round count;
 - equality-window and setup-index weight work;
 - per-role ring arithmetic.
@@ -284,13 +284,14 @@ from `PlannerPolicy`.
 Implemented:
 
 - `PlannerPolicy::ring_dimension_candidates` carries strictly sorted, unique
-  `(d_a, d_b, d_d)` tuples. Policy validation checks the A carrier and requires
+  `(d_a, d_b, d_d)` tuples. Policy validation checks native role-projection
+  geometry and requires
   every role dimension to divide `PlannerPolicy::ring_dimension`, the setup
   generation dimension.
 - `find_schedule` searches that policy-bound domain. An exact uniform
   setup-generation singleton retains the historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
-  dimensions. B and D physical widths include `d_a / d_role` carrier
+  dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
 - The mixed search enumerates every admitted tuple and valid block split only
   at L0 and L1. Tuples are component-wise non-increasing, L2 through the

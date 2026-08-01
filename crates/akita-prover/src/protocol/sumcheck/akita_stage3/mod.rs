@@ -19,9 +19,9 @@ use akita_sumcheck::{SumcheckInstanceProver, SumcheckInstanceProverExt, Sumcheck
 use akita_transcript::{labels::ABSORB_SETUP_PREFIX_SLOT, Transcript};
 use akita_types::{
     ensure_setup_envelope, select_setup_prefix_slot, shared_setup_fold_gadget, AkitaExpandedSetup,
-    CommittedGroupParams, FpExtEncoding, RelationAddressGeometry, RingRelationInstance,
-    SetupContributionGroupInputs, SetupContributionPlan, SetupPrefixProverRegistry,
-    SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
+    CommittedGroupParams, FpExtEncoding, PreparedRelationAddress, RelationAddressGeometry,
+    RingRelationInstance, SetupContributionGroupInputs, SetupContributionPlan,
+    SetupPrefixProverRegistry, SetupProjectionGeometry, SETUP_SUMCHECK_DEGREE,
 };
 use product_table::RectangularSetupProductTerm;
 use std::sync::Arc;
@@ -69,7 +69,7 @@ where
         T: Transcript<F>,
     {
         let setup_coefficient_bits =
-            relation_address_geometry.common_relation_witness_variable_count();
+            relation_address_geometry.relation_coefficient_variable_count();
         let setup_x_challenges = stage2_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
@@ -270,7 +270,6 @@ where
         tau1,
         x_challenges,
         relation_address_geometry,
-        alpha,
     )?;
     let geometry = plan.projection_geometry();
     let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
@@ -285,7 +284,6 @@ fn prepare_setup_contribution_plan<F, E>(
     tau1: &[E],
     x_challenges: &[E],
     relation_address_geometry: RelationAddressGeometry,
-    alpha: E,
 ) -> Result<SetupContributionPlan<E>, AkitaError>
 where
     F: FieldCore + CanonicalField,
@@ -340,10 +338,9 @@ where
         eq_tau1,
         &chunk_layout,
         &groups,
-        x_challenges,
+        PreparedRelationAddress::new(x_challenges)?,
         fold_gadget.as_deref(),
         relation_address_geometry,
-        alpha,
     )?;
     Ok(plan)
 }

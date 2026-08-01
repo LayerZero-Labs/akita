@@ -60,10 +60,7 @@ pub use relation::{
 };
 pub use relation_address::RelationAddressGeometry;
 pub use relation_range_image::{RelationRangeImageGroupPlan, RelationRangeImagePlan};
-pub use ring_relation::{
-    ring_relation_segment_lengths, RingRelationInstance, RingRelationOpeningCounts,
-    RingRelationSegmentLengths,
-};
+pub use ring_relation::RingRelationInstance;
 pub use scheme::{CommitmentVerifier, OpeningPoints};
 pub use setup::{
     derive_public_matrix_flat, sample_public_matrix_seed, validate_public_matrix_matches_seed,
@@ -114,7 +111,6 @@ use akita_sumcheck::{
 };
 use akita_transcript::Transcript;
 use std::io::{Read, Write};
-use std::marker::PhantomData;
 
 pub(super) const MAX_PROOF_SHAPE_SEQUENCE_LEN: usize = 1 << 12;
 

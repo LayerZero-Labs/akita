@@ -11,8 +11,6 @@
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
-#[cfg(test)]
-use akita_types::extension_opening_reduction_level_bytes;
 use akita_types::sis::{
     decomposed_s_block_ring_count, decomposed_t_ring_count, decomposed_w_ring_count,
     fold_witness_digit_plan, num_digits_inner, num_digits_open, num_digits_setup_prefix_commit,
@@ -21,11 +19,10 @@ use akita_types::sis::{
     OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    intermediate_w_ring_element_count_for_chunks, level_proof_bytes, padded_setup_prefix_len,
-    try_extension_opening_reduction_level_bytes, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupParams, DecompositionParams, FoldSchedule, PlannedFoldSchedule,
-    PolynomialGroupLayout, PrecommittedGroupDescriptor, PrecommittedLevelParams,
-    TerminalResponseShape, WitnessLayout,
+    level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
+    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupParams, DecompositionParams,
+    FoldSchedule, PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedGroupDescriptor,
+    PrecommittedLevelParams, WitnessLayout,
 };
 
 use crate::PlannerPolicy;
@@ -34,6 +31,9 @@ mod candidate;
 mod mixed_search;
 mod setup_score;
 mod suffix_dp;
+#[cfg(feature = "test-support")]
+#[path = "schedule_params/tests/test_support.rs"]
+pub(crate) mod test_support;
 #[cfg(all(test, feature = "catalog-gen"))]
 #[path = "schedule_params/tests/unpruned_search.rs"]
 mod unpruned_search;
@@ -134,126 +134,6 @@ fn componentwise_dimensions_at_most(
         && dimensions.d_d() <= ceiling.d_d()
 }
 
-/// One recursive fold of an independently planned suffix
-/// ([`plan_optimal_suffix`]).
-#[derive(Clone, Debug)]
-pub struct PlannedSuffixFold {
-    /// Committed-group params for this fold level (already priced at
-    /// `policy.ring_dimension`).
-    pub params: CommittedGroupParams,
-    /// Field-element witness length entering this fold.
-    pub input_witness_len: usize,
-    /// Field-element witness length produced for the next level.
-    pub output_witness_len: usize,
-}
-
-/// Terminal (cleartext) response of an independently planned suffix.
-#[derive(Clone, Debug)]
-pub struct PlannedSuffixTerminal {
-    /// Terminal committed-group params.
-    pub params: akita_types::TerminalCommittedGroupParams,
-    /// Short ring challenge family for the terminal fold.
-    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    /// Field-element witness length entering the terminal fold.
-    pub input_witness_len: usize,
-    /// Cleartext response wire shape.
-    pub response_shape: TerminalResponseShape,
-}
-
-/// Optimal recursive suffix planned from an intermediate witness.
-#[derive(Clone, Debug)]
-pub struct PlannedSuffix {
-    /// Recursive fold levels, starting at `start_level`.
-    pub folds: Vec<PlannedSuffixFold>,
-    /// Terminal fold.
-    pub terminal: PlannedSuffixTerminal,
-    /// Header-stripped direct-mode proof bytes of the suffix (folds + terminal).
-    pub total_bytes: usize,
-}
-
-/// Plan the proof-size-optimal recursive suffix that folds a witness of
-/// `start_witness_len` field elements (produced by some predecessor fold at
-/// `start_level - 1`) down to a cleartext terminal, at `policy.ring_dimension`.
-///
-/// This is the exact suffix DP [`crate::find_schedule`] runs after choosing a root,
-/// exposed so callers can splice an optimal suffix onto a differently sized
-/// predecessor — e.g. a mixed ring-dimension-per-level schedule whose root
-/// folds at a larger ring dimension than the suffix. `start_lb` is the
-/// predecessor level's `log_basis` (fold `log_basis` is non-decreasing), and
-/// `num_vars` is the opening arity (used for the singleton opening layout the
-/// suffix prices against).
-///
-/// # Errors
-///
-/// Returns [`AkitaError::UnsupportedSchedule`] if no terminating suffix exists
-/// for the requested state, or propagates SIS-sizing / overflow failures.
-pub fn plan_optimal_suffix(
-    policy: &PlannerPolicy,
-    ring_challenge_config: impl Fn(usize) -> Result<akita_challenges::SparseChallengeConfig, AkitaError>,
-    fold_challenge_shape_at_level: impl Fn(AkitaScheduleInputs) -> TensorChallengeShape,
-    num_vars: usize,
-    start_level: usize,
-    start_witness_len: usize,
-    start_lb: u32,
-) -> Result<PlannedSuffix, AkitaError> {
-    validate_policy(policy)?;
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "recursive setup planning is not supported by plan_optimal_suffix".to_string(),
-        ));
-    }
-    let ring_challenge_cfg = ring_challenge_config(policy.ring_dimension)?;
-    let ctx = SuffixCtx {
-        policy,
-        default_ring_challenge_cfg: &ring_challenge_cfg,
-        ring_challenge_config: &ring_challenge_config,
-        fold_challenge_shape_at_level: &fold_challenge_shape_at_level,
-        num_vars,
-        key: PolynomialGroupLayout::singleton(num_vars),
-        setup_field_budget: None,
-        root_lookup_key: None,
-    };
-    let mut memo = ScheduleMemo::new();
-    let result = derive_optimal_suffix_schedule(
-        &ctx,
-        &mut memo,
-        SuffixState {
-            level: start_level,
-            current_witness_len: start_witness_len,
-            current_lb: start_lb,
-            incoming_setup_prefix: None,
-        },
-        0,
-    )?;
-    let best = result
-        .best_by_payload_per_lb
-        .values()
-        .min_by_key(|suffix| suffix.total_bytes)
-        .ok_or_else(|| {
-            AkitaError::UnsupportedSchedule(format!(
-                "no terminating suffix for witness_len={start_witness_len} at level {start_level}"
-            ))
-        })?;
-    Ok(PlannedSuffix {
-        folds: best
-            .folds
-            .iter()
-            .map(|fold| PlannedSuffixFold {
-                params: fold.params.clone(),
-                input_witness_len: fold.input_witness_len,
-                output_witness_len: fold.output_witness_len,
-            })
-            .collect(),
-        terminal: PlannedSuffixTerminal {
-            params: best.terminal.params.clone(),
-            sparse_challenge_config: best.terminal.sparse_challenge_config,
-            input_witness_len: best.terminal.input_witness_len,
-            response_shape: best.terminal.response_shape.clone(),
-        },
-        total_bytes: best.total_bytes,
-    })
-}
-
 pub(crate) fn find_schedule_singular(
     key: PolynomialGroupLayout,
     policy: &PlannerPolicy,
@@ -262,6 +142,11 @@ pub(crate) fn find_schedule_singular(
 ) -> Result<PlannedFoldSchedule, AkitaError> {
     key.validate()?;
     validate_policy(policy)?;
+    if policy.recursive_setup_planning {
+        return Err(AkitaError::InvalidSetup(
+            "recursive setup planning requires the grouped-batch scheduler".to_string(),
+        ));
+    }
     let ring_challenge_config: RingChallengeConfigFn<'_> = &ring_challenge_config;
     let fold_shape = &fold_challenge_shape_at_level;
 
@@ -275,158 +160,46 @@ pub(crate) fn find_schedule_singular(
         key,
         setup_field_budget: None,
         root_lookup_key: None,
+        level_zero_is_root: true,
     };
-
-    if policy.recursive_setup_planning {
-        return Err(AkitaError::InvalidSetup(
-            "recursive setup planning requires the grouped-batch scheduler".to_string(),
-        ));
-    }
     let witness_len = 1usize
         .checked_shl(key.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("witness too large".into()))?;
 
-    let field_bits = policy.decomposition.field_bits();
-    let mut best: Option<ScheduleCandidate> = None;
-    let fold_challenge_shape = fold_shape(AkitaScheduleInputs {
-        num_vars: key.num_vars(),
-        level: 0,
-        input_witness_len: witness_len,
-    });
     let mut memo = ScheduleMemo::new();
-
-    // Chunk count of the witness committed at the root fold (absolute level 0).
-    let root_num_chunks = policy.chunks_at_level(0);
-    let (min_log_basis, max_log_basis) = policy.log_basis_search_range_at_level(0);
-    let candidate_dimensions = CommitmentRingDims::uniform(policy.ring_dimension);
-    for candidate_log_basis in min_log_basis..=max_log_basis {
-        let mut root_candidates = Vec::new();
-        {
-            let alpha = (candidate_dimensions.d_a() as u32).trailing_zeros() as usize;
-            let reduced_vars = key.num_vars().saturating_sub(alpha);
-            if reduced_vars == 0 {
-                continue;
-            }
-            let min_block_index_bits: usize = if reduced_vars >= 3 { 1 } else { 0 };
-            let max_block_index_bits: usize = (reduced_vars - 1).min(usize::BITS as usize - 1);
-            let Ok(ring_challenge_cfg) = ring_challenge_config(candidate_dimensions.d_a()) else {
-                continue;
-            };
-            for block_index_bits in (min_block_index_bits..=max_block_index_bits).rev() {
-                let Some(candidate_params) = scalar_root_fold_level_params_candidate(
-                    policy,
-                    &ring_challenge_cfg,
-                    candidate_dimensions,
-                    key.num_vars(),
-                    key.num_polynomials(),
-                    candidate_log_basis,
-                    block_index_bits,
-                    fold_challenge_shape,
-                )?
-                else {
-                    continue;
-                };
-
-                let output_witness_len = intermediate_w_ring_element_count_for_chunks(
-                    field_bits,
-                    &candidate_params,
-                    key.num_polynomials(),
-                    root_num_chunks,
-                )?
-                .checked_mul(candidate_dimensions.d_a())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness length overflow".into())
-                })?;
-                let initial_witness_len_bits = witness_len
-                    .checked_mul(field_bits as usize)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("root witness bit length overflow".into())
-                    })?;
-                if output_witness_len
-                    .checked_mul(candidate_log_basis as usize)
-                    .ok_or_else(|| {
-                        AkitaError::InvalidSetup("root next witness bit length overflow".into())
-                    })?
-                    >= initial_witness_len_bits
-                {
-                    continue;
-                }
-                root_candidates.push((candidate_params, output_witness_len));
-            }
-        }
-        for (candidate_params, output_witness_len) in root_candidates {
-            let candidate_dimensions = candidate_params.role_dims();
-            // Root projection is governed by the candidate's committed A dimension,
-            // not the setup-generation ceiling.
-            let Some(eor_bytes) = try_extension_opening_reduction_level_bytes(
-                policy.challenge_field_bits()?,
-                policy.claim_ext_degree,
-                0,
-                key,
-                witness_len,
-                candidate_dimensions.d_a(),
-            )?
-            else {
-                continue;
-            };
-            let suffix = derive_optimal_suffix_schedule(
-                &suffix_ctx,
-                &mut memo,
-                SuffixState {
-                    level: 1,
-                    current_witness_len: output_witness_len,
-                    current_lb: candidate_log_basis,
-                    incoming_setup_prefix: None,
-                },
-                0,
-            )?;
-            if suffix.is_empty() {
-                continue;
-            }
-            // A supported root must recurse into at least one suffix fold.
-            for suffix_fold in suffix.best_by_payload_per_lb.values() {
-                let next_witness_binding = if suffix_fold.folds.is_empty() {
-                    akita_types::NextWitnessBindingPolicy::TerminalInnerState
-                } else {
-                    akita_types::NextWitnessBindingPolicy::OuterCommitment
-                };
-                let root_proof_size = level_proof_bytes(
-                    field_bits,
-                    policy.challenge_field_bits()?,
-                    &candidate_params,
-                    suffix_fold.first_fold_params(),
-                    output_witness_len,
-                    Some(next_witness_binding),
-                )? + eor_bytes;
-                let total = root_proof_size + suffix_fold.total_bytes;
-                let root_envelope = level_setup_field_elements(&candidate_params)?;
-                let setup_envelope = root_envelope.max(suffix_fold.setup_field_elements);
-                let mut folds = Vec::with_capacity(1 + suffix_fold.folds.len());
-                folds.push(CandidateFoldStep {
-                    params: candidate_params.clone(),
-                    input_witness_len: witness_len,
-                    output_witness_len,
-                    estimated_direct_payload_bytes: root_proof_size,
-                    estimated_stage3_payload_bytes: 0,
-                });
-                folds.extend(suffix_fold.folds.iter().cloned());
-                let candidate = ScheduleCandidate {
-                    first_direct_setup_field_len: None,
-                    total_bytes: total,
-                    setup_field_elements: setup_envelope,
-                    folds,
-                    terminal: suffix_fold.terminal.clone(),
-                };
-                let replace = match &best {
-                    None => true,
-                    Some(current) => candidate.total_bytes < current.total_bytes,
-                };
-                if replace {
-                    best = Some(candidate);
-                }
-            }
+    let suffix = derive_optimal_suffix_schedule(
+        &suffix_ctx,
+        &mut memo,
+        SuffixState {
+            level: 0,
+            current_witness_len: witness_len,
+            current_lb: 0,
+            incoming_setup_prefix: None,
+        },
+        0,
+    )?;
+    let best = match policy.selection_policy {
+        crate::SelectionPolicyId::MinEstimatedProofPayload => suffix
+            .best_by_payload_per_lb
+            .values()
+            .min_by_key(|candidate| candidate.total_bytes),
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
+            .best_by_first_direct_setup_per_lb
+            .values()
+            .min_by_key(|candidate| {
+                (
+                    candidate.first_direct_setup_field_len_or_max(),
+                    candidate.total_bytes,
+                )
+            }),
+        crate::SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
+            return Err(AkitaError::UnsupportedSchedule(
+                "mixed ring-dimension selection is not supported for singular schedules"
+                    .to_string(),
+            ));
         }
     }
+    .cloned();
 
     let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(

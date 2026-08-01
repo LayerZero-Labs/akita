@@ -227,7 +227,7 @@ fn group_batch_commits_independent_arity_precommitteds() {
         final_commitment.rows().count(),
         main_params.outer_commit_matrix.output_rank()
     );
-    assert_eq!(final_hint.decomposed_inner_rows.len(), FINAL_SIZE);
+    assert_eq!(final_hint.inner_rows().len(), FINAL_SIZE);
     assert_eq!(
         akita_prover::RootPolyMeta::num_vars(&final_polys[0]),
         FINAL_NV,
@@ -387,12 +387,6 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             .all(|group| group.descriptor.inner_ring_dimension == TestCfg::D),
         "precommitted groups must retain their native A dimension"
     );
-    let expected_carrier = main_params.d_a().max(TestCfg::D);
-    assert_eq!(
-        main_params.relation_witness_carrier_ring_dimension(),
-        expected_carrier,
-        "relation witness storage must use the largest native group A dimension"
-    );
     if TestCfg::chunked_witness_cfg().uses_multi_chunk() {
         let root = &multi_group_schedule.root;
         let root_commitment = &root.params.final_group.commitment;
@@ -402,14 +396,10 @@ fn multi_group_root_round_trip_onehot<TestCfg, ProtocolCfg>(
             TestCfg::chunked_witness_cfg().num_chunks,
             "root fold must retain the configured chunk count"
         );
-        let relation_rows = root_commitment
-            .relation_matrix_row_count(opening_layout.num_groups())
-            .expect("grouped relation rows");
         let witness_layout = akita_types::WitnessLayout::new(
             root_commitment,
             &opening_layout,
             root.params.witness_partition.num_chunks(),
-            relation_rows,
             akita_types::r_decomp_levels::<OneHotF>(root_commitment.log_basis_open),
         )
         .expect("group-by-chunk witness layout");
@@ -658,10 +648,11 @@ fn multi_group_root_allows_final_a_smaller_than_precommitted_a() {
             &pre_params,
         )],
     };
+    let opening_layout = key.opening_layout().unwrap();
     let schedule = ProtocolCfg::runtime_schedule(key).expect("descending-A schedule");
     let root = multi_group_root_params(&schedule);
     assert_eq!(root.d_a(), 64);
-    assert_eq!(root.relation_witness_carrier_ring_dimension(), 128);
+    assert_eq!(root.group_role_dims(&opening_layout, 0).unwrap().d_a(), 128);
 
     multi_group_root_round_trip_onehot::<fp128::D128OneHot, ProtocolCfg>(
         PRE_NV,

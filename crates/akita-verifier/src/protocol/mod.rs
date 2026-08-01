@@ -5,11 +5,15 @@ use akita_field::AkitaError;
 pub(crate) mod core;
 pub(crate) mod evaluation_trace;
 pub(crate) mod ring_switch;
-mod slice_mle;
 
 pub use core::batched_verify;
 pub use ring_switch::{
     prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
+};
+#[cfg(feature = "benchmark-support")]
+pub use ring_switch::{
+    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
+    RelationEvaluatorBenchmarkCase,
 };
 
 #[inline]

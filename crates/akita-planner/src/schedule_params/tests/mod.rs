@@ -1,6 +1,9 @@
 use super::*;
 
 #[cfg(feature = "catalog-gen")]
+use akita_types::extension_opening_reduction_level_bytes;
+
+#[cfg(feature = "catalog-gen")]
 fn policy_for_candidates(
     mut policy: PlannerPolicy,
     candidates: impl IntoIterator<Item = CommitmentRingDims>,

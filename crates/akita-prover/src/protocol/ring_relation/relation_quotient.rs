@@ -536,10 +536,21 @@ where
         {
             return Err(AkitaError::InvalidProof);
         }
+        let outer_ratio = group_dims
+            .d_a()
+            .checked_div(group_dims.d_b())
+            .filter(|ratio| *ratio != 0 && ratio.is_power_of_two())
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup(
+                    "B-role ring dimension must divide the A-role ring dimension".into(),
+                )
+            })?;
         let expected_t_hat_block_digits = n_a
-            .checked_mul(num_digits_outer)
+            .checked_mul(outer_ratio)
+            .and_then(|n| n.checked_mul(num_digits_outer))
             .ok_or(AkitaError::InvalidProof)?;
         if group.t_hat.block_count() != expected_blocks
+            || group.t_hat.digit_stride() != group_dims.d_b()
             || group
                 .t_hat
                 .block_sizes()

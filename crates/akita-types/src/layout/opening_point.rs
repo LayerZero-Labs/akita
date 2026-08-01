@@ -144,6 +144,26 @@ pub fn opening_domain_len(source_len: usize) -> Result<usize, AkitaError> {
         .ok_or_else(|| AkitaError::InvalidSetup("opening domain length overflow".to_string()))
 }
 
+/// Committed coefficient length for an exact live witness prefix under a
+/// successor commitment ring dimension.
+pub fn witness_commitment_domain_len(
+    live_coeff_len: usize,
+    successor_ring_dim: usize,
+) -> Result<usize, AkitaError> {
+    if successor_ring_dim == 0 || !successor_ring_dim.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "successor commitment ring dimension must be a power of two".to_string(),
+        ));
+    }
+    let live_ring_len = live_coeff_len
+        .checked_add(successor_ring_dim - 1)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment length overflow".into()))?
+        / successor_ring_dim;
+    opening_domain_len(live_ring_len)?
+        .checked_mul(successor_ring_dim)
+        .ok_or_else(|| AkitaError::InvalidSetup("witness commitment domain overflow".into()))
+}
+
 /// Validate and return an index in the exact physical opening source.
 pub fn checked_opening_source_index(
     source_len: usize,

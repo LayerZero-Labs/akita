@@ -500,7 +500,7 @@ where
     let (_split_bits, width) = tensor_extension_split::<F, E>("packing")?;
     let packed =
         pack_tensor_base_lift_i8_digits::<D>(logical_w.as_i8_digits(), E::EXT_DEGREE, width)?;
-    Ok(RecursiveWitnessFlat::from_i8_digits(packed))
+    RecursiveWitnessFlat::from_i8_digits(packed).align_for_commitment_ring_dim(D)
 }
 
 #[cfg(test)]

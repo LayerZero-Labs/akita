@@ -61,11 +61,13 @@ fn negative_binary_digits<F: CanonicalField, const D: usize>(
         ));
     }
     let mut digits = vec![[0i8; D]; input_width];
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let params =
+        akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params::new(field_bits, 1, q);
     balanced_decompose_coefficients_pow2_i8_into(
         coefficients,
         &mut digits.as_flattened_mut()[..digit_coefficients],
-        field_bits,
-        1,
+        &params,
     );
     Ok(digits)
 }

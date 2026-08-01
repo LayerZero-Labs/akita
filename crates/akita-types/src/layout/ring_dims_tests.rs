@@ -140,10 +140,9 @@ fn rejects_b_or_d_larger_than_a() {
 }
 
 #[test]
-fn relation_and_witness_common_counts_are_distinct_contracts() {
+fn common_relation_count_depends_only_on_current_roles() {
     let uniform_roles = CommitmentRingDims::uniform(128);
     assert_eq!(uniform_roles.common_relation_coeff_count(), 128);
-    assert_eq!(uniform_roles.common_relation_witness_coeff_count(64), 64);
 
     let mixed_roles = CommitmentRingDims {
         inner: 128,
@@ -151,5 +150,4 @@ fn relation_and_witness_common_counts_are_distinct_contracts() {
         opening: 32,
     };
     assert_eq!(mixed_roles.common_relation_coeff_count(), 32);
-    assert_eq!(mixed_roles.common_relation_witness_coeff_count(16), 16);
 }

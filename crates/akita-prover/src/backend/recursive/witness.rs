@@ -17,7 +17,6 @@ use crate::backend::poly_helpers::{
     balanced_tight_digit_fold_partitioned, build_decompose_fold_witness,
 };
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend, RecursiveWitnessCommitRowsPlan};
-use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_types::{
     tensor_column_partials_from_base_evals, tensor_packed_witness_evals, FpExtEncoding,
     WitnessLayout,
@@ -30,6 +29,8 @@ use crate::{CommitInnerWitness, DecomposeFoldWitness};
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct RecursiveWitnessFlat {
     digits: Arc<[i8]>,
+    commitment_digits: Option<Arc<[i8]>>,
+    commitment_ring_dim: Option<usize>,
     known_balanced_log_basis: Option<u32>,
 }
 
@@ -37,19 +38,18 @@ impl RecursiveWitnessFlat {
     pub fn from_i8_digits(digits: Vec<i8>) -> Self {
         Self {
             digits: digits.into(),
+            commitment_digits: None,
+            commitment_ring_dim: None,
             known_balanced_log_basis: None,
         }
     }
 
-    pub(crate) fn from_witness_layout<const D: usize>(
+    pub(crate) fn from_witness_layout(
         digits: Vec<i8>,
         layout: &WitnessLayout,
         log_basis: u32,
     ) -> Result<Self, AkitaError> {
-        let expected = layout
-            .total_len()
-            .checked_mul(D)
-            .ok_or_else(|| AkitaError::InvalidSetup("recursive witness length overflow".into()))?;
+        let expected = layout.live_coeff_len();
         if digits.len() != expected {
             return Err(AkitaError::InvalidSize {
                 expected,
@@ -58,8 +58,33 @@ impl RecursiveWitnessFlat {
         }
         Ok(Self {
             digits: digits.into(),
+            commitment_digits: None,
+            commitment_ring_dim: None,
             known_balanced_log_basis: Some(log_basis),
         })
+    }
+
+    pub(crate) fn align_for_commitment_ring_dim(
+        mut self,
+        ring_dim: usize,
+    ) -> Result<Self, AkitaError> {
+        if ring_dim == 0 || !ring_dim.is_power_of_two() {
+            return Err(AkitaError::InvalidSetup(
+                "recursive witness commitment ring dimension must be a power of two".into(),
+            ));
+        }
+        let committed_len =
+            akita_types::witness_commitment_domain_len(self.digits.len(), ring_dim)?;
+        self.commitment_digits = if committed_len == self.digits.len() {
+            Some(Arc::clone(&self.digits))
+        } else {
+            let mut committed = Vec::with_capacity(committed_len);
+            committed.extend_from_slice(&self.digits);
+            committed.resize(committed_len, 0);
+            Some(committed.into())
+        };
+        self.commitment_ring_dim = Some(ring_dim);
+        Ok(self)
     }
 
     pub fn as_i8_digits(&self) -> &[i8] {
@@ -70,8 +95,15 @@ impl RecursiveWitnessFlat {
         Arc::clone(&self.digits)
     }
 
-    pub fn len(&self) -> usize {
+    pub fn live_coeff_len(&self) -> usize {
         self.digits.len()
+    }
+
+    pub(crate) fn committed_coeff_len(&self) -> Result<usize, AkitaError> {
+        self.commitment_digits
+            .as_ref()
+            .map(|digits| digits.len())
+            .ok_or(AkitaError::InvalidProof)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -81,7 +113,17 @@ impl RecursiveWitnessFlat {
     pub fn view<F: FieldCore, const D: usize>(
         &self,
     ) -> Result<SuffixWitnessView<'_, F, D>, AkitaError> {
-        SuffixWitnessView::from_recursive_witness(&self.digits, self.known_balanced_log_basis)
+        let digits = match (&self.commitment_digits, self.commitment_ring_dim) {
+            (Some(digits), Some(ring_dim)) if ring_dim == D => digits.as_ref(),
+            (Some(_), Some(_)) => return Err(AkitaError::InvalidProof),
+            (None, None) => self.digits.as_ref(),
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        SuffixWitnessView::from_recursive_witness(
+            digits,
+            self.digits.len(),
+            self.known_balanced_log_basis,
+        )
     }
 }
 
@@ -95,6 +137,7 @@ impl AsRef<[i8]> for RecursiveWitnessFlat {
 #[derive(Debug, Clone, Copy)]
 pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
     coeffs: &'a [[i8; D]],
+    live_ring_elems: usize,
     padded_ring_elems: usize,
     known_balanced_log_basis: Option<u32>,
     _marker: PhantomData<F>,
@@ -102,11 +145,12 @@ pub struct SuffixWitnessView<'a, F: FieldCore, const D: usize> {
 
 impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
     pub fn from_i8_digits(digits: &'a [i8]) -> Result<Self, AkitaError> {
-        Self::from_recursive_witness(digits, None)
+        Self::from_recursive_witness(digits, digits.len(), None)
     }
 
     fn from_recursive_witness(
         digits: &'a [i8],
+        live_coeff_len: usize,
         known_balanced_log_basis: Option<u32>,
     ) -> Result<Self, AkitaError> {
         let (coeffs, remainder) = digits.as_chunks::<D>();
@@ -116,9 +160,16 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
                 actual: digits.len(),
             });
         }
+        if live_coeff_len > digits.len() {
+            return Err(AkitaError::InvalidSize {
+                expected: digits.len(),
+                actual: live_coeff_len,
+            });
+        }
 
         Ok(Self {
             coeffs,
+            live_ring_elems: live_coeff_len.div_ceil(D),
             padded_ring_elems: coeffs.len().next_power_of_two().max(1),
             known_balanced_log_basis,
             _marker: PhantomData,
@@ -149,7 +200,7 @@ impl<'a, F: FieldCore, const D: usize> SuffixWitnessView<'a, F, D> {
                 "recursive witness requires positive exact block geometry".into(),
             ));
         }
-        Ok(self.coeffs.len().div_ceil(num_positions_per_block))
+        Ok(self.live_ring_elems.div_ceil(num_positions_per_block))
     }
 
     #[inline]
@@ -441,9 +492,7 @@ where
             plan.log_basis_inner,
         )?;
 
-        let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 
     /// Compute the canonical inner commitment rows. Ordinary commitment
@@ -490,15 +539,8 @@ use crate::compute::{
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use akita_field::MulBaseUnreduced;
 
-fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> Result<usize, AkitaError> {
-    let (coeffs, remainder) = digits.as_chunks::<D>();
-    if !remainder.is_empty() {
-        return Err(AkitaError::InvalidSize {
-            expected: D,
-            actual: digits.len(),
-        });
-    }
-    Ok(coeffs.len().next_power_of_two().max(1))
+fn padded_ring_elems_for_digits<const D: usize>(digits: &[i8]) -> usize {
+    digits.len().div_ceil(D).next_power_of_two().max(1)
 }
 
 /// Same-point batch view over several [`RecursiveWitnessFlat`] suffix witnesses.
@@ -513,7 +555,7 @@ where
     F: FieldCore,
 {
     fn num_ring_elems(&self) -> usize {
-        padded_ring_elems_for_digits::<D>(&self.digits).unwrap_or(1)
+        padded_ring_elems_for_digits::<D>(&self.digits)
     }
 }
 
@@ -568,7 +610,7 @@ where
         Self: 'v;
 
     fn opening_view(&self) -> Result<Self::OpeningView<'_>, AkitaError> {
-        SuffixWitnessView::from_i8_digits(&self.digits)
+        self.view::<F, D>()
     }
 
     fn opening_batch<'v>(polys: &'v [&'v Self]) -> Result<Self::OpeningBatchView<'v>, AkitaError> {
@@ -594,7 +636,7 @@ where
         Self: 'v;
 
     fn tensor_view(&self) -> Result<Self::TensorView<'_>, AkitaError> {
-        SuffixWitnessView::from_i8_digits(&self.digits)
+        self.view::<F, D>()
     }
 
     fn tensor_batch<'v>(polys: &'v [&'v Self]) -> Result<Self::TensorBatchView<'v>, AkitaError> {
@@ -674,7 +716,7 @@ where
         let polys = source
             .polys
             .iter()
-            .map(|witness| SuffixWitnessView::<F, D>::from_i8_digits(witness.as_i8_digits()))
+            .map(|witness| witness.view::<F, D>())
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         match plan {
@@ -759,7 +801,7 @@ where
         let polys = source
             .polys
             .iter()
-            .map(|witness| SuffixWitnessView::<F, D>::from_i8_digits(witness.as_i8_digits()))
+            .map(|witness| witness.view::<F, D>())
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_extension_column_partials_batch(&refs, logical_point)
@@ -774,7 +816,7 @@ where
         let polys = source
             .polys
             .iter()
-            .map(|witness| SuffixWitnessView::<F, D>::from_i8_digits(witness.as_i8_digits()))
+            .map(|witness| witness.view::<F, D>())
             .collect::<Result<Vec<_>, _>>()?;
         let refs = polys.iter().collect::<Vec<_>>();
         SuffixWitnessView::tensor_packed_extension_sparse_linear_combination(&refs, coeffs)
@@ -809,6 +851,19 @@ mod tests {
     }
 
     #[test]
+    fn commitment_padding_does_not_create_live_blocks() {
+        const D: usize = 64;
+        let witness = RecursiveWitnessFlat::from_i8_digits(vec![1; 70 * D])
+            .align_for_commitment_ring_dim(D)
+            .expect("commitment alignment");
+        let view = witness.view::<F, D>().expect("aligned view");
+
+        assert_eq!(view.live_ring_elems, 70);
+        assert!(view.coeffs.len() >= view.live_ring_elems);
+        assert_eq!(view.num_live_blocks(10).expect("live blocks"), 7);
+    }
+
+    #[test]
     fn suffix_root_projection_is_rejected() {
         const D: usize = 16;
         type E = akita_field::FpExt4<F>;
@@ -832,7 +887,7 @@ mod tests {
             .view::<akita_field::Prime128OffsetA7F7, 2>()
             .expect("view");
         let num_live_blocks = 4;
-        let num_positions_per_block = (w.len() / 2).div_ceil(num_live_blocks);
+        let num_positions_per_block = (w.live_coeff_len() / 2).div_ceil(num_live_blocks);
 
         let row = |block_idx: usize| -> Vec<[i8; 2]> {
             (0..num_positions_per_block)

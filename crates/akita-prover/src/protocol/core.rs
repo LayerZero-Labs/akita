@@ -12,10 +12,7 @@ use crate::protocol::sumcheck::relation_range_image::build_evaluation_trace_weig
 use crate::protocol::sumcheck::AkitaStage3Prover;
 use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
-use crate::{
-    ProverOpeningData, ProverTranscriptGrind, RecursiveCommitmentHintCache, RingRelationInstance,
-    RingRelationWitness,
-};
+use crate::{ProverOpeningData, ProverTranscriptGrind, RingRelationInstance, RingRelationWitness};
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};
 use akita_field::parallel::*;

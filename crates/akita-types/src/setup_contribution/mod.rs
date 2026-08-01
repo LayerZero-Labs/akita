@@ -13,7 +13,6 @@ use akita_field::{AkitaError, CanonicalField, FieldCore};
 
 mod geometry;
 mod plan;
-mod setup_index_weight_evaluator;
 #[allow(dead_code)]
 #[cfg(test)]
 mod test_oracle_weights;
@@ -23,11 +22,9 @@ mod tests;
 
 pub(crate) use geometry::SetupProjectionGroupGeometry;
 pub use geometry::{ensure_setup_envelope, SetupProjectionGeometry};
-pub(crate) use plan::get_d_col_range;
 #[cfg(test)]
 pub(crate) use plan::validate_setup_inputs;
-pub use plan::{SetupContributionGroupInputs, SetupContributionPlan};
-pub use setup_index_weight_evaluator::SetupIndexWeightEvaluator;
+pub use plan::{PreparedRelationAddress, SetupContributionGroupInputs, SetupContributionPlan};
 
 /// Shared fold gadget when every setup-contribution group uses the same basis.
 ///

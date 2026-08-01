@@ -275,11 +275,11 @@ fn prepare_recursive_level_search(
     requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<RecursiveLevelSearch>, AkitaError> {
     let num_chunks = policy.chunks_at_level(fold_level);
-    dimensions.validate_a_carrier()?;
-    if !current_witness_len.is_multiple_of(dimensions.d_a()) {
+    dimensions.validate_role_projection()?;
+    if current_witness_len == 0 {
         return Ok(None);
     }
-    let num_ring_elems = current_witness_len / dimensions.d_a();
+    let num_ring_elems = current_witness_len.div_ceil(dimensions.d_a());
     let reduced_vars = num_ring_elems
         .checked_next_power_of_two()
         .ok_or_else(|| AkitaError::InvalidSetup("recursive witness capacity overflow".to_string()))?

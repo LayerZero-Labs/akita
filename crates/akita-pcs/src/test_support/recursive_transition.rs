@@ -58,8 +58,8 @@ where
                 outer: middle_bd_ring_dim,
                 opening: middle_bd_ring_dim,
             };
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             for descriptor in &key.precommitteds {
                 if descriptor.inner_ring_dimension != Root::D
                     || descriptor.outer_ring_dimension != root_bd_ring_dim
@@ -75,7 +75,7 @@ where
             let opening_layout = key.opening_layout()?;
 
             // Plan the exact multi-group root at Root::D, then rebuild B and
-            // shared D from the requested final carrier geometry.
+            // shared D from the requested final projection geometry.
             let root_policy = policy_of::<Root>().direct_only();
             let mut root = akita_planner::find_schedule(
                 key,
@@ -111,7 +111,7 @@ where
             // rebuild its B/D matrices before attaching the setup prefix.
             let mut mid_policy = policy_of::<Mid>().direct_only();
             mid_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let mid = akita_planner::plan_optimal_suffix(
+            let mid = akita_planner::test_support::plan_optimal_suffix(
                 &mid_policy,
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -199,7 +199,7 @@ where
 
             let mut suffix_policy = policy_of::<Suffix>().direct_only();
             suffix_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &suffix_policy,
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,

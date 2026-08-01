@@ -13,5 +13,5 @@ pub use cyclotomic::{
 };
 pub use eval::{
     eval_flat_ring_at_pows, eval_flat_ring_at_pows_fast, eval_ring_at, eval_ring_at_pows,
-    eval_ring_at_pows_fast, scalar_powers,
+    eval_ring_at_pows_fast, evaluate_power_sequence_mle, scalar_powers, scalar_powers_with_stride,
 };

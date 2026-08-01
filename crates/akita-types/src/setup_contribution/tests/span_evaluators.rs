@@ -29,6 +29,7 @@ fn projected_setup_weight_reference(
     for base_idx in 0..required {
         let mut weight = F::zero();
         for group in &plan.groups {
+            let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
             let d_idx = base_idx / d_ratio;
             if d_idx < plan.d_rows * plan.d_physical_cols {
                 let d_col = d_idx % plan.d_physical_cols;
@@ -36,23 +37,21 @@ fn projected_setup_weight_reference(
                 if group.d_col_range.contains(&d_col) {
                     weight += d_scales[base_idx % d_ratio]
                         * plan.d_weights[d_row]
-                        * group.e_eq_slice[d_col - group.d_col_range.start];
+                        * e_eq_slice[d_col - group.d_col_range.start];
                 }
             }
             let b_idx = base_idx / b_ratio;
             if b_idx < group.n_b * group.t_cols {
                 let b_col = b_idx % group.t_cols;
                 let b_row = b_idx / group.t_cols;
-                weight +=
-                    b_scales[base_idx % b_ratio] * group.b_weights[b_row] * group.t_eq_slice[b_col];
+                weight += b_scales[base_idx % b_ratio] * group.b_weights[b_row] * t_eq_slice[b_col];
             }
             let a_idx = base_idx / a_ratio;
             if a_idx < group.n_a * group.z_cols {
                 let a_col = a_idx % group.z_cols;
                 let a_row = a_idx / group.z_cols;
-                weight += a_scales[base_idx % a_ratio]
-                    * group.a_row_weights[a_row]
-                    * group.z_eq_slice[a_col];
+                weight +=
+                    a_scales[base_idx % a_ratio] * group.a_row_weights[a_row] * z_eq_slice[a_col];
             }
         }
         acc += eq_eval_at_index(rho, base_idx) * weight;
@@ -74,42 +73,28 @@ fn assert_span_mle_matches_dense(plan: &SetupContributionPlan<F>, rho: &[F], alp
     );
 }
 
-fn assert_uniform_evaluator_matches_canonical_plan(ownership_widths: &[usize]) {
+fn assert_fixture_setup_index_mle_matches_dense(
+    ownership_widths: &[usize],
+    role_dims: CommitmentRingDims,
+    outgoing_ring_dim: usize,
+) {
     let alpha = test_scalar(3);
-    let (inputs, groups, layout, plan, tau1, address_point, fold_gadget) =
-        structured_weight_fixture(8, ownership_widths, CommitmentRingDims::uniform(TEST_D));
-    let evaluator = SetupIndexWeightEvaluator::new::<F>(
-        &plan,
-        &inputs.level_params,
-        &inputs.opening_batch,
-        &layout,
-        layout.total_len(),
-        &groups,
-        &tau1,
-        &address_point,
-        &fold_gadget,
-        alpha,
-    )
-    .unwrap();
+    let (_, _, _, plan, _, _, _) =
+        structured_weight_fixture_with_outgoing(8, ownership_widths, role_dims, outgoing_ring_dim);
     let rho = rho_for_required(plan.required());
-    assert_eq!(evaluator.required(), plan.required());
-    assert_eq!(
-        evaluator.evaluate(&rho).unwrap(),
-        plan.evaluate_setup_index_weight_mle(&rho, alpha).unwrap()
-    );
+    assert_span_mle_matches_dense(&plan, &rho, alpha);
 }
 
-fn structured_slice_reference(
-    plan: &SetupContributionPlan<F>,
+pub(super) fn structured_slice_reference(
     group: &SetupContributionGroupPlan<F>,
     block_challenges: &[F],
     opening_a_evals: &[F],
     alpha: F,
 ) -> F {
+    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.column_eq_slices().unwrap();
     let (outer_subcolumns, opening_subcolumns) =
-        SetupProjectionGeometry::a_carrier_subcolumn_counts(plan.projection_geometry.role_dims())
-            .unwrap();
-    let role_dims = plan.projection_geometry.role_dims();
+        SetupProjectionGeometry::native_role_subcolumn_counts(group.role_dims).unwrap();
+    let role_dims = group.role_dims;
     let alpha_powers = scalar_powers(alpha, role_dims.d_a());
     let opening_gadget = gadget_row_scalars::<F>(group.depth_open, group.log_basis_open);
     let commitment_gadget = gadget_row_scalars::<F>(group.depth_commit, group.log_basis_outer);
@@ -126,23 +111,23 @@ fn structured_slice_reference(
                         + digit;
                     evaluation += challenge
                         * group.consistency_weight
-                        * group.e_eq_slice[column]
+                        * e_eq_slice[column]
                         * gadget
                         * alpha_powers[subcolumn * role_dims.d_d()];
                 }
             }
             for row in 0..group.n_a {
-                for (digit, &gadget) in commitment_gadget.iter().enumerate() {
-                    for subcolumn in 0..outer_subcolumns {
+                for subcolumn in 0..outer_subcolumns {
+                    for (digit, &gadget) in commitment_gadget.iter().enumerate() {
                         let column = ((((claim * group.num_live_blocks + block) * group.n_a
                             + row)
-                            * group.depth_commit
-                            + digit)
-                            * outer_subcolumns)
-                            + subcolumn;
+                            * outer_subcolumns
+                            + subcolumn)
+                            * group.depth_commit)
+                            + digit;
                         evaluation += challenge
                             * group.a_row_weights[row]
-                            * group.t_eq_slice[column]
+                            * t_eq_slice[column]
                             * gadget
                             * alpha_powers[subcolumn * role_dims.d_b()];
                     }
@@ -154,7 +139,7 @@ fn structured_slice_reference(
         for (digit, &gadget) in witness_gadget.iter().enumerate() {
             evaluation += group.consistency_weight
                 * opening
-                * group.z_eq_slice[position * group.depth_witness + digit]
+                * z_eq_slice[position * group.depth_witness + digit]
                 * gadget;
         }
     }
@@ -162,7 +147,7 @@ fn structured_slice_reference(
 }
 
 #[test]
-fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
+fn canonical_tensors_match_dense_oracles_across_geometries() {
     let cases = [
         (&[8][..], CommitmentRingDims::uniform(TEST_D), TEST_D),
         (
@@ -182,29 +167,12 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
     ];
     let alpha = test_scalar(3);
     for (ownership_widths, role_dims, outgoing_ring_dim) in cases {
-        let (inputs, groups, layout, full, _, address_point, fold_gadget) =
-            structured_weight_fixture_with_outgoing(
-                8,
-                ownership_widths,
-                role_dims,
-                outgoing_ring_dim,
-            );
-        let opening_source_len = layout.total_len() * role_dims.d_a() / outgoing_ring_dim;
-        let relation_address_geometry =
-            crate::RelationAddressGeometry::new(role_dims, outgoing_ring_dim, opening_source_len)
-                .unwrap();
-        let deferred = SetupContributionPlan::prepare_deferred::<F>(
-            &inputs.level_params,
-            &inputs.opening_batch,
-            inputs.eq_tau1.clone(),
-            &layout,
-            &groups,
-            &address_point,
-            Some(&fold_gadget),
-            relation_address_geometry,
-            alpha,
-        )
-        .unwrap();
+        let (_, _, layout, full, _, _, _) = structured_weight_fixture_with_outgoing(
+            8,
+            ownership_widths,
+            role_dims,
+            outgoing_ring_dim,
+        );
         let rho = rho_for_required(full.required());
         let dense = full
             .materialize_setup_index_weights(alpha)
@@ -218,14 +186,15 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             full.evaluate_setup_index_weight_mle(&rho, alpha).unwrap(),
             dense
         );
-        assert_eq!(
-            deferred
-                .evaluate_setup_index_weight_mle(&rho, alpha)
-                .unwrap(),
-            dense
-        );
-
         let group = &full.groups[0];
+        let expected_families = layout.units_for_group(group.group_id).unwrap().count();
+        assert_eq!(group.a_tensors.len(), expected_families);
+        assert!(group.a_tensors.iter().all(|family| {
+            family
+                .axes
+                .iter()
+                .any(|axis| axis.left_stride == 0 && axis.len == group.fold_gadget.len())
+        }));
         let block_challenges = (0..group.num_claims * group.num_live_blocks)
             .map(|index| test_scalar(401 + index as u128))
             .collect::<Vec<_>>();
@@ -233,7 +202,7 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
             .map(|index| test_scalar(501 + index as u128))
             .collect::<Vec<_>>();
         let reference =
-            structured_slice_reference(&full, group, &block_challenges, &opening_a_evals, alpha);
+            structured_slice_reference(group, &block_challenges, &opening_a_evals, alpha);
         assert_eq!(
             full.evaluate_structured_group::<F>(
                 group.group_id,
@@ -242,17 +211,6 @@ fn full_and_deferred_plans_share_span_evaluators_across_geometries() {
                 alpha,
             )
             .unwrap(),
-            reference
-        );
-        assert_eq!(
-            deferred
-                .evaluate_structured_group::<F>(
-                    group.group_id,
-                    &block_challenges,
-                    &opening_a_evals,
-                    alpha,
-                )
-                .unwrap(),
             reference
         );
     }
@@ -276,13 +234,46 @@ fn span_setup_index_mle_matches_dense_multi_chunk() {
 }
 
 #[test]
-fn uniform_setup_index_evaluator_matches_single_chunk_plan() {
-    assert_uniform_evaluator_matches_canonical_plan(&[8]);
+fn uniform_setup_index_mle_matches_single_chunk_plan() {
+    assert_fixture_setup_index_mle_matches_dense(&[8], CommitmentRingDims::uniform(TEST_D), TEST_D);
 }
 
 #[test]
-fn uniform_setup_index_evaluator_matches_multi_chunk_plan() {
-    assert_uniform_evaluator_matches_canonical_plan(&[2, 2, 2, 2]);
+fn uniform_setup_index_mle_matches_multi_chunk_plan() {
+    assert_fixture_setup_index_mle_matches_dense(
+        &[2, 2, 2, 2],
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D,
+    );
+}
+
+#[test]
+fn uniform_setup_index_mle_ignores_outgoing_repacking() {
+    assert_fixture_setup_index_mle_matches_dense(
+        &[2, 2, 2, 2],
+        CommitmentRingDims::uniform(TEST_D),
+        TEST_D * 2,
+    );
+}
+
+#[test]
+fn setup_index_mle_matches_mixed_role_plans() {
+    for role_dims in [
+        CommitmentRingDims {
+            inner: 64,
+            outer: 32,
+            opening: 32,
+        },
+        CommitmentRingDims {
+            inner: 64,
+            outer: 16,
+            opening: 32,
+        },
+    ] {
+        for ownership_widths in [&[8][..], &[2, 2, 2, 2][..], &[3, 5][..]] {
+            assert_fixture_setup_index_mle_matches_dense(ownership_widths, role_dims, 16);
+        }
+    }
 }
 
 #[test]

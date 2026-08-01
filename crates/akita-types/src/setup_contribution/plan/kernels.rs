@@ -71,25 +71,19 @@ macro_rules! dispatch_segment_roles {
 
 pub(super) use dispatch_segment_roles;
 
-pub(super) struct RoleProjection<E> {
-    pub(super) scales: Vec<E>,
-    pub(super) shift: usize,
-    pub(super) mask: usize,
+pub(super) enum RoleProjection<E> {
+    Identity,
+    Projected {
+        scales: Vec<E>,
+        shift: usize,
+        mask: usize,
+    },
 }
 
 impl<E: FieldCore> RoleProjection<E> {
     #[inline(always)]
-    pub(super) fn identity() -> Self {
-        Self {
-            scales: vec![E::one()],
-            shift: 0,
-            mask: 0,
-        }
-    }
-
-    #[inline(always)]
     pub(super) fn is_identity(&self) -> bool {
-        self.scales.len() == 1
+        matches!(self, Self::Identity)
     }
 }
 
@@ -107,7 +101,7 @@ pub(super) fn role_projection<E: FieldCore>(
         return None;
     }
     if ratio == 1 {
-        return (alpha_pows == base_pows).then(RoleProjection::identity);
+        return (alpha_pows == base_pows).then_some(RoleProjection::Identity);
     }
     let mut scales = Vec::with_capacity(ratio);
     for chunk in alpha_pows.chunks_exact(base_d) {
@@ -119,7 +113,7 @@ pub(super) fn role_projection<E: FieldCore>(
         }
         scales.push(scale);
     }
-    Some(RoleProjection {
+    Some(RoleProjection::Projected {
         scales,
         shift: ratio.trailing_zeros() as usize,
         mask: ratio - 1,
@@ -315,24 +309,26 @@ fn projected_role_weight_at<E: FieldCore>(
     eq_slice: &[E],
     projection: &RoleProjection<E>,
 ) -> Result<E, AkitaError> {
-    let identity = projection.is_identity();
-    let role_idx = if identity {
-        base_idx
-    } else {
-        base_idx >> projection.shift
-    };
-    let scale = if identity {
-        E::one()
-    } else {
-        *projection
-            .scales
-            .get(base_idx & projection.mask)
-            .ok_or(AkitaError::InvalidProof)?
+    let (role_idx, scale) = match projection {
+        RoleProjection::Identity => (base_idx, None),
+        RoleProjection::Projected {
+            scales,
+            shift,
+            mask,
+        } => (
+            base_idx >> shift,
+            Some(
+                *scales
+                    .get(base_idx & mask)
+                    .ok_or(AkitaError::InvalidProof)?,
+            ),
+        ),
     };
     let eq_idx = role_idx
         .checked_sub(start_abs)
         .ok_or(AkitaError::InvalidProof)?;
-    Ok(row_weight * scale * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?)
+    let weight = row_weight * *eq_slice.get(eq_idx).ok_or(AkitaError::InvalidProof)?;
+    Ok(scale.map_or(weight, |scale| weight * scale))
 }
 
 #[cfg(test)]

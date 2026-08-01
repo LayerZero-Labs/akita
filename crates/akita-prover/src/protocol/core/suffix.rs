@@ -8,6 +8,7 @@ use crate::compute::{
 use crate::RootTensorProjectionPoly;
 use akita_field::unreduced::ReduceTo;
 use akita_field::AdditiveGroup;
+use akita_types::AkitaCommitmentHint;
 use std::sync::Arc;
 
 /// Prover state carried between suffix fold levels.
@@ -18,8 +19,8 @@ pub struct SuffixProverState<F: FieldCore, E: FieldCore> {
     pub logical_w: Option<RecursiveWitnessFlat>,
     /// Transcript-bound public state for the current suffix witness.
     pub binding: NextWitnessState<F>,
-    /// D-erased suffix commitment hint cache.
-    pub hint: RecursiveCommitmentHintCache<F>,
+    /// Persistent semantic A-ring rows for the current suffix commitment.
+    pub hint: AkitaCommitmentHint<F>,
     /// Current digit basis, as `log2(b)`.
     pub log_basis: u32,
     /// Sumcheck challenges that become the next suffix opening point.
@@ -133,10 +134,11 @@ where
                 )
             },
         );
-        if current_state.w.len() != input_witness_len {
+        let current_witness_len = current_state.w.live_coeff_len();
+        if current_witness_len != input_witness_len {
             return Err(AkitaError::InvalidSetup(format!(
                 "scheduled fold level {level} did not match runtime state: expected_witness_len={input_witness_len}, actual_witness_len={}",
-                current_state.w.len()
+                current_witness_len
             )));
         }
         let role_dims = level_params.role_dims();
@@ -180,11 +182,12 @@ where
         current_state = out.next_state;
         level += 1;
     }
-    if current_state.w.len() != schedule.terminal.input_witness_len {
+    let current_witness_len = current_state.w.live_coeff_len();
+    if current_witness_len != schedule.terminal.input_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled terminal fold did not match runtime state: expected_witness_len={}, actual_witness_len={}",
             schedule.terminal.input_witness_len,
-            current_state.w.len(),
+            current_witness_len,
         )));
     }
     let terminal = prove_terminal_suffix::<Cfg::Field, Cfg::ExtField, T, C, O, TS, R>(
@@ -239,6 +242,7 @@ where
         w,
         logical_w,
         binding,
+        hint,
         sumcheck_challenges,
         opening,
         setup_prefix_opening,
@@ -249,10 +253,15 @@ where
             "terminal fold cannot receive a setup-prefix opening".into(),
         ));
     }
-    let t_state = match binding {
-        NextWitnessState::TerminalInnerState { t_state } => t_state,
+    match binding {
+        NextWitnessState::TerminalInnerState => {}
         NextWitnessState::OuterCommitment(_) => return Err(AkitaError::InvalidProof),
-    };
+    }
+    let mut terminal_rows = hint.into_rows();
+    if terminal_rows.len() != 1 {
+        return Err(AkitaError::InvalidProof);
+    }
+    let t_state = terminal_rows.pop().ok_or(AkitaError::InvalidProof)?;
     transcript.absorb_and_record_bytes(
         ABSORB_COMMITMENT,
         &akita_types::raw_field_segment_bytes(&t_state)?,
@@ -462,12 +471,9 @@ where
             commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
             commitment
         }
-        NextWitnessState::TerminalInnerState { .. } => return Err(AkitaError::InvalidProof),
+        NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),
     };
-    // D-free suffix hint: the cache carries the flat `AkitaCommitmentHint<F>`
-    // directly (Slice A re-homed the recomposed rows), so there is no typed
-    // reconstruction here (the former `hint.to_typed::<D>()` bridge is gone).
-    let suffix_hint = hint.into_hint();
+    let suffix_hint = hint;
     let opening_point = &sumcheck_challenges;
 
     let recursive_num_vars = level_params.recursive_opening_num_vars()?;

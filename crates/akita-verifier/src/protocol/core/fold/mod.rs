@@ -131,31 +131,23 @@ where
     T: Transcript<F>,
 {
     let witness_eval = stage2.next_w_eval();
-    let carrier_ring_dimension = rs.relation_address_geometry.carrier_ring_dimension();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        carrier_ring_dimension,
-        |D| {
-            verify_stage2_kernel::<F, E, T, D>(
-                transcript,
-                setup,
-                stage2,
-                stage1,
-                rs,
-                relation_claim,
-                witness_eval,
-                setup_claim,
-                evaluation_trace,
-                evaluation_trace_row_weight,
-                evaluation_trace_opening_claim,
-            )
-        }
+    verify_stage2_kernel::<F, E, T>(
+        transcript,
+        setup,
+        stage2,
+        stage1,
+        rs,
+        relation_claim,
+        witness_eval,
+        setup_claim,
+        evaluation_trace,
+        evaluation_trace_row_weight,
+        evaluation_trace_opening_claim,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn verify_stage2_kernel<F, E, T, const D: usize>(
+fn verify_stage2_kernel<F, E, T>(
     transcript: &mut T,
     setup: &AkitaVerifierSetup<F>,
     stage2: &AkitaStage2Proof<F, E>,
@@ -173,7 +165,7 @@ where
     E: FpExtEncoding<F> + ExtField<F> + FromPrimitiveInt + AkitaSerialize + MulBaseUnreduced<F>,
     T: Transcript<F>,
 {
-    let stage2_verifier = AkitaStage2Verifier::<F, E, D>::new(
+    let stage2_verifier = AkitaStage2Verifier::<F, E>::new(
         stage1.batching_coeff,
         stage1.range_image_evaluation,
         witness_eval,
@@ -185,7 +177,7 @@ where
         relation_claim,
         rs.relation_address_geometry.relation_lane_variable_count(),
         rs.relation_address_geometry
-            .common_relation_witness_variable_count(),
+            .relation_coefficient_variable_count(),
         evaluation_trace,
         evaluation_trace_row_weight,
         evaluation_trace_opening_claim,
@@ -216,14 +208,13 @@ where
     if let Some((proof, next_fold_level_params)) = stage3 {
         let setup_coefficient_bits = rs
             .relation_address_geometry
-            .common_relation_witness_variable_count();
+            .relation_coefficient_variable_count();
         let setup_x_challenges = sumcheck_challenges
             .get(setup_coefficient_bits..)
             .ok_or(AkitaError::InvalidProof)?;
         let verifier = SetupSumcheckVerifier::new::<F>(
             &rs.relation_matrix_evaluator,
             setup_x_challenges,
-            &rs.tau1,
             rs.alpha,
         )?;
         let setup_point =
@@ -364,7 +355,6 @@ where
         opening_source_len: next_opening_source_len,
         opening_ring_dim: next_witness_ring_dim,
     };
-    let carrier_ring_dimension = prepared.lp.relation_witness_carrier_ring_dimension();
     {
         let _span = tracing::info_span!("fold_bind_next_witness").entered();
         match next_witness {
@@ -383,12 +373,7 @@ where
             PreparedNextWitness::TerminalT(_) => return Err(AkitaError::InvalidProof),
         }
     }
-    let rs = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        carrier_ring_dimension,
-        |D| ring_switch_verifier::<F, E, T, D>(&ring_switch_replay, prepared.w_len, transcript)
-    )?;
+    let rs = ring_switch_verifier::<F, E, T>(&ring_switch_replay, prepared.w_len, transcript)?;
     let relation_claim = relation_claim_from_layout_extension::<F, E>(
         &relation_rhs_layout,
         &rs.tau1,
@@ -416,26 +401,23 @@ where
         claims = opening_batch.num_total_polynomials(),
         groups = opening_batch.num_groups(),
         chunks = trace_witness_layout.units().len(),
-        source_ring_dimension = carrier_ring_dimension,
+        coefficient_block_len = rs
+            .relation_address_geometry
+            .relation_coefficient_block_len(),
     )
     .entered();
-    let evaluation_trace = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        carrier_ring_dimension,
-        |D| {
-            prepare_evaluation_trace::<F, E, D>(&EvaluationTraceInputs {
-                digit_witness_domain: trace_domain,
-                witness_layout: trace_witness_layout,
-                carrier_ring_dimension,
-                level_params: prepared.lp,
-                opening_batch,
-                prepared_points: &prefix.prepared_points,
-                claim_coefficients: &prefix.trace_claim_coefficients,
-                basis: prepared.evaluation_trace_basis,
-            })
-        }
-    )?;
+    let evaluation_trace = prepare_evaluation_trace::<F, E>(&EvaluationTraceInputs {
+        digit_witness_domain: trace_domain,
+        relation_coefficient_block_len: rs
+            .relation_address_geometry
+            .relation_coefficient_block_len(),
+        witness_layout: trace_witness_layout,
+        level_params: prepared.lp,
+        opening_batch,
+        prepared_points: &prefix.prepared_points,
+        claim_coefficients: &prefix.trace_claim_coefficients,
+        basis: prepared.evaluation_trace_basis,
+    })?;
     drop(trace_preparation_span);
     let evaluation_trace_opening_claim = evaluation_trace_weight * prefix.trace_eval_target;
     let setup_claim = stage3.as_ref().map(|(proof, _)| proof.claim);

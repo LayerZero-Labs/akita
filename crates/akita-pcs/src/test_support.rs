@@ -2,7 +2,7 @@
 //!
 //! Relocated from `akita-config`: after the runtime-resolution move (#327),
 //! `akita-planner` depends on `akita-config`, so `akita-config` can no longer
-//! depend on the offline planner ([`akita_planner::plan_optimal_suffix`])
+//! depend on the offline planner ([`akita_planner::test_support::plan_optimal_suffix`])
 //! without a dependency cycle. These builders live here (a crate above both)
 //! and are gated behind the `test-support` Cargo feature, which production
 //! builds never enable.
@@ -86,7 +86,7 @@ fn cached_synthetic_schedule(
 }
 
 // -------------------------------------------------------------------------
-// Multi-group carrier fixture: precommitted groups use the envelope config,
+// Multi-group native-dimension fixture: precommitted groups use the envelope config,
 // while the final group and recursive suffix use a smaller native config.
 // -------------------------------------------------------------------------
 
@@ -243,7 +243,7 @@ where
 /// Fold levels `[0, switch_at_fold)` keep the `EnvelopeCfg` schedule prefix
 /// (its root, and any recursive levels before the switch), at the envelope's
 /// ring dimension. From `switch_at_fold` onward the schedule is a
-/// **proof-size-optimal** continuation planned by [`akita_planner::plan_optimal_suffix`]
+/// **proof-size-optimal** continuation planned by [`akita_planner::test_support::plan_optimal_suffix`]
 /// at `SuffixCfg`'s ring dimension, starting from the envelope prefix's output
 /// witness — not the envelope's own (differently sized) suffix repriced in
 /// place. This is what lets a large-ring-dimension root fold hand off to a
@@ -313,7 +313,7 @@ where
             };
 
             // Optimal small-ring-dimension continuation from the prefix output.
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<SuffixCfg>(),
                 SuffixCfg::ring_challenge_config,
                 SuffixCfg::fold_challenge_shape_at_level,
@@ -480,7 +480,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error when the matrix dimensions do not fit the A carrier, an
+/// Returns an error when the matrix dimensions do not fit the A-native source, an
 /// exact matrix width falls outside the audited SIS table, or no terminating
 /// suffix can be planned.
 pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
@@ -534,7 +534,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 &opening_layout,
             )?;
             root.output_witness_len = root_out;
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Env>(),
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
@@ -548,11 +548,11 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
     )
 }
 
-/// Rebuild the B and D matrices from the final A-carrier geometry.
+/// Rebuild the B and D matrices from the final A-native projection geometry.
 ///
 /// The exact widths are the native committed digit counts multiplied by
 /// `d_a / d_b` and `d_a / d_d`. Deriving them from the final parameters is
-/// essential for promoted carriers such as the temporary D512 experiment:
+/// essential for promoted dimensions such as the temporary D512 experiment:
 /// scaling a stale D256 matrix would undercount both widths by two.
 fn retarget_commitment_matrices(
     commitment: &mut CommittedGroupParams,
@@ -565,7 +565,7 @@ fn retarget_commitment_matrices(
         outer: b_ring_dim,
         opening: d_ring_dim,
     };
-    dims.validate_a_carrier()?;
+    dims.validate_role_projection()?;
     let projected_width = |label: &str, native_width: usize, target_d: usize| {
         native_width
             .checked_mul(dims.d_a() / target_d)
@@ -634,25 +634,19 @@ fn retarget_commitment_matrices(
     Ok(())
 }
 
-/// Field-element length of the outgoing witness produced in the current
-/// level's A-carrier ring.
+/// Exact coefficient length of the outgoing compact witness.
 fn outgoing_witness_field_len(
     field_bits: u32,
     commitment: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let relation_rows = commitment.relation_matrix_row_count(opening_layout.num_groups())?;
     let layout = WitnessLayout::new(
         commitment,
         opening_layout,
         commitment.witness_chunk.num_chunks,
-        relation_rows,
         compute_num_digits_field_width(field_bits, commitment.log_basis_open),
     )?;
-    layout
-        .total_len()
-        .checked_mul(commitment.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("outgoing witness length overflow".into()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Config adapter for a three-level ring-dimension transition: L0
@@ -795,7 +789,7 @@ where
 
 /// Convert one planned suffix fold into its wire schedule representation
 /// (mirrors the `mixed_d_per_level_schedule` conversion).
-fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldStep {
+fn planned_fold_step(fold: &akita_planner::test_support::PlannedSuffixFold) -> RecursiveFoldStep {
     let witness_partition = if fold.params.witness_chunk.num_chunks == 1 {
         WitnessPartition::Single
     } else {
@@ -819,7 +813,7 @@ fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldSt
 fn finish_schedule(
     root: RootFoldStep,
     mut recursive_folds: Vec<RecursiveFoldStep>,
-    suffix: akita_planner::PlannedSuffix,
+    suffix: akita_planner::test_support::PlannedSuffix,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<FoldSchedule, AkitaError> {
     recursive_folds.extend(suffix.folds.iter().map(planned_fold_step));
@@ -896,8 +890,8 @@ where
                     "ring-dimension transition requires a singleton batch".into(),
                 ));
             }
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             if root_dims.d_a() != Root::D || middle_dims.d_a() != Mid::D {
                 return Err(AkitaError::InvalidSetup(
                     "ring-dimension transition A dimensions must match the Root and Mid policies"
@@ -1004,7 +998,7 @@ where
             }
 
             // Rebuild root B/D after the optional A-only promotion. Widths are derived
-            // from the final A carrier, not from the stale planned D256 matrices.
+            // from the final A-native source, not from the stale planned D256 matrices.
             retarget_commitment_matrices(
                 &mut root.params.final_group.commitment,
                 num_polynomials,
@@ -1027,7 +1021,7 @@ where
 
             // Band 2 (`Mid`): plan an optimal `Mid`-dim continuation from the root
             // output and keep only its first fold as L1.
-            let mid = akita_planner::plan_optimal_suffix(
+            let mid = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Mid>(),
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -1043,7 +1037,7 @@ where
             })?;
 
             let mut l1_step = planned_fold_step(l1);
-            // Rebuild L1 B/D from its final A carrier before planning the suffix.
+            // Rebuild L1 B/D from its final A-native source before planning the suffix.
             retarget_commitment_matrices(
                 &mut l1_step.params.witness,
                 num_polynomials,
@@ -1060,7 +1054,7 @@ where
             let l1_lb = l1_step.params.witness.log_basis_open;
 
             // Band 3 (`Suffix`): optimal small-ring continuation from L1's output.
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Suffix>(),
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,

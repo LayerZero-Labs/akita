@@ -15,7 +15,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
     block_index_bits: usize,
     requested_fold_shape: TensorChallengeShape,
 ) -> Result<Option<CommittedGroupParams>, AkitaError> {
-    dimensions.validate_a_carrier()?;
+    dimensions.validate_role_projection()?;
     let alpha = (dimensions.d_a() as u32).trailing_zeros() as usize;
     let reduced_vars = num_vars.saturating_sub(alpha);
     if reduced_vars == 0 || block_index_bits >= reduced_vars {
