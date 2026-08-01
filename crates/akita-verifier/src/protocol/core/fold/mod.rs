@@ -62,7 +62,7 @@ pub(in crate::protocol::core) enum PreparedFoldPayload<'a, F: FieldCore, E: Fiel
 
 struct Stage1Replay<E: FieldCore> {
     batching_coeff: E,
-    binary_batching: E,
+    binary_batching: Option<E>,
     range_image_evaluation: E,
     stage1_point: Vec<E>,
 }
@@ -101,8 +101,10 @@ where
         stage1_verifier.verify::<F, T>(proof, transcript)?
     };
     transcript.append_serde(ABSORB_RANGE_IMAGE_EVALUATION, &proof.range_image_evaluation);
-    let binary_batching: E =
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY);
+    let binary_batching = rs
+        .compression_relation_weights
+        .as_ref()
+        .map(|_| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY));
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     Ok(Stage1Replay {
         batching_coeff,
@@ -171,8 +173,8 @@ where
         witness_eval,
         stage1.stage1_point,
         &rs.relation_matrix_evaluator,
-        &rs.compression_relation_weights,
-        &rs.negative_binary_support,
+        rs.compression_relation_weights.as_ref(),
+        rs.negative_binary_support.as_ref(),
         stage1.binary_batching,
         &setup.expanded,
         rs.alpha,
@@ -253,28 +255,27 @@ where
         })?;
     if commitment_payloads.len() != num_groups {
         return Err(AkitaError::InvalidInput(
-            "compressed commitment payload group count mismatch".into(),
+            "commitment payload group count mismatch".into(),
         ));
     }
     for (relation_group_index, payload) in commitment_payloads.iter().enumerate() {
-        let (_, plan) = relation_rhs_layout.group_compression_plan(relation_group_index)?;
-        if payload.coeff_len() != plan.terminal_coefficients() {
+        if payload.coeff_len()
+            != relation_rhs_layout
+                .group_payload_geometry(relation_group_index)?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidInput(
-                "compressed commitment payload length mismatch".into(),
+                "commitment payload length mismatch".into(),
             ));
         }
     }
-    let opening_plan = relation_rhs_layout.opening_compression_plan()?;
-    if prepared.opening_payload.coeff_len() != opening_plan.terminal_coefficients() {
+    let opening_payload_geometry = relation_rhs_layout.opening_payload_geometry()?;
+    if prepared.opening_payload.coeff_len() != opening_payload_geometry.transmitted_coefficients() {
         return Err(AkitaError::InvalidInput(
-            "compressed opening payload length mismatch".into(),
+            "opening payload length mismatch".into(),
         ));
     }
-    let opening_payload_ring_dim = opening_plan
-        .maps()
-        .last()
-        .ok_or(AkitaError::InvalidProof)?
-        .ring_dimension();
+    let opening_payload_ring_dim = opening_payload_geometry.transcript_ring_dimension();
     let _fold_span = tracing::info_span!(
         "verify_fold",
         d_a = role_dims.d_a(),
@@ -305,9 +306,7 @@ where
             prepared.fold_grind_nonce,
         )
         .map_err(|error| {
-            AkitaError::InvalidInput(format!(
-                "compressed fold challenge replay failed: {error:?}"
-            ))
+            AkitaError::InvalidInput(format!("fold challenge replay failed: {error:?}"))
         })?
     };
     let (relation_rhs_layout, relation_instance) = {
@@ -322,15 +321,29 @@ where
                 )
             }
         )?;
-        let group_payloads = commitment_payloads
-            .iter()
-            .map(|payload| payload.coeffs())
-            .collect::<Vec<_>>();
-        let relation_rhs = assemble_compressed_relation_rhs::<F>(
-            &relation_rhs_layout,
-            &group_payloads,
-            prepared.opening_payload.coeffs(),
-        )?;
+        let commitment_rows = RingVec::from_coeffs(
+            commitment_payloads
+                .iter()
+                .flat_map(|payload| payload.coeffs().iter().copied())
+                .collect(),
+        );
+        let relation_rhs = if prepared.lp.payload_mode.is_compressed() {
+            let group_payloads = commitment_payloads
+                .iter()
+                .map(|payload| payload.coeffs())
+                .collect::<Vec<_>>();
+            assemble_compressed_relation_rhs::<F>(
+                &relation_rhs_layout,
+                &group_payloads,
+                prepared.opening_payload.coeffs(),
+            )?
+        } else {
+            assemble_relation_rhs::<F>(
+                &relation_rhs_layout,
+                &prepared.opening_payload,
+                &commitment_rows,
+            )?
+        };
         let group_ring_opening_points = prefix
             .prepared_points
             .iter()
@@ -349,12 +362,19 @@ where
             gamma,
             row_coefficient_rings,
             relation_rhs,
-            RingVec::from_coeffs(Vec::new()),
+            if prepared.lp.payload_mode.is_compressed() {
+                RingVec::from_coeffs(Vec::new())
+            } else {
+                prepared.opening_payload.clone()
+            },
             role_dims,
         )
         .map_err(|error| {
-            AkitaError::InvalidInput(format!("compressed relation instance failed: {error:?}"))
+            AkitaError::InvalidInput(format!("relation instance failed: {error:?}"))
         })?;
+        if !prepared.lp.payload_mode.is_compressed() {
+            relation_instance.check_v_shape_for_level(prepared.lp)?;
+        }
         (relation_rhs_layout, relation_instance)
     };
     let (stage1, stage2, next_witness, next_witness_ring_dim, next_opening_source_len, stage3) =

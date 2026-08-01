@@ -73,6 +73,7 @@ fn enumerate_suffixes(
             let candidates = if level < MIXED_SEARCH_FOLD_LEVELS {
                 derive_candidate_level_params_all_splits(
                     policy,
+                    akita_types::scheduled_payload_mode(level, false),
                     &ring_challenge,
                     *candidate_dimensions,
                     input_witness_len,
@@ -84,6 +85,7 @@ fn enumerate_suffixes(
             } else {
                 derive_candidate_level_params(
                     policy,
+                    akita_types::scheduled_payload_mode(level, false),
                     &ring_challenge,
                     *candidate_dimensions,
                     input_witness_len,

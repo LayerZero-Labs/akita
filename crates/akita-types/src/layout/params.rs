@@ -84,6 +84,8 @@ pub fn shared_d_digit_log_basis(
 /// single authoritative struct.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommittedGroupParams {
+    /// Public B/D payload encoding selected for this fold level.
+    pub payload_mode: crate::CommitmentPayloadMode,
     /// Base-2 logarithm of the A/source gadget decomposition base.
     pub log_basis_inner: u32,
     /// Base-2 logarithm of the B/`t_hat` gadget decomposition base.
@@ -137,8 +139,31 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Checked wire geometry for this level's final-group B image.
+    pub fn outer_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        crate::CommitmentPayloadGeometry::for_mode(
+            self.payload_mode,
+            self.outer_commit_matrix.sis_modulus_profile(),
+            self.outer_commit_matrix.output_rank(),
+            self.role_dims().d_b(),
+        )
+    }
+
+    /// Checked wire geometry for this level's shared D image.
+    pub fn opening_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        crate::CommitmentPayloadGeometry::for_mode(
+            self.payload_mode,
+            self.open_commit_matrix.sis_modulus_profile(),
+            self.open_commit_matrix.output_rank(),
+            self.role_dims().d_d(),
+        )
+    }
+
     /// Whether every B/D image at this level fits the compression policy cap.
     pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
+        if !self.payload_mode.is_compressed() {
+            return Ok(true);
+        }
         let final_outer = self
             .outer_commit_matrix
             .output_rank()
@@ -220,6 +245,7 @@ impl CommittedGroupParams {
         fold_challenge_config: SparseChallengeConfig,
     ) -> Self {
         Self {
+            payload_mode: crate::CommitmentPayloadMode::Compressed,
             log_basis_inner: log_basis,
             log_basis_outer: log_basis,
             log_basis_open: log_basis,
@@ -498,6 +524,7 @@ impl CommittedGroupParams {
     /// Kept next to [`CommittedGroupParams`] so protocol-affecting field changes are
     /// reviewed with their Fiat-Shamir binding.
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
+        bytes.push(self.payload_mode.tag());
         push_u32(bytes, self.log_basis_inner);
         push_u32(bytes, self.log_basis_outer);
         push_u32(bytes, self.log_basis_open);
@@ -791,7 +818,11 @@ impl CommittedGroupParams {
         let base = rows
             .checked_add(self.open_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        compression_relation_row_count(num_commitments, base)
+        if self.payload_mode.is_compressed() {
+            compression_relation_row_count(num_commitments, base)
+        } else {
+            Ok(base)
+        }
     }
 
     /// Absolute start row of one group's A block in the multi-group root layout
@@ -965,7 +996,11 @@ impl CommittedGroupParams {
         let base = after_commitment
             .checked_add(self.open_commit_matrix.output_rank())
             .ok_or_else(Self::relation_matrix_row_overflow)?;
-        compression_relation_row_count(num_commitments, base)
+        if self.payload_mode.is_compressed() {
+            compression_relation_row_count(num_commitments, base)
+        } else {
+            Ok(base)
+        }
     }
 
     /// Logical row index of the shared EvaluationTrace row (last padded row).
@@ -1046,6 +1081,7 @@ impl CommittedGroupParams {
             .checked_mul(num_live_blocks)
             .ok_or_else(|| AkitaError::InvalidSetup("D-matrix width overflow".to_string()))?;
         let rebuilt = Self {
+            payload_mode: self.payload_mode,
             log_basis_inner: self.log_basis_inner,
             log_basis_outer: self.log_basis_outer,
             log_basis_open: self.log_basis_open,
@@ -1110,6 +1146,7 @@ impl CommittedGroupParams {
     /// role-specific commit-matrix constructors short-circuit silently.
     pub fn with_layout(&self, other: &CommittedGroupParams) -> Result<Self, AkitaError> {
         Self {
+            payload_mode: other.payload_mode,
             log_basis_inner: other.log_basis_inner,
             log_basis_outer: other.log_basis_outer,
             log_basis_open: other.log_basis_open,

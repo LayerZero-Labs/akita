@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{CompressionChainPlan, OpeningClaimsLayout};
+use akita_types::OpeningClaimsLayout;
 
 /// Verifier state carried between suffix fold levels.
 pub(super) struct SuffixVerifierState<'a, F: FieldCore, E: FieldCore> {
@@ -47,12 +47,17 @@ fn suffix_commitment_payloads<F: FieldCore>(
 
     let relation_layout = relation_rhs_layout_for(lp, opening_batch)?;
     let mut ordered = Vec::with_capacity(group_payloads.len());
-    for group_index in opening_batch.root_group_order()? {
+    for (relation_group_index, group_index) in
+        opening_batch.root_group_order()?.into_iter().enumerate()
+    {
         let payload = group_payloads
             .get(group_index)
             .ok_or(AkitaError::InvalidProof)?;
-        let plan = relation_layout.compression_plan_for_group(group_index)?;
-        if payload.coeff_len() != plan.terminal_coefficients() {
+        if payload.coeff_len()
+            != relation_layout
+                .group_payload_geometry(relation_group_index)?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidProof);
         }
         ordered.push(payload.clone());
@@ -121,24 +126,15 @@ where
             schedule.terminal.params.witness.d_a(),
             CommittedGroupParams::d_a,
         );
-        let role_dims = current_lp.role_dims();
         let current_commitment = match &current_state.witness {
             SuffixWitnessState::Commitment(commitment) => *commitment,
             SuffixWitnessState::TerminalT(_) => return Err(AkitaError::InvalidProof),
         };
-        let current_source_coefficients = current_lp
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(role_dims.d_b())
-            .ok_or(AkitaError::InvalidProof)?;
-        let current_plan = CompressionChainPlan::for_complete_source(
-            current_lp
-                .outer_commit_matrix
-                .sis_table_key()
-                .modulus_profile,
-            current_source_coefficients,
-        )?;
-        if current_commitment.coeff_len() != current_plan.terminal_coefficients() {
+        if current_commitment.coeff_len()
+            != current_lp
+                .outer_payload_geometry()?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidProof);
         }
 
@@ -155,25 +151,12 @@ where
         let next_witness = match (fold.next_w_payload(), next_t_state.as_deref()) {
             (Some(commitment), None) => {
                 let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
-                let source_coefficients = next_params
-                    .outer_commit_matrix
-                    .output_rank()
-                    .checked_mul(next_params.role_dims().d_b())
-                    .ok_or(AkitaError::InvalidProof)?;
-                let plan = CompressionChainPlan::for_complete_source(
-                    next_params
-                        .outer_commit_matrix
-                        .sis_table_key()
-                        .modulus_profile,
-                    source_coefficients,
-                )?;
+                let ring_dim = next_params
+                    .outer_payload_geometry()?
+                    .transcript_ring_dimension();
                 PreparedNextWitness::Commitment {
                     commitment,
-                    ring_dim: plan
-                        .maps()
-                        .last()
-                        .ok_or(AkitaError::InvalidProof)?
-                        .ring_dimension(),
+                    ring_dim,
                 }
             }
             (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),
@@ -398,20 +381,7 @@ where
     T: Transcript<F>,
 {
     let role_dims = lp.role_dims();
-    let commitment_source_coefficients = lp
-        .outer_commit_matrix
-        .output_rank()
-        .checked_mul(role_dims.d_b())
-        .ok_or(AkitaError::InvalidProof)?;
-    let commitment_plan = CompressionChainPlan::for_complete_source(
-        lp.outer_commit_matrix.sis_table_key().modulus_profile,
-        commitment_source_coefficients,
-    )?;
-    let commit_d = commitment_plan
-        .maps()
-        .last()
-        .ok_or(AkitaError::InvalidProof)?
-        .ring_dimension();
+    let commit_d = lp.outer_payload_geometry()?.transcript_ring_dimension();
     let alpha_bits = role_dims.d_a().trailing_zeros() as usize;
     if current_state.opening_point.len() < alpha_bits {
         return Err(AkitaError::InvalidSetup(

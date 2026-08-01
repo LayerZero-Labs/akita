@@ -19,9 +19,9 @@ pub(crate) struct AkitaStage2Verifier<'a, F: FieldCore, E: FieldCore> {
     witness_eval: E,
     stage1_point: Vec<E>,
     relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-    compression_relation_weights: &'a CompressionRelationWeights<E>,
-    negative_binary_support: &'a NegativeBinarySupport,
-    binary_batching: E,
+    compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+    negative_binary_support: Option<&'a NegativeBinarySupport>,
+    binary_batching: Option<E>,
     setup_claim: Option<E>,
     setup: &'a AkitaExpandedSetup<F>,
     alpha: E,
@@ -48,9 +48,9 @@ where
         witness_eval: E,
         stage1_point: Vec<E>,
         relation_matrix_evaluator: &'a RelationMatrixEvaluator<E>,
-        compression_relation_weights: &'a CompressionRelationWeights<E>,
-        negative_binary_support: &'a NegativeBinarySupport,
-        binary_batching: E,
+        compression_relation_weights: Option<&'a CompressionRelationWeights<E>>,
+        negative_binary_support: Option<&'a NegativeBinarySupport>,
+        binary_batching: Option<E>,
         setup: &'a AkitaExpandedSetup<F>,
         alpha: E,
         setup_claim: Option<E>,
@@ -127,12 +127,21 @@ where
                 self.setup_claim,
             )?
         };
-        let compression_relation_weight = self
-            .compression_relation_weights
-            .evaluate_at_point(challenges)?;
-        let binary_weight = self.negative_binary_support.evaluate_at_point(challenges)?;
-        let relation_oracle = w_eval * (relation_weight + compression_relation_weight)
-            + self.binary_batching * binary_weight * w_eval * (w_eval + E::one());
+        let compression_oracle = match (
+            self.compression_relation_weights,
+            self.negative_binary_support,
+            self.binary_batching,
+        ) {
+            (Some(weights), Some(support), Some(binary_batching)) => {
+                let compression_relation_weight = weights.evaluate_at_point(challenges)?;
+                let binary_weight = support.evaluate_at_point(challenges)?;
+                w_eval * compression_relation_weight
+                    + binary_batching * binary_weight * w_eval * (w_eval + E::one())
+            }
+            (None, None, None) => E::zero(),
+            _ => return Err(AkitaError::InvalidProof),
+        };
+        let relation_oracle = w_eval * relation_weight + compression_oracle;
         let trace_oracle = {
             let _span = tracing::info_span!("stage2_trace_oracle").entered();
             let trace_weight = self.evaluation_trace.evaluate_at_point(challenges)?;

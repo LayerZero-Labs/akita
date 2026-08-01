@@ -77,7 +77,14 @@ impl NegativeBinarySupport {
         weights
     }
 
+    /// Borrow the sorted live intervals of the support indicator.
+    #[must_use]
+    pub fn intervals(&self) -> &[Range<usize>] {
+        &self.intervals
+    }
+
     /// Evaluate the support indicator MLE using a logarithmic dyadic cover.
+    #[tracing::instrument(skip_all, name = "negative_binary_support_mle")]
     pub fn evaluate_at_point<E: FieldCore>(&self, point: &[E]) -> Result<E, AkitaError> {
         if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
             return Err(AkitaError::InvalidSize {
@@ -167,7 +174,59 @@ impl<E: FieldCore> CompressionRelationWeights<E> {
         Ok(weights)
     }
 
+    /// Consume the relation table into sorted nonzero physical entries.
+    ///
+    /// This is the prover-side representation: compression relations occupy a
+    /// small collection of aligned witness intervals, so retaining the padded
+    /// full-domain table would turn a sparse addend into an avoidable scan and
+    /// allocation at every Stage-2 round.
+    pub fn into_sparse_entries(self) -> Result<Vec<(usize, E)>, AkitaError> {
+        let total_entries = self.events.iter().try_fold(0usize, |sum, event| {
+            sum.checked_add(event.coefficient_count).ok_or_else(|| {
+                AkitaError::InvalidSetup("compression sparse-entry count overflow".into())
+            })
+        })?;
+        let mut entries = Vec::with_capacity(total_entries);
+        for event in self.events {
+            let alpha_end = event
+                .alpha_exponent_start
+                .checked_add(event.coefficient_count)
+                .ok_or(AkitaError::InvalidProof)?;
+            let powers = self
+                .alpha_powers
+                .get(event.alpha_exponent_start..alpha_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            for (offset, &power) in powers.iter().enumerate() {
+                let index = event
+                    .physical_start
+                    .checked_add(offset)
+                    .ok_or(AkitaError::InvalidProof)?;
+                entries.push((index, event.scalar * power));
+            }
+        }
+        entries.sort_unstable_by_key(|(index, _)| *index);
+        let mut sparse: Vec<(usize, E)> = Vec::with_capacity(entries.len());
+        for (index, value) in entries {
+            if let Some((last_index, last_value)) = sparse.last_mut() {
+                if *last_index == index {
+                    *last_value += value;
+                    continue;
+                }
+            }
+            sparse.push((index, value));
+        }
+        sparse.retain(|(_, value)| !value.is_zero());
+        Ok(sparse)
+    }
+
+    /// Padded physical field domain covered by this table.
+    #[must_use]
+    pub fn physical_field_len(&self) -> usize {
+        self.physical_field_len
+    }
+
     /// Evaluate the table's multilinear extension at one full witness point.
+    #[tracing::instrument(skip_all, name = "compression_relation_mle")]
     pub fn evaluate_at_point(&self, point: &[E]) -> Result<E, AkitaError> {
         if self.physical_field_len != 1usize.checked_shl(point.len() as u32).unwrap_or(0) {
             return Err(AkitaError::InvalidSize {
@@ -175,11 +234,16 @@ impl<E: FieldCore> CompressionRelationWeights<E> {
                 actual: point.len(),
             });
         }
-        let equality = OffsetEqWindow::new(point)?;
+        let mut fallback_equality = None;
         let mut low_factor_cache = Vec::new();
+        let mut high_equality_cache = Vec::<(usize, OffsetEqWindow<E>)>::new();
         let mut evaluation = E::zero();
         for event in &self.events {
             if !event.physical_start.is_multiple_of(event.coefficient_count) {
+                if fallback_equality.is_none() {
+                    fallback_equality = Some(OffsetEqWindow::new(point)?);
+                }
+                let equality = fallback_equality.as_ref().ok_or(AkitaError::InvalidProof)?;
                 let alpha_end = event
                     .alpha_exponent_start
                     .checked_add(event.coefficient_count)
@@ -221,7 +285,23 @@ impl<E: FieldCore> CompressionRelationWeights<E> {
             };
             let high_index = event.physical_start >> low_bits;
             let high_point = point.get(low_bits..).ok_or(AkitaError::InvalidProof)?;
-            evaluation += event.scalar * low_factor * eq_eval_at_index(high_point, high_index);
+            let high_cache_index = if let Some(index) = high_equality_cache
+                .iter()
+                .position(|(cached_low_bits, _)| *cached_low_bits == low_bits)
+            {
+                index
+            } else {
+                let balanced_low_bits = high_point.len().div_ceil(2);
+                high_equality_cache.push((
+                    low_bits,
+                    OffsetEqWindow::with_low_bits(high_point, balanced_low_bits)?,
+                ));
+                high_equality_cache.len() - 1
+            };
+            let high_equality = high_equality_cache
+                .get(high_cache_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            evaluation += event.scalar * low_factor * high_equality.1.eval(high_index);
         }
         Ok(evaluation)
     }
@@ -280,6 +360,7 @@ where
 
 /// Build the one canonical compact F/H relation table.
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, name = "build_compression_relation_weights")]
 pub fn build_compression_relation_weights<F, E>(
     setup: &AkitaExpandedSetup<F>,
     instance: &RingRelationInstance<F>,

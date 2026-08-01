@@ -521,6 +521,27 @@ impl WitnessLayout {
             cursor = range.end;
             r_rows[row_index] = Some(WitnessQuotientRowLayout { ring_dim, range });
         }
+        if !lp.payload_mode.is_compressed() {
+            let r_rows = r_rows
+                .into_iter()
+                .enumerate()
+                .map(|(row_index, row)| {
+                    row.ok_or_else(|| {
+                        AkitaError::InvalidSetup(format!(
+                            "raw witness quotient row {row_index} was not placed"
+                        ))
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            return Ok(Self {
+                units,
+                compression_layers: Vec::new(),
+                compression_alignment_ranges: Vec::new(),
+                r_rows,
+                r_range: r_start..cursor,
+                quotient_depth,
+            });
+        }
         let relation_coefficient_block = relation_layout
             .groups
             .iter()

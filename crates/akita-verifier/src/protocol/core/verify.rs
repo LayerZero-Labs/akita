@@ -40,16 +40,11 @@ where
                                 next_params: Option<&CommittedGroupParams>,
                                 binding: akita_types::NextWitnessBindingPolicy|
      -> Result<(), AkitaError> {
-        let opening_source_coefficients = params
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(params.role_dims().d_d())
-            .ok_or(AkitaError::InvalidProof)?;
-        let opening_plan = akita_types::CompressionChainPlan::for_complete_source(
-            params.open_commit_matrix.sis_table_key().modulus_profile,
-            opening_source_coefficients,
-        )?;
-        if fold.opening_payload.coeff_len() != opening_plan.terminal_coefficients() {
+        if fold.opening_payload.coeff_len()
+            != params
+                .opening_payload_geometry()?
+                .transmitted_coefficients()
+        {
             return Err(AkitaError::InvalidProof);
         }
 
@@ -59,19 +54,11 @@ where
                 akita_types::NextWitnessBinding::OuterPayload(commitment),
             ) => {
                 let next_params = next_params.ok_or(AkitaError::InvalidProof)?;
-                let source_coefficients = next_params
-                    .outer_commit_matrix
-                    .output_rank()
-                    .checked_mul(next_params.role_dims().d_b())
-                    .ok_or(AkitaError::InvalidProof)?;
-                let plan = akita_types::CompressionChainPlan::for_complete_source(
-                    next_params
-                        .outer_commit_matrix
-                        .sis_table_key()
-                        .modulus_profile,
-                    source_coefficients,
-                )?;
-                if commitment.coeff_len() != plan.terminal_coefficients() {
+                if commitment.coeff_len()
+                    != next_params
+                        .outer_payload_geometry()?
+                        .transmitted_coefficients()
+                {
                     return Err(AkitaError::InvalidProof);
                 }
             }

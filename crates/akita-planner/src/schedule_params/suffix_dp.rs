@@ -566,8 +566,10 @@ pub(crate) fn derive_optimal_suffix_schedule(
             let Ok(ring_challenge_cfg) = ring_challenge_config(dimensions.d_a()) else {
                 continue;
             };
-            let Some(candidate) = derive_candidate_level_params(
+            let mode = akita_types::scheduled_payload_mode(level, incoming_setup_prefix.is_some());
+            if let Some(candidate) = derive_candidate_level_params(
                 policy,
+                mode,
                 &ring_challenge_cfg,
                 dimensions,
                 current_witness_len,
@@ -575,11 +577,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 level,
                 incoming_setup_prefix,
                 requested_fold_shape,
-            )?
-            else {
-                continue;
-            };
-            candidates.push(candidate);
+            )? {
+                candidates.push(candidate);
+            }
             if candidates.is_empty() {
                 continue;
             }
@@ -619,7 +619,9 @@ pub(crate) fn derive_optimal_suffix_schedule(
                 },
                 depth + 1,
             )?;
-            let offloaded_child = if policy.recursive_setup_planning {
+            let offloaded_child = if policy.recursive_setup_planning
+                && candidate_params.payload_mode.is_compressed()
+            {
                 Some(derive_optimal_suffix_schedule(
                     ctx,
                     memo,

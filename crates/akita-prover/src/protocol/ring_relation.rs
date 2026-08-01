@@ -18,7 +18,9 @@ use akita_field::{CanonicalField, FieldCore, FromPrimitiveInt, HalvingField};
 use akita_transcript::labels::ABSORB_OPENING_PAYLOAD;
 use akita_transcript::Transcript;
 use akita_types::dispatch_for_field;
-use akita_types::{assemble_compressed_relation_rhs, relation_rhs_layout_for, RingVec};
+use akita_types::{
+    assemble_compressed_relation_rhs, assemble_relation_rhs, relation_rhs_layout_for, RingVec,
+};
 use akita_types::{gadget_row_scalars, DigitBlocks};
 use akita_types::{CommittedGroupParams, RingRelationInstance};
 use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
@@ -446,9 +448,9 @@ impl RingRelationProver {
             hints.push(block_claims.group_hint(group_index)?.clone());
         }
         let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
-        // Public group commitments contain only terminal F payloads. Rebuild
-        // each complete B image from the retained first-map digits; the
-        // executor below checks both retained maps against those sources.
+        // Compressed commitments contain terminal F payloads, whose complete
+        // B images are recovered from the retained first-map digits. Raw
+        // suffix commitments already contain those B images directly.
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
         let mut group_payloads = Vec::with_capacity(num_groups);
         let commit_group_order = if lp.has_precommitted_groups() {
@@ -460,23 +462,36 @@ impl RingRelationProver {
             let group_commitment = block_claims
                 .opening_claims()
                 .group_commitment(group_index)?;
-            let (planned_group_index, plan) =
-                relation_rhs_layout.group_compression_plan(relation_group_index)?;
-            if planned_group_index != group_index
-                || group_commitment.rows().coeff_len() != plan.terminal_coefficients()
-            {
-                return Err(AkitaError::InvalidInput(
-                    "batched prover received a malformed compressed commitment".to_string(),
-                ));
+            if lp.payload_mode.is_compressed() {
+                let (planned_group_index, plan) =
+                    relation_rhs_layout.group_compression_plan(relation_group_index)?;
+                if planned_group_index != group_index
+                    || group_commitment.rows().coeff_len() != plan.terminal_coefficients()
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover received a malformed compressed commitment".to_string(),
+                    ));
+                }
+                let retained = hints[group_index].outer_compression_witness(plan)?;
+                let source = retained
+                    .stages()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .recompose::<F>()?;
+                commitment_row_coeffs.extend(source);
+                group_payloads.push(group_commitment.rows().coeffs().to_vec());
+            } else {
+                let group_dims = lp.group_role_dims(&opening_batch, group_index)?;
+                if !group_commitment.rows().can_decode_vec(group_dims.d_b())
+                    || group_commitment.rows().coeff_len() / group_dims.d_b()
+                        != lp.group_commitment_rows(&opening_batch, group_index)?
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "batched prover received a malformed raw commitment".to_string(),
+                    ));
+                }
+                commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
             }
-            let retained = hints[group_index].outer_compression_witness(plan)?;
-            let source = retained
-                .stages()
-                .first()
-                .ok_or(AkitaError::InvalidProof)?
-                .recompose::<F>()?;
-            commitment_row_coeffs.extend(source);
-            group_payloads.push(group_commitment.rows().coeffs().to_vec());
         }
         let commitment_rows = RingVec::from_coeffs(commitment_row_coeffs);
         for group_index in 0..num_groups {
@@ -621,56 +636,62 @@ impl RingRelationProver {
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
-        let (compression, compression_report) = materialize_compression_witness(
-            ring_switch_ctx,
-            &relation_rhs_layout,
-            &commitment_rows,
-            &v,
-        )
-        .map_err(|err| {
-            AkitaError::InvalidInput(format!(
-                "compression witness materialization failed: {err:?}"
-            ))
-        })?;
-        for (relation_group_index, payload) in group_payloads.iter().enumerate() {
-            let (group_index, plan) =
-                relation_rhs_layout.group_compression_plan(relation_group_index)?;
-            let source = compression.source(CompressionSourceId::Outer { group_index })?;
-            if source.witness != hints[group_index].outer_compression_witness(plan)?
-                || source.terminal.coefficients() != payload
-            {
-                return Err(AkitaError::InvalidInput(
-                    "commitment hint does not open the compressed public payload".into(),
-                ));
+        let compression = if lp.payload_mode.is_compressed() {
+            let (compression, compression_report) = materialize_compression_witness(
+                ring_switch_ctx,
+                &relation_rhs_layout,
+                &commitment_rows,
+                &v,
+            )
+            .map_err(|err| {
+                AkitaError::InvalidInput(format!(
+                    "compression witness materialization failed: {err:?}"
+                ))
+            })?;
+            for (relation_group_index, payload) in group_payloads.iter().enumerate() {
+                let (group_index, plan) =
+                    relation_rhs_layout.group_compression_plan(relation_group_index)?;
+                let source = compression.source(CompressionSourceId::Outer { group_index })?;
+                if source.witness != hints[group_index].outer_compression_witness(plan)?
+                    || source.terminal.coefficients() != payload
+                {
+                    return Err(AkitaError::InvalidInput(
+                        "commitment hint does not open the compressed public payload".into(),
+                    ));
+                }
             }
-        }
-        let opening_source = compression.source(CompressionSourceId::Opening)?;
-        let opening_terminal_ring_dim = opening_source
-            .witness
-            .plan()
-            .maps()
-            .last()
-            .ok_or(AkitaError::InvalidProof)?
-            .ring_dimension();
-        RingVec::from_coeffs_with_ring_dim(
-            opening_source.terminal.coefficients().to_vec(),
-            opening_terminal_ring_dim,
-        )?
-        .append_flat_to_transcript(
-            ABSORB_OPENING_PAYLOAD,
-            opening_terminal_ring_dim,
-            transcript,
-        )?;
-        tracing::info!(
-            sources = compression_report.sources,
-            maps = compression_report.maps,
-            batches = compression_report.batches.len(),
-            source_bytes = compression_report.source_bytes,
-            terminal_bytes = compression_report.terminal_bytes,
-            retained_bytes = compression_report.retained_packed_witness_bytes,
-            peak_scratch_bytes = compression_report.executor_peak_scratch_bytes,
-            "materialized compression witness"
-        );
+            let opening_source = compression.source(CompressionSourceId::Opening)?;
+            let opening_terminal_ring_dim = opening_source
+                .witness
+                .plan()
+                .maps()
+                .last()
+                .ok_or(AkitaError::InvalidProof)?
+                .ring_dimension();
+            RingVec::from_coeffs_with_ring_dim(
+                opening_source.terminal.coefficients().to_vec(),
+                opening_terminal_ring_dim,
+            )?
+            .append_flat_to_transcript(
+                ABSORB_OPENING_PAYLOAD,
+                opening_terminal_ring_dim,
+                transcript,
+            )?;
+            tracing::info!(
+                sources = compression_report.sources,
+                maps = compression_report.maps,
+                batches = compression_report.batches.len(),
+                source_bytes = compression_report.source_bytes,
+                terminal_bytes = compression_report.terminal_bytes,
+                retained_bytes = compression_report.retained_packed_witness_bytes,
+                peak_scratch_bytes = compression_report.executor_peak_scratch_bytes,
+                "materialized compression witness"
+            );
+            Some(compression)
+        } else {
+            v.append_flat_to_transcript(ABSORB_OPENING_PAYLOAD, dims.d_d(), transcript)?;
+            None
+        };
         // Concatenated folded `e` rows in the same order as the terminal witness.
         let e_folded_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
@@ -726,25 +747,29 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
-        let group_terminal_payloads = (0..relation_rhs_layout.groups.len())
-            .map(|relation_group_index| {
-                let (group_index, _) =
-                    relation_rhs_layout.group_compression_plan(relation_group_index)?;
-                Ok(compression
-                    .source(CompressionSourceId::Outer { group_index })?
-                    .terminal
-                    .coefficients())
-            })
-            .collect::<Result<Vec<_>, AkitaError>>()?;
-        let opening_terminal_payload = compression
-            .source(CompressionSourceId::Opening)?
-            .terminal
-            .coefficients();
-        let relation_rhs = assemble_compressed_relation_rhs::<F>(
-            &relation_rhs_layout,
-            &group_terminal_payloads,
-            opening_terminal_payload,
-        )
+        let relation_rhs = if let Some(compression) = &compression {
+            let group_terminal_payloads = (0..relation_rhs_layout.groups.len())
+                .map(|relation_group_index| {
+                    let (group_index, _) =
+                        relation_rhs_layout.group_compression_plan(relation_group_index)?;
+                    Ok(compression
+                        .source(CompressionSourceId::Outer { group_index })?
+                        .terminal
+                        .coefficients())
+                })
+                .collect::<Result<Vec<_>, AkitaError>>()?;
+            let opening_terminal_payload = compression
+                .source(CompressionSourceId::Opening)?
+                .terminal
+                .coefficients();
+            assemble_compressed_relation_rhs::<F>(
+                &relation_rhs_layout,
+                &group_terminal_payloads,
+                opening_terminal_payload,
+            )
+        } else {
+            assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
+        }
         .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
 
         let instance = RingRelationInstance::new(

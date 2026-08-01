@@ -136,6 +136,7 @@ pub(crate) fn scalar_root_fold_level_params_candidate(
         return Ok(None);
     };
     let params = CommittedGroupParams {
+        payload_mode: akita_types::scheduled_payload_mode(0, false),
         log_basis_inner: witness_decomp.log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,

@@ -25,10 +25,10 @@ use crate::golomb_rice::golomb_rice_encode_vec;
 use crate::{
     extension_opening_reduction_proof_bytes, level_proof_bytes, sumcheck_rounds,
     terminal_response_bytes, AkitaStage1Proof, AkitaStage1StageProof, AkitaStage2Proof,
-    CommittedGroupBatchProfile, DigitRangePlan, ExtensionOpeningReductionProof, FoldLevelProof,
-    NextWitnessBinding, RingVec, SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout,
-    TerminalLevelProof, TerminalResponse, TerminalResponseShape,
-    EXTENSION_OPENING_REDUCTION_DEGREE,
+    CommitmentPayloadMode, CommittedGroupBatchProfile, DigitRangePlan,
+    ExtensionOpeningReductionProof, FoldLevelProof, NextWitnessBinding, RingVec,
+    SisModulusProfileId, TailSegmentGroupLayout, TailSegmentLayout, TerminalLevelProof,
+    TerminalResponse, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE,
 };
 use akita_challenges::SparseChallengeConfig;
 use akita_field::{AkitaError, CanonicalField, FieldCore, Prime128OffsetA7F7};
@@ -183,6 +183,111 @@ fn recursive_schedule(
             input_witness_len: successor_ring_dimension,
         },
     }
+}
+
+fn append_recursive_fold(schedule: &mut FoldSchedule) {
+    let mut step = schedule
+        .recursive_folds
+        .last()
+        .expect("recursive fixture has one fold")
+        .clone();
+    step.params.incoming_setup_prefix = None;
+    step.params.witness.setup_prefix = None;
+    step.input_witness_len = schedule
+        .recursive_folds
+        .last()
+        .expect("recursive fixture has one fold")
+        .output_witness_len;
+    schedule.terminal.input_witness_len = step.output_witness_len;
+    schedule.recursive_folds.push(step);
+}
+
+#[test]
+fn schedule_rejects_raw_root_payload() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.root.params.final_group.commitment.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("root fold payload")
+    ));
+}
+
+#[test]
+fn schedule_rejects_raw_first_recursive_payload() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    schedule.recursive_folds[0].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_compression_after_raw_suffix_starts() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    append_recursive_fold(&mut schedule);
+    schedule.recursive_folds[1].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_unplanned_compression_after_two_fold_prefix() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message))
+            if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_setup_prefix_inside_raw_suffix() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    let raw = &mut schedule.recursive_folds[1];
+    raw.params.witness.payload_mode = CommitmentPayloadMode::Raw;
+    let natural_len = 64;
+    let commitment_params =
+        crate::setup_prefix_precommitted_params(&raw.params.witness, natural_len)
+            .expect("setup-prefix commitment params");
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    raw.params.incoming_setup_prefix = Some(prefix.clone());
+    raw.params.witness.setup_prefix = Some(prefix);
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("cutover policy")
+    ));
+}
+
+#[test]
+fn schedule_rejects_setup_prefix_that_resumes_compression() {
+    let mut schedule = recursive_schedule(64, 64, false);
+    append_recursive_fold(&mut schedule);
+    append_recursive_fold(&mut schedule);
+    schedule.recursive_folds[1].params.witness.payload_mode = CommitmentPayloadMode::Raw;
+    let resumed = &mut schedule.recursive_folds[2];
+    let natural_len = 64;
+    let commitment_params =
+        crate::setup_prefix_precommitted_params(&resumed.params.witness, natural_len)
+            .expect("setup-prefix commitment params");
+    let prefix = crate::setup_prefix_slot_id(natural_len, commitment_params);
+    resumed.params.incoming_setup_prefix = Some(prefix.clone());
+    resumed.params.witness.setup_prefix = Some(prefix);
+
+    assert!(matches!(
+        schedule.validate_structure(),
+        Err(AkitaError::InvalidSetup(message)) if message.contains("resume compression")
+    ));
 }
 
 #[test]

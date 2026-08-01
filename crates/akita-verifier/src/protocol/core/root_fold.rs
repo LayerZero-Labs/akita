@@ -1,5 +1,5 @@
 use super::*;
-use akita_types::{Commitment, CompressionChainPlan};
+use akita_types::Commitment;
 
 /// Verify the folded root proof payload.
 ///
@@ -47,25 +47,12 @@ where
     let next_witness = match (proof.next_w_payload(), next_t_state) {
         (Some(commitment), None) => {
             let next_params = next_fold_level_params.ok_or(AkitaError::InvalidProof)?;
-            let source_coefficients = next_params
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(next_params.role_dims().d_b())
-                .ok_or(AkitaError::InvalidProof)?;
-            let plan = CompressionChainPlan::for_complete_source(
-                next_params
-                    .outer_commit_matrix
-                    .sis_table_key()
-                    .modulus_profile,
-                source_coefficients,
-            )?;
+            let ring_dim = next_params
+                .outer_payload_geometry()?
+                .transcript_ring_dimension();
             PreparedNextWitness::Commitment {
                 commitment,
-                ring_dim: plan
-                    .maps()
-                    .last()
-                    .ok_or(AkitaError::InvalidProof)?
-                    .ring_dimension(),
+                ring_dim,
             }
         }
         (None, Some(t_state)) if !t_state.is_empty() => PreparedNextWitness::TerminalT(t_state),

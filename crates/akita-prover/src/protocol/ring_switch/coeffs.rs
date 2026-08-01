@@ -402,7 +402,7 @@ where
         instance.group_challenges(),
         e_hat_concat,
         instance.rhs(),
-        &compression,
+        compression.as_ref(),
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
@@ -421,7 +421,9 @@ where
     }
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
     emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
-    emit_compression_witness(&mut out, &witness_layout, &compression)?;
+    if let Some(compression) = &compression {
+        emit_compression_witness(&mut out, &witness_layout, compression)?;
+    }
     let expected = witness_layout.live_coeff_len();
     if out.len() != expected {
         return Err(AkitaError::InvalidSize {

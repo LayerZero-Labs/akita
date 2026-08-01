@@ -493,6 +493,7 @@ fn multi_group_root_main_level_params_candidate(
     };
 
     let params = CommittedGroupParams {
+        payload_mode: akita_types::scheduled_payload_mode(0, false),
         log_basis_inner,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,

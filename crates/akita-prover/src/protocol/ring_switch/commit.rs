@@ -122,45 +122,53 @@ where
                         return Err(AkitaError::InvalidProof);
                     }
                     let source = RingVec::from_ring_elems(&u);
-                    let plan = CompressionChainPlan::for_complete_source(
-                        commit_params
-                            .outer_commit_matrix
-                            .sis_table_key()
-                            .modulus_profile,
-                        source.coeff_len(),
-                    )?;
-                    let (mut outputs, _) = execute_compression_chains(
-                        commit_ctx,
-                        vec![CompressionExecutionInput {
-                            id: (),
-                            plan,
-                            coefficients: source.into_coeffs(),
-                        }],
-                    )?;
-                    let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
-                    let terminal_ring_dim = output
-                        .witness
-                        .plan()
-                        .maps()
-                        .last()
-                        .ok_or(AkitaError::InvalidProof)?
-                        .ring_dimension();
-                    let payload = RingVec::from_coeffs_with_ring_dim(
-                        output.terminal.coefficients().to_vec(),
-                        terminal_ring_dim,
-                    )?;
-                    Ok::<_, AkitaError>((
-                        packed_witness,
-                        inner.into_inner_rows(),
-                        payload,
-                        output.witness,
-                    ))
+                    if !commit_params.payload_mode.is_compressed() {
+                        Ok::<_, AkitaError>((packed_witness, inner.into_inner_rows(), source, None))
+                    } else {
+                        let plan = CompressionChainPlan::for_complete_source(
+                            commit_params
+                                .outer_commit_matrix
+                                .sis_table_key()
+                                .modulus_profile,
+                            source.coeff_len(),
+                        )?;
+                        let (mut outputs, _) = execute_compression_chains(
+                            commit_ctx,
+                            vec![CompressionExecutionInput {
+                                id: (),
+                                plan,
+                                coefficients: source.into_coeffs(),
+                            }],
+                        )?;
+                        let output = outputs.pop().ok_or(AkitaError::InvalidProof)?;
+                        let terminal_ring_dim = output
+                            .witness
+                            .plan()
+                            .maps()
+                            .last()
+                            .ok_or(AkitaError::InvalidProof)?
+                            .ring_dimension();
+                        let payload = RingVec::from_coeffs_with_ring_dim(
+                            output.terminal.coefficients().to_vec(),
+                            terminal_ring_dim,
+                        )?;
+                        Ok::<_, AkitaError>((
+                            packed_witness,
+                            inner.into_inner_rows(),
+                            payload,
+                            Some(output.witness),
+                        ))
+                    }
                 }
             )
         }
     )?;
-    let hint =
-        AkitaCommitmentHint::singleton_with_outer_compression(inner_rows, &compression_witness)?;
+    let hint = match compression_witness {
+        Some(compression_witness) => {
+            AkitaCommitmentHint::singleton_with_outer_compression(inner_rows, &compression_witness)?
+        }
+        None => AkitaCommitmentHint::singleton(inner_rows)?,
+    };
     Ok(NextWitnessStateOutput {
         witness: packed_witness,
         binding: NextWitnessState::OuterPayload(commitment),

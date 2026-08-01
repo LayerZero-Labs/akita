@@ -118,8 +118,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps + HasOptimizedFold> Sumch
         } else {
             self.compute_current_round_poly_from_state()
         };
-        if let Some(additional) = &self.additional_relation_terms {
-            let additional = additional.round_polynomial();
+        if let Some(additional) = self.additional_round_polynomial() {
             if polynomial.coeffs.len() < additional.coeffs.len() {
                 polynomial.coeffs.resize(additional.coeffs.len(), E::zero());
             }

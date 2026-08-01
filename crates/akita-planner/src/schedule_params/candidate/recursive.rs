@@ -127,6 +127,7 @@ pub(crate) fn recursive_fold_level_params_candidate(
         return Ok(None);
     };
     let params = CommittedGroupParams {
+        payload_mode: akita_types::scheduled_payload_mode(fold_level, false),
         log_basis_inner: log_basis,
         log_basis_outer: log_basis,
         log_basis_open: log_basis,
@@ -335,6 +336,7 @@ fn prepare_recursive_level_search(
 #[allow(clippy::too_many_arguments)]
 fn recursive_level_candidate_for_split(
     policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     search: &RecursiveLevelSearch,
@@ -357,6 +359,7 @@ fn recursive_level_candidate_for_split(
     else {
         return Ok(None);
     };
+    candidate_params.payload_mode = payload_mode;
     candidate_params.setup_prefix = search.setup_prefix.clone();
     if let Some(prefix) = &candidate_params.setup_prefix {
         let prefix_d_width = prefix
@@ -395,6 +398,7 @@ fn recursive_level_candidate_for_split(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params(
     policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     current_witness_len: usize,
@@ -465,6 +469,7 @@ pub(crate) fn derive_candidate_level_params(
         let Some((score, candidate_params, next_witness_len)) =
             recursive_level_candidate_for_split(
                 policy,
+                payload_mode,
                 ring_challenge_cfg,
                 dimensions,
                 &search,
@@ -498,6 +503,7 @@ pub(crate) fn derive_candidate_level_params(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn derive_candidate_level_params_all_splits(
     policy: &PlannerPolicy,
+    payload_mode: akita_types::CommitmentPayloadMode,
     ring_challenge_cfg: &akita_challenges::SparseChallengeConfig,
     dimensions: CommitmentRingDims,
     current_witness_len: usize,
@@ -523,6 +529,7 @@ pub(crate) fn derive_candidate_level_params_all_splits(
     for block_index_bits in (1..search.reduced_vars).rev() {
         let Some((_, params, next_witness_len)) = recursive_level_candidate_for_split(
             policy,
+            payload_mode,
             ring_challenge_cfg,
             dimensions,
             &search,

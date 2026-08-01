@@ -10,7 +10,19 @@ Paper authority: `sections/akita/6_commitment_and_fold.tex`,
 
 ## Decision
 
-Akita will compress every public B image and every public D image.
+Akita uses compressed standalone and root commitments, followed by a guided
+monotone cutover from compressed recursive payloads to raw recursive payloads:
+
+```text
+compressed, compressed, ..., compressed, raw, raw, ..., raw
+```
+
+The root fold and first recursive fold are compressed whenever they exist. An
+ordinary recursive fold at level two or later is raw. A fold that consumes a
+recursive setup prefix remains compressed, which may extend the compressed
+prefix; its first direct successor is raw. Compression cannot resume after
+that point. The schedule descriptor binds every level's mode; the proof carries
+no mode tag.
 
 Each source image must contain at most 8 KiB of canonical field elements. The
 bound is inclusive. The protocol rejects a larger source during schedule
@@ -20,13 +32,15 @@ Every compression chain has exactly two rank one maps. Both maps use the
 negative binary alphabet `{-1, 0}`. The transmitted terminal payload is exactly
 128 bytes.
 
-The protocol does not support three map chains. It does not slice a large
-source. It does not choose between compression policies. It does not retain the
-old raw public payload as a fallback.
+The protocol does not support three map chains and does not slice a large
+source. Raw mode is not a compression fallback for an oversized source. It is
+an independently validated recursive payload mode selected by the planner to
+avoid carrying a fixed compression-witness tax through the small tail of the
+recursion.
 
 This is a breaking protocol change. The complete cutover must merge as one
 working protocol. Intermediate development commits may add internal parts, but
-no release may expose a mixture of raw and compressed payloads.
+no release may expose a mode not bound by the selected schedule.
 
 ## Why The Cap Is 8 KiB
 
@@ -38,7 +52,7 @@ The 8 KiB cap has four useful properties.
 
 1. Every profile uses one fixed pair of compression dimensions.
 2. Every chain has exactly two maps.
-3. The planner has no threshold choice and no third map state.
+3. A compressed level has no map-shape choice or third-map state.
 4. The cap has a large margin below the certified SIS width.
 
 The PR 341 schedule census covers 5,604 supported schedules from 17 generated
@@ -151,26 +165,36 @@ For reference, the quick Rust estimates for the first map are:
 The 14 KiB row shows why runtime selection must use the certified table. The
 local optimizer can miss a cheaper attack.
 
-## Canonical Plan
+## Canonical Plan And Cutover
 
-The compression plan is derived. It is not a planner choice and it is not a
-new field on every schedule row.
+For a compressed level, the compression plan is derived and is not a planner
+choice. The cutover policy determines the level payload mode, while the planner
+chooses the surrounding fold and setup geometry. Each recursive schedule row
+stores `CommitmentPayloadMode::{Compressed, Raw}`.
 
 The source matrix profile and output shape determine the source coefficient
 count. The field profile determines both compression dimensions. The policy
 constant fixes the cap, alphabet, map count, output rank, and terminal byte
 count.
 
-The protocol defines one policy identifier:
+The protocol defines one cutover policy identifier:
 
 ```text
-NegativeBinaryTwoMap8KiBV1
+NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2
 ```
 
 The instance descriptor binds this identifier once. Standalone committed group
-profiles also bind the new commitment format through their version. Any change
-to the cap, alphabet, dimensions, map count, or terminal size requires a new
-policy identifier and protocol epoch.
+profiles also bind the compressed commitment format through their version.
+The effective schedule descriptor additionally binds each recursive mode. Any
+change to the cap, alphabet, dimensions, map count, terminal size, minimum
+compressed prefix, or monotone-cutover rule requires a new policy identifier
+and protocol epoch.
+
+Recursive setup-prefix offload is permitted only in the compressed prefix. A
+consumer of that prefix is compressed even at level two or later. After raw
+mode begins, setup contribution is direct. This keeps precommitted setup
+commitments uniformly compressed and prevents an offload edge from hiding a
+raw-to-compressed transition.
 
 Equal matrix shapes use the same canonical prefix of the universal flat setup.
 `F` and `H` are semantic row names. They do not create separate random setup
@@ -211,18 +235,20 @@ not carry an independent compression plan.
 
 ### Fold proof
 
-`FoldLevelProof.opening_payload` carries the 128 byte `p_H` payload instead of
-the raw D image.
+At a compressed level, `FoldLevelProof.opening_payload` carries the 128 byte
+`p_H` payload. At a raw level, it carries the native D image.
 
-`NextWitnessBinding::OuterPayload` carries the 128 byte `p_F` payload for the
-next witness instead of its raw B image.
+`NextWitnessBinding::OuterPayload` carries the next level's B encoding: 128
+byte `p_F` when the next level is compressed and the native B image when it is
+raw. This permits the cutover boundary to carry compressed `p_H` for the
+current level while binding its child through raw B.
 
 The terminal inner state variant is unchanged. Terminal folds have no B or D
 payload.
 
-Proof decoding remains headerless. The expected proof shape supplies the fixed
-payload coefficient count. No payload length or compression plan is serialized
-inside a fold proof.
+Proof decoding remains headerless. The schedule-selected mode supplies the
+expected payload coefficient count and ring dimension. No payload length,
+mode, or compression plan is serialized inside a fold proof.
 
 ### Protocol epoch
 
@@ -237,11 +263,12 @@ The positional transcript order remains the same where possible.
 
 1. Opening claims absorb each group profile and its `p_F` payload in canonical
    group order.
-2. A nonterminal fold absorbs `p_H` where it previously absorbed raw `v`.
-3. The fold absorbs the outgoing `p_F` where it previously absorbed the next
-   raw outer commitment.
-4. The verifier samples the negative binary batching challenge after the range
-   image claim and before the fused relation sumcheck.
+2. A nonterminal fold absorbs its schedule-selected opening payload: `p_H` in
+   compressed mode or raw `v` in raw mode.
+3. The fold absorbs the outgoing schedule-selected B payload for its child.
+4. A compressed level samples the negative binary batching challenge after the
+   range image claim and before the fused relation sumcheck. A raw level omits
+   this challenge and follows the pre-compression transcript sequence.
 
 Production labels are logging names and are not sponge domain separators. The
 The logging label is `ABSORB_OPENING_PAYLOAD`, and
@@ -252,8 +279,10 @@ separation. A raw payload proof cannot replay as a compressed payload proof.
 
 ## Witness Layout
 
-The witness keeps the current physical chunk units first. Compression digits
-are global. They appear once and are not copied into every witness chunk.
+At a compressed level, the witness keeps the current physical chunk units
+first and adds the global compression suffix below. At a raw level, the witness
+ends after the ordinary relation quotient digits; it has no compression spans,
+compression quotient rows, alignment tail, or negative-binary support.
 
 The canonical order is:
 
@@ -299,6 +328,11 @@ as a witness sized bitmap. Alignment padding is outside this support and is
 fixed to zero by witness construction.
 
 ## Relation Layout
+
+Raw mode uses the ordinary relation unchanged: the public B and D images occupy
+their native right-hand-side rows, and no F/H rows exist.
+
+Compressed mode uses the following extended relation.
 
 The raw public B and D images leave the right hand side. Their rows now bind the
 first compression digits.
@@ -356,8 +390,8 @@ The existing shared range check only proves that every witness coordinate lies
 in the level alphabet. Compression needs the stronger statement that every F
 and H digit lies in `{-1, 0}`.
 
-The protocol follows the paper and adds a support restricted term to the fused
-stage 2 sumcheck:
+At compressed levels, the protocol follows the paper and adds a support
+restricted term to the fused stage 2 sumcheck:
 
 ```text
 rho_bin * eq_restricted(r_virt, x) * w(x) * (w(x) + 1)
@@ -370,7 +404,9 @@ extended tables.
 The prover stores equality weights only on the live compression intervals. It
 folds and merges those sparse weights after every challenge. The verifier
 evaluates the same interval sum directly. Neither side allocates a dense table
-for the compression support.
+for the compression support. Raw levels construct neither this oracle nor its
+support and reuse the existing optimized two-round Stage-2 batching path
+without an empty compression term.
 
 ## Setup And Compute Backend
 
@@ -394,10 +430,13 @@ required operation of every backend that supports the affected field profile.
 
 ## Planner And Generated Schedules
 
-The planner does not search over compression maps. It applies the fixed policy
-to every B and D source.
+The planner does not search over compression maps or arbitrary per-level mode
+strings. It applies one schedule policy: levels zero and one are compressed;
+a later setup-prefix consumer is compressed; every other level is raw. Under
+that mode policy, suffix DP still optimizes fold geometry, fold count, setup
+offload, and terminal geometry jointly.
 
-For every candidate it must:
+For every compressed candidate it must:
 
 1. Reject a source above 8 KiB.
 2. Derive the two map shapes.
@@ -408,18 +447,29 @@ For every candidate it must:
 7. Include the negative binary sparse support cost.
 8. Include every compression map in the security inventory.
 
+For every raw candidate it instead prices the native B and D wire images and
+derives the successor witness from the ordinary relation layout. The raw
+candidate has no compression setup, witness, relation, quotient, or binary
+check cost. A source above 8 KiB invalidates only compressed mode; it does not
+silently force raw mode.
+
 Schedule generation runs only after these quantities use the same canonical
 types as the prover and verifier. Generated schedule files are never edited by
 hand.
 
-Direct per-level proof pricing charges one 128 byte `p_H` payload. An
-`OuterPayload` successor edge also charges one 128 byte `p_F` payload. A
-`TerminalInnerState` edge charges no duplicate F payload. Successor witness
-length comes only from `WitnessLayout`, including quotient rows, F/H digits,
-and derived zero alignment. Setup capacity includes the largest physical field
-prefix of either map for every B/D source. A cap-exceeding source makes only
-that planner candidate infeasible; strict runtime plan construction still
-rejects it as invalid input.
+Direct per-level proof pricing charges either one 128 byte `p_H` or the native D
+image according to the current mode. An `OuterPayload` successor edge charges
+the child mode's B encoding. A `TerminalInnerState` edge charges no duplicate B
+payload. Successor witness length comes only from `WitnessLayout`. Setup
+capacity includes compression prefixes only for compressed levels.
+
+An exact monotone cutover search was evaluated as an offline policy experiment.
+Its proof-byte-only optimum retained four compressed folds for fp128 dense and
+five for fp128 onehot. That made onehot use two additional folds and regressed
+dense proving by about five percent. The guided two-fold policy kept measured
+CI-profile prove and verify time roughly flat or improved while reducing proof
+bytes by 2.6--3.0% relative to PR 341. A future change to this rule requires a
+new policy identifier and regenerated schedules.
 
 ## Incremental Implementation Sequence
 
@@ -515,7 +565,8 @@ An internal prove and verify harness must pass before activation.
    row domain.
 6. Regenerate the checked schedule tables and catalog identities.
 7. Update transcript logging labels.
-8. Delete raw public B and D payload handling.
+8. Bind the monotone per-level cutover and retain both raw and compressed
+   recursive payload handling.
 
 This is the only slice that changes public proof bytes. Prover and verifier
 activate together.
@@ -542,17 +593,22 @@ The final cutover must include:
 6. Intermediate and terminal F and H row checks.
 7. Compression quotient checks at every native dimension.
 8. Negative binary rejection for one tampered digit in every span position.
-9. Scalar, multi group, mixed dimension, and chunked end to end proofs.
+9. Scalar, multi group, mixed dimension, and chunked end to end proofs,
+   including a compressed-to-raw boundary.
 10. Tampered `p_F`, tampered `p_H`, group reordering, and truncated payload
     rejection.
 11. Version 1 commitment and protocol epoch rejection.
 12. Default, no default feature, parallel, and disk persistence builds.
 13. Proof size and setup envelope agreement between planner, prover, and
-    verifier.
+    verifier for both modes.
+14. Schedule rejection for a raw root, raw first recursive fold, compressed
+    mode after raw mode, and setup-prefix offload inside the raw suffix.
 
 ## Completion Condition
 
-The cutover is complete only when public commitments and nonterminal fold
-payloads are always 128 byte compressed payloads, every compression digit is
-bound by both the relation and the negative binary proof, and no raw B or D
-public payload path remains.
+The cutover is complete only when standalone/root commitments are compressed,
+every schedule obeys the two-fold compressed-prefix and monotone raw-suffix
+rules, both recursive payload modes prove and verify end to end, every emitted
+compression digit is bound by both the relation and negative-binary proof, and
+the planner selects the smallest modeled schedule within the guided payload
+policy without a material prover or verifier regression.

@@ -278,6 +278,7 @@ impl GeneratedCommittedGroup {
     pub(crate) fn expand_to_level_params_with_setup(
         &self,
         policy: &PlannerPolicy,
+        payload_mode: akita_types::CommitmentPayloadMode,
         ring_challenge_config: impl Fn(usize) -> Result<SparseChallengeConfig, AkitaError>,
         fold_level: usize,
         exact_num_digits_inner: Option<u32>,
@@ -502,6 +503,7 @@ impl GeneratedCommittedGroup {
         // key (verifier-reachable, so the fallible `try_new` is used instead
         // of the panicking `new`).
         let params = CommittedGroupParams {
+            payload_mode,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,
@@ -710,6 +712,7 @@ impl GeneratedCommittedGroup {
             d_matrix_width,
         )?;
         let params = CommittedGroupParams {
+            payload_mode: akita_types::CommitmentPayloadMode::Compressed,
             log_basis_inner,
             log_basis_outer,
             log_basis_open,

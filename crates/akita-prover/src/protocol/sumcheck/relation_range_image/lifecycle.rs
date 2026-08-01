@@ -164,8 +164,30 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
         let additional = self
             .additional_relation_terms
             .as_ref()
-            .map_or(Ok(E::zero()), AdditionalRelationTerms::final_claim)?;
+            .map_or(Ok(E::zero()), |terms| terms.final_claim(witness))?;
         Ok(virtual_claim + ordinary_relation + trace_claim + additional)
+    }
+
+    pub(super) fn additional_round_polynomial(&self) -> Option<UniPoly<E>> {
+        let additional = self.additional_relation_terms.as_ref()?;
+        Some(match &self.witness_state {
+            WitnessState::CompactPrefix(compact_witness) => {
+                let first_challenge = if self.rounds_completed == 0 {
+                    None
+                } else {
+                    Some(
+                        self.deferred_compact_prefix
+                            .as_ref()
+                            .and_then(|prefix| prefix.first_challenge)
+                            .expect("compact round 1 requires the first prefix challenge"),
+                    )
+                };
+                additional.round_polynomial_compact(compact_witness, first_challenge)
+            }
+            WitnessState::FoldedSuffix(folded_witness) => {
+                additional.round_polynomial_folded(folded_witness)
+            }
+        })
     }
 
     #[inline]

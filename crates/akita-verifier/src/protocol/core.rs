@@ -31,7 +31,7 @@ use akita_transcript::labels::{
 use akita_transcript::{append_ext_field, sample_ext_challenge, Transcript};
 use akita_types::derive_tensor_extension_opening_claim_from_partials;
 use akita_types::{
-    append_claim_values_to_transcript, assemble_compressed_relation_rhs,
+    append_claim_values_to_transcript, assemble_compressed_relation_rhs, assemble_relation_rhs,
     ensure_trace_stage2_supported, prepare_opening_point,
     proof::relation::evaluation_trace_row_weight, raw_field_segment_bytes,
     relation_claim_from_compressed_rhs_extension, relation_rhs_layout_for,

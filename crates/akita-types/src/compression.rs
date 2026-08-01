@@ -18,26 +18,164 @@ pub const COMPRESSION_TARGET_BYTES: usize = 128;
 /// Exact number of maps in every compression chain.
 pub const COMPRESSION_MAP_COUNT: usize = 2;
 
+/// Schedule-bound encoding of one fold level's public B/D images.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum CommitmentPayloadMode {
+    /// Prove the two-map compression relation and transmit its 128-byte terminal payload.
+    #[default]
+    Compressed,
+    /// Omit compression witnesses/rows and transmit the native B/D image.
+    Raw,
+}
+
+impl CommitmentPayloadMode {
+    /// Stable descriptor tag bound by the effective schedule digest.
+    pub const fn tag(self) -> u8 {
+        match self {
+            Self::Compressed => 1,
+            Self::Raw => 2,
+        }
+    }
+
+    /// Whether this level proves and transmits compressed B/D images.
+    #[must_use]
+    pub const fn is_compressed(self) -> bool {
+        matches!(self, Self::Compressed)
+    }
+}
+
+/// Payload mode fixed by the recursive cutover policy at one absolute fold level.
+///
+/// The root and first recursive fold are compressed. A later fold is compressed
+/// only when it consumes a recursive setup prefix; every other later fold is raw.
+#[must_use]
+pub const fn scheduled_payload_mode(
+    absolute_fold_level: usize,
+    consumes_setup_prefix: bool,
+) -> CommitmentPayloadMode {
+    if absolute_fold_level < 2 || consumes_setup_prefix {
+        CommitmentPayloadMode::Compressed
+    } else {
+        CommitmentPayloadMode::Raw
+    }
+}
+
+/// Checked wire and transcript geometry for one native B/D source image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommitmentPayloadGeometry {
+    source_coefficients: usize,
+    transmitted_coefficients: usize,
+    transcript_ring_dimension: usize,
+}
+
+impl CommitmentPayloadGeometry {
+    /// Derive the canonical payload geometry selected by one schedule mode.
+    pub(crate) fn for_mode(
+        mode: CommitmentPayloadMode,
+        profile: SisModulusProfileId,
+        source_rows: usize,
+        source_ring_dimension: usize,
+    ) -> Result<Self, AkitaError> {
+        let source_coefficients = source_rows
+            .checked_mul(source_ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment payload shape overflow".into()))?;
+        let plan = mode
+            .is_compressed()
+            .then(|| CompressionChainPlan::for_complete_source(profile, source_coefficients))
+            .transpose()?;
+        Self::new(source_rows, source_ring_dimension, plan.as_ref())
+    }
+
+    /// Derive payload geometry from native source rows and an optional compression plan.
+    pub(crate) fn new(
+        source_rows: usize,
+        source_ring_dimension: usize,
+        compression_plan: Option<&CompressionChainPlan>,
+    ) -> Result<Self, AkitaError> {
+        let source_coefficients = source_rows
+            .checked_mul(source_ring_dimension)
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment payload shape overflow".into()))?;
+        let (transmitted_coefficients, transcript_ring_dimension) =
+            if let Some(plan) = compression_plan {
+                if plan.source_coefficients() != source_coefficients {
+                    return Err(AkitaError::InvalidSetup(
+                        "commitment payload source disagrees with compression plan".into(),
+                    ));
+                }
+                (
+                    plan.terminal_coefficients(),
+                    plan.maps()
+                        .last()
+                        .ok_or_else(|| {
+                            AkitaError::InvalidSetup(
+                                "commitment compression plan has no terminal map".into(),
+                            )
+                        })?
+                        .ring_dimension(),
+                )
+            } else {
+                (source_coefficients, source_ring_dimension)
+            };
+        Ok(Self {
+            source_coefficients,
+            transmitted_coefficients,
+            transcript_ring_dimension,
+        })
+    }
+
+    /// Native source coefficient count before compression.
+    #[must_use]
+    pub const fn source_coefficients(self) -> usize {
+        self.source_coefficients
+    }
+
+    /// Exact coefficient count carried by the proof payload.
+    #[must_use]
+    pub const fn transmitted_coefficients(self) -> usize {
+        self.transmitted_coefficients
+    }
+
+    /// Ring dimension used to absorb and interpret the transmitted payload.
+    #[must_use]
+    pub const fn transcript_ring_dimension(self) -> usize {
+        self.transcript_ring_dimension
+    }
+
+    /// Number of transmitted rows at the transcript ring dimension.
+    pub fn transmitted_rows(self) -> Result<usize, AkitaError> {
+        if self.transcript_ring_dimension == 0
+            || !self
+                .transmitted_coefficients
+                .is_multiple_of(self.transcript_ring_dimension)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "commitment payload does not align with its transcript ring dimension".into(),
+            ));
+        }
+        Ok(self.transmitted_coefficients / self.transcript_ring_dimension)
+    }
+}
+
 /// Stable identity of the commitment-compression protocol.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum CompressionPolicyId {
-    /// Two rank-one negative-binary maps, an 8 KiB source cap, and a 128-byte payload.
+    /// Two-map two-fold prefix, with setup consumers compressed, followed by a raw suffix.
     #[default]
-    NegativeBinaryTwoMap8KiBV1,
+    NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2,
 }
 
 impl CompressionPolicyId {
     /// Stable descriptor tag for this policy.
     pub const fn tag(self) -> u8 {
         match self {
-            Self::NegativeBinaryTwoMap8KiBV1 => 1,
+            Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2 => 2,
         }
     }
 
     /// Parse the stable descriptor tag.
     pub const fn from_tag(tag: u8) -> Option<Self> {
         match tag {
-            1 => Some(Self::NegativeBinaryTwoMap8KiBV1),
+            2 => Some(Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2),
             _ => None,
         }
     }
@@ -45,13 +183,16 @@ impl CompressionPolicyId {
     /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
-            Self::NegativeBinaryTwoMap8KiBV1 => "NegativeBinaryTwoMap8KiBV1",
+            Self::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2 => {
+                "NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2"
+            }
         }
     }
 }
 
 /// The only compression policy supported by this protocol epoch.
-pub const COMPRESSION_POLICY: CompressionPolicyId = CompressionPolicyId::NegativeBinaryTwoMap8KiBV1;
+pub const COMPRESSION_POLICY: CompressionPolicyId =
+    CompressionPolicyId::NegativeBinaryTwoMapTwoFoldPrefixRawSuffix8KiBV2;
 
 /// The two compression-only ring dimensions for one modulus profile.
 ///
@@ -757,6 +898,28 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    #[test]
+    fn payload_geometry_canonically_selects_wire_count_and_ring_dimension() {
+        let profile = SisModulusProfileId::Q128OffsetA7F7;
+        let compressed =
+            CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Compressed, profile, 4, 16)
+                .unwrap();
+        assert_eq!(compressed.source_coefficients(), 64);
+        assert_eq!(compressed.transmitted_coefficients(), 8);
+        assert_eq!(compressed.transcript_ring_dimension(), 8);
+        assert_eq!(compressed.transmitted_rows().unwrap(), 1);
+
+        let raw = CommitmentPayloadGeometry::for_mode(CommitmentPayloadMode::Raw, profile, 4, 16)
+            .unwrap();
+        assert_eq!(raw.source_coefficients(), 64);
+        assert_eq!(raw.transmitted_coefficients(), 64);
+        assert_eq!(raw.transcript_ring_dimension(), 16);
+        assert_eq!(raw.transmitted_rows().unwrap(), 4);
+
+        let plan = CompressionChainPlan::for_complete_source(profile, 64).unwrap();
+        assert!(CommitmentPayloadGeometry::new(5, 16, Some(&plan)).is_err());
     }
 
     #[test]

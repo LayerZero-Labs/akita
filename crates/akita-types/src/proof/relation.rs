@@ -297,6 +297,35 @@ impl RelationRhsLayout {
                 AkitaError::InvalidSetup("relation layout has no compression geometry".into())
             })
     }
+
+    /// Checked wire geometry for one relation-ordered B payload.
+    pub fn group_payload_geometry(
+        &self,
+        relation_group_index: usize,
+    ) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        self.validate()?;
+        let group = self
+            .groups
+            .get(relation_group_index)
+            .ok_or_else(|| AkitaError::InvalidInput("relation group index is invalid".into()))?;
+        let plan = self
+            .compression
+            .as_ref()
+            .and_then(|compression| compression.group_plans.get(relation_group_index));
+        crate::CommitmentPayloadGeometry::new(group.commit_rows, group.role_dims.d_b(), plan)
+    }
+
+    /// Checked wire geometry for the shared D payload.
+    pub fn opening_payload_geometry(&self) -> Result<crate::CommitmentPayloadGeometry, AkitaError> {
+        self.validate()?;
+        crate::CommitmentPayloadGeometry::new(
+            self.n_d,
+            self.opening_ring_dim,
+            self.compression
+                .as_ref()
+                .map(|compression| &compression.opening_plan),
+        )
+    }
 }
 
 fn compression_plan(
@@ -321,11 +350,17 @@ pub fn relation_rhs_layout_for(
 ) -> Result<RelationRhsLayout, AkitaError> {
     opening_batch.check()?;
     let n_d = lp.open_commit_matrix.output_rank();
-    let opening_plan = compression_plan(
-        lp.open_commit_matrix.sis_modulus_profile(),
-        n_d,
-        lp.open_commit_matrix.ring_dimension(),
-    )?;
+    let opening_plan = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| {
+            compression_plan(
+                lp.open_commit_matrix.sis_modulus_profile(),
+                n_d,
+                lp.open_commit_matrix.ring_dimension(),
+            )
+        })
+        .transpose()?;
     if !lp.has_precommitted_groups() {
         let role_dims = lp.role_dims();
         role_dims.validate_role_projection()?;
@@ -339,20 +374,25 @@ pub fn relation_rhs_layout_for(
                 b_inner_rows: 0,
             })
             .collect::<Vec<_>>();
-        let group_plan = compression_plan(
-            lp.outer_commit_matrix.sis_modulus_profile(),
-            lp.outer_commit_matrix.output_rank(),
-            role_dims.d_b(),
-        )?;
+        let compression = if let Some(opening_plan) = opening_plan {
+            let group_plan = compression_plan(
+                lp.outer_commit_matrix.sis_modulus_profile(),
+                lp.outer_commit_matrix.output_rank(),
+                role_dims.d_b(),
+            )?;
+            Some(RelationCompressionLayout {
+                group_plans: repeat_n(group_plan, group_indices.len()).collect(),
+                group_indices,
+                opening_plan,
+            })
+        } else {
+            None
+        };
         let layout = RelationRhsLayout {
             opening_ring_dim: role_dims.d_d(),
             n_d,
             groups,
-            compression: Some(RelationCompressionLayout {
-                group_plans: repeat_n(group_plan, group_indices.len()).collect(),
-                group_indices,
-                opening_plan,
-            }),
+            compression,
         };
         layout.validate()?;
         return Ok(layout);
@@ -369,11 +409,13 @@ pub fn relation_rhs_layout_for(
         b_inner_rows: 0,
     });
     group_indices.push(final_group_index);
-    group_plans.push(compression_plan(
-        lp.outer_commit_matrix.sis_modulus_profile(),
-        lp.outer_commit_matrix.output_rank(),
-        final_role_dims.d_b(),
-    )?);
+    if opening_plan.is_some() {
+        group_plans.push(compression_plan(
+            lp.outer_commit_matrix.sis_modulus_profile(),
+            lp.outer_commit_matrix.output_rank(),
+            final_role_dims.d_b(),
+        )?);
+    }
     for (group_index, group) in lp.precommitted_group_iter().enumerate() {
         let role_dims = lp.group_role_dims(opening_batch, group_index)?;
         groups.push(RelationGroupRows {
@@ -383,17 +425,19 @@ pub fn relation_rhs_layout_for(
             b_inner_rows: 0,
         });
         group_indices.push(group_index);
-        group_plans.push(compression_plan(
-            group.layout.outer_commit_matrix.sis_modulus_profile(),
-            group.layout.outer_commit_matrix.output_rank(),
-            role_dims.d_b(),
-        )?);
+        if opening_plan.is_some() {
+            group_plans.push(compression_plan(
+                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                group.layout.outer_commit_matrix.output_rank(),
+                role_dims.d_b(),
+            )?);
+        }
     }
     let layout = RelationRhsLayout {
         opening_ring_dim: final_role_dims.d_d(),
         n_d,
         groups,
-        compression: Some(RelationCompressionLayout {
+        compression: opening_plan.map(|opening_plan| RelationCompressionLayout {
             group_indices,
             group_plans,
             opening_plan,

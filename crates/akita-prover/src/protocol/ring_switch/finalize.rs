@@ -124,17 +124,22 @@ where
             opening_ring_dim,
         })?;
         let ordinary = events.factor_common_alpha()?;
-        let compression = akita_types::build_compression_relation_weights(
-            setup,
-            instance,
-            alpha,
-            lp,
-            &tau1,
-            &witness_layout,
-            opening_ring_dim,
-            physical_field_len,
-        )?
-        .materialize_dense()?;
+        let compression = lp
+            .payload_mode
+            .is_compressed()
+            .then(|| {
+                akita_types::build_compression_relation_weights(
+                    setup,
+                    instance,
+                    alpha,
+                    lp,
+                    &tau1,
+                    &witness_layout,
+                    opening_ring_dim,
+                    physical_field_len,
+                )
+            })
+            .transpose()?;
         Ok::<_, AkitaError>((ordinary, compression))
     };
 

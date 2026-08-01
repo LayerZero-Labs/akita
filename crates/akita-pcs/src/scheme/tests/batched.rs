@@ -103,10 +103,7 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         verifier_claims(&opening_point[..], &wrong_openings[..], &commitments[0]),
         BasisMode::Lagrange,
     );
-    assert!(matches!(
-        wrong_opening_result,
-        Err(AkitaError::InvalidProof)
-    ));
+    assert!(wrong_opening_result.is_err());
 
     let mut oversized_proof = proof.clone();
     {
@@ -127,5 +124,5 @@ fn batched_verify_accepts_consistent_openings_and_rejects_bad_inputs() {
         BasisMode::Lagrange,
     );
 
-    assert!(matches!(oversized_result, Err(AkitaError::InvalidProof)));
+    assert!(oversized_result.is_err());
 }

@@ -459,34 +459,21 @@ where
     let logical_witness = optional_logical_w
         .map(Arc::new)
         .unwrap_or_else(|| Arc::clone(&witness));
-    let role_dims = level_params.role_dims();
-    let source_coefficients = level_params
-        .outer_commit_matrix
-        .output_rank()
-        .checked_mul(role_dims.d_b())
-        .ok_or(AkitaError::InvalidProof)?;
-    let compression_plan = CompressionChainPlan::for_complete_source(
-        level_params
-            .outer_commit_matrix
-            .sis_table_key()
-            .modulus_profile,
-        source_coefficients,
-    )?;
-    let commit_d = compression_plan
-        .maps()
-        .last()
-        .ok_or(AkitaError::InvalidProof)?
-        .ring_dimension();
+    let payload_geometry = level_params.outer_payload_geometry()?;
     let witness_commitment = match binding {
         NextWitnessState::OuterPayload(commitment) => {
-            if commitment.coeff_len() != compression_plan.terminal_coefficients() {
+            if commitment.coeff_len() != payload_geometry.transmitted_coefficients() {
                 return Err(AkitaError::InvalidInput(format!(
-                    "suffix compressed commitment length {} does not match payload dimension {}",
+                    "suffix commitment length {} does not match expected coefficient count {}",
                     commitment.coeffs().len(),
-                    commit_d,
+                    payload_geometry.transmitted_coefficients(),
                 )));
             }
-            commitment.append_flat_to_transcript::<T>(ABSORB_COMMITMENT, commit_d, transcript)?;
+            commitment.append_flat_to_transcript::<T>(
+                ABSORB_COMMITMENT,
+                payload_geometry.transcript_ring_dimension(),
+                transcript,
+            )?;
             commitment
         }
         NextWitnessState::TerminalInnerState => return Err(AkitaError::InvalidProof),

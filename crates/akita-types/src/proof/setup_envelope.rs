@@ -106,13 +106,15 @@ pub fn accumulate_matrix_field_elements_for_level(
         params.outer_commit_matrix.ring_dimension(),
         "outer setup",
     )?;
-    include_compression_setup(
-        max_field_elements,
-        params.outer_commit_matrix.sis_modulus_profile(),
-        params.outer_commit_matrix.output_rank(),
-        params.role_dims().d_b(),
-        "outer compression setup",
-    )?;
+    if params.payload_mode.is_compressed() {
+        include_compression_setup(
+            max_field_elements,
+            params.outer_commit_matrix.sis_modulus_profile(),
+            params.outer_commit_matrix.output_rank(),
+            params.role_dims().d_b(),
+            "outer compression setup",
+        )?;
+    }
     include_matrix_field_elements(
         max_field_elements,
         params.open_commit_matrix.output_rank(),
@@ -135,21 +137,25 @@ pub fn accumulate_matrix_field_elements_for_level(
             group.layout.outer_commit_matrix.ring_dimension(),
             "precommitted outer setup",
         )?;
+        if params.payload_mode.is_compressed() {
+            include_compression_setup(
+                max_field_elements,
+                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                group.layout.outer_commit_matrix.output_rank(),
+                group.layout.outer_commit_matrix.ring_dimension(),
+                "precommitted outer compression setup",
+            )?;
+        }
+    }
+    if params.payload_mode.is_compressed() {
         include_compression_setup(
             max_field_elements,
-            group.layout.outer_commit_matrix.sis_modulus_profile(),
-            group.layout.outer_commit_matrix.output_rank(),
-            group.layout.outer_commit_matrix.ring_dimension(),
-            "precommitted outer compression setup",
+            params.open_commit_matrix.sis_modulus_profile(),
+            params.open_commit_matrix.output_rank(),
+            params.role_dims().d_d(),
+            "opening compression setup",
         )?;
     }
-    include_compression_setup(
-        max_field_elements,
-        params.open_commit_matrix.sis_modulus_profile(),
-        params.open_commit_matrix.output_rank(),
-        params.role_dims().d_d(),
-        "opening compression setup",
-    )?;
     if let Some(slot) = &params.setup_prefix {
         *max_field_elements = (*max_field_elements).max(setup_prefix_slot_field_elements(slot)?);
     }

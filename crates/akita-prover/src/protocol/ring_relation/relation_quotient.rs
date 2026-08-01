@@ -419,7 +419,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     group_challenges: &[Challenges],
     e_hat_concat: &DigitBlocks,
     y: &RingVec<F>,
-    compression: &CompressionWitnessMaterialization<F>,
+    compression: Option<&CompressionWitnessMaterialization<F>>,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -463,11 +463,12 @@ where
                 .checked_add(row.ring_dim())
                 .ok_or(AkitaError::InvalidProof)
         })?;
-    if y.coeffs()
-        .get(..ordinary_rhs_len)
-        .ok_or(AkitaError::InvalidProof)?
-        .iter()
-        .any(|coefficient| !coefficient.is_zero())
+    if compression.is_some()
+        && y.coeffs()
+            .get(..ordinary_rhs_len)
+            .ok_or(AkitaError::InvalidProof)?
+            .iter()
+            .any(|coefficient| !coefficient.is_zero())
     {
         return Err(AkitaError::InvalidProof);
     }
@@ -627,15 +628,30 @@ where
         if b_range.len() != n_b {
             return Err(AkitaError::InvalidProof);
         }
-        let recomposed_b = RingVec::from_coeffs(
-            compression
-                .source(CompressionSourceId::Outer { group_index })?
-                .witness
-                .stages()
-                .first()
-                .ok_or(AkitaError::InvalidProof)?
-                .recompose::<F>()?,
-        );
+        let b_coeff_len = n_b
+            .checked_mul(group_dims.d_b())
+            .ok_or(AkitaError::InvalidProof)?;
+        let b_end = y_offset
+            .checked_add(b_coeff_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let recomposed_b = if let Some(compression) = compression {
+            RingVec::from_coeffs(
+                compression
+                    .source(CompressionSourceId::Outer { group_index })?
+                    .witness
+                    .stages()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .recompose::<F>()?,
+            )
+        } else {
+            RingVec::from_coeffs(
+                y.coeffs()
+                    .get(y_offset..b_end)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .to_vec(),
+            )
+        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Outer),
             F,
@@ -686,24 +702,34 @@ where
                 Ok::<(), AkitaError>(())
             }
         )?;
-        y_offset = y_offset
-            .checked_add(
-                n_b.checked_mul(group_dims.d_b())
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
+        y_offset = b_end;
     }
 
     if n_d_active != 0 {
-        let recomposed_d = RingVec::from_coeffs(
-            compression
-                .source(CompressionSourceId::Opening)?
-                .witness
-                .stages()
-                .first()
-                .ok_or(AkitaError::InvalidProof)?
-                .recompose::<F>()?,
-        );
+        let d_coeff_len = n_d_active
+            .checked_mul(rhs_layout.opening_ring_dim)
+            .ok_or(AkitaError::InvalidProof)?;
+        let d_end = y_offset
+            .checked_add(d_coeff_len)
+            .ok_or(AkitaError::InvalidProof)?;
+        let recomposed_d = if let Some(compression) = compression {
+            RingVec::from_coeffs(
+                compression
+                    .source(CompressionSourceId::Opening)?
+                    .witness
+                    .stages()
+                    .first()
+                    .ok_or(AkitaError::InvalidProof)?
+                    .recompose::<F>()?,
+            )
+        } else {
+            RingVec::from_coeffs(
+                y.coeffs()
+                    .get(y_offset..d_end)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .to_vec(),
+            )
+        };
         akita_types::dispatch_for_field!(
             ProtocolDispatchSlot::Role(RingRole::Opening),
             F,
@@ -745,13 +771,7 @@ where
                 Ok::<(), AkitaError>(())
             }
         )?;
-        y_offset = y_offset
-            .checked_add(
-                n_d_active
-                    .checked_mul(rhs_layout.opening_ring_dim)
-                    .ok_or(AkitaError::InvalidProof)?,
-            )
-            .ok_or(AkitaError::InvalidProof)?;
+        y_offset = d_end;
     }
     for (row_index, family) in row_families.iter().enumerate() {
         let (source, map_index, ring_dim) = match *family {
@@ -770,6 +790,7 @@ where
             } => (CompressionSourceId::Opening, map_index, ring_dim),
             _ => continue,
         };
+        let compression = compression.ok_or(AkitaError::InvalidProof)?;
         let quotient = compression
             .source(source)?
             .quotients

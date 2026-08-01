@@ -241,7 +241,11 @@ where
     .map_err(|err| {
         AkitaError::InvalidInput(format!("ring relation preparation failed: {err:?}"))
     })?;
-    let opening_payload = witness.opening_payload()?;
+    let opening_payload = if level_params.payload_mode.is_compressed() {
+        witness.opening_payload()?
+    } else {
+        instance.v().clone()
+    };
     let extension_opening_reduction = reduction.map(|reduction| reduction.proof);
     let evaluation_trace_claim_coefficients = trace_claim.claim_coefficients;
     // Recursive suffixes still omit the public row coefficients from ring-switch
@@ -445,8 +449,10 @@ where
         &stage1_proof.range_image_evaluation,
     );
     let stage1_proof = Some(stage1_proof);
-    let binary_batching: E =
-        sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY);
+    let binary_batching = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_COMPRESSION_BINARY));
     let batching_coeff: E = sample_ext_challenge::<F, E, T>(transcript, CHALLENGE_SUMCHECK_BATCH);
     // EvaluationTrace is the last padded relation row: weight openings by
     // `eq(tau1, EvaluationTrace_row_index)`.
@@ -636,7 +642,7 @@ fn prove_stage2<F, E, T>(
     stage1_point: &[E],
     range_image_evaluation: E,
     relation_claim: E,
-    binary_batching: E,
+    binary_batching: Option<E>,
     evaluation_trace: PreparedProverEvaluationTrace<E>,
     trace_opening_claim: E,
     plan: RelationRangeImagePlan,
@@ -670,16 +676,25 @@ where
             common_alpha_factor.len(),
         )));
     }
-    let binary_weights =
-        NegativeBinarySupport::new(plan.witness_layout(), rs.compression_relation_weights.len())?
-            .materialize();
-    let additional_relation_terms = AdditionalRelationTerms::new(
-        rs.w_evals_compact.as_ref(),
-        rs.compression_relation_weights,
-        binary_weights,
-        binary_batching,
-    )?;
-    let ordinary_relation_claim = relation_claim - additional_relation_terms.input_claim();
+    let additional_relation_terms = rs
+        .compression_relation_weights
+        .map(|weights| {
+            let compression_domain_len = weights.physical_field_len();
+            let binary_support =
+                NegativeBinarySupport::new(plan.witness_layout(), compression_domain_len)?;
+            AdditionalRelationTerms::new(
+                rs.w_evals_compact.as_ref(),
+                compression_domain_len,
+                weights.into_sparse_entries()?,
+                binary_support.intervals(),
+                binary_batching.ok_or(AkitaError::InvalidProof)?,
+            )
+        })
+        .transpose()?;
+    let ordinary_relation_claim = relation_claim
+        - additional_relation_terms
+            .as_ref()
+            .map_or_else(E::zero, AdditionalRelationTerms::input_claim);
     let mut stage2_prover = RelationRangeImageProver::new(
         batching_coeff,
         rs.w_evals_compact,
@@ -694,7 +709,7 @@ where
         ordinary_relation_claim,
         evaluation_trace,
         trace_opening_claim,
-        Some(additional_relation_terms),
+        additional_relation_terms,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!(

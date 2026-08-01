@@ -7,8 +7,8 @@
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
 
-use crate::layout::{field_bytes, sumcheck_rounds};
-use crate::{CommittedGroupParams, CompressionChainPlan, DigitRangePlan};
+use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
+use crate::{CommitmentPayloadGeometry, CommittedGroupParams, DigitRangePlan};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -73,17 +73,10 @@ pub fn level_proof_bytes(
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-    let v_source_coefficients = lp
-        .open_commit_matrix
-        .output_rank()
-        .checked_mul(lp.role_dims().d_d())
-        .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
-    let v_bytes = compressed_payload_bytes(
+    let v_bytes = payload_bytes(
         base_field_bits,
-        &CompressionChainPlan::for_complete_source(
-            lp.open_commit_matrix.sis_modulus_profile(),
-            v_source_coefficients,
-        )?,
+        lp.open_commit_matrix.sis_modulus_profile(),
+        lp.opening_payload_geometry()?,
     )?;
     let next_commit_bytes = match next_witness_binding {
         Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
@@ -92,17 +85,10 @@ pub fn level_proof_bytes(
                     "outer-payload level proof is missing successor params".to_string(),
                 )
             })?;
-            let source_coefficients = next_lp
-                .outer_commit_matrix
-                .output_rank()
-                .checked_mul(next_lp.role_dims().d_b())
-                .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
-            compressed_payload_bytes(
+            payload_bytes(
                 base_field_bits,
-                &CompressionChainPlan::for_complete_source(
-                    next_lp.outer_commit_matrix.sis_modulus_profile(),
-                    source_coefficients,
-                )?,
+                next_lp.outer_commit_matrix.sis_modulus_profile(),
+                next_lp.outer_payload_geometry()?,
             )?
         }
         Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
@@ -123,18 +109,21 @@ pub fn level_proof_bytes(
         + next_eval_bytes)
 }
 
-fn compressed_payload_bytes(
+fn payload_bytes(
     base_field_bits: u32,
-    plan: &CompressionChainPlan,
+    profile: crate::SisModulusProfileId,
+    geometry: CommitmentPayloadGeometry,
 ) -> Result<usize, AkitaError> {
-    if base_field_bits as usize != plan.field_bits() {
+    if base_field_bits != profile.field_bits() {
         return Err(AkitaError::InvalidSetup(
-            "compression profile disagrees with the base field width".into(),
+            "commitment payload profile disagrees with the base field width".into(),
         ));
     }
-    plan.terminal_coefficients()
-        .checked_mul(plan.field_bytes())
-        .ok_or_else(|| AkitaError::InvalidSetup("compressed payload byte length overflow".into()))
+    Ok(proof_ring_vec_bytes(
+        geometry.transmitted_rows()?,
+        geometry.transcript_ring_dimension(),
+        field_bytes(base_field_bits),
+    ))
 }
 
 /// Header-stripped byte size of the recursive-mode stage-3 setup-product
@@ -290,26 +279,8 @@ mod tests {
         stage3_setup_ring_len: Option<usize>,
         next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
-        let current_source_coeffs = lp
-            .open_commit_matrix
-            .output_rank()
-            .checked_mul(lp.role_dims().d_d())
-            .ok_or_else(|| AkitaError::InvalidSetup("D compression overflow".to_string()))?;
-        let current_coeffs = CompressionChainPlan::for_complete_source(
-            lp.open_commit_matrix.sis_modulus_profile(),
-            current_source_coeffs,
-        )?
-        .terminal_coefficients();
-        let next_source_coeffs = next_lp
-            .outer_commit_matrix
-            .output_rank()
-            .checked_mul(next_lp.role_dims().d_b())
-            .ok_or_else(|| AkitaError::InvalidSetup("B compression overflow".to_string()))?;
-        let next_commit_coeffs = CompressionChainPlan::for_complete_source(
-            next_lp.outer_commit_matrix.sis_modulus_profile(),
-            next_source_coeffs,
-        )?
-        .terminal_coefficients();
+        let current_coeffs = lp.opening_payload_geometry()?.transmitted_coefficients();
+        let next_commit_coeffs = next_lp.outer_payload_geometry()?.transmitted_coefficients();
         let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
         let b = 1usize << lp.log_basis_open;
 

@@ -36,7 +36,8 @@ pub mod witness;
 
 pub use akita_challenges::TensorChallengeShape;
 pub use compression::{
-    compression_ring_dimensions, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
+    compression_ring_dimensions, scheduled_payload_mode, CommitmentPayloadGeometry,
+    CommitmentPayloadMode, CompressionChainPlan, CompressionChainWitness, CompressionMapPlan,
     CompressionPolicyId, CompressionTerminalPayload, PackedNegativeBinary, COMPRESSION_MAP_COUNT,
     COMPRESSION_POLICY, COMPRESSION_TARGET_BYTES, MAX_COMPRESSION_INPUT_BYTES,
 };

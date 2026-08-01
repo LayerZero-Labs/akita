@@ -748,6 +748,31 @@ impl FoldSchedule {
     }
 
     pub fn validate_structure(&self) -> Result<(), AkitaError> {
+        if self.root.params.final_group.commitment.payload_mode
+            != crate::scheduled_payload_mode(0, false)
+        {
+            return Err(AkitaError::InvalidSetup(
+                "root fold payload must be compressed".into(),
+            ));
+        }
+        let mut raw_suffix_started = false;
+        for (index, step) in self.recursive_folds.iter().enumerate() {
+            let consumes_setup_prefix = step.params.witness.setup_prefix.is_some();
+            if raw_suffix_started && consumes_setup_prefix {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} cannot resume compression by consuming a setup prefix after the raw suffix"
+                )));
+            }
+            let expected = crate::scheduled_payload_mode(index + 1, consumes_setup_prefix);
+            if step.params.witness.payload_mode != expected {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "recursive fold {index} payload mode disagrees with the compression cutover policy"
+                )));
+            }
+            if !step.params.witness.payload_mode.is_compressed() {
+                raw_suffix_started = true;
+            }
+        }
         if self.root.input_witness_len == 0 || self.root.output_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
                 "root fold witness lengths must be nonzero".to_string(),

@@ -41,9 +41,9 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
     /// Prepared data for prepared relation-matrix MLE evaluation.
     pub relation_matrix_evaluator: RelationMatrixEvaluator<E>,
     /// Independent compact F/H contribution; ordinary A/B/D geometry is unchanged.
-    pub compression_relation_weights: CompressionRelationWeights<E>,
+    pub compression_relation_weights: Option<CompressionRelationWeights<E>>,
     /// Sparse support of every F/H negative-binary digit span.
-    pub negative_binary_support: NegativeBinarySupport,
+    pub negative_binary_support: Option<NegativeBinarySupport>,
     /// Canonical flat relation-witness domain and coefficient/lane split.
     pub relation_address_geometry: RelationAddressGeometry,
     /// Low-variable count used by the protocol's Stage-1 tau0 equality point.
@@ -60,8 +60,8 @@ pub(crate) struct RingSwitchVerifyOutput<E: FieldCore> {
 
 struct RingSwitchVerifyCoreOutput<E: FieldCore> {
     relation_matrix_evaluator: RelationMatrixEvaluator<E>,
-    compression_relation_weights: CompressionRelationWeights<E>,
-    negative_binary_support: NegativeBinarySupport,
+    compression_relation_weights: Option<CompressionRelationWeights<E>>,
+    negative_binary_support: Option<NegativeBinarySupport>,
     relation_address_geometry: RelationAddressGeometry,
     digit_range_equality_low_variable_count: usize,
     tau0: Option<Vec<E>>,
@@ -255,17 +255,27 @@ where
         .opening_source_len
         .checked_mul(replay.opening_ring_dim)
         .ok_or_else(|| AkitaError::InvalidSetup("opening capacity overflow".into()))?;
-    let compression_relation_weights = build_compression_relation_weights(
-        replay.setup,
-        relation,
-        alpha,
-        lp,
-        &tau1,
-        &witness_layout,
-        replay.opening_ring_dim,
-        physical_field_len,
-    )?;
-    let negative_binary_support = NegativeBinarySupport::new(&witness_layout, physical_field_len)?;
+    let compression_relation_weights = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| {
+            build_compression_relation_weights(
+                replay.setup,
+                relation,
+                alpha,
+                lp,
+                &tau1,
+                &witness_layout,
+                replay.opening_ring_dim,
+                physical_field_len,
+            )
+        })
+        .transpose()?;
+    let negative_binary_support = lp
+        .payload_mode
+        .is_compressed()
+        .then(|| NegativeBinarySupport::new(&witness_layout, physical_field_len))
+        .transpose()?;
     RingSwitchVerifyCoreOutput {
         relation_matrix_evaluator,
         compression_relation_weights,

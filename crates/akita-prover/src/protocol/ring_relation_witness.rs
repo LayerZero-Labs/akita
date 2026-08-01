@@ -142,7 +142,7 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 pub struct RingRelationWitness<F: FieldCore> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
-    pub(crate) compression: CompressionWitnessMaterialization<F>,
+    pub(crate) compression: Option<CompressionWitnessMaterialization<F>>,
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
@@ -156,7 +156,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
         role_dims: CommitmentRingDims,
-        compression: CompressionWitnessMaterialization<F>,
+        compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
             fold_grind_nonce,
@@ -176,7 +176,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
     pub(crate) fn from_groups(
         fold_grind_nonce: u32,
         groups: Vec<RingRelationGroupWitness<F>>,
-        compression: CompressionWitnessMaterialization<F>,
+        compression: Option<CompressionWitnessMaterialization<F>>,
     ) -> Self {
         Self {
             fold_grind_nonce,
@@ -202,6 +202,8 @@ impl<F: FieldCore> RingRelationWitness<F> {
     {
         let source = self
             .compression
+            .as_ref()
+            .ok_or(AkitaError::InvalidProof)?
             .source(crate::protocol::ring_relation::CompressionSourceId::Opening)?;
         let ring_dim = source
             .witness
