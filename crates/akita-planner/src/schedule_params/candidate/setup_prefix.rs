@@ -1,6 +1,7 @@
 use super::*;
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(not(feature = "test-support"), allow(unreachable_pub))]
 /// Derive one secure setup-prefix commitment candidate.
 ///
 /// Returns `None` when the requested geometry has no audited feasible candidate.
