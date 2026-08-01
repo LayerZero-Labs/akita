@@ -1016,7 +1016,6 @@ where
             // candidate, so temporarily start from D256 root geometry and promote A.
             let mut root_policy = policy_of::<Root>();
             let planned_root_d = if Root::D == 512 { 256 } else { Root::D };
-            root_policy.ring_dimension = planned_root_d;
             root_policy.uniform_ring_dimension = planned_root_d;
             if Root::D != planned_root_d {
                 root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;

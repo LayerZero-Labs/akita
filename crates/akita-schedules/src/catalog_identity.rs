@@ -49,7 +49,6 @@ pub fn policy_digest(policy: &PlannerPolicy) -> [u8; 32] {
     h.write_u64(u64::from(policy.sis_security_policy.tag()));
     h.write_bytes(&policy.sis_table_digest.0);
     h.write_u64(policy.uniform_ring_dimension as u64);
-    h.write_u64(policy.ring_dimension as u64);
     h.write_u64(policy.setup_prefix_inner_ring_dimension as u64);
     write_ring_dimension_candidates(&mut h, policy.ring_dimension_candidates);
     write_decomposition(&mut h, policy.decomposition);
@@ -80,7 +79,6 @@ pub fn identity_digest(identity: &GeneratedScheduleCatalogIdentity) -> [u8; 32] 
     h.write_u64(u64::from(identity.sis_security_policy.tag()));
     h.write_bytes(&identity.sis_table_digest.0);
     h.write_u64(identity.uniform_ring_dimension as u64);
-    h.write_u64(identity.ring_dimension as u64);
     h.write_u64(identity.setup_prefix_inner_ring_dimension as u64);
     write_decomposition(&mut h, identity.decomposition);
     h.write_u64(u64::from(identity.ring_subfield_norm_bound));
@@ -142,7 +140,6 @@ struct CatalogIdentityExpectation {
     sis_security_policy: akita_types::SisSecurityPolicyId,
     sis_table_digest: akita_types::SisTableDigest,
     uniform_ring_dimension: usize,
-    ring_dimension: usize,
     setup_prefix_inner_ring_dimension: usize,
     decomposition: akita_types::DecompositionParams,
     ring_subfield_norm_bound: u32,
@@ -174,7 +171,6 @@ impl CatalogIdentityExpectation {
             sis_security_policy: identity.sis_security_policy,
             sis_table_digest: identity.sis_table_digest,
             uniform_ring_dimension: identity.uniform_ring_dimension,
-            ring_dimension: identity.ring_dimension,
             setup_prefix_inner_ring_dimension: identity.setup_prefix_inner_ring_dimension,
             decomposition: identity.decomposition,
             ring_subfield_norm_bound: identity.ring_subfield_norm_bound,
@@ -229,7 +225,6 @@ fn catalog_identity_expectation(
         sis_security_policy: policy.sis_security_policy,
         sis_table_digest: policy.sis_table_digest,
         uniform_ring_dimension: policy.uniform_ring_dimension,
-        ring_dimension: policy.ring_dimension,
         setup_prefix_inner_ring_dimension: policy.setup_prefix_inner_ring_dimension,
         decomposition: policy.decomposition,
         ring_subfield_norm_bound: policy.ring_subfield_norm_bound,
@@ -275,7 +270,6 @@ pub fn expected_catalog_identity(
         sis_security_policy: expected.sis_security_policy,
         sis_table_digest: expected.sis_table_digest,
         uniform_ring_dimension: expected.uniform_ring_dimension,
-        ring_dimension: expected.ring_dimension,
         setup_prefix_inner_ring_dimension: expected.setup_prefix_inner_ring_dimension,
         decomposition: expected.decomposition,
         ring_subfield_norm_bound: expected.ring_subfield_norm_bound,

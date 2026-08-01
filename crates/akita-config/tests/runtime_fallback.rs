@@ -324,7 +324,6 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         selection_policy: Cfg::selection_policy(),
         max_num_setup_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
-        ring_dimension: Cfg::D,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
         ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,

@@ -74,29 +74,21 @@ pub(crate) struct CandidateTerminalResponse {
 
 /// Explicit A/B/D dimensions admitted by mixed-D planner search.
 ///
-/// The planner policy's ring dimension defines only the implicit uniform
-/// domain used by [`find_schedule`]. Mixed-dimension search supplies this
-/// explicit set of schedule-owned A/B/D tuples.
+/// The planner policy's uniform ring dimension defines only the implicit
+/// singleton domain used by [`find_schedule`]. Mixed-dimension search supplies
+/// this explicit set of schedule-owned A/B/D tuples.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RingDimensionSearchDomain {
-    setup_generation_dimension: usize,
     candidates: Vec<CommitmentRingDims>,
 }
 
 impl RingDimensionSearchDomain {
     /// Construct and canonicalize a non-empty dimension domain.
     ///
-    /// Every tuple must satisfy the schedule-local A-carrier invariant and
-    /// divide the setup-generation dimension.
+    /// Every tuple must satisfy the schedule-local A-carrier invariant.
     pub fn new(
-        setup_generation_dimension: usize,
         candidates: impl IntoIterator<Item = CommitmentRingDims>,
     ) -> Result<Self, AkitaError> {
-        if setup_generation_dimension == 0 || !setup_generation_dimension.is_power_of_two() {
-            return Err(AkitaError::InvalidSetup(
-                "setup generation dimension must be a nonzero power of two".into(),
-            ));
-        }
         let mut candidates = candidates.into_iter().collect::<Vec<_>>();
         candidates.sort_by_key(|dims| (dims.d_a(), dims.d_b(), dims.d_d()));
         candidates.dedup();
@@ -107,27 +99,13 @@ impl RingDimensionSearchDomain {
         }
         for dims in &candidates {
             dims.validate_role_projection()?;
-            for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-                if !setup_generation_dimension.is_multiple_of(d) {
-                    return Err(AkitaError::InvalidSetup(format!(
-                        "candidate dimension D{d} does not divide setup generation dimension \
-                         D{setup_generation_dimension}"
-                    )));
-                }
-            }
         }
-        Ok(Self {
-            setup_generation_dimension,
-            candidates,
-        })
+        Ok(Self { candidates })
     }
 
     /// Construct the explicit singleton domain used by a uniform policy.
     pub fn uniform(ring_dimension: usize) -> Result<Self, AkitaError> {
-        Self::new(
-            ring_dimension,
-            [CommitmentRingDims::uniform(ring_dimension)],
-        )
+        Self::new([CommitmentRingDims::uniform(ring_dimension)])
     }
 
     /// Canonically ordered admitted A/B/D tuples.
@@ -135,18 +113,7 @@ impl RingDimensionSearchDomain {
         &self.candidates
     }
 
-    /// Setup generation dimension against which this domain was validated.
-    pub fn setup_generation_dimension(&self) -> usize {
-        self.setup_generation_dimension
-    }
-
     fn validate_for_policy(&self, policy: &PlannerPolicy) -> Result<(), AkitaError> {
-        if self.setup_generation_dimension != policy.ring_dimension {
-            return Err(AkitaError::InvalidSetup(format!(
-                "ring-dimension domain uses setup generation D{}, but policy uses D{}",
-                self.setup_generation_dimension, policy.ring_dimension
-            )));
-        }
         if self.candidates.as_slice() != policy.ring_dimension_candidates {
             if policy.ring_dimension_candidates.len() == 1 {
                 return Ok(());

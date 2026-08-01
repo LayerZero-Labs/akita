@@ -37,10 +37,12 @@ pub struct NttExecutionRequirements {
 }
 
 impl NttExecutionRequirements {
-    /// Compile matrix work performed inside one `batched_prove` invocation.
+    /// Compile matrix work performed by one resolved prover execution.
     ///
-    /// Root commitments and setup-prefix preprocessing are separate API calls
-    /// that may use different prepared owners and are intentionally excluded.
+    /// The root commitment is completed before `batched_prove` and remains
+    /// excluded. Setup-prefix commitments are part of the execution plan:
+    /// their slots are prepared before the recursive fold consumes them, so
+    /// their commit-cluster requirements must be included here.
     pub fn from_prove_schedule(schedule: &FoldSchedule) -> Result<Self, AkitaError> {
         schedule.validate_structure()?;
         let mut requirements = Self::default();
@@ -72,6 +74,7 @@ impl NttExecutionRequirements {
             requirements.add_group_commit(predecessor_level, &step.params.witness)?;
             requirements.add_group_relation(level, &step.params.witness)?;
             if let Some(prefix) = &step.params.incoming_setup_prefix {
+                requirements.add_setup_prefix_commitment(level, prefix)?;
                 requirements.add_precommitted_relation(level, &prefix.commitment_params)?;
             }
             requirements.add_matrix(

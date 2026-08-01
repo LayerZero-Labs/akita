@@ -80,10 +80,8 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .unwrap_or(36);
     let direct_policy = policy_of::<MixedDimFp128OneHot>();
     let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
-    let direct_domain = RingDimensionSearchDomain::new(
-        direct_policy.ring_dimension,
-        direct_policy.ring_dimension_candidates.iter().copied(),
-    )?;
+    let direct_domain =
+        RingDimensionSearchDomain::new(direct_policy.ring_dimension_candidates.iter().copied())?;
     let direct = find_schedule(
         direct_key.final_group,
         &direct_policy,
@@ -101,34 +99,27 @@ fn main() -> Result<(), akita_field::AkitaError> {
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
     let mixed_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
     let recursive_domain = RingDimensionSearchDomain::new(
-        mixed_recursive_policy.ring_dimension,
         mixed_recursive_policy
             .ring_dimension_candidates
             .iter()
             .copied(),
     )?;
-    let mixed_recursive = find_schedule(
+    let mixed_recursive_error = find_schedule(
         mixed_recursive_key.final_group,
         &mixed_recursive_policy,
         MixedRecursive::root_honest_fold_policy(),
         &recursive_domain,
         MixedRecursive::ring_challenge_config,
         MixedRecursive::fold_challenge_shape_at_level,
-    )?;
-    println!("recursive policy scalar dispatch through grouped planner:");
-    println!(
-        "  setup={} field elements, proof={} bytes",
-        mixed_recursive.estimate.estimated_num_setup_field_elements,
-        mixed_recursive.estimate.estimated_proof_payload_bytes()?,
-    );
+    )
+    .expect_err("mixed-D recursive planning is intentionally deferred");
+    println!("recursive mixed-D planner deferred as expected: {mixed_recursive_error}");
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
     let precommit_key = AkitaScheduleLookupKey::single(precommit_layout);
     let precommit_policy = policy_of::<D64OneHot>();
-    let precommit_domain = RingDimensionSearchDomain::new(
-        precommit_policy.ring_dimension,
-        precommit_policy.ring_dimension_candidates.iter().copied(),
-    )?;
+    let precommit_domain =
+        RingDimensionSearchDomain::new(precommit_policy.ring_dimension_candidates.iter().copied())?;
     let precommit = find_schedule(
         precommit_key.final_group,
         &precommit_policy,

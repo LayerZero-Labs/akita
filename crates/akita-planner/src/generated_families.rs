@@ -176,7 +176,7 @@ fn regen<Cfg: CommitmentConfig>(key: PolynomialGroupLayout) -> Result<FoldSchedu
 fn regen_mixed_dim_fp128_onehot(key: PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError> {
     type Cfg = fp128::MixedDimFp128OneHot;
     let policy = policy_of::<Cfg>();
-    let dimensions = RingDimensionSearchDomain::new(Cfg::D, Cfg::RING_DIMENSION_CANDIDATES)?;
+    let dimensions = RingDimensionSearchDomain::new(Cfg::RING_DIMENSION_CANDIDATES)?;
     Ok(find_schedule(
         key,
         &policy,

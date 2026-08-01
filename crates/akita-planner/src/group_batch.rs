@@ -566,7 +566,6 @@ fn find_group_batch_schedule_inner(
         // must not enter recursion-enabled grouped planning.
         let scalar_policy = policy.direct_only();
         let dimensions = crate::schedule_params::RingDimensionSearchDomain::new(
-            scalar_policy.ring_dimension,
             scalar_policy.ring_dimension_candidates.iter().copied(),
         )?;
         return find_schedule(

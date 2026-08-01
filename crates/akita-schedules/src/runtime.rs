@@ -50,13 +50,12 @@ impl SelectionPolicyId {
     /// Canonical selection objective for one schedule policy shape.
     pub fn for_policy(
         recursive_setup_planning: bool,
-        setup_generation_dimension: usize,
+        uniform_ring_dimension: usize,
         ring_dimension_candidates: &[CommitmentRingDims],
     ) -> Self {
         if recursive_setup_planning {
             Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else if ring_dimension_candidates
-            != [CommitmentRingDims::uniform(setup_generation_dimension)]
+        } else if ring_dimension_candidates != [CommitmentRingDims::uniform(uniform_ring_dimension)]
         {
             Self::MinSetupMatrixFieldElementsThenProofPayload
         } else {
@@ -98,8 +97,6 @@ pub struct PlannerPolicy {
     pub selection_policy: SelectionPolicyId,
     pub max_num_setup_field_elements: usize,
     pub min_offloaded_witness_contraction: usize,
-    /// Setup-generation ring dimension used to validate admitted candidates.
-    pub ring_dimension: usize,
     /// Ring dimension used when the planner is restricted to a uniform domain.
     pub uniform_ring_dimension: usize,
     /// A-matrix ring dimension used to commit offloaded setup prefixes.
@@ -164,7 +161,7 @@ impl PlannerPolicy {
             recursive_setup_planning: false,
             selection_policy: SelectionPolicyId::for_policy(
                 false,
-                self.ring_dimension,
+                self.uniform_ring_dimension,
                 self.ring_dimension_candidates,
             ),
             ..self
@@ -218,7 +215,7 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     validate_ring_dimension_candidates(policy)?;
     let expected_selection_policy = SelectionPolicyId::for_policy(
         policy.recursive_setup_planning,
-        policy.ring_dimension,
+        policy.uniform_ring_dimension,
         policy.ring_dimension_candidates,
     );
     if policy.selection_policy != expected_selection_policy {
@@ -232,7 +229,6 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
         ));
     }
     for (label, dimension) in [
-        ("setup-generation", policy.ring_dimension),
         ("uniform", policy.uniform_ring_dimension),
         (
             "setup-prefix inner",
@@ -261,11 +257,6 @@ pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
 }
 
 fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
-    if policy.ring_dimension == 0 || !policy.ring_dimension.is_power_of_two() {
-        return Err(AkitaError::InvalidSetup(
-            "setup generation dimension must be a nonzero power of two".to_string(),
-        ));
-    }
     let candidates = policy.ring_dimension_candidates;
     if candidates.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -275,14 +266,6 @@ fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), Akit
     let key = |dims: CommitmentRingDims| (dims.d_a(), dims.d_b(), dims.d_d());
     for (index, &dims) in candidates.iter().enumerate() {
         dims.validate_role_projection()?;
-        for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
-            if !policy.ring_dimension.is_multiple_of(d) {
-                return Err(AkitaError::InvalidSetup(format!(
-                    "candidate dimension D{d} does not divide setup generation D{}",
-                    policy.ring_dimension
-                )));
-            }
-        }
         if index > 0 && key(candidates[index - 1]) >= key(dims) {
             return Err(AkitaError::InvalidSetup(
                 "ring-dimension candidate domain must be strictly sorted and duplicate-free"

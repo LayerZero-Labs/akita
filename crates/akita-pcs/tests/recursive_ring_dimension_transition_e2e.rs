@@ -344,6 +344,20 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
             akita_types::NttTransformDomain::Cyclic,
         )
         .expect("prefix A requirement");
+        let expected_prefix_commit_a = akita_types::NttCacheKey::from_matrix_shape(
+            prefix_layout.inner_commit_matrix.ring_dimension(),
+            prefix_layout.inner_commit_matrix.output_rank(),
+            prefix_layout.inner_commit_matrix.input_width(),
+            akita_types::NttTransformDomain::Negacyclic,
+        )
+        .expect("prefix commitment A requirement");
+        let expected_prefix_commit_b = akita_types::NttCacheKey::from_matrix_shape(
+            prefix_layout.outer_commit_matrix.ring_dimension(),
+            prefix_layout.outer_commit_matrix.output_rank(),
+            prefix_layout.outer_commit_matrix.input_width(),
+            akita_types::NttTransformDomain::Negacyclic,
+        )
+        .expect("prefix commitment B requirement");
         assert!(requirements.entries().iter().any(|requirement| {
             requirement.fold_level == 1
                 && requirement.cluster == NttOperationCluster::RingSwitch
@@ -351,6 +365,15 @@ fn recursive_mixed_d_multi_group_round_trip<ProofCfg>(
                 && requirement.key.domain == expected_prefix_a.domain
                 && requirement.key.num_ring_elements >= expected_prefix_a.num_ring_elements
         }));
+        for expected in [expected_prefix_commit_a, expected_prefix_commit_b] {
+            assert!(requirements.entries().iter().any(|requirement| {
+                requirement.fold_level == 1
+                    && requirement.cluster == NttOperationCluster::Commit
+                    && requirement.key.ring_d == expected.ring_d
+                    && requirement.key.domain == expected.domain
+                    && requirement.key.num_ring_elements >= expected.num_ring_elements
+            }));
+        }
         let metrics = planned_ntt_cache_metrics::<F, _>(&prove_stack, &requirements)
             .expect("planned NTT metrics");
         assert_eq!(metrics.len(), 1, "uniform stack must have one cache owner");

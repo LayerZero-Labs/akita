@@ -47,19 +47,19 @@ fn generated_schedule_has_explicit_terminal_inner_only_topology() {
 
 #[cfg(feature = "schedules-default")]
 #[test]
-fn setup_envelope_includes_terminal_inner_matrix() {
+fn setup_capacity_includes_terminal_inner_matrix() {
     let schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
     let envelope = setup_matrix_capacity_for_schedule(&schedule).expect("setup capacity");
-    let terminal_a = schedule
-        .terminal
-        .params
-        .witness
+    let terminal = &schedule.terminal.params.witness;
+    let terminal_a = terminal
         .inner_commit_matrix
         .output_rank()
-        * schedule.terminal.params.witness.inner_width();
+        .checked_mul(terminal.inner_width())
+        .and_then(|width| width.checked_mul(terminal.inner_commit_matrix.ring_dimension()))
+        .expect("terminal setup capacity");
     assert!(envelope.num_field_elements >= terminal_a);
 }
 

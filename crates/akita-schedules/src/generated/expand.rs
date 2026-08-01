@@ -895,7 +895,6 @@ mod tests {
                 SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
             max_num_setup_field_elements: 1 << 26,
             min_offloaded_witness_contraction: 3,
-            ring_dimension: 64,
             uniform_ring_dimension: 64,
             setup_prefix_inner_ring_dimension: 128,
             ring_dimension_candidates: &CANDIDATES,
