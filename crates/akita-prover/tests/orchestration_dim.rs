@@ -58,7 +58,7 @@ fn real_presets_validate_against_setup_ring_dimension() {
     validate_schedule_ring_dims(&fp64_schedule).expect("D128 schedule envelope");
 
     let fp128_schedule = fp128::D64Dense::runtime_schedule(AkitaScheduleLookupKey::single(
-        PolynomialGroupLayout::singleton(13),
+        PolynomialGroupLayout::singleton(14),
     ))
     .expect("fp128 schedule");
     validate_schedule_ring_dims(&fp128_schedule).expect("D64 schedule envelope");
