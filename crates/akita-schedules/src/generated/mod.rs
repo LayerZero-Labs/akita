@@ -144,6 +144,9 @@ pub struct GeneratedScheduleCatalogIdentity {
     pub recursive_setup_planning: bool,
 
     pub root_fold_shape: akita_challenges::TensorChallengeShape,
+    /// Complete ordered A/B/D domain used to generate this catalog, including
+    /// candidates that did not win an emitted row.
+    pub ring_dimension_candidates: &'static [akita_types::CommitmentRingDims],
     pub ring_dimensions: &'static [usize],
     pub ring_challenge_config_digest: u64,
     pub key_count: usize,
@@ -160,8 +163,8 @@ pub mod expand;
 pub mod validate;
 pub(crate) mod walk;
 pub use crate::{
-    ChunkedWitnessCfg, DecompositionParams, PlannerCostModelId, SelectionPolicyId,
-    SisSecurityPolicyId, TensorChallengeShape,
+    ChunkedWitnessCfg, CommitmentRingDims, DecompositionParams, PlannerCostModelId,
+    SelectionPolicyId, SisSecurityPolicyId, TensorChallengeShape,
 };
 pub use akita_types::{PolynomialGroupLayout, PrecommittedGroupDescriptor};
 pub use akita_types::{SisModulusProfileId, SisTableDigest};
@@ -452,6 +455,8 @@ pub mod fp128_d64_onehot_recursive;
 pub mod fp128_d64_onehot_recursive_multi_chunk_w8r2;
 #[cfg(feature = "fp128-d64-onehot-tensor")]
 pub mod fp128_d64_onehot_tensor;
+#[cfg(feature = "fp128-mixed-dim-onehot")]
+pub mod fp128_mixed_dim_onehot;
 #[cfg(feature = "fp32-d128-onehot")]
 pub mod fp32_d128_onehot;
 #[cfg(feature = "fp32-d256-onehot")]
@@ -548,6 +553,14 @@ pub fn fp128_d64_onehot_tensor_table() -> GeneratedScheduleTable {
     GeneratedScheduleTable {
         entries: fp128_d64_onehot_tensor::FP128_D64_ONEHOT_TENSOR_SCHEDULES,
         identity: fp128_d64_onehot_tensor::CATALOG_IDENTITY,
+    }
+}
+
+#[cfg(feature = "fp128-mixed-dim-onehot")]
+pub fn fp128_mixed_dim_onehot_table() -> GeneratedScheduleTable {
+    GeneratedScheduleTable {
+        entries: fp128_mixed_dim_onehot::FP128_MIXED_DIM_ONEHOT_SCHEDULES,
+        identity: fp128_mixed_dim_onehot::CATALOG_IDENTITY,
     }
 }
 

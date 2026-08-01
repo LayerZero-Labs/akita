@@ -318,14 +318,14 @@ pub(crate) fn emit_runtime_schedule_summary(
     label: &str,
     schedule: &FoldSchedule,
     root_num_claims: usize,
+    setup_generation_dimension: usize,
     field_bits: u32,
 ) {
     let levels = schedule.num_fold_levels();
-    let setup_envelope_ring_elements = akita_types::setup_matrix_envelope_for_schedule(schedule)
-        .map(|envelope| envelope.max_setup_len)
-        .unwrap_or(0);
-    let setup_envelope_field_elements = setup_envelope_ring_elements
-        .saturating_mul(schedule.root.params.final_group.commitment.d_a());
+    let setup_envelope_field_elements =
+        akita_types::setup_matrix_field_elements_for_schedule(schedule).unwrap_or(0);
+    let setup_envelope_ring_elements =
+        setup_envelope_field_elements.div_ceil(setup_generation_dimension);
     let setup_envelope_bytes =
         setup_envelope_field_elements.saturating_mul(field_bits.div_ceil(8) as usize);
     let selected_offload_edges = schedule
@@ -523,10 +523,11 @@ fn fold_grind_nonce_wire_bytes() -> usize {
     0u32.serialized_size(Compress::No)
 }
 
-fn print_akita_level_breakdown<FF, E, const D: usize>(
+fn print_akita_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
     level: &FoldLevelProof<FF, E>,
+    ring_d: usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -542,8 +543,8 @@ where
     eprintln!(
         "[{label}]     v={} bytes ({} ring elems, D={})",
         v_size,
-        ring_elem_count(level.v.coeff_len(), D),
-        D,
+        ring_elem_count(level.v.coeff_len(), ring_d),
+        ring_d,
     );
     let stage1 = &level.stage1;
     let stage1_sumcheck_size = stage1
@@ -577,7 +578,7 @@ where
     tracing::info!(
         label,
         level = level_idx,
-        d = D,
+        d = ring_d,
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
@@ -625,11 +626,12 @@ where
     total
 }
 
-fn print_terminal_level_breakdown<FF, E, const D: usize>(
+fn print_terminal_level_breakdown<FF, E>(
     label: &str,
     level_idx: usize,
     level: &TerminalLevelProof<FF, E>,
     root_variant: &'static str,
+    ring_d: usize,
 ) -> usize
 where
     FF: FieldCore + CanonicalField + AkitaSerialize,
@@ -655,7 +657,7 @@ where
     tracing::info!(
         label,
         level = level_idx,
-        d = D,
+        d = ring_d,
         total_bytes = total,
         extension_opening_partials_bytes = extension_opening_partials_size,
         extension_opening_sumcheck_bytes = extension_opening_sumcheck_size,
@@ -693,6 +695,7 @@ where
 pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
     label: &str,
     proof: &AkitaBatchedProof<FF, E>,
+    schedule: Option<&FoldSchedule>,
 ) where
     FF: FieldCore + CanonicalField + AkitaSerialize,
     E: FieldCore + AkitaSerialize,
@@ -733,15 +736,27 @@ pub(crate) fn print_batched_proof_summary<FF, E, const D: usize>(
         proof.size(),
         "[{label}] proof accounting must exactly match serialized proof size"
     );
-    print_akita_level_breakdown::<FF, E, D>(label, 0, &proof.root);
+    let level_ring_dimension = |level_idx: usize| {
+        schedule.map_or(D, |schedule| {
+            if level_idx == 0 {
+                schedule.root.params.final_group.commitment.d_a()
+            } else if let Some(fold) = schedule.recursive_folds.get(level_idx - 1) {
+                fold.params.witness.d_a()
+            } else {
+                schedule.terminal.params.witness.d_a()
+            }
+        })
+    };
+    print_akita_level_breakdown(label, 0, &proof.root, level_ring_dimension(0));
     for (i, step) in proof.recursive_folds.iter().enumerate() {
-        print_akita_level_breakdown::<FF, E, D>(label, i + 1, step);
+        print_akita_level_breakdown(label, i + 1, step, level_ring_dimension(i + 1));
     }
-    print_terminal_level_breakdown::<FF, E, D>(
+    print_terminal_level_breakdown(
         label,
         proof.num_fold_levels() - 1,
         &proof.terminal,
         "fold",
+        level_ring_dimension(proof.num_fold_levels() - 1),
     );
 }
 

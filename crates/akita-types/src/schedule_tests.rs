@@ -273,10 +273,10 @@ fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
 }
 
 #[test]
-fn schedule_accepts_short_stage2_points_for_wider_successors() {
+fn schedule_accepts_stage2_points_within_successor_capacity() {
     recursive_schedule(128, 64, false)
         .validate_structure()
-        .expect("both successor cubes may be wider than their incoming Stage 2 points");
+        .expect("successor cubes may be wider than their incoming Stage 2 points");
 }
 
 #[test]
@@ -412,8 +412,19 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         "the exact prefix must include the larger multi-group setup footprint"
     );
 
-    let consumer = committed_params_with_geometry(64, 16, 64);
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
+    let mut consumer = committed_params_with_geometry(64, 16, 64);
+    let prefix_ring_slots = n_prefix / crate::SETUP_OFFLOAD_D_SETUP;
+    let inner = &consumer.inner_commit_matrix;
+    consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        prefix_ring_slots * consumer.num_digits_inner,
+        inner.coeff_linf_bound(),
+        inner.ring_dimension(),
+    );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
     let prefix =

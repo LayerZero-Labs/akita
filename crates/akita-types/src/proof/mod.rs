@@ -71,8 +71,9 @@ pub use setup::{
     MAX_SETUP_MATRIX_FIELD_ELEMENTS,
 };
 pub use setup_envelope::{
-    accumulate_matrix_envelope_for_level, accumulate_terminal_matrix_envelope,
-    inflate_envelope_for_setup_prefix_slot, setup_matrix_envelope_for_schedule,
+    accumulate_matrix_field_elements_for_level, accumulate_terminal_matrix_field_elements,
+    setup_matrix_envelope_for_schedule, setup_matrix_field_elements_for_schedule,
+    setup_prefix_slot_field_elements,
 };
 pub use setup_prefix::{
     active_setup_field_len, padded_setup_prefix_len, select_setup_prefix_slot,

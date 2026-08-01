@@ -727,8 +727,9 @@ behind the new feature flags.
    families: for each key, compare table expansion under
    `policy_of::<MultiChunkCfg>()` against
    `find_schedule(key, &policy_of::<MultiChunkCfg>(), …)`.
-3. Add regression: for a fixed key, `find_schedule(key, &policy_of::<D64OneHot>(), …)`
-   equals `find_schedule(key, &policy_with_default_chunk, …)` where
+3. Add regression: for a fixed key,
+   `find_schedule(key, &policy_of::<D64OneHot>(), …)` equals
+   `find_schedule(key, &policy_with_default_chunk, …)` where
    `policy_with_default_chunk` is `policy_of::<D64OneHot>()` with
    `witness_chunk: ChunkedWitnessCfg::default()` — confirms multi-chunk fields do
    not perturb non-chunked presets.

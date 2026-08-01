@@ -11,7 +11,7 @@ use akita_algebra::CyclotomicRing;
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
+    dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
@@ -138,22 +138,41 @@ where
         level_params.num_digits_outer,
     )?;
     validate_commit_outer_input_nonempty(b_input_len)?;
-    let mut b_input_digits = vec![[0i8; D]; b_input_len];
-    let planes = decomposed_inner_rows.typed_planes::<D>()?;
-    b_input_digits.copy_from_slice(planes);
-    let u = backend.digit_rows::<D>(
-        prepared,
-        level_params.outer_commit_matrix.output_rank(),
-        &b_input_digits,
-        level_params.layout.log_basis_outer,
-    )?;
-    if u.len() != level_params.outer_commit_matrix.output_rank() {
-        return Err(AkitaError::InvalidSetup(format!(
-            "setup prefix commit returned {} B rows, expected {}",
-            u.len(),
-            level_params.outer_commit_matrix.output_rank()
-        )));
+    let b_input_flat = decomposed_inner_rows.digits();
+    if b_input_flat.len()
+        != b_input_len.checked_mul(D).ok_or_else(|| {
+            AkitaError::InvalidSetup("setup prefix outer input length overflow".to_string())
+        })?
+    {
+        return Err(AkitaError::InvalidSetup(
+            "setup prefix outer input length does not match inner digit stream".to_string(),
+        ));
     }
+    let n_b = level_params.outer_commit_matrix.output_rank();
+    let d_b = level_params.outer_commit_matrix.ring_dimension();
+    let commitment_rows =
+        dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
+            let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
+            if !remainder.is_empty() {
+                return Err(AkitaError::InvalidSetup(
+                    "setup prefix digit carrier is not aligned to the outer ring dimension"
+                        .to_string(),
+                ));
+            }
+            let u = backend.digit_rows::<D_B>(
+                prepared,
+                n_b,
+                b_input_digits,
+                level_params.layout.log_basis_outer,
+            )?;
+            if u.len() != n_b {
+                return Err(AkitaError::InvalidSetup(format!(
+                    "setup prefix commit returned {} B rows, expected {n_b}",
+                    u.len(),
+                )));
+            }
+            Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
+        })?;
 
     // `recomposed_inner_rows` was only needed to decompose into the digit
     // stream above; the protocol slot stores the D-free decomposed digits and a
@@ -167,7 +186,7 @@ where
         natural_len,
         padded_len: n_prefix,
         commitment: SetupPrefixPublicCommitment {
-            rows: vec![RingVec::from_ring_elems(&u)],
+            rows: vec![commitment_rows],
         },
         hint,
     })
@@ -233,7 +252,8 @@ mod tests {
     use akita_field::Prime128Offset275 as F;
     use akita_types::{
         active_setup_field_len, setup_prefix_precommitted_params, CommittedGroupParams,
-        OpeningClaimsLayout, SetupMatrixEnvelope, SisModulusProfileId,
+        NttCacheKey, OpeningClaimsLayout, OuterCommitMatrixParams, SetupMatrixEnvelope,
+        SisModulusProfileId,
     };
 
     fn prefix_level_params(ring_dimension: usize) -> CommittedGroupParams {
@@ -398,5 +418,50 @@ mod tests {
     #[test]
     fn commit_setup_prefix_populates_d64_singleton_slot() {
         assert_commit_setup_prefix_populates_singleton_slot::<64>();
+    }
+
+    #[test]
+    fn commit_setup_prefix_dispatches_smaller_outer_dimension() {
+        let level_params = prefix_level_params(64);
+        let witness_ring_slots = level_params
+            .num_live_blocks
+            .checked_mul(level_params.num_positions_per_block)
+            .expect("witness shape");
+        let n_prefix = witness_ring_slots.checked_mul(64).expect("prefix length");
+        let mut prefix_params =
+            setup_prefix_precommitted_params(&level_params, n_prefix).expect("prefix params");
+        let outer = &prefix_params.outer_commit_matrix;
+        prefix_params.outer_commit_matrix = OuterCommitMatrixParams::new_unchecked(
+            outer.security_policy(),
+            outer.sis_table_key().table_digest,
+            outer.sis_modulus_profile(),
+            outer.output_rank(),
+            outer.input_width() * 2,
+            outer.coeff_linf_bound(),
+            32,
+        );
+        prefix_params.layout.outer_ring_dimension = 32;
+
+        let setup = test_setup::<64>(&level_params, n_prefix);
+        let backend = CpuBackend;
+        let prepared = backend.prepare_setup(&setup).expect("prepared setup");
+        let ntt_key = NttCacheKey::from_envelope(&setup.expanded, 32).expect("D32 NTT key");
+        backend
+            .ensure_ntt_slot(&prepared, ntt_key)
+            .expect("warm D32 NTT slot");
+        let slot = commit_setup_prefix::<F, 64, _>(
+            &setup.expanded,
+            &backend,
+            &prepared,
+            &prefix_params,
+            n_prefix,
+            n_prefix,
+        )
+        .expect("commit mixed-D prefix");
+
+        assert_eq!(
+            slot.commitment.rows[0].coeff_len(),
+            prefix_params.outer_commit_matrix.output_rank() * 32
+        );
     }
 }

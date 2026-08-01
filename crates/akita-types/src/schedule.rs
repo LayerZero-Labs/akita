@@ -866,8 +866,7 @@ impl FoldSchedule {
                     .commitment_params
                     .outer_commit_matrix
                     .ring_dimension();
-                if prefix.d_setup != crate::SETUP_OFFLOAD_D_SETUP
-                    || prefix.d_setup != predecessor_setup_d
+                if prefix.d_setup != predecessor_setup_d
                     || prefix_inner_d != consumer_dims.d_a()
                     || prefix_outer_d != consumer_dims.d_b()
                 {
@@ -928,6 +927,17 @@ impl FoldSchedule {
 
     pub fn initial_witness_len(&self) -> usize {
         self.root.input_witness_len
+    }
+
+    /// Canonical byte encoding used to order semantically distinct schedules.
+    ///
+    /// This is an ordering descriptor, not a wire encoding or transcript
+    /// commitment. It includes every schedule field that can affect proving or
+    /// verification.
+    pub fn canonical_descriptor_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        self.append_descriptor_bytes(&mut bytes);
+        bytes
     }
 
     pub(crate) fn append_descriptor_bytes(&self, bytes: &mut Vec<u8>) {
@@ -1012,6 +1022,9 @@ fn validate_stage2_successor_capacity(
     successor_ring_dimension: usize,
     successor_opening_num_vars: usize,
 ) -> Result<(), AkitaError> {
+    // Stage 2 owns the predecessor-derived point. A successor may expose a
+    // wider scheduled cube; preparation derives that wider representation by
+    // zero-extension. The schedule must reject only points that do not fit.
     if successor_ring_dimension == 0 || !output_witness_len.is_multiple_of(successor_ring_dimension)
     {
         return Err(AkitaError::InvalidSetup(format!(

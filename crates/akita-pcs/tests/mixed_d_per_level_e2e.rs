@@ -285,8 +285,8 @@ fn tableless_mixed_d_setup_uses_the_synthetic_schedule_envelope() {
         PolynomialGroupLayout::singleton(TABLELESS_NUM_VARS),
     ))
     .expect("tableless mixed-D schedule");
-    let required =
-        setup_matrix_envelope_for_schedule(&schedule).expect("synthetic schedule envelope");
+    let required = setup_matrix_envelope_for_schedule(&schedule, TablelessMixedD::D)
+        .expect("synthetic schedule envelope");
     let configured = TablelessMixedD::max_setup_matrix_size(TABLELESS_NUM_VARS, 1)
         .expect("mixed-D setup envelope");
     assert!(configured.max_setup_len >= required.max_setup_len);

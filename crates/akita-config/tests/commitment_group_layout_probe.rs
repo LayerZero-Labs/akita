@@ -7,7 +7,7 @@
 use akita_config::proof_optimized::fp128;
 use akita_config::{policy_of, CommitmentConfig};
 use akita_field::AkitaError;
-use akita_planner::{find_group_batch_schedule, PlannerPolicy};
+use akita_planner::{find_schedule, PlannerPolicy};
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};
 
 type Cfg = fp128::D64OneHot;
@@ -29,7 +29,7 @@ fn root_params(schedule: &akita_types::FoldSchedule) -> Result<&CommittedGroupPa
 
 fn layout_summary(policy: &PlannerPolicy, num_vars: usize) -> Result<LayoutSummary, AkitaError> {
     let key = PolynomialGroupLayout::new(num_vars, 1);
-    let schedule = find_group_batch_schedule(
+    let schedule = find_schedule(
         &AkitaScheduleLookupKey::single(key),
         policy,
         Cfg::ring_challenge_config,
