@@ -3,7 +3,7 @@ use crate::{
     CommitmentRingDims, CommittedGroupParams, LevelParamsLike, OpeningClaimsLayout,
     SetupProjectionGeometry, WitnessLayout,
 };
-use akita_algebra::offset_eq::OffsetEqWindow;
+use akita_algebra::offset_eq::{EqPairTensorFamily, OffsetEqWindow};
 use akita_field::{AkitaError, FieldCore};
 use std::{ops::Range, sync::Arc};
 
@@ -27,24 +27,18 @@ pub(crate) fn validate_setup_inputs(
             "setup groups disagree with witness layout".into(),
         ));
     }
-    let witness_group_order = witness_layout
+    let group_count = groups.len();
+    if witness_layout
         .units()
         .iter()
-        .map(|unit| unit.group_index())
-        .fold(Vec::new(), |mut order, group_id| {
-            if order.last() != Some(&group_id) {
-                order.push(group_id);
-            }
-            order
-        });
-    if witness_group_order
-        != groups
-            .iter()
-            .map(|group| group.group_id)
-            .collect::<Vec<_>>()
+        .enumerate()
+        .any(|(index, unit)| {
+            let expected_group = groups[index % group_count].group_id;
+            unit.group_index() != expected_group || unit.chunk_index() != index / group_count
+        })
     {
         return Err(AkitaError::InvalidSetup(
-            "setup groups do not follow witness relation order".into(),
+            "setup witness units do not follow chunk-major relation order".into(),
         ));
     }
     for group in groups {
@@ -56,26 +50,6 @@ pub(crate) fn validate_setup_inputs(
         )?;
     }
     validate_setup_group_ids(groups, witness_layout.num_groups())
-}
-
-pub(crate) fn get_d_col_range(
-    level_params: &CommittedGroupParams,
-    opening_batch: &OpeningClaimsLayout,
-    groups: &[SetupContributionGroupInputs],
-    group_id: usize,
-) -> Result<Range<usize>, AkitaError> {
-    let mut cursor = 0usize;
-    for group in groups {
-        let width = group.d_active_cols(level_params, opening_batch)?;
-        let end = cursor
-            .checked_add(width)
-            .ok_or_else(|| AkitaError::InvalidSetup("setup D width overflow".into()))?;
-        if group.group_id == group_id {
-            return Ok(cursor..end);
-        }
-        cursor = end;
-    }
-    Err(AkitaError::InvalidSetup("setup D group is missing".into()))
 }
 
 fn validate_setup_group_ids(
@@ -290,178 +264,94 @@ impl SetupContributionGroupInputs {
     }
 }
 
+/// Checked relation-address point and its bounded equality window.
+///
+/// Clones share both allocations. Keeping the point and window in one value
+/// prevents setup planning from consuming a window prepared for different
+/// challenges.
+#[derive(Clone)]
+pub struct PreparedRelationAddress<E: FieldCore> {
+    pub(crate) point: Arc<[E]>,
+    pub(crate) equality_window: Arc<OffsetEqWindow<E>>,
+}
+
+impl<E: FieldCore> PreparedRelationAddress<E> {
+    /// Prepare the reusable equality state for one relation-address point.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bounded equality window cannot be constructed.
+    pub fn new(point: &[E]) -> Result<Self, AkitaError> {
+        Ok(Self {
+            point: point.to_vec().into(),
+            equality_window: Arc::new(OffsetEqWindow::new(point)?),
+        })
+    }
+
+    /// Relation lane-and-column challenges in LSB-first order.
+    #[must_use]
+    pub fn point(&self) -> &[E] {
+        &self.point
+    }
+
+    /// Equality window prepared from [`Self::point`].
+    #[must_use]
+    pub fn equality_window(&self) -> &OffsetEqWindow<E> {
+        &self.equality_window
+    }
+}
+
 pub struct SetupContributionPlan<E: FieldCore> {
     pub(crate) groups: Vec<SetupContributionGroupPlan<E>>,
     pub(crate) d_rows: usize,
     pub(crate) d_physical_cols: usize,
     pub(crate) d_weights: Arc<[E]>,
-    pub(crate) address_point: Arc<[E]>,
+    pub(crate) setup_index_tensors: Vec<ProjectedEqPairTensor<E>>,
+    pub(crate) relation_address: PreparedRelationAddress<E>,
     pub(crate) relation_address_geometry: crate::RelationAddressGeometry,
     pub(crate) projection_geometry: SetupProjectionGeometry,
-    pub(crate) eq_window: OffsetEqWindow<E>,
+    pub(crate) direct_scan_alpha: Option<E>,
+}
+
+pub(crate) struct ProjectedEqPairTensor<E: FieldCore> {
+    pub(crate) ratio: usize,
+    pub(crate) families: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: FieldCore> SetupContributionPlan<E> {
     /// Equality window shared by every direct contribution over this opening point.
     #[must_use]
     pub fn eq_window(&self) -> &OffsetEqWindow<E> {
-        &self.eq_window
+        self.relation_address.equality_window()
     }
 
     /// Prepared D/B/A column equality slices for `group_id`.
     ///
     /// The D-role slice is laid out
     /// `(claim, block, opening_subcolumn, opening_digit)`, the B-role slice
-    /// `(claim, block, A_row, commit_digit, outer_subcolumn)`, and the A-role
+    /// `(claim, block, A_row, outer_subcolumn, commit_digit)`, and the A-role
     /// slice `(position, witness_digit)` after contraction over units and fold
     /// digits. Subcolumn axes have length one for uniform roles.
     /// The direct ring-switch verifier reuses all three instead of evaluating
     /// the same opening equality addresses a second time.
     #[must_use]
     pub fn group_column_eq_slices(&self, group_id: usize) -> Option<(&[E], &[E], &[E])> {
-        let group = self
-            .groups
+        self.groups
             .iter()
             .find(|group| group.group_id == group_id)
-            .filter(|group| {
-                (group.e_eq_slice.is_empty() || !group.d_spans.is_empty())
-                    && (group.t_eq_slice.is_empty() || !group.b_spans.is_empty())
-                    && (group.z_eq_slice.is_empty() || !group.a_spans.is_empty())
-            })?;
-        Some((
-            group.e_eq_slice.as_slice(),
-            group.t_eq_slice.as_slice(),
-            group.z_eq_slice.as_slice(),
-        ))
+            .and_then(SetupContributionGroupPlan::column_eq_slices)
     }
 }
 
-/// A strided family of setup columns and their corresponding relation lanes.
-///
-/// Every occurrence maps one physical setup column to
-/// `relation_lane_count` consecutive lanes. The lanes are folded by the
-/// ring-switch challenge when column equality weights are materialized.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct SetupContributionSpan {
-    pub(crate) setup_column_start: usize,
-    pub(crate) setup_column_stride: usize,
-    pub(crate) relation_lane_start: usize,
-    pub(crate) relation_lane_stride: usize,
-    pub(crate) occurrence_count: usize,
-    pub(crate) relation_lane_count: usize,
-    pub(crate) fold_digit: Option<usize>,
+pub(crate) struct DirectScanWeights<E> {
+    pub(crate) e: Vec<E>,
+    pub(crate) t: Vec<E>,
+    pub(crate) z: Vec<E>,
 }
 
-impl SetupContributionSpan {
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        setup_column_start: usize,
-        setup_column_stride: usize,
-        relation_lane_start: usize,
-        relation_lane_stride: usize,
-        occurrence_count: usize,
-        relation_lane_count: usize,
-        fold_digit: Option<usize>,
-        setup_column_count: usize,
-        relation_lane_capacity: usize,
-    ) -> Result<Self, AkitaError> {
-        if setup_column_stride == 0 || relation_lane_stride == 0 || relation_lane_count == 0 {
-            return Err(AkitaError::InvalidSetup(
-                "setup contribution span strides and lane count must be positive".into(),
-            ));
-        }
-        if occurrence_count != 0 {
-            let last_setup_column =
-                checked_span_index(setup_column_start, setup_column_stride, occurrence_count)?;
-            if last_setup_column >= setup_column_count {
-                return Err(AkitaError::InvalidSetup(
-                    "setup contribution span exceeds role columns".into(),
-                ));
-            }
-            let last_relation_lane =
-                checked_span_index(relation_lane_start, relation_lane_stride, occurrence_count)?;
-            let relation_lane_end = last_relation_lane
-                .checked_add(relation_lane_count)
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-                })?;
-            if relation_lane_end > relation_lane_capacity {
-                return Err(AkitaError::InvalidSetup(
-                    "setup contribution span exceeds relation lane domain".into(),
-                ));
-            }
-        }
-        Ok(Self {
-            setup_column_start,
-            setup_column_stride,
-            relation_lane_start,
-            relation_lane_stride,
-            occurrence_count,
-            relation_lane_count,
-            fold_digit,
-        })
-    }
+type ColumnEqSlices<'a, E> = (&'a [E], &'a [E], &'a [E]);
 
-    pub(crate) fn occurrences(
-        &self,
-    ) -> impl Iterator<Item = Result<(usize, usize), AkitaError>> + '_ {
-        (0..self.occurrence_count).map(|occurrence| {
-            let setup_column = self
-                .setup_column_stride
-                .checked_mul(occurrence)
-                .and_then(|offset| self.setup_column_start.checked_add(offset))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution span overflow".into())
-                })?;
-            let relation_lane = self
-                .relation_lane_stride
-                .checked_mul(occurrence)
-                .and_then(|offset| self.relation_lane_start.checked_add(offset))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-                })?;
-            Ok((setup_column, relation_lane))
-        })
-    }
-
-    pub(crate) fn relation_lane_start_for_setup_column(
-        &self,
-        setup_column: usize,
-    ) -> Result<Option<usize>, AkitaError> {
-        let Some(delta) = setup_column.checked_sub(self.setup_column_start) else {
-            return Ok(None);
-        };
-        let occurrence = if self.setup_column_stride == 1 {
-            delta
-        } else if delta.is_multiple_of(self.setup_column_stride) {
-            delta / self.setup_column_stride
-        } else {
-            return Ok(None);
-        };
-        if occurrence >= self.occurrence_count {
-            return Ok(None);
-        }
-        self.relation_lane_stride
-            .checked_mul(occurrence)
-            .and_then(|offset| self.relation_lane_start.checked_add(offset))
-            .map(Some)
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("setup contribution relation span overflow".into())
-            })
-    }
-}
-
-fn checked_span_index(start: usize, stride: usize, len: usize) -> Result<usize, AkitaError> {
-    let last = len.checked_sub(1).ok_or_else(|| {
-        AkitaError::InvalidSetup("setup contribution span length must be positive".into())
-    })?;
-    stride
-        .checked_mul(last)
-        .and_then(|offset| start.checked_add(offset))
-        .ok_or_else(|| AkitaError::InvalidSetup("setup contribution span overflow".into()))
-}
-
-pub(crate) struct SetupContributionGroupPlan<E> {
+pub(crate) struct SetupContributionGroupPlan<E: FieldCore> {
     pub(crate) group_id: usize,
     pub(crate) role_dims: CommitmentRingDims,
     pub(crate) a_ratio: usize,
@@ -487,15 +377,27 @@ pub(crate) struct SetupContributionGroupPlan<E> {
     pub(crate) a_row_weights: Arc<[E]>,
     pub(crate) b_weights: Arc<[E]>,
     pub(crate) fold_gadget: Arc<[E]>,
-    pub(crate) e_eq_slice: Vec<E>,
-    pub(crate) t_eq_slice: Vec<E>,
-    pub(crate) z_eq_slice: Vec<E>,
-    pub(crate) d_spans: Vec<SetupContributionSpan>,
-    pub(crate) b_spans: Vec<SetupContributionSpan>,
-    pub(crate) a_spans: Vec<SetupContributionSpan>,
+    pub(crate) direct_scan_weights: Option<DirectScanWeights<E>>,
+    pub(crate) d_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) b_tensors: Vec<EqPairTensorFamily<E>>,
+    pub(crate) a_tensors: Vec<EqPairTensorFamily<E>>,
 }
 
 impl<E: FieldCore> SetupContributionGroupPlan<E> {
+    pub(crate) fn column_eq_slices(&self) -> Option<(&[E], &[E], &[E])> {
+        self.direct_scan_weights
+            .as_ref()
+            .map(|weights| (&weights.e[..], &weights.t[..], &weights.z[..]))
+    }
+
+    pub(crate) fn require_column_eq_slices(&self) -> Result<ColumnEqSlices<'_, E>, AkitaError> {
+        self.column_eq_slices().ok_or_else(|| {
+            AkitaError::InvalidSetup(
+                "direct setup operation requires prepared column weights".into(),
+            )
+        })
+    }
+
     pub(crate) fn set_projection_ratios(&mut self, base_ring_dim: usize) -> Result<(), AkitaError> {
         let ratio = |name: &'static str, dimension: usize| {
             dimension

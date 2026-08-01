@@ -139,6 +139,7 @@ fn recursive_schedule(
         successor_ring_dimension,
     ));
     let terminal_response_len = 3 * successor_ring_dimension;
+    let root_handoff_len = predecessor_ring_dimension.max(successor_ring_dimension);
 
     FoldSchedule {
         root: RootFoldStep {
@@ -156,7 +157,7 @@ fn recursive_schedule(
                 witness_partition: WitnessPartition::Single,
             },
             input_witness_len: predecessor_ring_dimension,
-            output_witness_len: successor_ring_dimension,
+            output_witness_len: root_handoff_len,
         },
         recursive_folds: vec![RecursiveFoldStep {
             params: RecursiveFoldParams {
@@ -166,7 +167,7 @@ fn recursive_schedule(
                 witness_partition: WitnessPartition::Single,
                 witness: successor,
             },
-            input_witness_len: successor_ring_dimension,
+            input_witness_len: root_handoff_len,
             output_witness_len: successor_ring_dimension,
         }],
         terminal: TerminalFoldStep {
@@ -273,10 +274,10 @@ fn schedule_rejects_offload_when_producer_projection_misses_prefix_dimension() {
 }
 
 #[test]
-fn schedule_accepts_short_stage2_points_for_wider_successors() {
+fn schedule_accepts_stage2_points_within_successor_capacity() {
     recursive_schedule(128, 64, false)
         .validate_structure()
-        .expect("both successor cubes may be wider than their incoming Stage 2 points");
+        .expect("successor cubes may be wider than their incoming Stage 2 points");
 }
 
 #[test]
@@ -412,8 +413,19 @@ fn schedule_accepts_exact_multi_group_prefix_from_mixed_producer() {
         "the exact prefix must include the larger multi-group setup footprint"
     );
 
-    let consumer = committed_params_with_geometry(64, 16, 64);
     let n_prefix = crate::padded_setup_prefix_len(natural_len);
+    let mut consumer = committed_params_with_geometry(64, 16, 64);
+    let prefix_ring_slots = n_prefix / crate::SETUP_OFFLOAD_D_SETUP;
+    let inner = &consumer.inner_commit_matrix;
+    consumer.inner_commit_matrix = crate::sis::InnerCommitMatrixParams::new_unchecked(
+        inner.security_policy(),
+        inner.sis_table_key().table_digest,
+        inner.sis_modulus_profile(),
+        inner.output_rank(),
+        prefix_ring_slots * consumer.num_digits_inner,
+        inner.coeff_linf_bound(),
+        inner.ring_dimension(),
+    );
     let commitment_params = crate::setup_prefix_precommitted_params(&consumer, n_prefix)
         .expect("consumer-compatible prefix commitment");
     let prefix =
@@ -457,80 +469,6 @@ fn terminal_projection_preserves_the_fixed_inner_matrix() {
         response_policy.admission_cap >= response_policy.unconstrained_target.div_ceil(2),
         "terminal capacity must retain at least half of the unconstrained target"
     );
-}
-
-#[test]
-fn chunked_witness_count_matches_chunk_layout_arithmetic() {
-    const D: usize = 64;
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    // num_live_blocks = 2^3 = 8, divisible by {1, 2, 4, 8}.
-    let lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        D,
-        3,
-        2,
-        2,
-        2,
-        fold_challenge_config,
-    )
-    .with_decomp(4, 32, 2, 2, 2)
-    .unwrap();
-    let field_bits = 128u32;
-    let num_poly = 3usize;
-
-    let single =
-        intermediate_w_ring_element_count_with_counts_bits(field_bits, &lp, num_poly, 1).unwrap();
-    // num_chunks = 1 must be byte-identical to the single-chunk delegate.
-    assert_eq!(
-        intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, 1).unwrap(),
-        single
-    );
-
-    let z_pre = lp.inner_width() * lp.num_digits_fold(num_poly, field_bits).unwrap();
-    for num_chunks in [2usize, 4, 8] {
-        let chunked =
-            intermediate_w_ring_element_count_for_chunks(field_bits, &lp, num_poly, num_chunks)
-                .unwrap();
-        // ê/t̂ totals are unchanged (partitioned), and the shared r-tail is
-        // a single summed quotient that keeps the single-machine row count
-        // (num_commitments = 1). So the ONLY growth is the replicated ẑ:
-        // (num_chunks - 1) full-width copies.
-        assert_eq!(chunked, single + (num_chunks - 1) * z_pre);
-        assert!(chunked > single, "chunked layout must grow vs single chunk");
-    }
-}
-
-#[test]
-fn chunked_witness_count_rejects_invalid_chunk_counts() {
-    const D: usize = 64;
-    let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
-    // num_live_blocks = 2^3 = 8.
-    let lp = CommittedGroupParams::params_only(
-        SisModulusProfileId::Q128OffsetA7F7,
-        D,
-        3,
-        2,
-        2,
-        2,
-        fold_challenge_config,
-    )
-    .with_decomp(4, 32, 2, 2, 2)
-    .unwrap();
-    // Non-power-of-two chunk count.
-    assert!(matches!(
-        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 6),
-        Err(AkitaError::InvalidSetup(_))
-    ));
-    // num_chunks does not divide num_live_blocks (8 % 16 != 0).
-    assert!(matches!(
-        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 16),
-        Err(AkitaError::InvalidSetup(_))
-    ));
-    // Zero chunks.
-    assert!(matches!(
-        intermediate_w_ring_element_count_for_chunks(128, &lp, 1, 0),
-        Err(AkitaError::InvalidSetup(_))
-    ));
 }
 
 fn terminal_response_fixture(

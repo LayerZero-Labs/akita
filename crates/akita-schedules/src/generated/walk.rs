@@ -58,13 +58,7 @@ pub(crate) fn walk_generated_schedule_entry(
         .checked_shl(key.final_group.num_vars() as u32)
         .ok_or_else(|| AkitaError::InvalidSetup("root witness length overflow".to_string()))?;
     let field_bits = policy.decomposition.field_bits();
-    let challenge_field_bits = field_bits
-        .checked_mul(policy.chal_ext_degree as u32)
-        .ok_or_else(|| {
-            AkitaError::InvalidSetup(
-                "generated schedule challenge field bit width overflow".to_string(),
-            )
-        })?;
+    let challenge_field_bits = policy.challenge_field_bits()?;
     let root_eor_key = PolynomialGroupLayout::new(key.max_num_vars(), key.num_polynomials()?);
     let stored_root_shape = match entry.root.final_group.challenge {
         GeneratedRootFinalChallenge::Flat => TensorChallengeShape::Flat,
@@ -241,11 +235,17 @@ pub(crate) fn walk_generated_schedule_entry(
             "generated schedule validates to zero proof bytes".to_string(),
         ));
     }
-    let mut setup_envelope = 1;
+    let mut setup_field_elements = 1;
     for fold in &folds {
-        akita_types::accumulate_matrix_envelope_for_level(&fold.params, &mut setup_envelope)?;
+        akita_types::accumulate_matrix_field_elements_for_level(
+            &fold.params,
+            &mut setup_field_elements,
+        )?;
     }
-    akita_types::accumulate_terminal_matrix_envelope(&terminal_params, &mut setup_envelope)?;
+    akita_types::accumulate_terminal_matrix_field_elements(
+        &terminal_params,
+        &mut setup_field_elements,
+    )?;
     let first_direct_setup_field_len = if policy.recursive_setup_planning {
         folds
             .iter()
@@ -267,7 +267,8 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
-        setup_envelope,
+        setup_field_elements,
+        policy.ring_dimension,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

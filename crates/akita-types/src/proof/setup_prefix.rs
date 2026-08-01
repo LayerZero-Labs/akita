@@ -1175,54 +1175,51 @@ fn active_setup_projection_geometry(
     opening_batch.check()?;
     level_params.validate_opening_batch(opening_batch)?;
 
-    let mut max_a_slots = 0usize;
-    let mut max_b_slots = 0usize;
-    let mut shared_d_width = 0usize;
+    let mut d_physical_cols = 0usize;
+    let mut groups = Vec::with_capacity(opening_batch.num_groups());
     for group_index in 0..opening_batch.num_groups() {
         let group_layout = opening_batch.group_layout(group_index)?;
         let group_params = level_params.group_params(opening_batch, group_index)?;
-        let a_width = group_params
+        let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
+        let (b_subcolumns, d_subcolumns) =
+            crate::SetupProjectionGeometry::native_role_subcolumn_counts(group_role_dims)?;
+        let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
             .ok_or_else(|| AkitaError::InvalidSetup("A setup width overflow".to_string()))?;
-        let a_slots = group_params
-            .a_rows_len()
-            .checked_mul(a_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("A setup footprint overflow".to_string()))?;
 
-        let b_width = group_layout
+        let b_cols = group_layout
             .num_polynomials()
             .checked_mul(group_params.a_rows_len())
             .and_then(|n| n.checked_mul(group_params.num_live_blocks()))
             .and_then(|n| n.checked_mul(group_params.num_digits_outer()))
+            .and_then(|n| n.checked_mul(b_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("B setup width overflow".to_string()))?;
-        let b_slots = group_params
-            .b_rows_len()
-            .checked_mul(b_width)
-            .ok_or_else(|| AkitaError::InvalidSetup("B setup footprint overflow".to_string()))?;
 
-        let d_width = group_layout
+        let d_active_cols = group_layout
             .num_polynomials()
             .checked_mul(group_params.num_live_blocks())
             .and_then(|n| n.checked_mul(group_params.num_digits_open()))
+            .and_then(|n| n.checked_mul(d_subcolumns))
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
-        shared_d_width = shared_d_width
-            .checked_add(d_width)
+        d_physical_cols = d_physical_cols
+            .checked_add(d_active_cols)
             .ok_or_else(|| AkitaError::InvalidSetup("D setup width overflow".to_string()))?;
 
-        max_a_slots = max_a_slots.max(a_slots);
-        max_b_slots = max_b_slots.max(b_slots);
+        groups.push(crate::setup_contribution::SetupProjectionGroupGeometry {
+            role_dims: group_role_dims,
+            a_rows: group_params.a_rows_len(),
+            a_cols,
+            b_rows: group_params.b_rows_len(),
+            b_cols,
+            d_active_cols,
+        });
     }
-    let d_slots = level_params
-        .open_commit_matrix
-        .output_rank()
-        .checked_mul(shared_d_width)
-        .ok_or_else(|| AkitaError::InvalidSetup("D setup footprint overflow".to_string()))?;
-    crate::SetupProjectionGeometry::from_role_footprints(
+    crate::SetupProjectionGeometry::from_groups(
         level_params.role_dims(),
-        max_a_slots,
-        max_b_slots,
-        d_slots,
+        level_params.open_commit_matrix.output_rank(),
+        d_physical_cols,
+        &groups,
     )
 }
 
@@ -1333,6 +1330,11 @@ where
     let Some(template) = &level_params.setup_prefix else {
         return Ok(None);
     };
+    if template.d_setup != d_setup {
+        return Err(AkitaError::InvalidSetup(
+            "setup-prefix source dimension disagrees with the active setup projection".to_string(),
+        ));
+    }
 
     let n_prefix = padded_setup_prefix_len(natural_field_len);
     let setup_field_len = setup_ring_slots_at_d.checked_mul(d_setup).ok_or_else(|| {
@@ -1345,7 +1347,11 @@ where
     }
     let template_n_prefix = template.n_prefix()?;
     if template.natural_len != natural_field_len || template_n_prefix != n_prefix {
-        return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
+        return Err(AkitaError::InvalidSetup(format!(
+            "{coverage_error}: planned natural/padded lengths are {}/{template_n_prefix}, \
+             active lengths are {natural_field_len}/{n_prefix}",
+            template.natural_len,
+        )));
     }
 
     let Some((slot, slot_natural_len, slot_padded_len)) = lookup_slot(template) else {
@@ -1354,7 +1360,10 @@ where
         ));
     };
     if slot_natural_len != natural_field_len || slot_padded_len != n_prefix {
-        return Err(AkitaError::InvalidSetup(coverage_error.to_string()));
+        return Err(AkitaError::InvalidSetup(format!(
+            "{coverage_error}: slot natural/padded lengths are {slot_natural_len}/{slot_padded_len}, \
+             active lengths are {natural_field_len}/{n_prefix}",
+        )));
     }
     let setup_eval_len = template_n_prefix.checked_div(d_setup).ok_or_else(|| {
         AkitaError::InvalidSetup("setup prefix padded length has invalid dimension".to_string())

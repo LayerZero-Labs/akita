@@ -136,6 +136,10 @@ layout-driven scheduling, and efficient internal reuse.
 12. For a fixed ordered layout, this cutover MUST NOT change setup dimensions,
     schedule eligibility, witness partition, or SIS pricing. The planner MUST
     reprice the intentionally smaller Stage 3 proof before comparing schedules.
+    The separately versioned Fold-l∞ snap policy is not part of this point-model
+    invariant: formula tag `4` binds an Fp32-only `3/4 · t*` floor and a `1/2 · t*`
+    floor for other fields, so affected fold digit plans and pricing are
+    intentionally regenerated under that independent policy.
 13. The verifier MUST NOT materialize a full table of size `2^num_vars` merely
     to discover or exploit nested points. It prepares the inner, position, and
     live-block factors required by the selected geometry.
@@ -160,6 +164,12 @@ layout-driven scheduling, and efficient internal reuse.
 20. The all-layers cached builder MAY retain a distinct storage traversal
     because its output contract differs from a full table, but it MUST call the
     canonical parent-split primitive rather than restating the recurrence.
+21. For every recursive edge, let `n` be the predecessor-derived Stage 2 point
+    arity and `N` be the successor's scheduled opening capacity. Schedule
+    validation MUST accept `n <= N` and reject `n > N`. The raw Stage 2 vector
+    of length `n` remains the claim, EOR, and transcript object. Any zero
+    extension to `N` is a deterministic derivative permitted only inside
+    `prepare_opening_point` for scheduled-width evaluation state.
 
 ### Non-Goals
 
@@ -691,8 +701,10 @@ pub fn stage3_setup_product_bytes(
 It MUST match actual serialization and use only the setup domain. Planner and
 runtime schedule callers remove `output_witness_len`. Generated schedules and
 required setup-prefix slot registries MUST be regenerated from the new totals.
-The transparent setup matrix and SIS bounds are unchanged, but serialized setup
-caches containing a different prefix-slot registry are not assumed compatible.
+The transparent setup matrix and group-local SIS geometry are unchanged, but the
+separately bound Fp32 snap policy may change fold digit plans and A-role pricing;
+those affected tables are regenerated. Serialized setup caches containing a
+different prefix-slot registry are not assumed compatible.
 
 ## Evaluation
 
@@ -919,8 +931,9 @@ new APIs are not cross-compatible.
 
 The Stage 3 cutover is also a proof-wire and transcript break:
 `SetupSumcheckProof.next_w_eval`, the fused witness rounds, and their transcript
-events disappear. Commitment dimensions, the transparent setup matrix, and SIS
-pricing remain valid. Planner proof totals and generated schedule choices must
+events disappear. Commitment dimensions and the transparent setup matrix remain
+valid for the group-local cutover. The separately bound Fp32 snap policy can
+change fold pricing, so planner proof totals and generated schedule choices must
 be recomputed, and serialized setup caches must be regenerated if their
 required setup-prefix slot registry changes. The Lagrange recurrence change is
 purely computational and produces byte-identical field values.

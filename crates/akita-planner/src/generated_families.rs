@@ -17,7 +17,7 @@ use std::{
     sync::{LazyLock, Mutex, MutexGuard},
 };
 
-use crate::{find_group_batch_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
+use crate::{find_schedule, runtime_schedule_key_cmp, EmitSpec, PlannerPolicy};
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
 use akita_types::{
@@ -80,7 +80,7 @@ pub struct GeneratedFamily {
     /// Opening-batch sizes (`num_polys`) enumerated for this family.
     pub num_polys: &'static [usize],
     /// Pure DP regeneration that ignores any generated table
-    /// (`find_group_batch_schedule(single-key, &policy_of::<Cfg>(), …)`).
+    /// (`find_schedule(single-key, &policy_of::<Cfg>(), …)`).
     pub regen: fn(PolynomialGroupLayout) -> Result<FoldSchedule, AkitaError>,
     /// Pure multi-group DP regeneration that ignores any generated table.
     pub regen_group_batch: fn(AkitaScheduleLookupKey) -> Result<FoldSchedule, AkitaError>,
@@ -140,7 +140,7 @@ pub fn emitted_scalar_keys(
 fn plan_regen<Cfg: CommitmentConfig>(
     key: &AkitaScheduleLookupKey,
 ) -> Result<FoldSchedule, AkitaError> {
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
@@ -336,7 +336,7 @@ fn planner_precommitted_commit_params<Cfg: CommitmentConfig>(
     let mut policy = policy_of::<Cfg>().direct_only();
     policy.basis_range = (policy.basis_range.0, policy.basis_range.0);
     policy.witness_chunk = akita_types::ChunkedWitnessCfg::default();
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &AkitaScheduleLookupKey::single(*key),
         &policy,
         Cfg::ring_challenge_config,
@@ -553,6 +553,24 @@ pub const ALL_GENERATED_FAMILIES: &[GeneratedFamily] = &[
         50,
         fp128::D64OneHot
     ),
+    GeneratedFamily {
+        module_name: "fp128_mixed_dim_onehot",
+        const_name: "FP128_MIXED_DIM_ONEHOT_SCHEDULES",
+        schedule_feature: "fp128-mixed-dim-onehot",
+        min_num_vars: 32,
+        max_num_vars: 32,
+        num_polys: &[1],
+        regen: regen::<fp128::MixedDimFp128OneHot>,
+        regen_group_batch: regen_group_batch::<fp128::MixedDimFp128OneHot>,
+        emit_group_batch: false,
+        group_batch_keys: group_batch_keys::<fp128::MixedDimFp128OneHot>,
+        table_backed: table_backed::<fp128::MixedDimFp128OneHot>,
+        policy: family_policy::<fp128::MixedDimFp128OneHot>,
+        ring_challenge_config:
+            <fp128::MixedDimFp128OneHot as CommitmentConfig>::ring_challenge_config,
+        fold_challenge_shape_at_level:
+            <fp128::MixedDimFp128OneHot as CommitmentConfig>::fold_challenge_shape_at_level,
+    },
     family_row!(
         recursive,
         "fp128_d64_onehot_recursive",

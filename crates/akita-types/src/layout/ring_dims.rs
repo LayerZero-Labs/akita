@@ -41,9 +41,9 @@ pub enum RingRole {
 
 /// Per-fold ring dimensions of the A, B, and D commitment matrices.
 ///
-/// A is the relation-witness carrier, so `inner >= outer` and
-/// `inner >= opening`. B and D are independent: neither is ordered relative to
-/// the other.
+/// Z, E, and T are produced over the A-native source ring. B- and D-native
+/// projections therefore require `inner >= outer` and `inner >= opening`.
+/// B and D are independent: neither is ordered relative to the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CommitmentRingDims {
     /// Fold / ring-switch / inner-commitment ring (`d_a`).
@@ -64,12 +64,12 @@ impl CommitmentRingDims {
         }
     }
 
-    /// Validate the representation-level A-carrier geometry independently of
-    /// production dispatch and challenge catalogs.
+    /// Validate the representation-level native projection geometry
+    /// independently of production dispatch and challenge catalogs.
     ///
     /// This permits small dimensions in arithmetic/layout tests while keeping
     /// the same ordering contract used by [`validate_role_dims`].
-    pub fn validate_a_carrier(self) -> Result<(), AkitaError> {
+    pub fn validate_role_projection(self) -> Result<(), AkitaError> {
         for (role, d) in [
             (RingRole::Inner, self.inner),
             (RingRole::Outer, self.outer),
@@ -127,28 +127,6 @@ impl CommitmentRingDims {
             inner_outer_min
         } else {
             self.opening
-        }
-    }
-
-    /// Largest low coefficient block aligned for both the relation and the
-    /// outgoing witness representation.
-    ///
-    /// The current prover stores the flat relation witness in outgoing ring
-    /// elements. Its first rounds therefore need a block width that divides
-    /// both every role-local alpha sequence and one outgoing witness ring
-    /// element. This is the intersection of those two address geometries, not
-    /// an additional relation constraint. Use [`Self::common_relation_coeff_count`]
-    /// when only the relation algebra matters.
-    #[must_use]
-    pub const fn common_relation_witness_coeff_count(
-        self,
-        outgoing_witness_ring_dimension: usize,
-    ) -> usize {
-        let relation_common = self.common_relation_coeff_count();
-        if relation_common < outgoing_witness_ring_dimension {
-            relation_common
-        } else {
-            outgoing_witness_ring_dimension
         }
     }
 
@@ -220,16 +198,16 @@ pub fn validate_schedule_ring_dims(
                 )));
             }
         }
-        if !input_witness_len.is_multiple_of(dims.inner) {
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(format!(
-                "witness length {} is not divisible by fold ring d_a={}",
+                "witness length {} is invalid for fold ring d_a={}",
                 input_witness_len, dims.inner
             )));
         }
         if let (Some(output_witness_len), Some(next_ring_d)) = (output_witness_len, next_ring_d) {
-            if next_ring_d == 0 || !output_witness_len.is_multiple_of(next_ring_d) {
+            if next_ring_d == 0 || output_witness_len == 0 {
                 return Err(AkitaError::InvalidSetup(format!(
-                    "next witness length {} is not divisible by next fold ring d_a={next_ring_d}",
+                    "next witness length {} is invalid for next fold ring d_a={next_ring_d}",
                     output_witness_len,
                 )));
             }
@@ -348,7 +326,7 @@ pub fn validate_role_dims_match_keys(lp: &crate::CommittedGroupParams) -> Result
 }
 
 pub fn validate_role_dims(dims: CommitmentRingDims) -> Result<(), AkitaError> {
-    dims.validate_a_carrier()?;
+    dims.validate_role_projection()?;
     if !SUPPORTED_CHALLENGE_RING_DIMS.contains(&dims.inner) {
         return Err(AkitaError::InvalidSetup(format!(
             "A-role ring dimension d_a={} is unsupported for sparse fold challenges (need d_a >= {MIN_A_ROLE_FOLD_CHALLENGE_RING_D})",

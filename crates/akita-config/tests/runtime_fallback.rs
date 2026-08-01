@@ -15,8 +15,8 @@ use akita_config::proof_optimized::{fp128, fp32};
 use akita_config::{
     policy_of, CommitmentConfig, PrecommittedCommitmentConfig, RecursiveCommitmentConfig,
 };
-use akita_planner::find_group_batch_schedule;
-use akita_schedules::{PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
+use akita_planner::find_schedule;
+use akita_schedules::{resolve_schedule, PlannerCostModelId, PlannerPolicy, SelectionPolicyId};
 use akita_types::{
     AkitaScheduleLookupKey, OpeningClaimsLayout, PolynomialGroupLayout,
     PrecommittedGroupDescriptor, RootSource,
@@ -112,24 +112,33 @@ fn recursive_policy_preserves_rank_aware_scalar_selection() {
     );
 }
 
+#[test]
+fn adapters_forward_ring_dimension_candidates() {
+    type Base = fp128::MixedDimFp128OneHot;
+    assert_eq!(
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
+    );
+    assert_eq!(
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
+    );
+}
+
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if Cfg::recursive_setup_planning() {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
-                direct_payload_slack_permille: Cfg::selection_payload_slack_permille(),
-            }
-        } else if Cfg::selection_payload_slack_permille() > 0 {
-            SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
-                slack_permille: Cfg::selection_payload_slack_permille(),
-            }
-        } else {
-            SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: SelectionPolicyId::for_policy_with_payload_slack(
+            Cfg::recursive_setup_planning(),
+            Cfg::D,
+            Cfg::RING_DIMENSION_CANDIDATES,
+            Cfg::selection_payload_slack_permille(),
+        ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -146,6 +155,39 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
         policy, expected,
         "policy_of must derive every field from the Cfg impl"
     );
+}
+
+#[test]
+fn runtime_rejects_malformed_extension_geometry_without_panicking() {
+    type Cfg = fp128::D64OneHot;
+    let catalog = Cfg::schedule_catalog();
+    let key = PolynomialGroupLayout::singleton(14);
+    let reject = |mutate: fn(&mut PlannerPolicy)| {
+        let mut policy = policy_of::<Cfg>();
+        mutate(&mut policy);
+        resolve_schedule(
+            key,
+            &policy,
+            Cfg::ring_challenge_config,
+            Cfg::fold_challenge_shape_at_level,
+            catalog,
+        )
+        .expect_err("malformed extension geometry must reject")
+        .to_string()
+    };
+
+    assert!(reject(|policy| policy.claim_ext_degree = 0).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.claim_ext_degree = 3).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 0).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 3).contains("nonzero power of two"));
+    assert!(reject(|policy| policy.chal_ext_degree = 1usize << 31)
+        .contains("challenge field bit width overflow"));
+    if usize::BITS > u32::BITS {
+        assert!(
+            reject(|policy| policy.chal_ext_degree = (u32::MAX as usize) + 1)
+                .contains("exceeds u32")
+        );
+    }
 }
 
 #[test]
@@ -176,7 +218,7 @@ fn offline_planner_admits_dense_multi_group_roots() {
             &pre_params,
         )],
     };
-    let planned = find_group_batch_schedule(
+    let planned = find_schedule(
         &key,
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,

@@ -9,6 +9,7 @@
 |-----------|-------|
 | Author(s) | Quang Dao |
 | Created   | 2026-05-27 |
+| Revised   | 2026-07-31 |
 | Status    | implemented |
 | Suggested branch | `setup-layout-repack` |
 | PR         | #112, implemented by #132; verifier reuse revised by #318 |
@@ -26,6 +27,17 @@ Current offload selection is specified by
 compares direct and offloaded successors at every supported nonterminal edge,
 uses the exact active prefix dictated by packed setup geometry, and may select
 zero, one, or several offloaded levels.
+
+The witness and setup role order in
+[`digit-innermost-layout.md`](digit-innermost-layout.md) supersedes the older
+root and recursive order recorded by the first version of this spec. Every fold
+level now uses the same digit-innermost order. This document retains authority
+over the packed overlapping setup prefix, not a separate role order.
+
+[`role-native-projected-digit-layout.md`](role-native-projected-digit-layout.md)
+is authoritative for the coefficient-level E and T projection order and the
+physical B and D column formulas. This document keeps authority over the shared
+packed setup object and its overlapping role views.
 
 ## Original layout-branch scope (archival)
 
@@ -276,57 +288,30 @@ verifier callers stop spelling `setup.seed.max_stride`.
 The setup role column order is a view used by the current folding step. It is
 not a separate committed setup object.
 
-Root witnesses are digit-fast today, and root one-hot commitment only occurs at
-the root. Therefore root setup views must stay digit-fast, including the A
-view.
-
-Recursive folded witnesses are block-fast. For recursive levels where we use
-setup-claim delegation, D/B should use block-fast views, and recursive A should
-also use a block-fast view if recursive setup offloading is enabled.
-
-Let `B = num_live_blocks`, `delta = depth_open`, `delta_c = depth_commit`,
-`M = num_positions_per_block`, `K = max_p n_p`, and `C = num_claims`. The Boolean
-block-index domain has size `B_dom = next_power_of_two(B)`; setup role widths
-below use exact live `B`, not `B_dom`.
-
-Root digit-fast D/B/A views:
+Root and recursive folds use the same semantic order. Let
+`B = num_live_blocks`, `delta_o = depth_open`,
+`delta_c = depth_commit`, `delta_w = depth_witness`,
+`M = num_positions_per_block`, and `C = num_claims`. Setup role widths use
+exact live `B`, not its padded Boolean domain.
 
 ```text
-j_D_root(c, b, d) = (c * B + b) * delta + d
+j_D(c, b, d_o) = d_o + delta_o * (b + B * c)
 ```
 
 ```text
-j_B_root(s_p, b, a, d)
-  = s_p * (n_a * delta * B) + b * (n_a * delta) + a * delta + d
+j_B(c, b, a, d_c)
+  = d_c + delta_c * (a + n_a * (b + B * c))
 ```
 
 ```text
-j_A_root(b_z, d_c) = b_z * delta_c + d_c
+j_A(p, d_w) = d_w + delta_w * p
 ```
 
-Recursive block-fast D/B views:
-
-```text
-j_D_rec(c, b, d) = b + B * (c + C * d)
-```
-
-```text
-j_B_rec(s_p, b, a, d)
-  = b + B * (s_p + K * (a * delta + d))
-```
-
-Optional recursive block-fast A view:
-
-```text
-j_A_rec(b_z, d_c) = b_z + L_bar * d_c
-```
-
-where `L_bar` is the power-of-two block width used for the recursive A view.
-This may pad the recursive A column view, so it should be enabled only if the
-recursive setup-offload evaluator benefits from it.
-
-The root A constraint is not optional: root A must remain digit-fast for
-efficient one-hot folding.
+These formulas omit the physical role subcolumn and therefore are not physical
+matrix indexes when `d_b < d_a` or `d_d < d_a`. The physical order **MUST** be
+`[semantic column][role subcolumn][role digit]`. The exact formulas are in the
+role native projection spec. `WitnessLayout` remains the authority for group
+and chunk ranges.
 
 ## NTT Cache and Kernels
 
@@ -803,53 +788,50 @@ be added later only if benchmarks justify it.
 Do not materialize `A * G_fold`. Akita keeps `A` as the digit-domain setup
 prefix. It applies `G_fold` on the weight side when it builds the setup weights.
 
-At the root, the compact A column is:
+At every fold level, the compact A column is:
 
 ```text
-j_A_root(b_z, d_c) = b_z * delta_c + d_c
+j_A(p, d_w) = d_w + delta_w * p
 ```
 
-The folded z coordinate is block-fast:
+Here `delta_w = depth_witness` and `delta_f = depth_fold`.
+
+Each group and chunk unit stores `z_hat` in digit-innermost order:
 
 ```text
-x_Z(p, d_f, d_c, b_z)
-  = b_z + L * (p + P * (d_f + delta_f * d_c))
+x_Z(unit, p, d_w, d_f)
+  = z_start(unit) + d_f + delta_f * (d_w + delta_w * p)
 ```
 
 The useful adjoint vector is:
 
 ```text
-eta_Z(b_z, d_c)
-  = - sum_p sum_{d_f} G_fold[d_f]
-      eq(r_x, offset_z + x_Z(p, d_f, d_c, b_z))
+eta_Z(p, d_w)
+  = - sum_unit sum_{d_f} G_fold[d_f]
+      eq(r_x, x_Z(unit, p, d_w, d_f))
 ```
 
 The A contribution to the setup-weight tensor is:
 
 ```text
-setup_index_weight_A(iota_A(a, j_A_root(b_z, d_c)), y)
-  = alpha^y * eq(tau_1, A_a) * eta_Z(b_z, d_c)
+setup_index_weight_A(iota_A(a, j_A(p, d_w)), y)
+  = alpha^y * eq(tau_1, A_a) * eta_Z(p, d_w)
 ```
 
 Equivalently, the A setup rows represent:
 
 ```text
-A * z, where z[b_z, d_c]
-  = sum_{d_f} G_fold[d_f] * z_hat[b_z, d_c, d_f].
+A * z_agg, where z_agg[p, d_w]
+  = sum_unit sum_{d_f} G_fold[d_f] * z_hat[unit, p, d_w, d_f].
 ```
 
 This is `A * G_fold * z_hat`. It is not
 `A * G_commit * G_fold * z_hat`.
 
-The root setup-offload evaluator should evaluate the row-aware root A slice
-directly. Because root A is digit-fast while the folded z side is block-fast,
-the evaluator must account for the carry that appears when `offset_z` is added
-to the block index. This is the right long-term choice because root one-hot
-requires digit-fast A.
-
-If setup offloading is enabled at a recursive folded level, recursive A may use
-the block-fast view so the large `b_z` axis factors as an equality inner
-product instead of entering the carry transducer.
+The setup evaluator uses the same `(position, witness digit)` order as the A
+view. It sums the innermost fold digit over each unit. Root and recursive folds
+use the same address formula. Any carry comes from the tight digit count and
+the checked unit offset. It does not come from a second layout.
 
 ### Transcript Binding
 
@@ -924,8 +906,7 @@ This lane rewrites the direct setup contribution as:
 
 using a materialized `setup_index_weight_S`. Its purpose is to pin the exact role pullbacks
 and give every later branch a correctness oracle. It should test D, B, and
-`A * G_fold * z_hat` weights, including the root digit-fast A slice and
-recursive block-fast role views.
+`A * G_fold * z_hat` weights in the canonical digit-innermost role views.
 
 ### Succinct Weight Evaluator
 
@@ -937,10 +918,9 @@ setup_index_weight_tilde_S(rho_lambda)
 ```
 
 without scanning `S` and without building a dense setup-index equality table.
-The hard part is the root A slice with the `G_fold`
-weight: root A remains digit-fast for one-hot, while the folded z side is
-block-fast. The evaluator must account for the carry that appears when
-`offset_z` is added to the block index.
+The A slice must sum the innermost fold digit with `G_fold` for every checked
+group and chunk unit. The succinct evaluator must preserve the tight digit
+count and exact unit offsets without introducing a second layout.
 
 ### Prefix Commitment Artifacts
 
@@ -1030,10 +1010,10 @@ For the later offloading branches:
 
 - materialized `<S_{<= N_setup}, setup_index_weight_S>` equals direct setup contribution;
 - `setup_index_weight_S` has alpha on the weight side;
-- root A evaluator with `G_fold` weights matches materialized `eta_Z` and the
+- the A evaluator with `G_fold` weights matches materialized `eta_Z` and the
   row-aware A slice;
-- recursive block-fast D/B and optional recursive block-fast A evaluators match
-  materialized weights;
+- digit-innermost D/B/A evaluators match materialized weights at root and
+  recursive levels;
 - selected-slot preprocessing can generate only the known CI/root prefix and
   still exposes a prover-ready `RingCommitment + AkitaCommitmentHint` bundle;
 - missing prefix slots obey the configured behavior: strict error,
@@ -1115,8 +1095,8 @@ variance is visible in the logs.
   active proof.
 - No legacy `max_stride` compatibility layer.
 - No materialization of `A * G_fold`.
-- No change to the physical `w_hat || t_hat || z_hat || r_hat` witness segment
-  order beyond selecting role-column views that match the current folding step.
+- No change to the physical per-unit `[z_hat | e_hat | t_hat]` order or the
+  shared `r_hat` suffix defined by `WitnessLayout`.
 
 ## Open questions from the original rollout (archival)
 
@@ -1127,15 +1107,12 @@ variance is visible in the logs.
 3. What is the exact cache serialization and validation boundary for
    prover-ready prefix slots, especially `AkitaCommitmentHint` material and
    ZK blinding digit streams?
-4. For recursive setup offloading, is the recursive block-fast A view worth the
-   possible `L_bar` padding, or should recursive offload initially restrict to
-   D/B if A padding is awkward?
-5. What is the exact NTT cache API that keeps contiguous row slices while
-   supporting root digit-fast and recursive block-fast views?
-6. Should the offload gate remain one global `N_min = 2^23`, or should it later
+4. What is the exact NTT cache API that keeps contiguous row slices while
+   preserving the shared digit-innermost role order?
+5. Should the offload gate remain one global `N_min = 2^23`, or should it later
    depend on the pair `(base field, extension field)` after matrix-MLE
    benchmarks?
-7. After the common padded recursive carry works, is heterogeneous-domain
+6. After the common padded recursive carry works, is heterogeneous-domain
    carried-opening batching worth the extra verifier and scheduler complexity?
 
 ## Acceptance criteria for the original spec PR (archival)
@@ -1146,8 +1123,8 @@ variance is visible in the logs.
 - The spec records the prefix-commitment policy plan, including full-ladder and
   selected-slot modes, plus the initial `D_setup = 32`, `N_min = 2^23`
   decisions.
-- The spec records root digit-fast and recursive block-fast role-view policy,
-  including the root A/one-hot constraint.
+- The spec uses the one digit-innermost role order defined by
+  `digit-innermost-layout.md` at root and recursive levels.
 - The spec records that ZK blinding is outside the base setup matrix.
 - The spec records that recursive setup openings are batched through carried
   opening claims, with a common padded domain in the first implementation.
