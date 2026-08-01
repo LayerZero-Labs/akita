@@ -11,6 +11,13 @@ fn score(candidate: &ScheduleCandidate) -> MixedScore {
     }
 }
 
+fn complete_schedule_order_key(
+    score: MixedScore,
+    schedule: &FoldSchedule,
+) -> (MixedScore, Vec<u8>) {
+    (score, schedule.canonical_descriptor_bytes())
+}
+
 fn dominates_score(left: MixedScore, right: MixedScore) -> bool {
     left.setup_field_elements <= right.setup_field_elements
         // A setup-only improvement is not safe to prune: a parent can mask
@@ -427,7 +434,7 @@ pub(crate) fn find_schedule_mixed_ring(
     let mut scored = complete
         .into_iter()
         .map(|candidate| {
-            let descriptor = materialize_candidate_schedule(
+            let schedule = materialize_candidate_schedule(
                 candidate.total_bytes,
                 candidate.setup_field_elements,
                 policy.ring_dimension,
@@ -435,20 +442,21 @@ pub(crate) fn find_schedule_mixed_ring(
                 candidate.folds.clone(),
                 candidate.terminal.clone(),
             )?
-            .schedule
-            .canonical_descriptor_bytes();
+            .schedule;
             Ok((
-                MixedScore {
-                    setup_field_elements: candidate.setup_field_elements,
-                    proof_bytes: candidate.total_bytes,
-                },
-                descriptor,
+                complete_schedule_order_key(
+                    MixedScore {
+                        setup_field_elements: candidate.setup_field_elements,
+                        proof_bytes: candidate.total_bytes,
+                    },
+                    &schedule,
+                ),
                 candidate,
             ))
         })
         .collect::<Result<Vec<_>, AkitaError>>()?;
-    scored.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
-    let Some((_, _, selected)) = scored.into_iter().next() else {
+    scored.sort_by(|left, right| left.0.cmp(&right.0));
+    let Some((_, selected)) = scored.into_iter().next() else {
         return Err(AkitaError::UnsupportedSchedule(format!(
             "no mixed-D schedule with at least two folds for num_vars={}, num_polynomials={}",
             key.num_vars(),
@@ -467,7 +475,7 @@ pub(crate) fn find_schedule_mixed_ring(
 
 #[cfg(test)]
 mod tests {
-    use super::{dominates_score, MixedScore};
+    use super::{complete_schedule_order_key, dominates_score, MixedScore};
 
     #[test]
     fn frontier_keeps_lower_payload_child_until_parent_masks_setup() {
@@ -513,5 +521,52 @@ mod tests {
             parent_setup.max(lower_setup.setup_field_elements),
             parent_setup.max(higher_setup.setup_field_elements)
         );
+    }
+
+    #[cfg(feature = "catalog-gen")]
+    #[test]
+    fn complete_schedule_tie_breaks_by_full_descriptor() {
+        use akita_config::{
+            policy_of,
+            proof_optimized::fp128::{D128OneHot, D64OneHot},
+            CommitmentConfig,
+        };
+
+        let key = akita_types::AkitaScheduleLookupKey::single(
+            akita_types::PolynomialGroupLayout::singleton(16),
+        );
+        let d64 = crate::find_schedule(
+            &key,
+            &policy_of::<D64OneHot>(),
+            D64OneHot::ring_challenge_config,
+            D64OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap()
+        .schedule;
+        let d128 = crate::find_schedule(
+            &key,
+            &policy_of::<D128OneHot>(),
+            D128OneHot::ring_challenge_config,
+            D128OneHot::fold_challenge_shape_at_level,
+        )
+        .unwrap()
+        .schedule;
+        d64.validate_structure().unwrap();
+        d128.validate_structure().unwrap();
+
+        let d64_descriptor = d64.canonical_descriptor_bytes();
+        let d128_descriptor = d128.canonical_descriptor_bytes();
+        assert_ne!(d64_descriptor, d128_descriptor);
+        let exact_tie = MixedScore {
+            setup_field_elements: 1_024,
+            proof_bytes: 4_096,
+        };
+        let mut keys = [
+            complete_schedule_order_key(exact_tie, &d128),
+            complete_schedule_order_key(exact_tie, &d64),
+        ];
+        keys.sort();
+
+        assert_eq!(keys[0].1, d64_descriptor.min(d128_descriptor));
     }
 }
