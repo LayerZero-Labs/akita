@@ -333,6 +333,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sis::SisModulusProfileId;
     use akita_field::Fp32;
 
     type F = Fp32<251>;
@@ -396,5 +397,36 @@ mod tests {
             .unwrap();
         4usize.serialize_uncompressed(&mut oversized).unwrap();
         assert!(AkitaCommitmentHint::<F>::deserialize_uncompressed(&oversized[..], &()).is_err());
+    }
+
+    #[test]
+    fn hint_round_trips_exactly_two_derived_compression_stages() {
+        let plan =
+            CompressionChainPlan::for_complete_source(SisModulusProfileId::Q32Offset99, 8).unwrap();
+        let stages = plan
+            .maps()
+            .iter()
+            .map(|map| PackedNegativeBinary::from_bytes(*map, vec![0; map.packed_digit_bytes()]))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let witness = CompressionChainWitness::new(plan.clone(), stages).unwrap();
+        let hint =
+            AkitaCommitmentHint::new_with_outer_compression(4, vec![rows(10, 8, 4)], &witness)
+                .unwrap();
+
+        let mut encoded = Vec::new();
+        hint.serialize_uncompressed(&mut encoded).unwrap();
+        let decoded =
+            AkitaCommitmentHint::<F>::deserialize_uncompressed(&encoded[..], &()).unwrap();
+        assert_eq!(decoded, hint);
+        assert_eq!(decoded.outer_compression_witness(&plan).unwrap(), witness);
+
+        let mut wrong_count = hint.clone();
+        wrong_count.outer_compression_stages.pop();
+        assert!(wrong_count.serialize_uncompressed(Vec::new()).is_err());
+
+        let mut wrong_length = hint;
+        wrong_length.outer_compression_stages[0].pop();
+        assert!(wrong_length.outer_compression_witness(&plan).is_err());
     }
 }

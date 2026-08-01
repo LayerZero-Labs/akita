@@ -380,7 +380,7 @@ where
         FoldSuccessorParams::Recursive(params) => {
             if next_witness_binding != Some(akita_types::NextWitnessBindingPolicy::OuterPayload) {
                 return Err(AkitaError::InvalidSetup(
-                    "recursive successor requires outer-commitment binding".into(),
+                    "recursive successor requires outer-payload binding".into(),
                 ));
             }
             crate::commit_w::<Cfg, C>(&params.witness, expanded, stack.commit(), &logical_w)?

@@ -43,24 +43,24 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 /// configurations.
 ///
 /// This prices the **direct-mode** folded payload only
-/// (`SetupContributionMode::Direct`): the y/v ring blocks, the stage-1
+/// (`SetupContributionMode::Direct`): the range-image and opening payloads, the stage-1
 /// range-check tree, the fused stage-2 sumcheck, and the next-level witness
-/// binding plus its evaluation. An ordinary recursive edge ships the outer
-/// commitment; an edge into the suffix terminal reuses that terminal proof's
-/// inner `t` state and ships no duplicate commitment bytes. It deliberately
-/// **excludes** the optional
+/// binding plus its evaluation. An ordinary recursive edge ships the
+/// compressed outer payload; an edge into the suffix terminal reuses that
+/// terminal proof's inner `t` state and ships no duplicate payload bytes. It
+/// deliberately **excludes** the optional
 /// recursive stage-3 setup-product sumcheck
 /// (`SetupContributionMode::Recursive`), whose per-level overhead is priced
 /// separately by [`stage3_setup_product_bytes`]. The planner adds that exact
 /// payload when the selected successor consumes an incoming setup prefix.
 ///
-/// `next_lp` is required only for an intermediate outer-commitment binding
-/// (it sizes the next-level witness commitment shipped on the wire). It is
+/// `next_lp` is required only for an intermediate outer-payload binding
+/// (it sizes the next-level compressed payload shipped on the wire). It is
 /// unused for a terminal-inner binding.
 ///
 /// # Errors
 ///
-/// Returns an error if an outer-commitment binding has no `next_lp`, or if an
+/// Returns an error if an outer-payload binding has no `next_lp`, or if an
 /// intermediate layout has no outgoing witness binding.
 pub fn level_proof_bytes(
     base_field_bits: u32,
@@ -89,7 +89,7 @@ pub fn level_proof_bytes(
         Some(crate::NextWitnessBindingPolicy::OuterPayload) => {
             let next_lp = next_lp.ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "outer-commitment level proof is missing successor params".to_string(),
+                    "outer-payload level proof is missing successor params".to_string(),
                 )
             })?;
             let source_coefficients = next_lp

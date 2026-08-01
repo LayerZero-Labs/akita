@@ -609,6 +609,16 @@ mod committed_group_tests {
         )
         .is_err());
 
+        let mut previous_version = bytes.clone();
+        previous_version[0] = CommittedGroupProfile::VERSION - 1;
+        assert!(CommittedGroup::<F>::deserialize_with_mode(
+            previous_version.as_slice(),
+            Compress::Yes,
+            Validate::Yes,
+            &(),
+        )
+        .is_err());
+
         let inner_matrix_role_offset = 1 + 2 * 8 + 3 * 8 + 4 + 8 + 2;
         let mut wrong_matrix_role = bytes;
         wrong_matrix_role[inner_matrix_role_offset] = SisMatrixRole::Outer.tag();

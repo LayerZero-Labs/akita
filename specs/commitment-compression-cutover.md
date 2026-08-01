@@ -1,6 +1,6 @@
 # Spec: Commitment Compression Cutover
 
-Status: protocol design locked; implementation pending.
+Status: protocol activated; final validation pending.
 
 Implementation base: PR 341 at `f0710986f93c2dd9a81acce4bee3d1ee2ae2211d`.
 
@@ -203,13 +203,11 @@ not carry an independent compression plan.
 
 ### Fold proof
 
-`FoldLevelProof.v` changes from the raw D image to the 128 byte `p_H` payload.
-The code should rename the field to `opening_payload` during the breaking
-cutover.
+`FoldLevelProof.opening_payload` carries the 128 byte `p_H` payload instead of
+the raw D image.
 
-`NextWitnessBinding::OuterCommitment` changes from the raw B image of the next
-witness to its 128 byte `p_F` payload. The code should rename the variant to
-`OuterPayload`.
+`NextWitnessBinding::OuterPayload` carries the 128 byte `p_F` payload for the
+next witness instead of its raw B image.
 
 The terminal inner state variant is unchanged. Terminal folds have no B or D
 payload.
@@ -238,9 +236,8 @@ The positional transcript order remains the same where possible.
    image claim and before the fused relation sumcheck.
 
 Production labels are logging names and are not sponge domain separators. The
-code should still rename `ABSORB_PROVER_V` to `ABSORB_OPENING_PAYLOAD` so logs
-match the protocol. It should add `CHALLENGE_COMPRESSION_BINARY` for the new
-batching challenge.
+The logging label is `ABSORB_OPENING_PAYLOAD`, and
+`CHALLENGE_COMPRESSION_BINARY` names the new batching challenge.
 
 The descriptor version and policy identifier provide cross protocol domain
 separation. A raw payload proof cannot replay as a compressed payload proof.
@@ -408,7 +405,7 @@ types as the prover and verifier. Generated schedule files are never edited by
 hand.
 
 Direct per-level proof pricing charges one 128 byte `p_H` payload. An
-`OuterCommitment` successor edge also charges one 128 byte `p_F` payload. A
+`OuterPayload` successor edge also charges one 128 byte `p_F` payload. A
 `TerminalInnerState` edge charges no duplicate F payload. Successor witness
 length comes only from `WitnessLayout`, including quotient rows, F/H digits,
 and derived zero alignment. Setup capacity includes the largest physical field

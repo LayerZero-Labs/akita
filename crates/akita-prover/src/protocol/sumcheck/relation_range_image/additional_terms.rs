@@ -142,4 +142,26 @@ mod tests {
             next_claim
         );
     }
+
+    #[test]
+    fn nonbinary_digit_inside_support_contributes_a_nonzero_constraint() {
+        let rho = F::from_u64(13);
+        let invalid = AdditionalRelationTerms::new(
+            &[2, 0],
+            vec![F::zero(); 2],
+            vec![F::one(), F::zero()],
+            rho,
+        )
+        .unwrap();
+        assert_eq!(invalid.input_claim(), rho * F::from_u64(6));
+
+        let valid = AdditionalRelationTerms::new(
+            &[-1, 0],
+            vec![F::zero(); 2],
+            vec![F::one(), F::zero()],
+            rho,
+        )
+        .unwrap();
+        assert_eq!(valid.input_claim(), F::zero());
+    }
 }

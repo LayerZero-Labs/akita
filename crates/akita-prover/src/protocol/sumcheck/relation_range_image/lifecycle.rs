@@ -153,13 +153,6 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
     }
 
     pub(crate) fn expected_final_claim(&self) -> Result<E, AkitaError> {
-        Ok(self
-            .final_claim_components()?
-            .into_iter()
-            .fold(E::zero(), |sum, value| sum + value))
-    }
-
-    pub(crate) fn final_claim_components(&self) -> Result<[E; 4], AkitaError> {
         if self.common_alpha_factor.len() != 1 || self.relation_lane_weights.len() != 1 {
             return Err(AkitaError::InvalidProof);
         }
@@ -172,7 +165,7 @@ impl<E: FieldCore + FromPrimitiveInt + HasUnreducedOps> RelationRangeImageProver
             .additional_relation_terms
             .as_ref()
             .map_or(Ok(E::zero()), AdditionalRelationTerms::final_claim)?;
-        Ok([virtual_claim, ordinary_relation, trace_claim, additional])
+        Ok(virtual_claim + ordinary_relation + trace_claim + additional)
     }
 
     #[inline]

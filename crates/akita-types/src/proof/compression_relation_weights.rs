@@ -97,7 +97,8 @@ impl NegativeBinarySupport {
                     start.trailing_zeros() as usize
                 };
                 let low_bits = alignment_bits.min(remaining_bits);
-                evaluation += eq_eval_at_index(&point[low_bits..], start >> low_bits);
+                let high_point = point.get(low_bits..).ok_or(AkitaError::InvalidProof)?;
+                evaluation += eq_eval_at_index(high_point, start >> low_bits);
                 start += 1usize << low_bits;
             }
         }
@@ -179,8 +180,14 @@ impl<E: FieldCore> CompressionRelationWeights<E> {
         let mut evaluation = E::zero();
         for event in &self.events {
             if !event.physical_start.is_multiple_of(event.coefficient_count) {
-                let powers = &self.alpha_powers[event.alpha_exponent_start
-                    ..event.alpha_exponent_start + event.coefficient_count];
+                let alpha_end = event
+                    .alpha_exponent_start
+                    .checked_add(event.coefficient_count)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let powers = self
+                    .alpha_powers
+                    .get(event.alpha_exponent_start..alpha_end)
+                    .ok_or(AkitaError::InvalidProof)?;
                 let interval =
                     powers
                         .iter()
@@ -199,15 +206,22 @@ impl<E: FieldCore> CompressionRelationWeights<E> {
             {
                 *value
             } else {
-                let powers = &self.alpha_powers[event.alpha_exponent_start
-                    ..event.alpha_exponent_start + event.coefficient_count];
-                let value = multilinear_eval(powers, &point[..low_bits])?;
+                let alpha_end = event
+                    .alpha_exponent_start
+                    .checked_add(event.coefficient_count)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let powers = self
+                    .alpha_powers
+                    .get(event.alpha_exponent_start..alpha_end)
+                    .ok_or(AkitaError::InvalidProof)?;
+                let low_point = point.get(..low_bits).ok_or(AkitaError::InvalidProof)?;
+                let value = multilinear_eval(powers, low_point)?;
                 low_factor_cache.push((cache_key, value));
                 value
             };
             let high_index = event.physical_start >> low_bits;
-            evaluation +=
-                event.scalar * low_factor * eq_eval_at_index(&point[low_bits..], high_index);
+            let high_point = point.get(low_bits..).ok_or(AkitaError::InvalidProof)?;
+            evaluation += event.scalar * low_factor * eq_eval_at_index(high_point, high_index);
         }
         Ok(evaluation)
     }
@@ -359,7 +373,10 @@ where
                 map_index,
                 ..
             } => {
-                let span = witness_layout.compression_layers()[map_index]
+                let span = witness_layout
+                    .compression_layers()
+                    .get(map_index)
+                    .ok_or(AkitaError::InvalidProof)?
                     .f_spans()
                     .iter()
                     .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
@@ -369,7 +386,11 @@ where
             RelationRowFamily::CompressionH { map_index, .. } => (
                 None,
                 map_index,
-                witness_layout.compression_layers()[map_index].h_span(),
+                witness_layout
+                    .compression_layers()
+                    .get(map_index)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .h_span(),
             ),
             _ => continue,
         };
@@ -397,12 +418,19 @@ where
         }
         if map_index + 1 < crate::COMPRESSION_MAP_COUNT {
             let successor = match group_index {
-                Some(group_index) => witness_layout.compression_layers()[map_index + 1]
+                Some(group_index) => witness_layout
+                    .compression_layers()
+                    .get(map_index + 1)
+                    .ok_or(AkitaError::InvalidProof)?
                     .f_spans()
                     .iter()
                     .find_map(|(candidate, span)| (*candidate == group_index).then_some(span))
                     .ok_or(AkitaError::InvalidProof)?,
-                None => witness_layout.compression_layers()[map_index + 1].h_span(),
+                None => witness_layout
+                    .compression_layers()
+                    .get(map_index + 1)
+                    .ok_or(AkitaError::InvalidProof)?
+                    .h_span(),
             };
             push_recomposition::<F, E>(
                 &mut weights,
@@ -416,7 +444,8 @@ where
                 &row_weights,
             )?;
         }
-        let denominator = powers[map.ring_dimension() - 1] * alpha + E::one();
+        let denominator =
+            powers.last().copied().ok_or(AkitaError::InvalidProof)? * alpha + E::one();
         for (digit, gadget) in
             gadget_row_scalars::<F>(r_decomp_levels::<F>(lp.log_basis_open), lp.log_basis_open)
                 .into_iter()
