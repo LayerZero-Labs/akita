@@ -3,13 +3,13 @@
 use akita_challenges::TensorChallengeShape;
 use akita_field::AkitaError;
 use akita_types::{
-    intermediate_w_ring_element_count_for_chunks, padded_setup_prefix_len, ChunkedWitnessCfg,
-    CommitmentRingDims, CommittedGroupParams, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams,
-    RootFoldParams, RootFoldStep, RootPrecommittedGroupParams, SisModulusProfileId,
-    SisSecurityPolicyId, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
-    WitnessPartition, DEFAULT_SIS_SECURITY_POLICY,
+    padded_setup_prefix_len, ChunkedWitnessCfg, CommitmentRingDims, CommittedGroupParams,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
+    PlannedFoldSchedule, PolynomialGroupLayout, RecursiveFoldParams, RecursiveFoldStep,
+    RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, SisModulusProfileId, SisSecurityPolicyId, TerminalFoldParams,
+    TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    DEFAULT_SIS_SECURITY_POLICY,
 };
 
 /// Quantities materialized and checked by the current bounded planner cost model.
@@ -47,6 +47,23 @@ pub enum SelectionPolicyId {
 }
 
 impl SelectionPolicyId {
+    /// Canonical selection objective for one schedule policy shape.
+    pub fn for_policy(
+        recursive_setup_planning: bool,
+        setup_generation_dimension: usize,
+        ring_dimension_candidates: &[CommitmentRingDims],
+    ) -> Self {
+        if recursive_setup_planning {
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+        } else if ring_dimension_candidates
+            != [CommitmentRingDims::uniform(setup_generation_dimension)]
+        {
+            Self::MinSetupMatrixFieldElementsThenProofPayload
+        } else {
+            Self::MinEstimatedProofPayload
+        }
+    }
+
     /// Stable identity tag.
     pub const fn tag(self) -> u32 {
         match self {
@@ -145,11 +162,11 @@ impl PlannerPolicy {
     pub fn direct_only(self) -> Self {
         Self {
             recursive_setup_planning: false,
-            selection_policy: if self.ring_dimension_candidates.len() > 1 {
-                SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-            } else {
-                SelectionPolicyId::MinEstimatedProofPayload
-            },
+            selection_policy: SelectionPolicyId::for_policy(
+                false,
+                self.ring_dimension,
+                self.ring_dimension_candidates,
+            ),
             ..self
         }
     }
@@ -196,24 +213,14 @@ impl PlannerPolicy {
 pub(crate) const MAX_RECURSION_DEPTH: usize = 12;
 
 /// Validate runtime policy values used by schedule expansion and validation.
-pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+pub fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> {
     policy.challenge_field_bits()?;
     validate_ring_dimension_candidates(policy)?;
-    let expected_selection_policy = if policy.recursive_setup_planning {
-        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-    } else if policy.ring_dimension_candidates.len() > 1 {
-        SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-    } else {
-        match policy.selection_policy {
-            SelectionPolicyId::MinEstimatedProofPayload
-            | SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload => {
-                policy.selection_policy
-            }
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
-                SelectionPolicyId::MinEstimatedProofPayload
-            }
-        }
-    };
+    let expected_selection_policy = SelectionPolicyId::for_policy(
+        policy.recursive_setup_planning,
+        policy.ring_dimension,
+        policy.ring_dimension_candidates,
+    );
     if policy.selection_policy != expected_selection_policy {
         return Err(AkitaError::InvalidSetup(
             "schedule selection policy disagrees with recursive setup capability".to_string(),
@@ -254,6 +261,11 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
 }
 
 fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), AkitaError> {
+    if policy.ring_dimension == 0 || !policy.ring_dimension.is_power_of_two() {
+        return Err(AkitaError::InvalidSetup(
+            "setup generation dimension must be a nonzero power of two".to_string(),
+        ));
+    }
     let candidates = policy.ring_dimension_candidates;
     if candidates.is_empty() {
         return Err(AkitaError::InvalidSetup(
@@ -262,7 +274,7 @@ fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), Akit
     }
     let key = |dims: CommitmentRingDims| (dims.d_a(), dims.d_b(), dims.d_d());
     for (index, &dims) in candidates.iter().enumerate() {
-        dims.validate_a_carrier()?;
+        dims.validate_role_projection()?;
         for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
             if !policy.ring_dimension.is_multiple_of(d) {
                 return Err(AkitaError::InvalidSetup(format!(
@@ -282,7 +294,7 @@ fn validate_ring_dimension_candidates(policy: &PlannerPolicy) -> Result<(), Akit
 }
 
 /// Resolve the tensor low length independently from the block split.
-pub(crate) fn optimize_fold_challenge_shape(
+pub fn optimize_fold_challenge_shape(
     requested: TensorChallengeShape,
     num_live_blocks: usize,
 ) -> Result<TensorChallengeShape, AkitaError> {
@@ -322,26 +334,28 @@ pub(crate) fn optimize_fold_challenge_shape(
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateFoldStep {
-    pub(crate) params: CommittedGroupParams,
-    pub(crate) input_witness_len: usize,
-    pub(crate) output_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) estimated_stage3_payload_bytes: usize,
+/// One fully priced non-terminal fold awaiting schedule materialization.
+pub struct CandidateFoldStep {
+    pub params: CommittedGroupParams,
+    pub input_witness_len: usize,
+    pub output_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub estimated_stage3_payload_bytes: usize,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct CandidateTerminalResponse {
-    pub(crate) params: akita_types::TerminalCommittedGroupParams,
-    pub(crate) sparse_challenge_config: akita_challenges::SparseChallengeConfig,
-    pub(crate) input_witness_len: usize,
-    pub(crate) estimated_direct_payload_bytes: usize,
-    pub(crate) response_shape: TerminalResponseShape,
-    pub(crate) estimated_payload_bytes: usize,
+/// Fully priced terminal response awaiting schedule materialization.
+pub struct CandidateTerminalResponse {
+    pub params: akita_types::TerminalCommittedGroupParams,
+    pub sparse_challenge_config: akita_challenges::SparseChallengeConfig,
+    pub input_witness_len: usize,
+    pub estimated_direct_payload_bytes: usize,
+    pub response_shape: TerminalResponseShape,
+    pub estimated_payload_bytes: usize,
 }
 
 /// Exact Stage-3 payload induced when `successor` consumes a setup prefix.
-pub(crate) fn stage3_payload_bytes_for_successor(
+pub fn stage3_payload_bytes_for_successor(
     policy: &PlannerPolicy,
     successor: Option<&CommittedGroupParams>,
 ) -> Result<usize, AkitaError> {
@@ -362,7 +376,10 @@ pub(crate) fn stage3_payload_bytes_for_successor(
     ))
 }
 
-pub(crate) fn materialize_candidate_schedule(
+/// Materialize and validate the schedule shared by offline search and generated replay.
+///
+/// `cached_num_setup_field_elements` is the exact shared flat setup capacity.
+pub fn materialize_candidate_schedule(
     cached_total: usize,
     cached_num_setup_field_elements: usize,
     first_direct_setup_field_len: Option<usize>,
@@ -477,7 +494,11 @@ fn witness_partition(num_chunks: usize) -> WitnessPartition {
     }
 }
 
-fn checked_power_of_two_vars(field_len: usize, context: &'static str) -> Result<usize, AkitaError> {
+/// Return the Boolean variable count after checked power-of-two padding.
+pub fn checked_power_of_two_vars(
+    field_len: usize,
+    context: &'static str,
+) -> Result<usize, AkitaError> {
     if field_len == 0 {
         return Err(AkitaError::InvalidSetup(format!(
             "{context} must be nonzero"
@@ -514,7 +535,8 @@ pub fn suffix_opening_layout(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn grouped_segment_rings(
+/// Count ring elements in one grouped witness segment with checked arithmetic.
+pub fn grouped_segment_rings(
     num_polys: usize,
     num_live_blocks: usize,
     num_chunks: usize,
@@ -546,80 +568,22 @@ fn grouped_segment_rings(
         .ok_or_else(|| AkitaError::InvalidSetup("group witness overflow".to_string()))
 }
 
-pub(crate) fn planned_next_witness_len(
+/// Derive the canonical next-witness field length for a scalar planner level.
+pub fn planned_next_witness_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     final_num_polys: usize,
     num_chunks: usize,
 ) -> Result<usize, AkitaError> {
-    if !params.precommitted_groups.is_empty() {
-        return Err(AkitaError::InvalidSetup(
-            "multi-group root witness sizing must use CommittedGroupParams::output_witness_len"
-                .to_string(),
-        ));
-    }
-    if params.setup_prefix.is_some() {
-        return grouped_setup_prefix_next_witness_len(
-            field_bits,
-            params,
-            final_num_polys,
-            num_chunks,
-        );
-    }
-
-    intermediate_w_ring_element_count_for_chunks(field_bits, params, final_num_polys, num_chunks)?
-        .checked_mul(params.d_a())
-        .ok_or_else(|| AkitaError::InvalidSetup("next witness length overflow".into()))
-}
-
-fn grouped_setup_prefix_next_witness_len(
-    field_bits: u32,
-    params: &CommittedGroupParams,
-    final_num_polys: usize,
-    num_chunks: usize,
-) -> Result<usize, AkitaError> {
-    let mut total = grouped_segment_rings(
-        final_num_polys,
-        params.num_live_blocks,
+    let opening_batch =
+        params.opening_layout_for_final_group(PolynomialGroupLayout::new(0, final_num_polys))?;
+    let layout = WitnessLayout::new(
+        params,
+        &opening_batch,
         num_chunks,
-        params.num_positions_per_block,
-        params.inner_commit_matrix.output_rank(),
-        params.num_digits_inner,
-        params.num_digits_outer,
-        params.num_digits_open,
-        params.num_digits_fold(),
+        akita_types::sis::compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    for group in params.precommitted_group_iter() {
-        let group_rings = grouped_segment_rings(
-            group.layout.group.num_polynomials(),
-            group.layout.num_live_blocks,
-            num_chunks,
-            group.layout.num_positions_per_block,
-            group.layout.inner_commit_matrix.output_rank(),
-            group.layout.num_digits_inner,
-            group.layout.num_digits_outer,
-            group.num_digits_open,
-            group.num_digits_fold,
-        )?;
-        total = total
-            .checked_add(group_rings)
-            .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-    }
-
-    let r_rows = params.relation_matrix_row_count(params.precommitted_group_count() + 1)?;
-    let r_count = r_rows
-        .checked_mul(akita_types::sis::compute_num_digits_field_width(
-            field_bits,
-            params.log_basis_open,
-        ))
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped r-tail witness overflow".to_string()))?;
-    let rings = total
-        .checked_add(r_count)
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped witness overflow".to_string()))?;
-
-    rings
-        .checked_mul(params.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("grouped next witness length overflow".to_string()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Convenience policy used by config adapters.

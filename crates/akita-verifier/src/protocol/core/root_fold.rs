@@ -186,9 +186,8 @@ where
     let witness_len = root_lp.output_witness_len::<F>(opening_batch)?;
     let fold_grind_nonce = proof.fold_grind_nonce;
     let v_storage = proof.v.clone();
-    if !witness_len.is_multiple_of(next_witness_ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
+    let committed_witness_len =
+        akita_types::witness_commitment_domain_len(witness_len, next_witness_ring_dim)?;
     let prepared = PreparedFoldReplay {
         lp: root_lp,
         fold_grind_nonce,
@@ -202,7 +201,7 @@ where
             stage2: &proof.stage2,
             next_witness,
             next_witness_ring_dim,
-            next_opening_source_len: witness_len / next_witness_ring_dim,
+            next_opening_source_len: committed_witness_len / next_witness_ring_dim,
             stage3: stage3_sumcheck_proof.zip(next_fold_level_params),
         },
         evaluation_trace_basis: basis,

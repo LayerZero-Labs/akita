@@ -160,7 +160,7 @@ fn synthetic_schedule_key(profiles: &CommittedGroupBatchProfile) -> AkitaSchedul
 }
 
 // -------------------------------------------------------------------------
-// Multi-group carrier fixture: precommitted groups use the envelope config,
+// Multi-group native-dimension fixture: precommitted groups use the envelope config,
 // while the final group and recursive suffix use a smaller native config.
 // -------------------------------------------------------------------------
 
@@ -363,8 +363,12 @@ where
             let envelope_domain = akita_planner::RingDimensionSearchDomain::uniform(
                 envelope_policy.uniform_ring_dimension,
             )?;
+            let envelope_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                num_vars,
+                num_polynomials,
+            ));
             let envelope = akita_planner::find_schedule(
-                PolynomialGroupLayout::new(num_vars, num_polynomials),
+                envelope_key.final_group,
                 &envelope_policy,
                 EnvelopeCfg::root_honest_fold_policy(),
                 &envelope_domain,
@@ -571,7 +575,7 @@ where
 ///
 /// # Errors
 ///
-/// Returns an error when the matrix dimensions do not fit the A carrier, an
+/// Returns an error when the matrix dimensions do not fit the A-native source, an
 /// exact matrix width falls outside the audited SIS table, or no terminating
 /// suffix can be planned.
 pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
@@ -596,8 +600,12 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
             let root_domain = akita_planner::RingDimensionSearchDomain::uniform(
                 root_policy.uniform_ring_dimension,
             )?;
+            let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                num_vars,
+                num_polynomials,
+            ));
             let mut root = akita_planner::find_schedule(
-                PolynomialGroupLayout::new(num_vars, num_polynomials),
+                root_key.final_group,
                 &root_policy,
                 Env::root_honest_fold_policy(),
                 &root_domain,
@@ -636,11 +644,11 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
     )
 }
 
-/// Rebuild the B and D matrices from the final A-carrier geometry.
+/// Rebuild the B and D matrices from the final A-native projection geometry.
 ///
 /// The exact widths are the native committed digit counts multiplied by
 /// `d_a / d_b` and `d_a / d_d`. Deriving them from the final parameters is
-/// essential for promoted carriers such as the temporary D512 experiment:
+/// essential for promoted dimensions such as the temporary D512 experiment:
 /// scaling a stale D256 matrix would undercount both widths by two.
 fn retarget_commitment_matrices(
     commitment: &mut CommittedGroupParams,
@@ -653,7 +661,7 @@ fn retarget_commitment_matrices(
         outer: b_ring_dim,
         opening: d_ring_dim,
     };
-    dims.validate_a_carrier()?;
+    dims.validate_role_projection()?;
     let projected_width = |label: &str, native_width: usize, target_d: usize| {
         native_width
             .checked_mul(dims.d_a() / target_d)
@@ -722,25 +730,19 @@ fn retarget_commitment_matrices(
     Ok(())
 }
 
-/// Field-element length of the outgoing witness produced in the current
-/// level's A-carrier ring.
+/// Exact coefficient length of the outgoing compact witness.
 fn outgoing_witness_field_len(
     field_bits: u32,
     commitment: &CommittedGroupParams,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<usize, AkitaError> {
-    let relation_rows = commitment.relation_matrix_row_count(opening_layout.num_groups())?;
     let layout = WitnessLayout::new(
         commitment,
         opening_layout,
         commitment.witness_chunk.num_chunks,
-        relation_rows,
         compute_num_digits_field_width(field_bits, commitment.log_basis_open),
     )?;
-    layout
-        .total_len()
-        .checked_mul(commitment.relation_witness_carrier_ring_dimension())
-        .ok_or_else(|| AkitaError::InvalidSetup("outgoing witness length overflow".into()))
+    Ok(layout.live_coeff_len())
 }
 
 /// Config adapter for a three-level ring-dimension transition: L0
@@ -996,8 +998,8 @@ where
                     "ring-dimension transition requires a singleton batch".into(),
                 ));
             }
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             if root_dims.d_a() != Root::D || middle_dims.d_a() != Mid::D {
                 return Err(AkitaError::InvalidSetup(
                     "ring-dimension transition A dimensions must match the Root and Mid policies"
@@ -1020,8 +1022,12 @@ where
                 root_policy.ring_dimension_candidates = D256_PLANNER_CANDIDATES;
             }
             let root_domain = akita_planner::RingDimensionSearchDomain::uniform(planned_root_d)?;
+            let root_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(
+                num_vars,
+                num_polynomials,
+            ));
             let mut root = akita_planner::find_schedule(
-                PolynomialGroupLayout::new(num_vars, num_polynomials),
+                root_key.final_group,
                 &root_policy,
                 Root::root_honest_fold_policy(),
                 &root_domain,
@@ -1109,7 +1115,7 @@ where
             }
 
             // Rebuild root B/D after the optional A-only promotion. Widths are derived
-            // from the final A carrier, not from the stale planned D256 matrices.
+            // from the final A-native source, not from the stale planned D256 matrices.
             retarget_commitment_matrices(
                 &mut root.params.final_group.commitment,
                 num_polynomials,
@@ -1143,7 +1149,7 @@ where
             })?;
 
             let mut l1_step = planned_fold_step(l1);
-            // Rebuild L1 B/D from its final A carrier before planning the suffix.
+            // Rebuild L1 B/D from its final A-native source before planning the suffix.
             retarget_commitment_matrices(
                 &mut l1_step.params.witness,
                 num_polynomials,

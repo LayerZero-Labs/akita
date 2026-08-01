@@ -610,10 +610,24 @@ where
             .num_positions_per_block
             .checked_mul(plan.num_digits_inner)
             .ok_or_else(|| AkitaError::InvalidSetup("recursive A width overflow".to_string()))?;
+        let minimum_ring_elems = plan
+            .num_live_blocks
+            .saturating_sub(1)
+            .checked_mul(plan.num_positions_per_block)
+            .and_then(|prefix| prefix.checked_add(1))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("recursive witness block extent overflow".to_string())
+            })?;
+        if plan.num_live_blocks == 0 || plan.coeffs.len() < minimum_ring_elems {
+            return Err(AkitaError::InvalidSetup(
+                "recursive witness does not cover its live blocks".to_string(),
+            ));
+        }
         if plan.num_digits_inner == 1 {
             let blocks = plan
                 .coeffs
                 .chunks(plan.num_positions_per_block)
+                .take(plan.num_live_blocks)
                 .collect::<Vec<_>>();
             // The `num_digits_inner == 1` recursive witness is a raw signed-i8
             // coefficient stream. Degree-one fields yield balanced gadget digits
@@ -665,6 +679,7 @@ where
                 .collect();
             let blocks = ring_elems
                 .chunks(plan.num_positions_per_block)
+                .take(plan.num_live_blocks)
                 .collect::<Vec<_>>();
             prepared.with_shared_ntt::<D, _>(
                 NttCacheKey::from_matrix_shape(
@@ -1330,6 +1345,28 @@ mod tests {
             )
             .expect("direct digit rows");
         assert_eq!(via_backend, direct);
+    }
+
+    #[test]
+    fn recursive_commit_ignores_commitment_padding_blocks() {
+        let prepared = prepared();
+        let coeffs = vec![[1i8; D]; 6];
+        let rows = CpuBackend
+            .recursive_witness_commit_rows(
+                &prepared,
+                RecursiveWitnessCommitRowsPlan {
+                    coeffs: &coeffs,
+                    n_rows: 1,
+                    num_positions_per_block: 2,
+                    num_live_blocks: 2,
+                    num_digits_inner: 1,
+                    log_basis_inner: 3,
+                    known_balanced_log_basis: Some(3),
+                },
+            )
+            .expect("recursive commit rows");
+
+        assert_eq!(rows.len(), 2);
     }
 
     #[test]

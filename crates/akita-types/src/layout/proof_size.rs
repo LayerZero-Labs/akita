@@ -3,8 +3,8 @@
 use akita_field::{AkitaError, CanonicalField};
 
 use crate::sis::compute_num_digits_field_width;
-use crate::PolynomialGroupLayout;
-use crate::{CommittedGroupParams, TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
+use crate::{CommittedGroupParams, PolynomialGroupLayout};
+use crate::{TerminalResponseShape, EXTENSION_OPENING_REDUCTION_DEGREE};
 
 /// Field element size in bytes for a field with `field_bits` bits.
 pub fn field_bytes(field_bits: u32) -> usize {
@@ -274,7 +274,7 @@ pub fn planned_output_witness_len<F: CanonicalField>(
 /// Total sumcheck rounds (`col_bits + ring_bits`) for one fold level.
 pub fn sumcheck_rounds(level_d: usize, output_witness_len: usize) -> usize {
     let ring_bits = level_d.trailing_zeros() as usize;
-    let num_ring_elems = output_witness_len / level_d;
+    let num_ring_elems = output_witness_len.div_ceil(level_d);
     let col_bits = num_ring_elems.next_power_of_two().trailing_zeros() as usize;
     col_bits + ring_bits
 }

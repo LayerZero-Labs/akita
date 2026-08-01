@@ -8,6 +8,147 @@ use rand::SeedableRng;
 
 type F = Fp64<4294967197>;
 
+mod affine_bases;
+
+#[test]
+fn eq_pair_tensor_matches_dense_mixed_axes() {
+    let mut rng = StdRng::seed_from_u64(0x7E1150);
+    let left = random_vec(&mut rng, 9);
+    let right = random_vec(&mut rng, 10);
+    let row_weights = random_vec(&mut rng, 3);
+    let fold_weights = random_vec(&mut rng, 2);
+    let family = EqPairTensorFamily::new(
+        5,
+        7,
+        F::from_u64(9),
+        vec![
+            EqPairTensorAxis::unit(2, 1, 3),
+            EqPairTensorAxis::unit(3, 2, 1),
+            EqPairTensorAxis::unit(4, 6, 6),
+            EqPairTensorAxis::dense(0, 24, fold_weights.clone()),
+            EqPairTensorAxis::dense(48, 0, row_weights.clone()),
+        ],
+    )
+    .unwrap();
+
+    let mut expected = F::zero();
+    for (row, &row_weight) in row_weights.iter().enumerate() {
+        for (fold, &fold_weight) in fold_weights.iter().enumerate() {
+            for outer in 0..4 {
+                for middle in 0..3 {
+                    for inner in 0..2 {
+                        let left_index = 5 + 48 * row + 6 * outer + 2 * middle + inner;
+                        let right_index = 7 + 24 * fold + 6 * outer + middle + 3 * inner;
+                        expected += F::from_u64(9)
+                            * row_weight
+                            * fold_weight
+                            * eq_eval_at_index(&left, left_index)
+                            * eq_eval_at_index(&right, right_index);
+                    }
+                }
+            }
+        }
+    }
+    assert_eq!(
+        eval_eq_pair_tensor_families(&left, &right, &[family]).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn eq_pair_tensor_normalization_collapses_uniform_axes() {
+    let family = EqPairTensorFamily::new(
+        3,
+        5,
+        F::one(),
+        vec![
+            EqPairTensorAxis::unit(2, 1, 1),
+            EqPairTensorAxis::unit(4, 2, 2),
+            EqPairTensorAxis::unit(8, 8, 8),
+        ],
+    )
+    .unwrap();
+    assert_eq!(family.axes, vec![EqPairTensorAxis::unit(64, 1, 1)]);
+}
+
+#[test]
+fn eq_pair_tensor_materialization_fills_contiguous_families() {
+    let mut rng = StdRng::seed_from_u64(0xC017_1600);
+    let challenges = random_vec(&mut rng, 8);
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let families = [
+        EqPairTensorFamily::new(0, 7, F::one(), vec![EqPairTensorAxis::unit(12, 1, 1)]).unwrap(),
+        EqPairTensorFamily::new(12, 41, F::one(), vec![EqPairTensorAxis::unit(9, 1, 1)]).unwrap(),
+    ];
+    let got = materialize_eq_tensor_left(&equality, &families, 24).unwrap();
+    let expected = (0..24)
+        .map(|left| match left {
+            0..12 => eq_eval_at_index(&challenges, 7 + left),
+            12..21 => eq_eval_at_index(&challenges, 41 + left - 12),
+            _ => F::zero(),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn eq_pair_tensor_materialization_contracts_dense_overlaps_per_destination() {
+    let mut rng = StdRng::seed_from_u64(0xA0F0_1D00);
+    let challenges = random_vec(&mut rng, 10);
+    let equality = OffsetEqWindow::new(&challenges).unwrap();
+    let fold_a = random_vec(&mut rng, 3);
+    let fold_b = random_vec(&mut rng, 3);
+    let families = [
+        EqPairTensorFamily::new(
+            2,
+            11,
+            F::from_u64(5),
+            vec![
+                EqPairTensorAxis::unit(16, 1, 6),
+                EqPairTensorAxis::dense(0, 2, fold_a.clone()),
+            ],
+        )
+        .unwrap(),
+        EqPairTensorFamily::new(
+            2,
+            101,
+            F::from_u64(7),
+            vec![
+                EqPairTensorAxis::unit(16, 1, 6),
+                EqPairTensorAxis::dense(0, 2, fold_b.clone()),
+            ],
+        )
+        .unwrap(),
+    ];
+    let got = materialize_eq_tensor_left(&equality, &families, 20).unwrap();
+    let expected = (0..20)
+        .map(|left| {
+            if !(2..18).contains(&left) {
+                return F::zero();
+            }
+            let coordinate = left - 2;
+            [
+                (11, F::from_u64(5), &fold_a),
+                (101, F::from_u64(7), &fold_b),
+            ]
+            .into_iter()
+            .map(|(base, scalar, folds)| {
+                folds
+                    .iter()
+                    .enumerate()
+                    .map(|(fold, &weight)| {
+                        scalar
+                            * weight
+                            * eq_eval_at_index(&challenges, base + 6 * coordinate + 2 * fold)
+                    })
+                    .sum::<F>()
+            })
+            .sum()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(got, expected);
+}
+
 #[test]
 fn offset_eq_window_matches_scalar_eq_across_low_bits() {
     let mut rng = StdRng::seed_from_u64(0x0FF5E7);
@@ -431,207 +572,6 @@ fn compact_stride_rejects_overflow_before_clipping() {
     assert!(matches!(err, AkitaError::InvalidInput(_)));
 }
 
-#[test]
-fn compact_pair_matches_direct_non_power_of_two_sweep() {
-    let mut rng = StdRng::seed_from_u64(0x00C0_11AA);
-    for left_bits in 2..8usize {
-        for right_bits in 2..8usize {
-            let left = random_vec(&mut rng, left_bits);
-            let right = random_vec(&mut rng, right_bits);
-            for left_stride in [1usize, 2, 3, 5] {
-                for right_stride in [1usize, 2, 3, 7] {
-                    for len in [1usize, 2, 3, 5, 9] {
-                        let left_offset = left_bits;
-                        let right_offset = right_bits + 1;
-                        let got = eval_weighted_compact_pair_eq(
-                            &left,
-                            &right,
-                            &[WeightedCompactPairTerm {
-                                left_offset,
-                                left_stride,
-                                right_offset,
-                                right_stride,
-                                len,
-                                weight: F::one(),
-                            }],
-                        )
-                        .unwrap();
-                        let expected = (0..len)
-                            .map(|index| {
-                                eq_eval_at_index(&left, left_offset + left_stride * index)
-                                    * eq_eval_at_index(&right, right_offset + right_stride * index)
-                            })
-                            .sum();
-                        assert_eq!(
-                            got, expected,
-                            "left_bits={left_bits} right_bits={right_bits} left_stride={left_stride} right_stride={right_stride} len={len}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[test]
-fn compact_pair_boolean_challenges_need_no_inverses() {
-    let left = [F::zero(), F::one(), F::one(), F::zero(), F::one()];
-    let right = [F::one(), F::zero(), F::one(), F::one(), F::zero()];
-    let got = eval_weighted_compact_pair_eq(
-        &left,
-        &right,
-        &[WeightedCompactPairTerm {
-            left_offset: 3,
-            left_stride: 3,
-            right_offset: 1,
-            right_stride: 5,
-            len: 7,
-            weight: F::one(),
-        }],
-    )
-    .unwrap();
-    let expected = (0..7)
-        .map(|index| {
-            eq_eval_at_index(&left, 3 + 3 * index) * eq_eval_at_index(&right, 1 + 5 * index)
-        })
-        .sum();
-    assert_eq!(got, expected);
-}
-
-#[test]
-fn weighted_compact_pairs_match_independent_dense_sum() {
-    let mut rng = StdRng::seed_from_u64(0x00C0_11AB);
-    for term_count in [1usize, 2, 5, 17, 43] {
-        let left = random_vec(&mut rng, 10);
-        let right = random_vec(&mut rng, 11);
-        let terms = (0..term_count)
-            .map(|index| WeightedCompactPairTerm {
-                left_offset: (7 * index + 3) % 97,
-                left_stride: [3usize, 5, 8][index % 3],
-                right_offset: (11 * index + 1) % 113,
-                right_stride: [2usize, 5, 9][index % 3],
-                len: [1usize, 2, 3, 5, 9, 16, 19][index % 7],
-                weight: F::random(&mut rng),
-            })
-            .collect::<Vec<_>>();
-        let got = eval_weighted_compact_pair_eq(&left, &right, &terms).unwrap();
-        let expected = terms
-            .iter()
-            .map(|term| {
-                term.weight
-                    * (0..term.len)
-                        .map(|index| {
-                            eq_eval_at_index(&left, term.left_offset + term.left_stride * index)
-                                * eq_eval_at_index(
-                                    &right,
-                                    term.right_offset + term.right_stride * index,
-                                )
-                        })
-                        .sum::<F>()
-            })
-            .sum();
-        assert_eq!(got, expected, "term_count={term_count}");
-    }
-}
-
-#[test]
-fn weighted_compact_pairs_merge_equal_states_and_cancel() {
-    let mut rng = StdRng::seed_from_u64(0x00C0_11AC);
-    let left = random_vec(&mut rng, 8);
-    let right = random_vec(&mut rng, 8);
-    let weight = F::random(&mut rng);
-    let term = WeightedCompactPairTerm {
-        left_offset: 9,
-        left_stride: 7,
-        right_offset: 5,
-        right_stride: 11,
-        len: 31,
-        weight,
-    };
-    let cancelling = WeightedCompactPairTerm {
-        weight: -weight,
-        ..term
-    };
-    assert_eq!(
-        eval_weighted_compact_pair_eq(&left, &right, &[term, cancelling]).unwrap(),
-        F::zero()
-    );
-}
-
-#[test]
-fn weighted_compact_pairs_coalesce_contiguous_fragments() {
-    let mut rng = StdRng::seed_from_u64(0x00C0_11AD);
-    let left = random_vec(&mut rng, 12);
-    let right = random_vec(&mut rng, 13);
-    let weight = F::random(&mut rng);
-    let fragments = [3usize, 5, 7, 16]
-        .into_iter()
-        .scan(0usize, |base, len| {
-            let term = WeightedCompactPairTerm {
-                left_offset: 11 + 9 * *base,
-                left_stride: 9,
-                right_offset: 17 + 13 * *base,
-                right_stride: 13,
-                len,
-                weight,
-            };
-            *base += len;
-            Some(term)
-        })
-        .collect::<Vec<_>>();
-    let whole = WeightedCompactPairTerm {
-        left_offset: 11,
-        left_stride: 9,
-        right_offset: 17,
-        right_stride: 13,
-        len: fragments.iter().map(|term| term.len).sum(),
-        weight,
-    };
-    assert_eq!(
-        eval_weighted_compact_pair_eq(&left, &right, &fragments).unwrap(),
-        eval_weighted_compact_pair_eq(&left, &right, &[whole]).unwrap()
-    );
-}
-
-#[test]
-fn weighted_compact_pairs_fuse_interleaved_affine_rectangle() {
-    let mut rng = StdRng::seed_from_u64(0x00C0_11AE);
-    let left = random_vec(&mut rng, 14);
-    let right = random_vec(&mut rng, 15);
-    let weight = F::random(&mut rng);
-    let width = 7usize;
-    let rows = 19usize;
-    let left_inner = 3usize;
-    let right_inner = 5usize;
-    let lanes = (0..width)
-        .map(|lane| WeightedCompactPairTerm {
-            left_offset: 11 + left_inner * lane,
-            left_stride: left_inner * width,
-            right_offset: 17 + right_inner * lane,
-            right_stride: right_inner * width,
-            len: rows,
-            weight,
-        })
-        .collect::<Vec<_>>();
-    let rectangle = WeightedCompactPairTerm {
-        left_offset: 11,
-        left_stride: left_inner,
-        right_offset: 17,
-        right_stride: right_inner,
-        len: rows * width,
-        weight,
-    };
-
-    assert_eq!(
-        coalesce_weighted_compact_pair_terms(&lanes).unwrap(),
-        vec![rectangle]
-    );
-    assert_eq!(
-        eval_weighted_compact_pair_eq(&left, &right, &lanes).unwrap(),
-        eval_weighted_compact_pair_eq(&left, &right, &[rectangle]).unwrap()
-    );
-}
-
 #[allow(clippy::too_many_arguments)]
 fn reference_affine_digit_interval(
     challenges: &[F],
@@ -674,15 +614,17 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
         let digit_weights = random_vec(&mut rng, digits);
         let high = random_vec(&mut rng, high_len);
         let low = random_vec(&mut rng, low_len);
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let expected = reference_affine_digit_interval(
@@ -695,6 +637,108 @@ fn affine_digit_interval_matches_dense_subwindows_and_partial_rows() {
             &high,
             &low,
         );
+        assert_eq!(got, expected);
+    }
+}
+
+#[test]
+fn affine_digit_interval_empty_low_factor_is_structural_identity() {
+    let mut rng = StdRng::seed_from_u64(0x1d_e0_1d_e0);
+    let challenges = random_vec(&mut rng, 12);
+    let digit_weights = random_vec(&mut rng, 5);
+    let high = random_vec(&mut rng, 13);
+    let dense = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        2,
+        &digit_weights,
+        &high,
+        &[F::one()],
+        &[],
+    )
+    .unwrap();
+    let identity = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        2,
+        &digit_weights,
+        &high,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(identity, dense);
+
+    let dense_single_digit = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        1,
+        &digit_weights[..1],
+        &high,
+        &[F::one()],
+        &[],
+    )
+    .unwrap();
+    let identity_single_digit = eval_affine_digit_intervals(
+        &challenges,
+        &[7, 19],
+        2,
+        9,
+        11,
+        1,
+        &digit_weights[..1],
+        &high,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert_eq!(identity_single_digit, dense_single_digit);
+}
+
+#[test]
+fn affine_digit_interval_matches_independent_strided_digit_oracle() {
+    let mut rng = StdRng::seed_from_u64(0x57_12_1d_ed);
+    for &(low_len, high_len, outer_start, live_len, digits, outer_stride, digit_stride, base) in
+        &[(4, 4, 1, 11, 3, 9, 2, 3), (8, 3, 5, 13, 4, 17, 3, 6)]
+    {
+        let challenges = random_vec(&mut rng, 13);
+        let digit_weights = random_vec(&mut rng, digits);
+        let high = random_vec(&mut rng, high_len);
+        let low = random_vec(&mut rng, low_len);
+        let got = eval_affine_digit_intervals(
+            &challenges,
+            &[base],
+            outer_start,
+            live_len,
+            outer_stride,
+            digit_stride,
+            &digit_weights,
+            &high,
+            &low,
+            &[],
+        )
+        .unwrap();
+        let mut expected = F::zero();
+        for outer in outer_start..outer_start + live_len {
+            for (digit, &digit_weight) in digit_weights.iter().enumerate() {
+                expected += high[outer / low.len()]
+                    * low[outer % low.len()]
+                    * digit_weight
+                    * eq_eval_at_index(
+                        &challenges,
+                        base + outer_stride * (outer - outer_start) + digit_stride * digit,
+                    );
+            }
+        }
         assert_eq!(got, expected);
     }
 }
@@ -719,7 +763,8 @@ fn affine_digit_interval_handles_boolean_challenges_without_inversion() {
         F::from_u64(23),
         F::from_u64(29),
     ];
-    let got = eval_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low).unwrap();
+    let got = eval_affine_digit_intervals(&challenges, &[5], 3, 7, 6, 1, &digits, &high, &low, &[])
+        .unwrap();
     assert_eq!(
         got,
         reference_affine_digit_interval(&challenges, 5, 3, 7, 6, &digits, &high, &low)
@@ -731,15 +776,17 @@ fn affine_digit_interval_rejects_work_above_cap() {
     let challenges = vec![F::from_u64(2); 20];
     let digits = vec![F::one(); 1 << 14];
     let low = vec![F::one(); 1 << 14];
-    let err = eval_affine_digit_interval(
+    let err = eval_affine_digit_intervals(
         &challenges,
-        0,
+        &[0],
         0,
         1 << 14,
         1 << 14,
+        1,
         &digits,
         &[F::one()],
         &low,
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
@@ -747,15 +794,17 @@ fn affine_digit_interval_rejects_work_above_cap() {
 
 #[test]
 fn affine_digit_interval_rejects_addresses_outside_eq_domain() {
-    let err = eval_affine_digit_interval(
+    let err = eval_affine_digit_intervals(
         &[F::from_u64(2); 3],
-        7,
+        &[7],
         0,
         2,
         2,
+        1,
         &[F::one()],
         &[F::one()],
         &[F::one(), F::one()],
+        &[],
     )
     .unwrap_err();
     assert!(matches!(err, AkitaError::InvalidSize { .. }));
@@ -1143,15 +1192,17 @@ fn affine_digit_interval_matches_reference() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let tag = (
@@ -1195,21 +1246,63 @@ fn affine_digit_interval_matches_boolean_challenges() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             5,
+            1,
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         assert_eq!(
             got, expected,
             "boolean canonical mismatch {outer_start} {live_len} {base}"
         );
+    }
+}
+
+#[test]
+fn affine_digit_intervals_batch_matches_independent_families() {
+    let mut rng = StdRng::seed_from_u64(0xBA7C_4FF1);
+    let challenges = random_vec(&mut rng, 15);
+    let digit_weights = random_vec(&mut rng, 5);
+    let high = random_vec(&mut rng, 32);
+    let low = random_vec(&mut rng, 4);
+    for base_offsets in [vec![3usize, 67, 131], vec![3, 68, 133]] {
+        let got = eval_affine_digit_intervals(
+            &challenges,
+            &base_offsets,
+            1,
+            63,
+            7,
+            1,
+            &digit_weights,
+            &high,
+            &low,
+            &[],
+        )
+        .unwrap();
+        let expected = base_offsets
+            .iter()
+            .map(|&base| {
+                reference_affine_digit_interval(
+                    &challenges,
+                    base,
+                    1,
+                    63,
+                    7,
+                    &digit_weights,
+                    &high,
+                    &low,
+                )
+            })
+            .sum();
+        assert_eq!(got, expected);
     }
 }
 
@@ -1238,15 +1331,17 @@ fn affine_digit_interval_bench() {
         for _ in 0..iters {
             let start = Instant::now();
             std::hint::black_box(
-                eval_affine_digit_interval(
+                eval_affine_digit_intervals(
                     &challenges,
-                    0,
+                    &[0],
                     0,
                     live_len,
                     stride,
+                    1,
                     &digit_weights,
                     &high,
                     &low,
+                    &[],
                 )
                 .unwrap(),
             );
@@ -1305,15 +1400,17 @@ fn affine_digit_interval_matches_geometric_digits() {
             &high,
             &low,
         );
-        let got = eval_affine_digit_interval(
+        let got = eval_affine_digit_intervals(
             &challenges,
-            base,
+            &[base],
             outer_start,
             live_len,
             stride,
+            1,
             &digit_weights,
             &high,
             &low,
+            &[],
         )
         .unwrap();
         let tag = (
@@ -1356,15 +1453,17 @@ fn affine_digit_interval_bench_geometric() {
         for _ in 0..iters {
             let start = Instant::now();
             std::hint::black_box(
-                eval_affine_digit_interval(
+                eval_affine_digit_intervals(
                     &challenges,
-                    0,
+                    &[0],
                     0,
                     live_len,
                     stride,
+                    1,
                     &digit_weights,
                     &high,
                     &low,
+                    &[],
                 )
                 .unwrap(),
             );

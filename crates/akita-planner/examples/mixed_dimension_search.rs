@@ -79,15 +79,16 @@ fn main() -> Result<(), akita_field::AkitaError> {
         .and_then(|value| value.parse().ok())
         .unwrap_or(36);
     let direct_policy = policy_of::<MixedDimFp128OneHot>();
-    let domain = RingDimensionSearchDomain::new(
-        MixedDimFp128OneHot::D,
-        MixedDimFp128OneHot::RING_DIMENSION_CANDIDATES,
+    let direct_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::singleton(num_vars));
+    let direct_domain = RingDimensionSearchDomain::new(
+        direct_policy.ring_dimension,
+        direct_policy.ring_dimension_candidates.iter().copied(),
     )?;
     let direct = find_schedule(
-        PolynomialGroupLayout::singleton(num_vars),
+        direct_key.final_group,
         &direct_policy,
         MixedDimFp128OneHot::root_honest_fold_policy(),
-        &domain,
+        &direct_domain,
         MixedDimFp128OneHot::ring_challenge_config,
         MixedDimFp128OneHot::fold_challenge_shape_at_level,
     )?;
@@ -98,29 +99,39 @@ fn main() -> Result<(), akita_field::AkitaError> {
 
     type MixedRecursive = RecursiveCommitmentConfig<MixedDimFp128OneHot>;
     let mixed_recursive_policy = policy_of::<MixedRecursive>();
+    let mixed_recursive_key = AkitaScheduleLookupKey::single(PolynomialGroupLayout::new(32, 2));
     let recursive_domain = RingDimensionSearchDomain::new(
-        MixedRecursive::D,
-        MixedRecursive::RING_DIMENSION_CANDIDATES,
+        mixed_recursive_policy.ring_dimension,
+        mixed_recursive_policy
+            .ring_dimension_candidates
+            .iter()
+            .copied(),
     )?;
     let mixed_recursive = find_schedule(
-        PolynomialGroupLayout::new(32, 2),
+        mixed_recursive_key.final_group,
         &mixed_recursive_policy,
         MixedRecursive::root_honest_fold_policy(),
         &recursive_domain,
         MixedRecursive::ring_challenge_config,
         MixedRecursive::fold_challenge_shape_at_level,
-    );
-    println!("recursive setup mixed-D entry point:");
+    )?;
+    println!("recursive policy scalar dispatch through grouped planner:");
     println!(
-        "  {}",
-        mixed_recursive.expect_err("the first mixed-D cut rejects recursive setup planning")
+        "  setup={} field elements, proof={} bytes",
+        mixed_recursive.estimate.estimated_num_setup_field_elements,
+        mixed_recursive.estimate.estimated_proof_payload_bytes()?,
     );
 
     let precommit_layout = PolynomialGroupLayout::singleton(16);
-    let precommit_domain = RingDimensionSearchDomain::uniform(D64OneHot::D)?;
+    let precommit_key = AkitaScheduleLookupKey::single(precommit_layout);
+    let precommit_policy = policy_of::<D64OneHot>();
+    let precommit_domain = RingDimensionSearchDomain::new(
+        precommit_policy.ring_dimension,
+        precommit_policy.ring_dimension_candidates.iter().copied(),
+    )?;
     let precommit = find_schedule(
-        precommit_layout,
-        &policy_of::<D64OneHot>(),
+        precommit_key.final_group,
+        &precommit_policy,
         D64OneHot::root_honest_fold_policy(),
         &precommit_domain,
         D64OneHot::ring_challenge_config,

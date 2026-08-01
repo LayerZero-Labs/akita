@@ -133,7 +133,7 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
         ring_dimension: Cfg::D,
         uniform_ring_dimension: Cfg::D,
         setup_prefix_inner_ring_dimension: Cfg::setup_prefix_inner_ring_dimension(),
-        ring_dimension_candidates: Cfg::ring_dimension_candidates(),
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,
@@ -207,10 +207,6 @@ pub trait CommitmentConfig: Clone + Send + Sync + 'static {
     /// Adaptive presets override this with their full audited search domain.
     const RING_DIMENSION_CANDIDATES: &'static [CommitmentRingDims] =
         &[CommitmentRingDims::uniform(Self::D)];
-
-    fn ring_dimension_candidates() -> &'static [CommitmentRingDims] {
-        Self::RING_DIMENSION_CANDIDATES
-    }
 
     /// Gadget base + coefficient bounds.
     fn decomposition() -> DecompositionParams;

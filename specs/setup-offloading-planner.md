@@ -310,7 +310,7 @@ fn recursive_setup_planning() -> bool {
 
 The adapter overrides it to `true`, but uses that policy only after determining
 that the key is genuinely multi-group. `policy_of::<Self>()` copies the value
-into `PlannerPolicy` for `find_group_batch_schedule`. Scalar keys delegate
+into `PlannerPolicy` for `find_schedule`. Scalar keys delegate
 directly to `Cfg::runtime_schedule` and never invoke the recursion-enabled
 policy.
 
@@ -690,7 +690,7 @@ The scalar `find_schedule` path never computes or forwards an outgoing setup
 prefix, and its current DP behavior is preserved. It does not accept an
 incoming setup prefix.
 
-Only `find_group_batch_schedule` with a genuinely multi-group key and
+Only `find_schedule` with a genuinely multi-group key and
 `policy.recursive_setup_planning == true` uses the edge logic below. Its suffix
 context retains that root-path fact while planning later folds; setup
 offloading does not become available merely because a scalar suffix happens to
@@ -877,7 +877,7 @@ validation already share this walker; no second replay implementation is
 introduced.
 
 On a recursive multi-group table miss, `RecursiveCommitmentConfig<Cfg>` runs
-`find_group_batch_schedule` fallback with recursion planning enabled. A scalar
+`find_schedule` fallback with recursion planning enabled. A scalar
 miss delegates to `Cfg::runtime_schedule` and the direct `find_schedule`
 fallback. Table-hit and table-miss behavior therefore remain path-consistent.
 

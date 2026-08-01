@@ -57,8 +57,8 @@ where
                 outer: middle_bd_ring_dim,
                 opening: middle_bd_ring_dim,
             };
-            root_dims.validate_a_carrier()?;
-            middle_dims.validate_a_carrier()?;
+            root_dims.validate_role_projection()?;
+            middle_dims.validate_role_projection()?;
             for descriptor in &key.precommitteds {
                 if descriptor.inner_commit_matrix.ring_dimension() != Root::D
                     || descriptor.outer_commit_matrix.ring_dimension() != root_bd_ring_dim
@@ -74,7 +74,7 @@ where
             let opening_layout = key.opening_layout()?;
 
             // Plan the exact multi-group root at Root::D, then rebuild B and
-            // shared D from the requested final carrier geometry.
+            // shared D from the requested final projection geometry.
             let root_policy = policy_of::<Root>().direct_only();
             let precommitted_honest_fold_policies =
                 vec![Root::root_honest_fold_policy(); key.precommitteds.len()];

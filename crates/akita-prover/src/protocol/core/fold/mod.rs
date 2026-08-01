@@ -351,24 +351,24 @@ where
     Cfg: CommitmentConfig<Field = F, ExtField = E>,
 {
     let opening_batch = prepared_fold.instance.opening_batch();
-    let ring_d = lp.relation_witness_carrier_ring_dimension();
     let fold_grind_nonce = prepared_fold.witness.fold_grind_nonce;
+    let next_params = next_params.ok_or_else(|| {
+        AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
+    })?;
+    let next_opening_ring_dim = next_params.inner_ring_dimension();
     let logical_w = ring_switch_build_w::<F, R>(
         &prepared_fold.instance,
         prepared_fold.witness,
         stack.ring_switch(),
         lp,
     )
-    .map_err(|err| {
-        AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}"))
-    })?;
-    let next_params = next_params.ok_or_else(|| {
-        AkitaError::InvalidSetup("non-terminal fold is missing successor params".into())
-    })?;
-    if Some(logical_w.len()) != expected_output_witness_len {
+    .map_err(|err| AkitaError::InvalidInput(format!("ring-switch witness build failed: {err:?}")))?
+    .align_for_commitment_ring_dim(next_opening_ring_dim)?;
+    let committed_witness_len = logical_w.committed_coeff_len()?;
+    if Some(logical_w.live_coeff_len()) != expected_output_witness_len {
         return Err(AkitaError::InvalidSetup(format!(
             "scheduled fold level {level} produced unexpected next-w length: expected={expected_output_witness_len:?}, actual={}",
-            logical_w.len()
+            logical_w.live_coeff_len()
         )));
     }
     let _span = tracing::info_span!("commit_w_level", level).entered();
@@ -398,16 +398,17 @@ where
         NextWitnessState::OuterCommitment(commitment) => {
             transcript.append_serde(ABSORB_NEXT_LEVEL_WITNESS_BINDING, commitment);
         }
-        NextWitnessState::TerminalInnerState { t_state } => {
+        NextWitnessState::TerminalInnerState => {
+            let rows = next_commitment.hint.inner_rows();
+            let t_state = match rows {
+                [t_state] => t_state,
+                _ => return Err(AkitaError::InvalidProof),
+            };
             let bytes = akita_types::raw_field_segment_bytes(t_state)?;
             transcript.absorb_and_record_bytes(ABSORB_NEXT_LEVEL_WITNESS_BINDING, &bytes);
         }
     }
-    let next_opening_ring_dim = next_params.inner_ring_dimension();
-    if !logical_w.len().is_multiple_of(next_opening_ring_dim) {
-        return Err(AkitaError::InvalidProof);
-    }
-    let next_opening_source_len = logical_w.len() / next_opening_ring_dim;
+    let next_opening_source_len = committed_witness_len / next_opening_ring_dim;
     let mut rs = ring_switch_finalize::<F, E, T>(
         &prepared_fold.instance,
         expanded.as_ref(),
@@ -455,35 +456,28 @@ where
         claims = opening_batch.num_total_polynomials(),
         groups = opening_batch.num_groups(),
         chunks = relation_range_image_plan.witness_layout().units().len(),
-        source_ring_dimension = ring_d,
         coeff_count = rs
             .relation_address_geometry
-            .common_relation_witness_coeff_count(),
+            .relation_coefficient_block_len(),
     )
     .entered();
-    let evaluation_trace = dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        ring_d,
-        |D| {
-            let semantic_trace =
-                build_evaluation_trace_weights::<F, E, D>(EvaluationTraceInputs {
-                    digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
-                    witness_layout: relation_range_image_plan.witness_layout(),
-                    carrier_ring_dimension: rs.relation_address_geometry.carrier_ring_dimension(),
-                    level_params: lp,
-                    opening_batch,
-                    prepared_points: evaluation_trace_points,
-                    claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
-                    basis: prepared_fold.evaluation_trace_basis,
-                })?;
-            PreparedProverEvaluationTrace::new(
-                &semantic_trace,
-                rs.relation_address_geometry
-                    .common_relation_witness_coeff_count(),
-                evaluation_trace_weight,
-            )
-        }
+    let semantic_trace = build_evaluation_trace_weights::<F, E>(EvaluationTraceInputs {
+        digit_witness_domain: relation_range_image_plan.digit_witness_domain(),
+        relation_coefficient_block_len: rs
+            .relation_address_geometry
+            .relation_coefficient_block_len(),
+        witness_layout: relation_range_image_plan.witness_layout(),
+        level_params: lp,
+        opening_batch,
+        prepared_points: evaluation_trace_points,
+        claim_coefficients: &prepared_fold.evaluation_trace_claim_coefficients,
+        basis: prepared_fold.evaluation_trace_basis,
+    })?;
+    let evaluation_trace = PreparedProverEvaluationTrace::new(
+        &semantic_trace,
+        rs.relation_address_geometry
+            .relation_coefficient_block_len(),
+        evaluation_trace_weight,
     )?;
     drop(trace_preparation_span);
     let relation_address_geometry = rs.relation_address_geometry;
@@ -548,9 +542,9 @@ where
             akita_types::NextWitnessBinding::OuterCommitment(commitment.clone().into_compact()),
             NextWitnessState::OuterCommitment(commitment),
         ),
-        NextWitnessState::TerminalInnerState { t_state } => (
+        NextWitnessState::TerminalInnerState => (
             akita_types::NextWitnessBinding::TerminalInnerState,
-            NextWitnessState::TerminalInnerState { t_state },
+            NextWitnessState::TerminalInnerState,
         ),
     };
     let level_proof = FoldLevelProof {
@@ -651,7 +645,7 @@ where
     let geometry = rs.relation_address_geometry;
     let live_relation_lane_count = geometry.live_relation_lane_count();
     let relation_lane_variable_count = geometry.relation_lane_variable_count();
-    let common_relation_witness_variable_count = geometry.common_relation_witness_variable_count();
+    let relation_coefficient_variable_count = geometry.relation_coefficient_variable_count();
     if plan.relation_address_geometry() != geometry
         || domain.live_len() != rs.w_evals_compact.len()
         || plan.digit_range_plan().basis() != rs.b
@@ -663,7 +657,7 @@ where
     let (common_alpha_factor, relation_lane_weights) = rs
         .relation_weight_factorization
         .into_common_alpha_factor_and_relation_lane_weights();
-    let expected_factor_len = geometry.common_relation_witness_coeff_count();
+    let expected_factor_len = geometry.relation_coefficient_block_len();
     if common_alpha_factor.len() != expected_factor_len {
         return Err(AkitaError::InvalidSetup(format!(
             "common alpha factor has length {}, expected {expected_factor_len}",
@@ -680,7 +674,7 @@ where
         relation_lane_weights,
         live_relation_lane_count,
         relation_lane_variable_count,
-        common_relation_witness_variable_count,
+        relation_coefficient_variable_count,
         relation_claim,
         evaluation_trace,
         trace_opening_claim,

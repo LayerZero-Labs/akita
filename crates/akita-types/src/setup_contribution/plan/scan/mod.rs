@@ -184,6 +184,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 let setup = setup_flat.get(lo..hi).ok_or(AkitaError::InvalidProof)?;
                 let mut weights = vec![E::zero(); setup.len()];
                 for (group, projection) in self.groups.iter().zip(projections) {
+                    let (e_eq_slice, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
                     let first = group.segments.partition_point(|segment| segment.hi <= lo);
                     for segment in group.segments.iter().skip(first) {
                         if segment.lo >= hi {
@@ -198,9 +199,9 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                             for_each_base_ring_segment_weight_typed::<E, HAS_D, HAS_B, HAS_A>(
                                 overlap,
                                 segment,
-                                &group.e_eq_slice,
-                                &group.t_eq_slice,
-                                &group.z_eq_slice,
+                                e_eq_slice,
+                                t_eq_slice,
+                                z_eq_slice,
                                 &projection[2],
                                 &projection[1],
                                 &projection[0],

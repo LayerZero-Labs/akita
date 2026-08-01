@@ -273,7 +273,6 @@ pub(crate) fn walk_generated_schedule_entry(
         &terminal_params,
         &mut setup_field_elements,
     )?;
-    let num_setup_field_elements = setup_field_elements;
     let first_direct_setup_field_len = if policy.recursive_setup_planning {
         folds
             .iter()
@@ -295,7 +294,7 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
-        num_setup_field_elements,
+        setup_field_elements,
         first_direct_setup_field_len,
         folds,
         CandidateTerminalResponse {

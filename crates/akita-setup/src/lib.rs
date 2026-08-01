@@ -704,7 +704,7 @@ mod tests {
         fn prefix_slots_roundtrip_through_setup_cache() {
             with_test_cache_dir("prefix-slots", || {
                 use akita_types::{
-                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, DigitBlocks,
+                    setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
                     InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
                     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
                     SisModulusProfileId, SisTableDigest, SisTableKey, DEFAULT_SIS_SECURITY_POLICY,
@@ -760,9 +760,11 @@ mod tests {
                     num_digits_fold: 1,
                 };
                 let id = setup_prefix_slot_id(1, commitment_params);
-                // One block of zero planes at the setup ring dimension.
-                let decomposed = DigitBlocks::empty(TEST_D);
-                let hint = AkitaCommitmentHint::singleton(decomposed);
+                let hint = AkitaCommitmentHint::singleton(
+                    RingVec::from_coeffs_with_ring_dim(vec![TestF::zero(); TEST_D], TEST_D)
+                        .expect("inner rows"),
+                )
+                .expect("hint");
                 setup
                     .prefix_slots
                     .insert(SetupPrefixSlot {
@@ -983,12 +985,22 @@ mod tests {
                         plan,
                     )
                     .unwrap();
-                    let typed_digits = inner.decomposed_inner_rows_trusted::<TEST_D>().unwrap();
+                    let n_a = lp.inner_commit_matrix.output_rank();
+                    let blocks = (0..lp.num_live_blocks)
+                        .map(|block| inner.block_rows::<TEST_D>(block, n_a).unwrap())
+                        .collect::<Vec<_>>();
+                    let digits =
+                        akita_prover::kernels::linear::decompose_commit_blocks_into::<
+                            TestF,
+                            TEST_D,
+                            TEST_D,
+                        >(&blocks, lp.num_digits_outer, lp.log_basis_outer)
+                        .unwrap();
                     CpuBackend
                         .digit_rows::<TEST_D>(
                             &prepared,
                             lp.outer_commit_matrix.output_rank(),
-                            typed_digits.typed_planes::<TEST_D>().unwrap(),
+                            digits.typed_planes::<TEST_D>().unwrap(),
                             lp.log_basis_outer,
                         )
                         .unwrap()

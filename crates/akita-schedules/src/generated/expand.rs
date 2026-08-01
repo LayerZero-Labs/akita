@@ -321,18 +321,14 @@ impl GeneratedCommittedGroup {
                     .to_string(),
             ));
         }
-        if input_witness_len == 0 || (!is_root && !input_witness_len.is_multiple_of(ring_d)) {
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
-                "witness length is not divisible by the ring dimension".to_string(),
+                "witness length must be nonzero".to_string(),
             ));
         }
-        // Root inputs may be shorter than one ring and are zero-padded inside
-        // that ring. Recursive witnesses are ring-aligned by contract.
-        let num_live_ring_elements_per_claim = if is_root {
-            input_witness_len.div_ceil(ring_d)
-        } else {
-            input_witness_len / ring_d
-        };
+        // Every exact live prefix may end in a partial ring. The commitment
+        // view supplies the one implicit-zero suffix.
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_d);
         let derived_num_live_blocks =
             num_live_ring_elements_per_claim.div_ceil(num_positions_per_block);
         if derived_num_live_blocks != num_live_blocks {
@@ -779,12 +775,12 @@ impl GeneratedTerminalFold {
                 "generated terminal inner ring dimension must be nonzero".to_string(),
             ));
         }
-        if input_witness_len == 0 || !input_witness_len.is_multiple_of(ring_dimension) {
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(
-                "terminal witness length is not inner-ring aligned".to_string(),
+                "terminal witness length must be nonzero".to_string(),
             ));
         }
-        let num_live_ring_elements_per_claim = input_witness_len / ring_dimension;
+        let num_live_ring_elements_per_claim = input_witness_len.div_ceil(ring_dimension);
         let num_positions_per_block =
             generated_count(self.geometry.positions_per_block, "positions per block")?;
         let num_live_blocks = generated_count(self.geometry.live_blocks, "live block count")?;

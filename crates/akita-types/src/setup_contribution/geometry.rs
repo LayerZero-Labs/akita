@@ -1,6 +1,5 @@
 //! Challenge-free setup product geometry: projection sizing and envelope guards.
 
-use akita_algebra::offset_eq::MAX_COMPACT_STRIDE_TERMS;
 use akita_field::{AkitaError, FieldCore};
 
 use crate::layout::{validate_role_dims, CommitmentRingDims};
@@ -14,8 +13,6 @@ pub(crate) struct SetupProjectionGroupGeometry {
     pub(crate) b_rows: usize,
     pub(crate) b_cols: usize,
     pub(crate) d_active_cols: usize,
-    pub(crate) ownership_units: usize,
-    pub(crate) depth_fold: usize,
 }
 
 /// Checked common-base geometry for the Stage 3 setup projection.
@@ -39,7 +36,6 @@ pub struct SetupProjectionGeometry {
     ring_bits: usize,
     rounds: usize,
     natural_field_len: usize,
-    evaluation_terms: usize,
 }
 
 impl SetupProjectionGeometry {
@@ -97,7 +93,7 @@ impl SetupProjectionGeometry {
         }
         let (a_ratio, b_ratio) = (ratio("A", role_dims.d_a())?, ratio("B", role_dims.d_b())?);
         let required = a_footprint.max(b_footprint).max(d_footprint);
-        let mut geometry = Self::from_projected_footprints(
+        Self::from_projected_footprints(
             role_dims,
             base_ring_dim,
             a_ratio,
@@ -107,42 +103,7 @@ impl SetupProjectionGeometry {
             b_footprint,
             d_footprint,
             required,
-        )?;
-        let mut evaluation_terms = 0usize;
-        for group in groups {
-            let a_ratio = ratio("A", group.role_dims.d_a())?;
-            let b_ratio = ratio("B", group.role_dims.d_b())?;
-            let d_terms = group
-                .d_active_cols
-                .checked_mul(d_rows)
-                .and_then(|terms| terms.checked_mul(d_ratio))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup D evaluation work overflow".into())
-                })?;
-            let b_terms = group
-                .b_cols
-                .checked_mul(group.b_rows)
-                .and_then(|terms| terms.checked_mul(b_ratio))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup B evaluation work overflow".into())
-                })?;
-            let a_terms = group
-                .a_cols
-                .checked_mul(group.a_rows)
-                .and_then(|terms| terms.checked_mul(a_ratio))
-                .and_then(|terms| terms.checked_mul(group.ownership_units))
-                .and_then(|terms| terms.checked_mul(group.depth_fold))
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("setup A evaluation work overflow".into())
-                })?;
-            evaluation_terms = evaluation_terms
-                .checked_add(d_terms)
-                .and_then(|terms| terms.checked_add(b_terms))
-                .and_then(|terms| terms.checked_add(a_terms))
-                .ok_or_else(|| AkitaError::InvalidSetup("setup evaluation work overflow".into()))?;
-        }
-        geometry.evaluation_terms = evaluation_terms;
-        Ok(geometry)
+        )
     }
 
     #[cfg(test)]
@@ -219,16 +180,14 @@ impl SetupProjectionGeometry {
             ring_bits,
             rounds,
             natural_field_len,
-            evaluation_terms: 0,
         })
     }
 
-    /// Number of native B- and D-role subcolumns in the current A-width
-    /// relation-witness carrier.
+    /// Number of B- and D-native subcolumns in one A-native source ring.
     ///
-    /// B and D are not ordered relative to each other. Both fit the A carrier
-    /// under the canonical role-dimension invariant.
-    pub fn a_carrier_subcolumn_counts(
+    /// B and D are not ordered relative to each other. Both dimensions divide
+    /// the A-native source dimension under the canonical projection invariant.
+    pub fn native_role_subcolumn_counts(
         role_dims: CommitmentRingDims,
     ) -> Result<(usize, usize), AkitaError> {
         let (_, a_ratio, b_ratio, d_ratio) = checked_role_ratios(role_dims)?;
@@ -237,7 +196,7 @@ impl SetupProjectionGeometry {
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "current A-width relation witness cannot carry the B role".into(),
+                    "A-native source rings do not decompose into B-native subcolumns".into(),
                 )
             })?;
         let d_subcolumns = a_ratio
@@ -245,7 +204,7 @@ impl SetupProjectionGeometry {
             .filter(|ratio| *ratio != 0)
             .ok_or_else(|| {
                 AkitaError::InvalidSetup(
-                    "current A-width relation witness cannot carry the D role".into(),
+                    "A-native source rings do not decompose into D-native subcolumns".into(),
                 )
             })?;
         if !b_subcolumns.is_power_of_two() || !d_subcolumns.is_power_of_two() {
@@ -324,21 +283,6 @@ impl SetupProjectionGeometry {
     #[must_use]
     pub const fn natural_field_len(self) -> usize {
         self.natural_field_len
-    }
-
-    #[must_use]
-    pub const fn evaluation_terms(self) -> usize {
-        self.evaluation_terms
-    }
-
-    pub fn ensure_evaluation_budget(self) -> Result<(), AkitaError> {
-        if self.evaluation_terms > MAX_COMPACT_STRIDE_TERMS {
-            return Err(AkitaError::InvalidSize {
-                expected: MAX_COMPACT_STRIDE_TERMS,
-                actual: self.evaluation_terms,
-            });
-        }
-        Ok(())
     }
 
     pub(crate) fn validate_alpha_power_lengths(
@@ -483,51 +427,6 @@ mod tests {
     }
 
     #[test]
-    fn evaluation_budget_accepts_cap_and_rejects_next_term() {
-        let geometry_at_cap = SetupProjectionGeometry::from_groups(
-            CommitmentRingDims::uniform(64),
-            0,
-            0,
-            &[SetupProjectionGroupGeometry {
-                role_dims: CommitmentRingDims::uniform(64),
-                a_rows: 1,
-                a_cols: MAX_COMPACT_STRIDE_TERMS,
-                b_rows: 0,
-                b_cols: 0,
-                d_active_cols: 0,
-                ownership_units: 1,
-                depth_fold: 1,
-            }],
-        )
-        .expect("geometry at cap");
-        assert_eq!(geometry_at_cap.evaluation_terms(), MAX_COMPACT_STRIDE_TERMS);
-        geometry_at_cap
-            .ensure_evaluation_budget()
-            .expect("cap accepted");
-
-        let geometry_above_cap = SetupProjectionGeometry::from_groups(
-            CommitmentRingDims::uniform(64),
-            0,
-            0,
-            &[SetupProjectionGroupGeometry {
-                role_dims: CommitmentRingDims::uniform(64),
-                a_rows: 1,
-                a_cols: MAX_COMPACT_STRIDE_TERMS + 1,
-                b_rows: 0,
-                b_cols: 0,
-                d_active_cols: 0,
-                ownership_units: 1,
-                depth_fold: 1,
-            }],
-        )
-        .expect("geometry above cap");
-        assert!(matches!(
-            geometry_above_cap.ensure_evaluation_budget(),
-            Err(AkitaError::InvalidSize { .. })
-        ));
-    }
-
-    #[test]
     fn projection_geometry_uses_every_groups_native_dimensions() {
         let geometry = SetupProjectionGeometry::from_groups(
             CommitmentRingDims {
@@ -545,8 +444,6 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 1,
-                    ownership_units: 1,
-                    depth_fold: 1,
                 },
                 SetupProjectionGroupGeometry {
                     role_dims: CommitmentRingDims {
@@ -559,8 +456,6 @@ mod tests {
                     b_rows: 3,
                     b_cols: 7,
                     d_active_cols: 2,
-                    ownership_units: 1,
-                    depth_fold: 1,
                 },
             ],
         )

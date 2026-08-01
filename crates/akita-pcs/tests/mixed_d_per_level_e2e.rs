@@ -463,7 +463,7 @@ fn mixed_d_per_level_prove_verify_replay_and_malformed_rejections() {
 }
 
 #[test]
-fn mixed_d_malformed_hint_digit_length_rejected() {
+fn mixed_d_malformed_hint_inner_rows_rejected() {
     init_rayon_pool();
     run_on_large_stack(|| {
         let poly = make_envelope_dense_poly(NUM_VARS, 0xcede_0001);
@@ -482,8 +482,8 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
 
         let poly_refs = [&poly];
 
-        // Hint with no per-polynomial digit streams at all.
-        let empty_hint = AkitaCommitmentHint::<F>::new(Vec::new());
+        // Hint with no per-polynomial A rows at all.
+        let empty_hint = AkitaCommitmentHint::<F>::new(ENVELOPE_D, Vec::new()).expect("empty hint");
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
@@ -492,13 +492,15 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
-        .expect_err("prove must reject a hint with a missing digit stream");
+        .expect_err("prove must reject a hint with missing inner rows");
 
-        // Hint whose digit stream is sized at the wrong level's ring
-        // dimension (D=64 stride for the D=128 root) with a wrong length.
+        // Hint whose semantic rows declare the suffix dimension instead of
+        // the root A dimension.
         let wrong_dim_hint = AkitaCommitmentHint::<F>::singleton(
-            akita_types::DigitBlocks::zeroed(vec![1], SUFFIX_D).expect("digit blocks"),
-        );
+            RingVec::from_coeffs_with_ring_dim(vec![F::zero(); SUFFIX_D], SUFFIX_D)
+                .expect("inner rows"),
+        )
+        .expect("wrong-dimension hint");
         let mut prover_transcript = AkitaTranscript::<F>::new(TRANSCRIPT_LABEL);
         Scheme::batched_prove(
             &setup,
@@ -507,7 +509,7 @@ fn mixed_d_malformed_hint_digit_length_rejected() {
             &mut prover_transcript,
             BasisMode::Lagrange,
         )
-        .expect_err("prove must reject a hint digit stream sized at the wrong level's dim");
+        .expect_err("prove must reject hint rows at the wrong A dimension");
     });
 }
 

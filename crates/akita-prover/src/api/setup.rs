@@ -195,7 +195,7 @@ mod tests {
     #[test]
     fn prover_setup_check_validates_prefix_slots() {
         use akita_types::{
-            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile, DigitBlocks,
+            setup_prefix_slot_id, AkitaCommitmentHint, CommittedGroupProfile,
             InnerCommitMatrixParams, OuterCommitMatrixParams, PolynomialGroupLayout,
             PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
             SisMatrixRole, SisModulusProfileId, SisTableDigest, SisTableKey,
@@ -208,8 +208,9 @@ mod tests {
             SetupMatrixCapacity::minimum(),
         )
         .expect("generate setup");
-        let decomposed = DigitBlocks::empty(64);
-        let hint = AkitaCommitmentHint::singleton(decomposed);
+        let decomposed =
+            RingVec::from_coeffs_with_ring_dim(Vec::new(), 64).expect("empty A-native hint");
+        let hint = AkitaCommitmentHint::singleton(decomposed).expect("empty A-native hint");
         let inner_commit_matrix = InnerCommitMatrixParams::try_new_with_min_rank(
             SisTableKey {
                 policy: DEFAULT_SIS_SECURITY_POLICY,

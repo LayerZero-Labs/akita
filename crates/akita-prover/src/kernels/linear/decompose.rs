@@ -92,22 +92,36 @@ pub fn decompose_rows_i8_into<F: FieldCore + CanonicalField, const D: usize>(
         });
 }
 
-/// Stage flat i8 digit blocks for inner commitment from recomposed Ajtai rows.
+/// Project recomposed A-role rows into native role rings and decompose them.
 ///
-/// Skips i8 decomposition for all-zero blocks and leaves their digit buffers zeroed.
-pub fn decompose_commit_blocks_into<F, const D: usize>(
-    rows: &[Vec<CyclotomicRing<F, D>>],
+/// The output order within each block is
+/// `[A row][role subcolumn][digit][role coefficient]`. Skips decomposition for
+/// all-zero blocks and leaves their digit buffers zeroed.
+pub fn decompose_commit_blocks_into<F, const D_A: usize, const D_ROLE: usize>(
+    rows: &[&[CyclotomicRing<F, D_A>]],
     num_digits_open: usize,
     log_basis: u32,
 ) -> Result<DigitBlocks, AkitaError>
 where
     F: FieldCore + CanonicalField,
 {
+    if !D_A.is_multiple_of(D_ROLE) {
+        return Err(AkitaError::InvalidSetup(format!(
+            "source ring dimension {D_A} is not divisible by role ring dimension {D_ROLE}"
+        )));
+    }
+    let role_subcolumns = D_A / D_ROLE;
     let block_sizes: Vec<usize> = rows
         .iter()
-        .map(|block_rows| {
+        .map(|&block_rows| {
             block_rows
                 .len()
+                .checked_mul(role_subcolumns)
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup(
+                        "commit witness role subcolumn count overflow".to_string(),
+                    )
+                })?
                 .checked_mul(num_digits_open)
                 .ok_or_else(|| {
                     AkitaError::InvalidSetup(
@@ -116,29 +130,30 @@ where
                 })
         })
         .collect::<Result<_, _>>()?;
-    let mut out = DigitBlocks::zeroed(block_sizes, D)?;
-    let dst_blocks = out.split_typed_blocks_mut::<D>()?;
+    let mut out = DigitBlocks::zeroed(block_sizes, D_ROLE)?;
+    let dst_blocks = out.split_typed_blocks_mut::<D_ROLE>()?;
+    let q = (-F::one()).to_canonical_u128() + 1;
+    let params = BalancedDecomposePow2Params::new(num_digits_open, log_basis, q);
     #[cfg(feature = "parallel")]
     cfg_into_iter!(dst_blocks)
         .zip(cfg_iter!(rows))
-        .for_each(|(dst, block_rows)| {
-            decompose_commit_block_rows_into(block_rows, dst, num_digits_open, log_basis);
+        .for_each(|(dst, &block_rows)| {
+            decompose_commit_block_rows_into(block_rows, dst, &params);
         });
     #[cfg(not(feature = "parallel"))]
     dst_blocks
         .into_iter()
         .zip(rows.iter())
-        .for_each(|(dst, block_rows)| {
-            decompose_commit_block_rows_into(block_rows, dst, num_digits_open, log_basis);
+        .for_each(|(dst, &block_rows)| {
+            decompose_commit_block_rows_into(block_rows, dst, &params);
         });
     Ok(out)
 }
 
-fn decompose_commit_block_rows_into<F, const D: usize>(
-    block_rows: &[CyclotomicRing<F, D>],
-    dst: &mut [[i8; D]],
-    num_digits_open: usize,
-    log_basis: u32,
+fn decompose_commit_block_rows_into<F, const D_A: usize, const D_ROLE: usize>(
+    block_rows: &[CyclotomicRing<F, D_A>],
+    dst: &mut [[i8; D_ROLE]],
+    params: &BalancedDecomposePow2Params,
 ) where
     F: FieldCore + CanonicalField,
 {
@@ -146,7 +161,22 @@ fn decompose_commit_block_rows_into<F, const D: usize>(
         debug_assert!(dst.iter().all(|plane| plane.iter().all(|&d| d == 0)));
         return;
     }
-    decompose_commit_rows_i8_into(block_rows, dst, num_digits_open, log_basis);
+    let role_subcolumns = D_A / D_ROLE;
+    let num_digits = dst.len() / (block_rows.len() * role_subcolumns);
+    for (row, row_dst) in block_rows
+        .iter()
+        .zip(dst.chunks_mut(role_subcolumns * num_digits))
+    {
+        let (subcolumns, remainder) = row.coefficients().as_chunks::<D_ROLE>();
+        debug_assert!(remainder.is_empty());
+        for (coefficients, subcolumn_dst) in subcolumns.iter().zip(row_dst.chunks_mut(num_digits)) {
+            akita_algebra::balanced_decompose_coefficients_pow2_i8_into(
+                coefficients,
+                subcolumn_dst.as_flattened_mut(),
+                params,
+            );
+        }
+    }
 }
 
 /// Like [`decompose_rows_i8_into`] for inner-commitment digit staging only.
@@ -168,7 +198,7 @@ pub fn decompose_commit_rows_i8_into<F: FieldCore + CanonicalField, const D: usi
     }
 }
 
-#[cfg(any(test, debug_assertions))]
+#[cfg(debug_assertions)]
 fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
     rows: &[CyclotomicRing<F, D>],
     digits: &[[i8; D]],
@@ -199,48 +229,6 @@ fn check_rows_i8_digit_planes<F: FieldCore + CanonicalField, const D: usize>(
                 )));
             }
         }
-    }
-    Ok(())
-}
-
-/// Test helper for inner-commitment digit round-trip checks.
-#[cfg(test)]
-pub fn check_decomposed_rows_i8_match<F: FieldCore + CanonicalField, const D: usize>(
-    inner: &crate::CommitInnerWitness<F>,
-    n_a: usize,
-    num_digits_open: usize,
-    log_basis: u32,
-) -> Result<(), AkitaError> {
-    use crate::api::commitment::commit_inner_block_digit_count;
-
-    let decomposed = inner.decomposed_inner_rows_trusted::<D>()?;
-    let planes = decomposed.typed_planes::<D>()?;
-    let expected_block_digits = commit_inner_block_digit_count(n_a, num_digits_open)?;
-    let mut offset = 0usize;
-    for (block_idx, &block_size) in decomposed.block_sizes().iter().enumerate() {
-        let block_digits = &planes[offset..offset + block_size];
-        offset += block_size;
-        let recomposed_block = inner.recomposed_block_trusted::<D>(block_idx)?;
-        if block_digits.len() != expected_block_digits {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {actual} decomposed digits for inner commitment block {block_idx}, expected {expected_block_digits}",
-                actual = block_digits.len(),
-                block_idx = block_idx,
-                expected_block_digits = expected_block_digits
-            )));
-        }
-        if recomposed_block.len() != n_a {
-            return Err(AkitaError::InvalidSetup(format!(
-                "backend returned {actual} rows for inner commitment block {block_idx}, expected {n_a} A rows",
-                actual = recomposed_block.len(),
-                block_idx = block_idx,
-                n_a = n_a
-            )));
-        }
-        check_rows_i8_digit_planes(recomposed_block, block_digits, num_digits_open, log_basis)
-            .map_err(|err| {
-                AkitaError::InvalidSetup(format!("inner commitment block {block_idx}: {err}"))
-            })?;
     }
     Ok(())
 }

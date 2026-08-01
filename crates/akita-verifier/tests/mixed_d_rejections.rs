@@ -28,7 +28,7 @@ fn role_dims_reject_b_larger_than_a() {
         outer: 128,
         opening: 32,
     };
-    validate_role_dims(dims).expect_err("A remains the relation-witness carrier");
+    validate_role_dims(dims).expect_err("B and D dimensions must divide the A-native source");
 }
 
 #[test]

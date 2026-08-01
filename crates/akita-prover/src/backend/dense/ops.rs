@@ -12,7 +12,6 @@ use crate::backend::poly_helpers::{
 };
 use crate::backend::RootTensorProjectionPoly;
 use crate::compute::{CommitInnerPlan, CommitmentComputeBackend};
-use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::protocol::extension_opening_reduction::SparseExtensionOpeningWitness;
 use crate::{CommitInnerWitness, DecomposeFoldWitness};
 use akita_algebra::ring::cyclotomic::decompose_centering_threshold;
@@ -379,8 +378,6 @@ where
             plan.num_digits_inner,
             plan.log_basis_inner,
         )?;
-        let decomposed_inner_rows =
-            decompose_commit_blocks_into::<F, D>(&t, plan.num_digits_outer, plan.log_basis_outer)?;
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 }

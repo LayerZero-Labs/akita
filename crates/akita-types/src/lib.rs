@@ -68,14 +68,13 @@ pub use layout::{
     basis_weights, basis_weights_prefix, block_rings_at_opening, checked_opening_source_index,
     extension_opening_reduction_level_bytes, extension_opening_reduction_proof_bytes, field_bytes,
     gadget_row_scalars, lagrange_weights, monomial_weights, opening_domain_len,
-    packed_digits_bytes, padded_boolean_opening_vars, planned_output_witness_len,
-    planned_w_ring_element_count, proof_ring_vec_bytes, reduce_inner_opening_to_ring_element,
-    ring_opening_point_from_field, shared_d_digit_log_basis, sumcheck_rounds,
-    terminal_response_bytes, try_extension_opening_reduction_level_bytes, validate_role_dims,
-    validate_schedule_ring_dims, BasisMode, CommitmentRingDims, CommittedGroupParams, FlatMatrix,
-    LevelParamsLike, PrecommittedLevelParams, RingMatrixView, RingOpeningPoint, RingRole,
-    MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D, SUPPORTED_CHALLENGE_RING_DIMS,
-    SUPPORTED_RING_DIMS,
+    packed_digits_bytes, padded_boolean_opening_vars, proof_ring_vec_bytes,
+    reduce_inner_opening_to_ring_element, ring_opening_point_from_field, shared_d_digit_log_basis,
+    sumcheck_rounds, terminal_response_bytes, try_extension_opening_reduction_level_bytes,
+    validate_role_dims, validate_schedule_ring_dims, witness_commitment_domain_len, BasisMode,
+    CommitmentRingDims, CommittedGroupParams, FlatMatrix, LevelParamsLike, PrecommittedLevelParams,
+    RingMatrixView, RingOpeningPoint, RingRole, MAX_FOLD_LEVELS, MIN_A_ROLE_FOLD_CHALLENGE_RING_D,
+    SUPPORTED_CHALLENGE_RING_DIMS, SUPPORTED_RING_DIMS,
 };
 pub use ntt_cache::{
     max_safe_crt_accumulation_width, ntt_cache_requires_i16_tail, prepare_compression_ntt_cache,
@@ -135,8 +134,8 @@ pub use schedule::{
 };
 pub use schedule_selection::{schedule_row_digest, OpeningScheduleSelection, ScheduleRowDigest};
 pub use setup_contribution::{
-    ensure_setup_envelope, shared_setup_fold_gadget, SetupContributionGroupInputs,
-    SetupContributionPlan, SetupIndexWeightEvaluator, SetupProjectionGeometry,
+    ensure_setup_envelope, shared_setup_fold_gadget, PreparedRelationAddress,
+    SetupContributionGroupInputs, SetupContributionPlan, SetupProjectionGeometry,
 };
 pub use sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, ScalarCutoff,
@@ -157,5 +156,6 @@ pub use trace_weight::{
 };
 pub use transcript::AppendToTranscript;
 pub use witness::{
-    ChunkedWitnessCfg, MultiChunkProfileId, WitnessLayout, WitnessUnitLayout, MAX_WITNESS_CHUNKS,
+    ChunkedWitnessCfg, MultiChunkProfileId, WitnessLayout, WitnessQuotientRowLayout,
+    WitnessUnitLayout, MAX_WITNESS_CHUNKS,
 };

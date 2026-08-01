@@ -65,7 +65,7 @@ footprints, but verification is still about twice as slow.
 ### 1. Mixed root projections create more verifier work
 
 The root changes from uniform D64 to `256/128/128`. A is twice the common
-relation dimension, so each A carrier contains two D128 relation lanes. The B
+relation dimension, so each A-native source ring projects to two D128 relation lanes. The B
 and D portions of the relation require corresponding projected subcolumns.
 
 The setup-prefix geometry changes as follows:
@@ -82,7 +82,7 @@ has:
 
 - twice the flat field domain;
 - an additional coefficient-axis sumcheck round;
-- extra B/D subcolumns induced by the A carrier ratio;
+- extra B/D subcolumns induced by the A-to-role projection ratio;
 - more setup-index weight evaluation work.
 
 This explains why proof bytes are a poor proxy for verifier work here. The
@@ -146,7 +146,7 @@ requested dimension tuple.
 
 Uniform D64 had hidden two independent-dimension assumptions:
 
-1. `active_setup_field_len` omitted B/D carrier subcolumns. For the mixed root
+1. `active_setup_field_len` omitted B/D projection subcolumns. For the mixed root
    it planned exactly half of the required prefix.
 2. `commit_setup_prefix` used the prefix source dimension for its B
    commitment. A D128 source with a D64 B matrix serialized rows at twice the
@@ -160,7 +160,7 @@ or dimension-mismatched prefix slots.
 
 The following costs are inherent to this exact schedule:
 
-- the `256/128/128` root has two A-carrier lanes over the D128 relation base;
+- the `256/128/128` root has two A-native lanes over the D128 relation base;
 - its setup prefix has a 67,108,864-field padded domain;
 - committing root/precommit matrices invokes D256 and D128 kernels;
 - crossing three dimensions requires prepared setup support for each one.
@@ -180,7 +180,8 @@ that larger D is automatically faster.
 
 ### Preserve existing behavior
 
-Mixed-D planning must be opt-in. When no dimension domain is supplied:
+Mixed-D planning must be opt-in. When the policy domain is exactly the uniform
+setup-generation tuple:
 
 - `PlannerPolicy::ring_dimension` remains the only candidate;
 - existing scalar-D comparison policies remain unchanged;
@@ -235,7 +236,7 @@ That policy can legitimately choose a verifier-slower schedule, because proof
 bytes do not price:
 
 - setup-projection evaluation terms;
-- carrier subcolumns;
+- native projection subcolumns;
 - sumcheck round count;
 - equality-window and setup-index weight work;
 - per-role ring arithmetic.
@@ -276,26 +277,26 @@ schedule after a later transition.
 
 ## Planner implementation status on `feat/planner-per-matrix-d`
 
-The first planner-native cut is an opt-in offline scalar search. It does not
-change the meaning of the current policy. The canonical `find_schedule` entry
-point now requires an explicit dimension domain.
+The first planner-native cut is an opt-in offline scalar search. The canonical
+`find_schedule` entry point reads the catalog-bound dimension domain directly
+from `PlannerPolicy`.
 
 Implemented:
 
-- `RingDimensionSearchDomain` accepts explicit `(d_a, d_b, d_d)` tuples,
-  canonicalizes their order, removes duplicates, validates the A carrier, and
-  requires every role dimension to divide the setup-generation dimension.
-- `find_schedule` searches the supplied domain with
-  `PlannerPolicy::ring_dimension` interpreted as the setup-generation
-  dimension. Uniform callers supply an explicit singleton domain and retain
-  the historical proof-payload objective.
+- `PlannerPolicy::ring_dimension_candidates` carries strictly sorted, unique
+  `(d_a, d_b, d_d)` tuples. Policy validation checks native role-projection
+  geometry and requires
+  every role dimension to divide `PlannerPolicy::ring_dimension`, the setup
+  generation dimension.
+- `find_schedule` searches that policy-bound domain. An exact uniform
+  setup-generation singleton retains the historical proof-payload objective.
 - Root and recursive candidates derive A/B/D SIS keys at their selected role
-  dimensions. B and D physical widths include `d_a / d_role` carrier
+  dimensions. B and D physical widths include `d_a / d_role` projection
   subcolumns; candidates are built directly rather than retargeted afterward.
 - The mixed search enumerates every admitted tuple and valid block split only
   at L0 and L1. Tuples are component-wise non-increasing, L2 through the
-  terminal are uniform D64, and dimensions above the first comparable
-  rank-one matrix are pruned.
+  terminal are uniform D64. Rank-one dimension pruning remains disabled until
+  an equivalence key is proved against the unpruned traversal.
 - Mixed-boundary suffix states retain the required `(setup, proof)`
   alternatives per exact first `CommittedGroupParams`, because the parent
   proof formula sees that first step. Once dimensions freeze at L2, candidate

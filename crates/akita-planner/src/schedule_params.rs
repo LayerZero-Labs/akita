@@ -20,13 +20,13 @@ use akita_types::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisTableKey,
 };
 use akita_types::{
-    intermediate_w_ring_element_count_for_chunks, level_proof_bytes, padded_setup_prefix_len,
-    try_extension_opening_reduction_level_bytes, AkitaScheduleInputs, CommitmentRingDims,
-    CommittedGroupParams, CommittedGroupProfile, DecompositionParams, FoldSchedule,
-    FoldScheduleEstimate, OpeningClaimsLayout, PlannedFoldSchedule, PolynomialGroupLayout,
-    PrecommittedLevelParams, RecursiveFoldParams, RecursiveFoldStep, RootFinalChallenge,
-    RootFinalGroupParams, RootFoldParams, RootFoldStep, RootPrecommittedGroupParams,
-    TerminalFoldParams, TerminalFoldStep, TerminalResponseShape, WitnessLayout, WitnessPartition,
+    level_proof_bytes, padded_setup_prefix_len, try_extension_opening_reduction_level_bytes,
+    AkitaScheduleInputs, CommitmentRingDims, CommittedGroupParams, CommittedGroupProfile,
+    DecompositionParams, FoldSchedule, FoldScheduleEstimate, OpeningClaimsLayout,
+    PlannedFoldSchedule, PolynomialGroupLayout, PrecommittedLevelParams, RecursiveFoldParams,
+    RecursiveFoldStep, RootFinalChallenge, RootFinalGroupParams, RootFoldParams, RootFoldStep,
+    RootPrecommittedGroupParams, TerminalFoldParams, TerminalFoldStep, TerminalResponseShape,
+    WitnessLayout, WitnessPartition,
 };
 
 use crate::PlannerPolicy;
@@ -43,7 +43,7 @@ mod unpruned_search;
 pub use candidate::suffix_opening_layout;
 pub(crate) use candidate::{
     derive_candidate_level_params, derive_candidate_level_params_all_splits,
-    scalar_root_fold_level_params_candidate,
+    planned_next_witness_len, scalar_root_fold_level_params_candidate,
 };
 pub(crate) use setup_score::{
     level_setup_field_elements, terminal_setup_field_elements, MixedScore,
@@ -106,7 +106,7 @@ impl RingDimensionSearchDomain {
             ));
         }
         for dims in &candidates {
-            dims.validate_a_carrier()?;
+            dims.validate_role_projection()?;
             for d in [dims.d_a(), dims.d_b(), dims.d_d()] {
                 if !setup_generation_dimension.is_multiple_of(d) {
                     return Err(AkitaError::InvalidSetup(format!(
@@ -267,7 +267,7 @@ pub(crate) fn materialize_candidate_schedule(
                         commitment,
                     })
                     .collect(),
-                open_commit_matrix: root.params.open_commit_matrix.clone(),
+                open_commit_matrix: root.params.open_commit_matrix,
                 sparse_challenge_config: root.params.fold_challenge_config,
                 witness_partition: witness_partition(root.params.witness_chunk.num_chunks),
             },
@@ -278,7 +278,7 @@ pub(crate) fn materialize_candidate_schedule(
             .into_iter()
             .map(|fold| RecursiveFoldStep {
                 params: RecursiveFoldParams {
-                    open_commit_matrix: fold.params.open_commit_matrix.clone(),
+                    open_commit_matrix: fold.params.open_commit_matrix,
                     sparse_challenge_config: fold.params.fold_challenge_config,
                     incoming_setup_prefix: fold.params.setup_prefix.clone(),
                     witness_partition: witness_partition(fold.params.witness_chunk.num_chunks),
@@ -788,16 +788,12 @@ fn find_schedule_inner(
                     continue;
                 };
 
-                let output_witness_len = intermediate_w_ring_element_count_for_chunks(
+                let output_witness_len = planned_next_witness_len(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?
-                .checked_mul(candidate_dimensions.d_a())
-                .ok_or_else(|| {
-                    AkitaError::InvalidSetup("root next witness length overflow".into())
-                })?;
+                )?;
                 let initial_witness_len_bits = witness_len
                     .checked_mul(field_bits as usize)
                     .ok_or_else(|| {

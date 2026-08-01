@@ -3,7 +3,7 @@
 
 use crate::protocol::ring_switch::RelationMatrixEvaluator;
 use akita_algebra::eq_poly::{EqPolynomial, SplitEqEvals};
-use akita_algebra::ring::{eval_ring_at_pows_fast, scalar_powers};
+use akita_algebra::ring::{eval_ring_at_pows_fast, evaluate_power_sequence_mle};
 use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, ExtField, FieldCore, FromPrimitiveInt};
 use akita_serialization::AkitaSerialize;
@@ -13,7 +13,7 @@ use akita_transcript::labels::{
 use akita_transcript::{sample_ext_challenge, Transcript};
 use akita_types::{
     dispatch_for_field, ensure_setup_envelope, select_setup_prefix_slot, AkitaExpandedSetup,
-    AkitaVerifierSetup, CommittedGroupParams, SetupContributionPlan, SetupIndexWeightEvaluator,
+    AkitaVerifierSetup, CommittedGroupParams, PreparedRelationAddress, SetupContributionPlan,
     SetupSumcheckProof, SETUP_SUMCHECK_DEGREE,
 };
 
@@ -25,9 +25,7 @@ use akita_types::{
 /// evaluation, then call [`verify_stage3`](Self::verify_stage3)
 /// with the proof and transcript.
 pub(crate) struct SetupSumcheckVerifier<E: FieldCore> {
-    plan: SetupContributionPlan<E>,
-    setup_index_weight_evaluator: Option<SetupIndexWeightEvaluator<E>>,
-    alpha_pows: Vec<E>,
+    setup_contribution_plan: SetupContributionPlan<E>,
     alpha: E,
     ring_bits: usize,
     rounds: usize,
@@ -44,7 +42,6 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
     pub(crate) fn new<F>(
         relation_matrix_evaluator: &RelationMatrixEvaluator<E>,
         x_challenges: &[E],
-        tau1: &[E],
         alpha: E,
     ) -> Result<Self, AkitaError>
     where
@@ -57,32 +54,15 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             .map_or_else(
                 || {
                     relation_matrix_evaluator.setup_contribution_plan::<F>(
-                        x_challenges,
+                        PreparedRelationAddress::new(x_challenges)?,
                         fold_gadget.as_deref(),
-                        alpha,
                     )
                 },
                 Ok,
             )?;
         let geometry = plan.projection_geometry();
-        let alpha_pows = scalar_powers(alpha, geometry.alpha_power_len());
-        let setup_index_weight_evaluator = fold_gadget
-            .as_deref()
-            .map(|fold_gadget| {
-                relation_matrix_evaluator.setup_index_weight_evaluator::<F>(
-                    &plan,
-                    tau1,
-                    x_challenges,
-                    fold_gadget,
-                    alpha,
-                )
-            })
-            .transpose()?
-            .flatten();
         Ok(Self {
-            plan,
-            setup_index_weight_evaluator,
-            alpha_pows,
+            setup_contribution_plan: plan,
             alpha,
             ring_bits: geometry.ring_bits(),
             rounds: geometry.rounds(),
@@ -104,13 +84,22 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let ring_d = self.plan.projection_geometry().base_ring_dim();
+        let ring_d = self
+            .setup_contribution_plan
+            .projection_geometry()
+            .base_ring_dim();
         if ring_d == 0 {
             return Err(AkitaError::InvalidSetup(
                 "Stage 3 setup ring dimension must be nonzero".into(),
             ));
         }
-        let setup_len = setup.expanded.shared_matrix().num_field_elements() / ring_d;
+        let setup_field_len = setup.expanded.shared_matrix().num_field_elements();
+        if !setup_field_len.is_multiple_of(ring_d) {
+            return Err(AkitaError::InvalidSetup(
+                "shared setup field length is not divisible by Stage 3 ring dimension".into(),
+            ));
+        }
+        let setup_len = setup_field_len / ring_d;
         let setup_eval_len = self.setup_eval_len::<F, T>(
             setup,
             next_fold_level_params,
@@ -151,7 +140,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         T: Transcript<F>,
     {
         if next_fold_level_params.setup_prefix.is_some() {
-            let geometry = self.plan.projection_geometry();
+            let geometry = self.setup_contribution_plan.projection_geometry();
             let natural_field_len = geometry.natural_field_len();
             ensure_setup_envelope(&setup.expanded, geometry.required(), ring_d)?;
             let setup_prefix_selection = select_setup_prefix_slot(
@@ -195,7 +184,7 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
         E: ExtField<F> + FromPrimitiveInt + AkitaSerialize + akita_field::MulBaseUnreduced<F>,
         T: Transcript<F>,
     {
-        let required = self.plan.required();
+        let required = self.setup_contribution_plan.required();
         transcript.append_serde(ABSORB_SUMCHECK_CLAIM, &proof.claim);
         let (final_claim, challenges) = proof.sumcheck.verify::<F, _, _>(
             proof.claim,
@@ -227,19 +216,11 @@ impl<E: FieldCore> SetupSumcheckVerifier<E> {
             }
         };
         let setup_index_weight = {
-            let _span = tracing::info_span!(
-                "stage3_setup_index_weight_eval",
-                uniform = self.setup_index_weight_evaluator.is_some()
-            )
-            .entered();
-            if let Some(evaluator) = &self.setup_index_weight_evaluator {
-                evaluator.evaluate(rho_setup_idx)?
-            } else {
-                self.plan
-                    .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
-            }
+            let _span = tracing::info_span!("stage3_setup_index_weight_eval").entered();
+            self.setup_contribution_plan
+                .evaluate_setup_index_weight_mle(rho_setup_idx, self.alpha)?
         };
-        let alpha_val = eval_dense_table_with_eq(&self.alpha_pows, &eq_y)?;
+        let alpha_val = evaluate_power_sequence_mle(self.alpha, rho_y);
         let setup_term = setup_val * setup_index_weight * alpha_val;
         if final_claim != setup_term {
             return Err(AkitaError::InvalidProof);
@@ -260,24 +241,6 @@ fn ring_eq_table<E: FieldCore, const D: usize>(rho_y: &[E]) -> Result<Vec<E>, Ak
         });
     }
     Ok(eq_y)
-}
-
-fn eval_dense_table_with_eq<E: FieldCore>(evals: &[E], eq: &[E]) -> Result<E, AkitaError> {
-    if evals.len() != eq.len() {
-        return Err(AkitaError::InvalidSize {
-            expected: evals.len(),
-            actual: eq.len(),
-        });
-    }
-    Ok(cfg_fold_reduce!(
-        0..evals.len(),
-        E::zero,
-        |mut acc, idx| {
-            acc += evals[idx] * eq[idx];
-            acc
-        },
-        |lhs, rhs| lhs + rhs
-    ))
 }
 
 fn setup_mle_at_eq_tables<F, E, const D: usize>(

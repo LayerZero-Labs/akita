@@ -192,7 +192,7 @@ Implemented now:
   `AkitaScheduleLookupKey::single(final_group)` and delegates to the scalar
   scheduler. A multi-group key goes through generated group-batch lookup first, then
   DP fallback.
-- `find_group_batch_schedule` builds folded-root schedules for dense or one-hot,
+- `find_schedule` builds folded-root schedules for dense or one-hot,
   non-tiered configs. Unsupported keys return `UnsupportedSchedule`. The
   multi-group root `LevelParams` holds
   the final group in the normal root fields and all precommitted groups in

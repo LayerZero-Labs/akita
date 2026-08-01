@@ -1217,7 +1217,7 @@ fn active_setup_projection_geometry(
         let group_params = level_params.group_params(opening_batch, group_index)?;
         let group_role_dims = level_params.group_role_dims(opening_batch, group_index)?;
         let (b_subcolumns, d_subcolumns) =
-            crate::SetupProjectionGeometry::a_carrier_subcolumn_counts(group_role_dims)?;
+            crate::SetupProjectionGeometry::native_role_subcolumn_counts(group_role_dims)?;
         let a_cols = group_params
             .num_positions_per_block()
             .checked_mul(group_params.num_digits_inner())
@@ -1248,10 +1248,6 @@ fn active_setup_projection_geometry(
             b_rows: group_params.b_rows_len(),
             b_cols,
             d_active_cols,
-            // Prefix sizing consumes only the physical footprint. Stage 3
-            // fills these work-only fields from the witness layout.
-            ownership_units: 0,
-            depth_fold: 0,
         });
     }
     crate::SetupProjectionGeometry::from_groups(

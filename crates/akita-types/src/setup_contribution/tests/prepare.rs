@@ -1,6 +1,20 @@
 use super::*;
 
 #[test]
+fn prepared_relation_address_clones_share_the_equality_window() {
+    let point = (0..12)
+        .map(|index| test_scalar(17 + index as u128))
+        .collect::<Vec<_>>();
+    let prepared = PreparedRelationAddress::new(&point).unwrap();
+    let shared = prepared.clone();
+    assert!(std::sync::Arc::ptr_eq(
+        &prepared.equality_window,
+        &shared.equality_window,
+    ));
+    assert!(std::sync::Arc::ptr_eq(&prepared.point, &shared.point));
+}
+
+#[test]
 fn dense_z_eq_slice_uses_relative_high_carry() {
     let num_positions_per_block = 16;
     let depth_commit = 3;
@@ -38,14 +52,14 @@ fn dense_z_eq_slice_uses_relative_high_carry() {
         prepare_single_group_plan(&inputs, &full_vec_randomness, &fold_gadget, &layout).unwrap();
     let expected = expected_z_setup_weights(
         &layout,
-        layout.total_len(),
+        layout.live_coeff_len(),
         0,
         num_positions_per_block,
         depth_commit,
         &fold_gadget,
         &full_vec_randomness,
     );
-    assert_eq!(plan.groups[0].z_eq_slice, expected);
+    assert_eq!(plan.groups[0].column_eq_slices().unwrap().2, expected);
 }
 
 #[test]
@@ -82,18 +96,19 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     );
     lp.num_digits_fold = 2;
     let opening_batch = OpeningClaimsLayout::new(0, 2).expect("opening batch");
+    let depth_fold = lp.num_digits_fold();
     let rows = lp
         .relation_matrix_row_count(opening_batch.num_groups())
         .unwrap();
     let group = SetupContributionGroupInputs {
         group_id: 0,
         num_claims: 2,
-        depth_fold: 2,
+        depth_fold,
         a_row_start: 1,
         b_row_start: 2,
     };
-    let witness_layout = test_witness_layout(2, 3, 8, 3, 2, 2, 1, 1, rows, 2);
-    let opening_source_len = witness_layout.total_len();
+    let witness_layout = WitnessLayout::new(&lp, &opening_batch, 1, 2).unwrap();
+    let opening_source_len = witness_layout.live_coeff_len();
     let eq_tau1 = (0..rows.next_power_of_two())
         .map(|idx| test_scalar(11 + idx as u128))
         .collect::<Vec<_>>()
@@ -106,16 +121,15 @@ fn prepare_accepts_exact_non_pow2_fold_count() {
     .unwrap();
     let full_vec_randomness =
         vec![F::one(); relation_address_geometry.relation_lane_variable_count()];
-    assert!(SetupContributionPlan::prepare::<F>(
+    let prepared = SetupContributionPlan::prepare::<F>(
         &lp,
         &opening_batch,
         eq_tau1,
         &witness_layout,
         &[group],
-        &full_vec_randomness,
+        PreparedRelationAddress::new(&full_vec_randomness).unwrap(),
         None,
         relation_address_geometry,
-        test_scalar(3),
-    )
-    .is_ok());
+    );
+    assert!(prepared.is_ok(), "{:#?}", prepared.err());
 }
