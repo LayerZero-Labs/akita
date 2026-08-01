@@ -755,12 +755,15 @@ fn find_schedule_inner(
                     continue;
                 };
 
-                let output_witness_len = planned_next_witness_len(
+                let Some(output_witness_len) = planned_next_witness_len(
                     field_bits,
                     &candidate_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?;
+                )?
+                else {
+                    continue;
+                };
                 let initial_witness_len_bits = witness_len
                     .checked_mul(field_bits as usize)
                     .ok_or_else(|| {

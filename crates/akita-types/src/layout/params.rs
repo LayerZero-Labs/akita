@@ -14,6 +14,7 @@ use crate::proof::{
     CompressionRelationAddressGeometry, RelationAddressGeometry, RelationRowFamily,
     SetupPrefixSlotId,
 };
+use crate::CompressionChainPlan;
 
 pub use crate::sis::{
     InnerCommitMatrixParams, OpenCommitMatrixParams, OuterCommitMatrixParams, SisModulusProfileId,
@@ -136,6 +137,51 @@ pub struct CommittedGroupParams {
 }
 
 impl CommittedGroupParams {
+    /// Whether every B/D image at this level fits the compression policy cap.
+    pub fn compression_sources_supported(&self) -> Result<bool, AkitaError> {
+        let final_outer = self
+            .outer_commit_matrix
+            .output_rank()
+            .checked_mul(self.role_dims().d_b())
+            .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
+        if CompressionChainPlan::try_for_complete_source(
+            self.outer_commit_matrix.sis_modulus_profile(),
+            final_outer,
+        )?
+        .is_none()
+        {
+            return Ok(false);
+        }
+        for group in self.precommitted_group_iter() {
+            let source = group
+                .layout
+                .outer_commit_matrix
+                .output_rank()
+                .checked_mul(group.layout.outer_commit_matrix.ring_dimension())
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("precommitted B compression shape overflow".into())
+                })?;
+            if CompressionChainPlan::try_for_complete_source(
+                group.layout.outer_commit_matrix.sis_modulus_profile(),
+                source,
+            )?
+            .is_none()
+            {
+                return Ok(false);
+            }
+        }
+        let opening = self
+            .open_commit_matrix
+            .output_rank()
+            .checked_mul(self.role_dims().d_d())
+            .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
+        Ok(CompressionChainPlan::try_for_complete_source(
+            self.open_commit_matrix.sis_modulus_profile(),
+            opening,
+        )?
+        .is_some())
+    }
+
     /// Largest gadget basis accepted by this level's shared D product.
     #[must_use]
     pub fn shared_d_digit_log_basis(&self) -> u32 {

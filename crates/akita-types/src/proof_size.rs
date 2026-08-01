@@ -7,8 +7,8 @@
 //! proof (`schedule_from_entry`) lives in `akita-planner`, next to the
 //! schedule-table representation it consumes.
 
-use crate::layout::{field_bytes, proof_ring_vec_bytes, sumcheck_rounds};
-use crate::{CommittedGroupParams, DigitRangePlan};
+use crate::layout::{field_bytes, sumcheck_rounds};
+use crate::{CommittedGroupParams, CompressionChainPlan, DigitRangePlan};
 use akita_field::AkitaError;
 
 /// Fixed wire size of `fold_grind_nonce` on every fold level proof.
@@ -37,10 +37,10 @@ fn stage1_proof_bytes(rounds: usize, b: usize, elem_bytes: usize) -> usize {
 
 /// Header-stripped byte size of one non-terminal folded proof level.
 ///
-/// Ring-valued objects (`y`, `v`, next-witness commitment) serialize over
-/// the base SIS field. Sumcheck objects and scalar evaluations serialize
-/// over the challenge field, which may be a non-trivial extension of the
-/// base field for small-prime configurations.
+/// Compressed D and B images serialize as fixed-size base-field payloads.
+/// Sumcheck objects and scalar evaluations serialize over the challenge field,
+/// which may be a non-trivial extension of the base field for small-prime
+/// configurations.
 ///
 /// This prices the **direct-mode** folded payload only
 /// (`SetupContributionMode::Direct`): the y/v ring blocks, the stage-1
@@ -70,15 +70,21 @@ pub fn level_proof_bytes(
     output_witness_len: usize,
     next_witness_binding: Option<crate::NextWitnessBindingPolicy>,
 ) -> Result<usize, AkitaError> {
-    let base_elem_bytes = field_bytes(base_field_bits);
     let challenge_elem_bytes = field_bytes(challenge_field_bits);
     let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
     let sumcheck = sumcheck_bytes(rounds, 3, challenge_elem_bytes);
-    let v_bytes = proof_ring_vec_bytes(
-        lp.open_commit_matrix.output_rank(),
-        lp.role_dims().d_d(),
-        base_elem_bytes,
-    );
+    let v_source_coefficients = lp
+        .open_commit_matrix
+        .output_rank()
+        .checked_mul(lp.role_dims().d_d())
+        .ok_or_else(|| AkitaError::InvalidSetup("D compression shape overflow".into()))?;
+    let v_bytes = compressed_payload_bytes(
+        base_field_bits,
+        &CompressionChainPlan::for_complete_source(
+            lp.open_commit_matrix.sis_modulus_profile(),
+            v_source_coefficients,
+        )?,
+    )?;
     let next_commit_bytes = match next_witness_binding {
         Some(crate::NextWitnessBindingPolicy::OuterCommitment) => {
             let next_lp = next_lp.ok_or_else(|| {
@@ -86,11 +92,18 @@ pub fn level_proof_bytes(
                     "outer-commitment level proof is missing successor params".to_string(),
                 )
             })?;
-            proof_ring_vec_bytes(
-                next_lp.outer_commit_matrix.output_rank(),
-                next_lp.role_dims().d_b(),
-                base_elem_bytes,
-            )
+            let source_coefficients = next_lp
+                .outer_commit_matrix
+                .output_rank()
+                .checked_mul(next_lp.role_dims().d_b())
+                .ok_or_else(|| AkitaError::InvalidSetup("B compression shape overflow".into()))?;
+            compressed_payload_bytes(
+                base_field_bits,
+                &CompressionChainPlan::for_complete_source(
+                    next_lp.outer_commit_matrix.sis_modulus_profile(),
+                    source_coefficients,
+                )?,
+            )?
         }
         Some(crate::NextWitnessBindingPolicy::TerminalInnerState) => 0,
         None => {
@@ -108,6 +121,20 @@ pub fn level_proof_bytes(
         + sumcheck
         + next_commit_bytes
         + next_eval_bytes)
+}
+
+fn compressed_payload_bytes(
+    base_field_bits: u32,
+    plan: &CompressionChainPlan,
+) -> Result<usize, AkitaError> {
+    if base_field_bits as usize != plan.field_bits() {
+        return Err(AkitaError::InvalidSetup(
+            "compression profile disagrees with the base field width".into(),
+        ));
+    }
+    plan.terminal_coefficients()
+        .checked_mul(plan.field_bytes())
+        .ok_or_else(|| AkitaError::InvalidSetup("compressed payload byte length overflow".into()))
 }
 
 /// Header-stripped byte size of the recursive-mode stage-3 setup-product
@@ -263,20 +290,26 @@ mod tests {
         stage3_setup_ring_len: Option<usize>,
         next_witness_binding: crate::NextWitnessBindingPolicy,
     ) -> Result<usize, AkitaError> {
-        let current_coeffs = lp
+        let current_source_coeffs = lp
             .open_commit_matrix
             .output_rank()
             .checked_mul(lp.role_dims().d_d())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
-        let next_commit_coeffs = next_lp
+            .ok_or_else(|| AkitaError::InvalidSetup("D compression overflow".to_string()))?;
+        let current_coeffs = CompressionChainPlan::for_complete_source(
+            lp.open_commit_matrix.sis_modulus_profile(),
+            current_source_coeffs,
+        )?
+        .terminal_coefficients();
+        let next_source_coeffs = next_lp
             .outer_commit_matrix
             .output_rank()
             .checked_mul(next_lp.role_dims().d_b())
-            .ok_or_else(|| {
-                AkitaError::InvalidSetup("recursive proof sizing overflow".to_string())
-            })?;
+            .ok_or_else(|| AkitaError::InvalidSetup("B compression overflow".to_string()))?;
+        let next_commit_coeffs = CompressionChainPlan::for_complete_source(
+            next_lp.outer_commit_matrix.sis_modulus_profile(),
+            next_source_coeffs,
+        )?
+        .terminal_coefficients();
         let rounds = sumcheck_rounds(lp.d_a(), output_witness_len);
         let b = 1usize << lp.log_basis_open;
 
@@ -357,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn planned_level_bytes_use_native_d_and_successor_b_dimensions() {
+    fn planned_level_bytes_use_fixed_compressed_d_and_successor_b_payloads() {
         const D_A: usize = 128;
         let fold_challenge_config = SparseChallengeConfig::pm1_only(3);
         let mut lp = CommittedGroupParams::params_only(
@@ -483,12 +516,7 @@ mod tests {
             Some(crate::NextWitnessBindingPolicy::TerminalInnerState),
         )
         .unwrap();
-        let expected_outer_commitment = proof_ring_vec_bytes(
-            next_lp.outer_commit_matrix.output_rank(),
-            D,
-            field_bytes(128),
-        );
-        assert_eq!(outer - terminal_inner, expected_outer_commitment);
+        assert_eq!(outer - terminal_inner, crate::COMPRESSION_TARGET_BYTES);
         assert_eq!(
             terminal_inner,
             exact_level_proof_bytes::<F>(

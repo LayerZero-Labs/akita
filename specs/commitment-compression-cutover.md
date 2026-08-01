@@ -398,6 +398,15 @@ Schedule generation runs only after these quantities use the same canonical
 types as the prover and verifier. Generated schedule files are never edited by
 hand.
 
+Direct per-level proof pricing charges one 128 byte `p_H` payload. An
+`OuterCommitment` successor edge also charges one 128 byte `p_F` payload. A
+`TerminalInnerState` edge charges no duplicate F payload. Successor witness
+length comes only from `WitnessLayout`, including quotient rows, F/H digits,
+and derived zero alignment. Setup capacity includes the largest physical field
+prefix of either map for every B/D source. A cap-exceeding source makes only
+that planner candidate infeasible; strict runtime plan construction still
+rejects it as invalid input.
+
 ## Incremental Implementation Sequence
 
 The work proceeds in the following order. Every slice must format, compile, and

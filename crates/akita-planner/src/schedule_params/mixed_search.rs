@@ -300,12 +300,15 @@ pub(super) fn find_schedule(
                 else {
                     continue;
                 };
-                let output_witness_len = planned_next_witness_len(
+                let Some(output_witness_len) = planned_next_witness_len(
                     field_bits,
                     &root_params,
                     key.num_polynomials(),
                     root_num_chunks,
-                )?;
+                )?
+                else {
+                    continue;
+                };
                 if output_witness_len
                     .checked_mul(log_basis as usize)
                     .ok_or_else(|| AkitaError::InvalidSetup("mixed bit length overflow".into()))?

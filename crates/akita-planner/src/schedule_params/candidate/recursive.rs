@@ -374,12 +374,15 @@ fn recursive_level_candidate_for_split(
             total_d_width,
         )?;
     }
-    let next_witness_len = planned_next_witness_len(
+    let Some(next_witness_len) = planned_next_witness_len(
         policy.decomposition.field_bits(),
         &candidate_params,
         1,
         search.num_chunks,
-    )?;
+    )?
+    else {
+        return Ok(None);
+    };
     let score = layout_candidate_score(
         next_witness_len,
         candidate_params.num_live_blocks,

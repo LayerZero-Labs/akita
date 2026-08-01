@@ -257,16 +257,19 @@ pub(crate) fn multi_group_root_next_w_len(
     field_bits: u32,
     params: &CommittedGroupParams,
     opening_batch: &OpeningClaimsLayout,
-) -> Result<usize, AkitaError> {
+) -> Result<Option<usize>, AkitaError> {
     params.witness_chunk.validate()?;
     params.validate_opening_batch(opening_batch)?;
+    if !params.compression_sources_supported()? {
+        return Ok(None);
+    }
     let witness_layout = WitnessLayout::new(
         params,
         opening_batch,
         params.witness_chunk.num_chunks,
         compute_num_digits_field_width(field_bits, params.log_basis_open),
     )?;
-    Ok(witness_layout.live_coeff_len())
+    Ok(Some(witness_layout.live_coeff_len()))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -343,8 +346,11 @@ pub(crate) fn multi_group_root_level_candidates_for_basis(
             continue;
         }
         candidate_params.witness_chunk = policy.witness_chunk_for_level(0);
-        let output_witness_len =
-            multi_group_root_next_w_len(field_bits, &candidate_params, &opening_batch)?;
+        let Some(output_witness_len) =
+            multi_group_root_next_w_len(field_bits, &candidate_params, &opening_batch)?
+        else {
+            continue;
+        };
         if output_witness_len
             .checked_mul(candidate_log_basis as usize)
             .ok_or_else(|| {

@@ -4,8 +4,8 @@ use akita_field::AkitaError;
 
 use super::setup_prefix::{active_setup_field_len, suffix_opening_layout};
 use crate::{
-    CommittedGroupParams, FoldSchedule, OpeningClaimsLayout, SetupMatrixCapacity,
-    SetupPrefixSlotId, TerminalCommittedGroupParams,
+    CommittedGroupParams, CompressionChainPlan, FoldSchedule, OpeningClaimsLayout,
+    SetupMatrixCapacity, SetupPrefixSlotId, SisModulusProfileId, TerminalCommittedGroupParams,
 };
 
 /// Compute the exact maximum reusable setup-matrix field prefix required by
@@ -106,6 +106,13 @@ pub fn accumulate_matrix_field_elements_for_level(
         params.outer_commit_matrix.ring_dimension(),
         "outer setup",
     )?;
+    include_compression_setup(
+        max_field_elements,
+        params.outer_commit_matrix.sis_modulus_profile(),
+        params.outer_commit_matrix.output_rank(),
+        params.role_dims().d_b(),
+        "outer compression setup",
+    )?;
     include_matrix_field_elements(
         max_field_elements,
         params.open_commit_matrix.output_rank(),
@@ -128,7 +135,21 @@ pub fn accumulate_matrix_field_elements_for_level(
             group.layout.outer_commit_matrix.ring_dimension(),
             "precommitted outer setup",
         )?;
+        include_compression_setup(
+            max_field_elements,
+            group.layout.outer_commit_matrix.sis_modulus_profile(),
+            group.layout.outer_commit_matrix.output_rank(),
+            group.layout.outer_commit_matrix.ring_dimension(),
+            "precommitted outer compression setup",
+        )?;
     }
+    include_compression_setup(
+        max_field_elements,
+        params.open_commit_matrix.sis_modulus_profile(),
+        params.open_commit_matrix.output_rank(),
+        params.role_dims().d_d(),
+        "opening compression setup",
+    )?;
     if let Some(slot) = &params.setup_prefix {
         *max_field_elements = (*max_field_elements).max(setup_prefix_slot_field_elements(slot)?);
     }
@@ -174,7 +195,29 @@ pub fn setup_prefix_slot_field_elements(slot: &SetupPrefixSlotId) -> Result<usiz
         params.layout.outer_commit_matrix.ring_dimension(),
         "setup-prefix outer setup",
     )?;
+    include_compression_setup(
+        &mut max_field_elements,
+        params.layout.outer_commit_matrix.sis_modulus_profile(),
+        params.layout.outer_commit_matrix.output_rank(),
+        params.layout.outer_commit_matrix.ring_dimension(),
+        "setup-prefix outer compression setup",
+    )?;
     Ok(max_field_elements)
+}
+
+fn include_compression_setup(
+    max_field_elements: &mut usize,
+    profile: SisModulusProfileId,
+    rows: usize,
+    ring_dimension: usize,
+    role: &'static str,
+) -> Result<(), AkitaError> {
+    let source_coefficients = rows
+        .checked_mul(ring_dimension)
+        .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} source shape overflow")))?;
+    let chain = CompressionChainPlan::for_complete_source(profile, source_coefficients)?;
+    *max_field_elements = (*max_field_elements).max(chain.max_setup_field_elements()?);
+    Ok(())
 }
 
 fn include_matrix_field_elements(
@@ -190,4 +233,50 @@ fn include_matrix_field_elements(
         .ok_or_else(|| AkitaError::InvalidSetup(format!("{role} envelope overflow")))?;
     *max_field_elements = (*max_field_elements).max(field_elements);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::SisModulusProfileId;
+    use akita_challenges::SparseChallengeConfig;
+
+    #[test]
+    fn level_envelope_includes_outer_and_opening_compression_maps() {
+        let params = CommittedGroupParams::params_only(
+            SisModulusProfileId::Q128OffsetA7F7,
+            64,
+            4,
+            2,
+            2,
+            2,
+            SparseChallengeConfig::pm1_only(3),
+        )
+        .with_decomp(1, 1, 1, 1, 1)
+        .expect("params");
+        let outer_source = params.outer_commit_matrix.output_rank() * params.role_dims().d_b();
+        let opening_source = params.open_commit_matrix.output_rank() * params.role_dims().d_d();
+        let expected = [
+            CompressionChainPlan::for_complete_source(
+                params.outer_commit_matrix.sis_modulus_profile(),
+                outer_source,
+            )
+            .expect("outer compression")
+            .max_setup_field_elements()
+            .expect("outer setup"),
+            CompressionChainPlan::for_complete_source(
+                params.open_commit_matrix.sis_modulus_profile(),
+                opening_source,
+            )
+            .expect("opening compression")
+            .max_setup_field_elements()
+            .expect("opening setup"),
+        ]
+        .into_iter()
+        .max()
+        .expect("compression setup maximum");
+        let mut actual = 1;
+        accumulate_matrix_field_elements_for_level(&params, &mut actual).expect("level envelope");
+        assert_eq!(actual, expected);
+    }
 }

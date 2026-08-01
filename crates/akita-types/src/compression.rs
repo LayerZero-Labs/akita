@@ -290,6 +290,21 @@ impl CompressionChainPlan {
         modulus_profile: SisModulusProfileId,
         source_coefficients: usize,
     ) -> Result<Self, AkitaError> {
+        Self::try_for_complete_source(modulus_profile, source_coefficients)?.ok_or_else(|| {
+            let (field_bits, _) = profile_geometry(modulus_profile);
+            let source_bytes = source_coefficients.saturating_mul(field_bits.div_ceil(8));
+            AkitaError::InvalidInput(format!(
+                "compression source is {source_bytes} bytes, exceeding the {MAX_COMPRESSION_INPUT_BYTES}-byte maximum"
+            ))
+        })
+    }
+
+    /// Candidate-aware derivation. `None` means only that the source exceeds
+    /// the protocol cap; malformed and uncertified shapes remain errors.
+    pub fn try_for_complete_source(
+        modulus_profile: SisModulusProfileId,
+        source_coefficients: usize,
+    ) -> Result<Option<Self>, AkitaError> {
         let (field_bits, first_ring_dimension) = profile_geometry(modulus_profile);
         let field_bytes = field_bits.div_ceil(8);
         let source_bytes = source_coefficients
@@ -297,8 +312,11 @@ impl CompressionChainPlan {
             .ok_or_else(|| {
                 AkitaError::InvalidSetup("compression source byte length overflow".into())
             })?;
-        if source_coefficients == 0 || source_bytes > MAX_COMPRESSION_INPUT_BYTES {
-            return Self::new(modulus_profile, source_coefficients, Vec::new());
+        if source_coefficients == 0 {
+            return Self::new(modulus_profile, source_coefficients, Vec::new()).map(Some);
+        }
+        if source_bytes > MAX_COMPRESSION_INPUT_BYTES {
+            return Ok(None);
         }
         let mut maps = Vec::with_capacity(COMPRESSION_MAP_COUNT);
         let mut input_coefficients = source_coefficients;
@@ -319,7 +337,7 @@ impl CompressionChainPlan {
             })?;
             maps.push(map);
             if output_bytes == COMPRESSION_TARGET_BYTES {
-                return Self::new(modulus_profile, source_coefficients, maps);
+                return Self::new(modulus_profile, source_coefficients, maps).map(Some);
             }
             if output_bytes < COMPRESSION_TARGET_BYTES {
                 return Err(AkitaError::InvalidSetup(
@@ -389,6 +407,20 @@ impl CompressionChainPlan {
             total.checked_add(map.real_digit_count()).ok_or_else(|| {
                 AkitaError::InvalidSetup("compression unpacked witness bytes overflow".into())
             })
+        })
+    }
+
+    /// Largest universal-setup matrix prefix required by any map in fields.
+    pub fn max_setup_field_elements(&self) -> Result<usize, AkitaError> {
+        self.maps.iter().try_fold(0usize, |maximum, map| {
+            let fields = map
+                .output_rank()
+                .checked_mul(map.input_width())
+                .and_then(|len| len.checked_mul(map.ring_dimension()))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression setup envelope overflow".into())
+                })?;
+            Ok(maximum.max(fields))
         })
     }
 }
@@ -701,6 +733,16 @@ mod tests {
             );
             assert_eq!(plan.policy(), COMPRESSION_POLICY);
             assert_eq!(plan.terminal_coefficients() * field_bytes, 128);
+            assert_eq!(
+                plan.max_setup_field_elements().unwrap(),
+                plan.maps()[0].padded_digit_count()
+            );
+            assert!(CompressionChainPlan::try_for_complete_source(
+                profile,
+                MAX_COMPRESSION_INPUT_BYTES / field_bytes + 1
+            )
+            .unwrap()
+            .is_none());
             assert!(CompressionChainPlan::for_complete_source(
                 profile,
                 MAX_COMPRESSION_INPUT_BYTES / field_bytes + 1
