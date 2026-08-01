@@ -26,7 +26,13 @@ pub(in crate::protocol::core) fn prepare_extension_claim_fold<'a, F, E, T, P, V,
     basis: BasisMode,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + RandomSampling
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>

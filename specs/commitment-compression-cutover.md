@@ -254,12 +254,17 @@ The canonical order is:
 
 ```text
 [all chunk units Z | E | T]
-[relation quotient digits R, with compression rows last]
+[ordinary relation quotient digits R for consistency, A, B, and D]
 [derived zero alignment padding]
 [F_1 digits for each relation group]
 [H_1 digits]
+[F_1 quotient digits for each relation group]
+[H_1 quotient digits]
+[derived layer alignment padding, when needed]
 [F_2 digits for each relation group]
 [H_2 digits]
+[F_2 quotient digits for each relation group]
+[H_2 quotient digits]
 [derived zero suffix padding, when needed]
 ```
 
@@ -268,21 +273,25 @@ group comes first. Precommitted groups follow in their canonical order. The H
 chain is shared by the level and appears once.
 
 Compression is the final physical witness tail because its native dimensions
-are smaller. The R block stays contiguous. Its existing A, B, and D quotient
-rows come first and its F and H quotient rows come last, immediately before the
-compression digit tail except for zero padding derived by `WitnessLayout`.
-The padding aligns the flat witness length to the unchanged A, B, and D common
-coefficient block. It is witness data, not serialized metadata. This avoids a
-small-dimension to large-dimension reset in the physical layout.
+are smaller. Each layer keeps its F/H negative-binary digits together with the
+quotient digits for the same map. The first layer precedes the lower-dimension
+second layer. The shared-tail envelope is contiguous, but compression quotient
+rows are intentionally not a separate physical block. Padding is derived by
+`WitnessLayout` at the ordinary-to-compression boundary, between layers when
+needed, and at the suffix. It aligns the flat witness length to the unchanged
+A, B, and D common coefficient block. It is witness data, not serialized
+metadata. This avoids every small-dimension to large-dimension reset in the
+physical layout.
 
 Digits remain the innermost coordinate. The layout stores the complete padded
 ring rows for every map. `WitnessLayout` is the only authority for all F, H,
 and R coefficient addresses.
 
-The negative binary support is the union of all F and H digit ranges. The
-support is represented as sorted intervals derived from `WitnessLayout`. It is
-not materialized as a witness sized bitmap. Alignment padding is outside this
-support and is fixed to zero by witness construction.
+The negative binary support is the union of all F and H digit ranges. Each
+layer contributes one sorted interval; its adjacent quotient digits are not in
+the support. The intervals are derived from `WitnessLayout`, not materialized
+as a witness sized bitmap. Alignment padding is outside this support and is
+fixed to zero by witness construction.
 
 ## Relation Layout
 

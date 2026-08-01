@@ -5,7 +5,7 @@
 #![cfg_attr(not(any(test, feature = "compression-diagnostics")), allow(dead_code))]
 
 use super::{CompressionComputeBackend, OperationCtx};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
     dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
     CompressionTerminalPayload, PackedNegativeBinary, RingVec,
@@ -28,6 +28,8 @@ pub(crate) struct CompressionExecutionOutput<Id, F> {
     pub(crate) id: Id,
     pub(crate) witness: CompressionChainWitness,
     pub(crate) terminal: CompressionTerminalPayload<F>,
+    /// One native-ring quotient image per compression map.
+    pub(crate) quotients: Vec<RingVec<F>>,
 }
 
 /// Measurements for one bounded exact-shape kernel batch.
@@ -71,6 +73,30 @@ struct WorkItem<Id, F> {
     plan: CompressionChainPlan,
     coefficients: Vec<F>,
     stages: Vec<PackedNegativeBinary>,
+    quotients: Vec<RingVec<F>>,
+}
+
+fn quotient_from_products<F: FieldCore + HalvingField, const D: usize>(
+    cyclic: &[akita_algebra::CyclotomicRing<F, D>],
+    negacyclic: &[akita_algebra::CyclotomicRing<F, D>],
+) -> Result<RingVec<F>, AkitaError> {
+    if cyclic.len() != negacyclic.len() {
+        return Err(AkitaError::InvalidSetup(
+            "compression cyclic and negacyclic ranks disagree".into(),
+        ));
+    }
+    let coefficients = cyclic
+        .iter()
+        .zip(negacyclic)
+        .flat_map(|(cyclic, negacyclic)| {
+            cyclic
+                .coefficients()
+                .iter()
+                .zip(negacyclic.coefficients())
+                .map(|(&cyclic, &negacyclic)| (cyclic - negacyclic).half())
+        })
+        .collect();
+    RingVec::from_coeffs_with_ring_dim(coefficients, D)
 }
 
 fn checked_sum_bytes(
@@ -93,7 +119,7 @@ fn execute_chunk<F, B, Id, const D: usize>(
     map_index: usize,
 ) -> Result<CompressionBatchReport, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
 {
     if item_indices.is_empty() || item_indices.len() > MAX_COMPRESSION_RHS_BATCH {
@@ -185,6 +211,7 @@ where
                 "compression backend returned the wrong output rank".into(),
             ));
         }
+        let quotient = quotient_from_products(&products.cyclic, &products.negacyclic)?;
         let negacyclic_image = RingVec::from_ring_elems(&products.negacyclic)
             .coeffs()
             .to_vec();
@@ -195,6 +222,7 @@ where
         }
         items[item_index].coefficients = negacyclic_image;
         items[item_index].stages.push(packed_digits);
+        items[item_index].quotients.push(quotient);
     }
     let output_bytes = checked_sum_bytes(
         item_indices
@@ -223,7 +251,7 @@ fn execute_stage<F, B, Id>(
     map_index: usize,
 ) -> Result<Vec<CompressionBatchReport>, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
 {
     let mut groups = BTreeMap::<(usize, usize, usize), Vec<usize>>::new();
@@ -262,7 +290,7 @@ pub(crate) fn execute_compression_chains<F, B, Id>(
     AkitaError,
 >
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
 {
     let started = Instant::now();
@@ -289,6 +317,7 @@ where
             plan: input.plan,
             coefficients: input.coefficients,
             stages: Vec::new(),
+            quotients: Vec::new(),
         });
     }
     let source_bytes = items.iter().try_fold(0usize, |total, item| {
@@ -375,6 +404,7 @@ where
             id: item.id,
             witness,
             terminal,
+            quotients: item.quotients,
         });
     }
     report.cache_bytes_after = ctx.backend().compression_cache_bytes(ctx.prepared());
@@ -452,6 +482,12 @@ mod tests {
         assert_eq!(
             batched[1].terminal.coefficients(),
             second[0].terminal.coefficients()
+        );
+        assert_eq!(batched[0].quotients, first[0].quotients);
+        assert_eq!(batched[1].quotients, second[0].quotients);
+        assert_eq!(
+            batched[0].quotients.len(),
+            akita_types::COMPRESSION_MAP_COUNT
         );
         assert_eq!(report.batches.len(), 2);
         assert!(report.batches.iter().all(|batch| batch.batch_size == 2));

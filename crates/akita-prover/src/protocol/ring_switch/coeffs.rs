@@ -1,15 +1,18 @@
 use super::*;
 use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
 use crate::kernels::linear::decompose_commit_blocks_into;
-use crate::protocol::ring_relation::validate_chunked_witness_cfg;
-use crate::protocol::ring_relation::RelationQuotientOutput;
+use crate::protocol::ring_relation::{
+    validate_chunked_witness_cfg, CompressionSourceId, CompressionWitnessMaterialization,
+    RelationQuotientOutput,
+};
 use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
     dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
-    CommitmentRingDims, LevelParamsLike, RingRole, RingVec, WitnessLayout,
+    CommitmentRingDims, CompressionWitnessSpan, LevelParamsLike, PackedNegativeBinary, RingRole,
+    RingVec, WitnessLayout,
 };
 
 pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
@@ -49,6 +52,57 @@ fn concat_digit_blocks<'a>(
         block_sizes.extend_from_slice(block.block_sizes());
     }
     DigitBlocks::new(digits, block_sizes, stride)
+}
+
+fn emit_packed_negative_binary(
+    out: &mut [i8],
+    span: &CompressionWitnessSpan,
+    packed: &PackedNegativeBinary,
+) -> Result<(), AkitaError> {
+    if packed.map() != span.map() || span.range().len() != packed.map().padded_digit_count() {
+        return Err(AkitaError::InvalidProof);
+    }
+    let range = span.range();
+    let target = out.get_mut(range).ok_or(AkitaError::InvalidProof)?;
+    for (linear, coefficient) in target
+        .iter_mut()
+        .take(packed.map().real_digit_count())
+        .enumerate()
+    {
+        if packed.bytes()[linear / 8] >> (linear % 8) & 1 == 1 {
+            *coefficient = -1;
+        }
+    }
+    Ok(())
+}
+
+fn emit_compression_witness<F: FieldCore>(
+    out: &mut [i8],
+    layout: &WitnessLayout,
+    compression: &CompressionWitnessMaterialization<F>,
+) -> Result<(), AkitaError> {
+    for layer in layout.compression_layers() {
+        let map_index = layer.map_index();
+        for (group_index, span) in layer.f_spans() {
+            let source = compression.source(CompressionSourceId::Outer {
+                group_index: *group_index,
+            })?;
+            let packed = source
+                .witness
+                .stages()
+                .get(map_index)
+                .ok_or(AkitaError::InvalidProof)?;
+            emit_packed_negative_binary(out, span, packed)?;
+        }
+        let source = compression.source(CompressionSourceId::Opening)?;
+        let packed = source
+            .witness
+            .stages()
+            .get(map_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        emit_packed_negative_binary(out, layer.h_span(), packed)?;
+    }
+    Ok(())
 }
 
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
@@ -191,6 +245,7 @@ where
     let RingRelationWitness {
         groups,
         fold_grind_nonce: _,
+        compression,
     } = witness;
     if groups.len() != opening_batch.num_groups() {
         return Err(AkitaError::InvalidInput(
@@ -347,6 +402,7 @@ where
         instance.group_challenges(),
         e_hat_concat,
         instance.rhs(),
+        &compression,
     )
     .map_err(|err| {
         AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
@@ -365,6 +421,7 @@ where
     }
     let levels = r_decomp_levels::<F>(lp.log_basis_open);
     emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
+    emit_compression_witness(&mut out, &witness_layout, &compression)?;
     let expected = witness_layout.live_coeff_len();
     if out.len() != expected {
         return Err(AkitaError::InvalidSize {

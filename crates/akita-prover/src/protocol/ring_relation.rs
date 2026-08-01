@@ -6,11 +6,6 @@ use crate::compute::{
     BatchDecomposeFoldOutcome, DecomposeFoldBatchPlan, DecomposeFoldPlan, OpeningBatchKernel,
     OpeningFoldKernel, OperationCtx, RootOpeningSource,
 };
-#[cfg(feature = "compression-diagnostics")]
-use crate::diagnostics::compression::{
-    compute_shadow_compressed_commitments, CompressionDiagnosticSource,
-    CompressionDiagnosticSourceKind,
-};
 use crate::validation::validate_i8_setup_log_basis;
 use crate::{DecomposeFoldWitness, DigitRowsComputeBackend, ProverOpeningData};
 use akita_algebra::ring::cyclotomic::BalancedDecomposePow2Params;
@@ -31,8 +26,12 @@ use akita_types::{RingMultiplierOpeningPoint, RingOpeningPoint};
 use super::fold_grind::{self, ProverTranscriptGrind};
 use super::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
 
+mod compression_witness;
 mod relation_quotient;
 
+pub(crate) use compression_witness::{
+    materialize_compression_witness, CompressionSourceId, CompressionWitnessMaterialization,
+};
 pub(crate) use relation_quotient::{compute_multi_group_relation_quotient, RelationQuotientOutput};
 
 fn decompose_e_hat<F: FieldCore + CanonicalField, const D: usize>(
@@ -424,7 +423,7 @@ impl RingRelationProver {
         row_coefficient_rings: RingVec<F>,
     ) -> Result<(RingRelationInstance<F>, RingRelationWitness<F>), AkitaError>
     where
-        F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + 'static,
+        F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField + HasWide + 'static,
         <F as HasWide>::Wide: From<F> + ReduceTo<F>,
         PointF: Clone,
         T: Transcript<F> + ProverTranscriptGrind<F>,
@@ -454,8 +453,6 @@ impl RingRelationProver {
         // Sent-commitment rows are B-role data; keep them as flat coefficients
         // and validate the ring count under `d_b` (no-panic length gate).
         let mut commitment_row_coeffs: Vec<F> = Vec::new();
-        #[cfg(feature = "compression-diagnostics")]
-        let mut compression_b_sources: Vec<(usize, Vec<F>)> = Vec::with_capacity(num_groups);
         let commit_group_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
         } else {
@@ -474,8 +471,6 @@ impl RingRelationProver {
                     "batched prover received a commitment with the wrong length".to_string(),
                 ));
             }
-            #[cfg(feature = "compression-diagnostics")]
-            compression_b_sources.push((group_index, group_commitment.rows().coeffs().to_vec()));
             commitment_row_coeffs.extend_from_slice(group_commitment.rows().coeffs());
         }
         for group_index in 0..num_groups {
@@ -626,59 +621,28 @@ impl RingRelationProver {
             }
         )
         .map_err(|err| AkitaError::InvalidInput(format!("D-role v failed: {err:?}")))?;
-        #[cfg(feature = "compression-diagnostics")]
-        {
-            let mut sources = compression_b_sources
-                .iter()
-                .map(|(group_index, coefficients)| CompressionDiagnosticSource {
-                    kind: CompressionDiagnosticSourceKind::Outer {
-                        group_index: *group_index,
-                    },
-                    coefficients: coefficients.as_slice(),
-                })
-                .collect::<Vec<_>>();
-            if !v.coeffs().is_empty() {
-                sources.push(CompressionDiagnosticSource {
-                    kind: CompressionDiagnosticSourceKind::Opening,
-                    coefficients: v.coeffs(),
-                });
-            }
-            let report = compute_shadow_compressed_commitments(
-                ring_switch_ctx,
-                lp.outer_commit_matrix.sis_modulus_profile(),
-                &sources,
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!(
-                    "compressed-commitment diagnostic failed: {err:?}"
-                ))
-            })?;
-            let cache_bytes_added = report
-                .cache_bytes_before
-                .zip(report.cache_bytes_after)
-                .map(|(before, after)| after.saturating_sub(before));
-            tracing::info!(
-                sources = report.sources,
-                maps = report.maps,
-                batch_count = report.batches.len(),
-                source_bytes = report.source_bytes,
-                terminal_bytes = report.terminal_bytes,
-                retained_packed_witness_bytes = report.retained_packed_witness_bytes,
-                equivalent_i8_witness_bytes = report.equivalent_i8_witness_bytes,
-                max_expanded_rhs_bytes = report.max_expanded_rhs_bytes,
-                max_current_image_bytes = report.max_current_image_bytes,
-                executor_peak_scratch_bytes = report.executor_peak_scratch_bytes,
-                cache_bytes_before = report.cache_bytes_before,
-                cache_bytes_after = report.cache_bytes_after,
-                cache_bytes_added,
-                digitization_micros =
-                    u64::try_from(report.digitization.as_micros()).unwrap_or(u64::MAX),
-                kernel_including_prepare_micros =
-                    u64::try_from(report.kernel_including_prepare.as_micros()).unwrap_or(u64::MAX),
-                elapsed_micros = u64::try_from(report.elapsed.as_micros()).unwrap_or(u64::MAX),
-                "computed and discarded shadow compressed commitments"
-            );
-        }
+        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
+        let (compression, compression_report) = materialize_compression_witness(
+            ring_switch_ctx,
+            &relation_rhs_layout,
+            &commitment_rows,
+            &v,
+        )
+        .map_err(|err| {
+            AkitaError::InvalidInput(format!(
+                "compression witness materialization failed: {err:?}"
+            ))
+        })?;
+        tracing::info!(
+            sources = compression_report.sources,
+            maps = compression_report.maps,
+            batches = compression_report.batches.len(),
+            source_bytes = compression_report.source_bytes,
+            terminal_bytes = compression_report.terminal_bytes,
+            retained_bytes = compression_report.retained_packed_witness_bytes,
+            peak_scratch_bytes = compression_report.executor_peak_scratch_bytes,
+            "materialized compression witness"
+        );
         // Concatenated folded `e` rows in the same order as the terminal witness.
         let e_folded_order = if lp.has_precommitted_groups() {
             opening_batch.root_group_order()?
@@ -734,7 +698,6 @@ impl RingRelationProver {
         // Terminal levels drop the D-block from M entirely, so `n_d` is zero
         // and `v` stays empty.
         let instance_span = tracing::info_span!("ring_relation_build_instance").entered();
-        let relation_rhs_layout = relation_rhs_layout_for(&lp, &opening_batch)?;
         let relation_rhs =
             assemble_relation_rhs::<F>(&relation_rhs_layout, &v, &commitment_rows)
                 .map_err(|err| AkitaError::InvalidInput(format!("relation rhs failed: {err:?}")))?;
@@ -781,7 +744,7 @@ impl RingRelationProver {
                     group_dims,
                 ));
             }
-            RingRelationWitness::from_groups(fold_grind_nonce, groups)
+            RingRelationWitness::from_groups(fold_grind_nonce, groups, compression)
         } else {
             if hints.len() != 1 {
                 return Err(AkitaError::InvalidProof);
@@ -797,6 +760,7 @@ impl RingRelationProver {
                 e_folded,
                 hint,
                 dims,
+                compression,
             )
         };
         drop(witness_span);

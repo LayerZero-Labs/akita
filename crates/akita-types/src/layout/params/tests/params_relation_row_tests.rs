@@ -4,7 +4,7 @@ use crate::proof::relation::{
     RelationRowFamily,
 };
 use crate::{RingVec, WitnessLayout};
-use akita_field::{FieldCore, Prime128OffsetA7F7};
+use akita_field::Prime128OffsetA7F7;
 
 #[test]
 fn compression_quotient_rows_are_included_before_evaluation_trace() {

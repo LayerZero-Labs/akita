@@ -477,8 +477,13 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 );
             }
             assert_eq!(layout.r_rows().len(), expected_r_dims.len());
-            for (row_index, (&ring_dim, row)) in
-                expected_r_dims.iter().zip(layout.r_rows()).enumerate()
+            let compression_row_count = crate::COMPRESSION_MAP_COUNT * (group_order.len() + 1);
+            let ordinary_row_count = expected_r_dims.len() - compression_row_count;
+            for (row_index, (&ring_dim, row)) in expected_r_dims
+                .iter()
+                .zip(layout.r_rows())
+                .take(ordinary_row_count)
+                .enumerate()
             {
                 assert_eq!(row.ring_dim(), ring_dim);
                 assert_eq!(row.range(), cursor..cursor + quotient_depth * ring_dim);
@@ -494,21 +499,26 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                 }
                 cursor += quotient_depth * ring_dim;
             }
-            assert_eq!(layout.r_range().end, cursor);
             let support = layout.negative_binary_support_intervals();
-            assert_eq!(support.len(), 1);
+            assert_eq!(support.len(), crate::COMPRESSION_MAP_COUNT);
             let prefix_alignment = cursor..support[0].start;
             if !prefix_alignment.is_empty() {
                 assert!(layout
                     .compression_alignment_ranges()
                     .contains(&prefix_alignment));
             }
-            cursor = support[0].start;
             assert_eq!(
                 layout.compression_layers().len(),
                 crate::COMPRESSION_MAP_COUNT
             );
             for map_index in 0..crate::COMPRESSION_MAP_COUNT {
+                let layer_alignment = cursor..support[map_index].start;
+                if !layer_alignment.is_empty() {
+                    assert!(layout
+                        .compression_alignment_ranges()
+                        .contains(&layer_alignment));
+                }
+                cursor = support[map_index].start;
                 let layer = &layout.compression_layers()[map_index];
                 assert_eq!(layer.map_index(), map_index);
                 assert_eq!(layer.f_spans().len(), group_order.len());
@@ -536,8 +546,23 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     cursor..cursor + h_map.padded_digit_count()
                 );
                 cursor += h_map.padded_digit_count();
+                assert_eq!(support[map_index].end, cursor);
+                for &(group_index, row_index) in layer.f_quotient_rows() {
+                    assert!(group_order.contains(&group_index));
+                    let row = &layout.r_rows()[row_index];
+                    assert_eq!(
+                        row.range(),
+                        cursor..cursor + quotient_depth * row.ring_dim()
+                    );
+                    cursor = row.range().end;
+                }
+                let h_row = &layout.r_rows()[layer.h_quotient_row()];
+                assert_eq!(
+                    h_row.range(),
+                    cursor..cursor + quotient_depth * h_row.ring_dim()
+                );
+                cursor = h_row.range().end;
             }
-            assert_eq!(support[0].end, cursor);
             let suffix_alignment = cursor..layout.live_coeff_len();
             if !suffix_alignment.is_empty() {
                 assert!(layout
@@ -545,6 +570,7 @@ fn compact_witness_addresses_match_independent_formula_matrix() {
                     .contains(&suffix_alignment));
             }
             cursor = layout.live_coeff_len();
+            assert_eq!(layout.r_range().end, cursor);
             assert_eq!(layout.live_coeff_len(), cursor);
             assert_eq!(
                 lp.output_witness_len::<Prime128OffsetA7F7>(&batch)

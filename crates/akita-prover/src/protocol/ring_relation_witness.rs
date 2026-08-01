@@ -1,5 +1,6 @@
 //! Prover-only secret witness for the negacyclic-ring relation.
 
+use crate::protocol::ring_relation::CompressionWitnessMaterialization;
 use crate::DecomposeFoldWitness;
 use akita_algebra::CyclotomicRing;
 use akita_field::{AkitaError, FieldCore};
@@ -141,11 +142,13 @@ impl<F: FieldCore> RingRelationGroupWitness<F> {
 pub struct RingRelationWitness<F: FieldCore> {
     pub fold_grind_nonce: u32,
     pub groups: Vec<RingRelationGroupWitness<F>>,
+    pub(crate) compression: CompressionWitnessMaterialization<F>,
 }
 
 impl<F: FieldCore> RingRelationWitness<F> {
     /// Construct from D-free fold outputs under schedule-derived role dimensions.
-    pub fn from_flat_parts(
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn from_flat_parts(
         z_folded_rings: DecomposeFoldWitness<F>,
         z_folded_centered_per_chunk: Vec<Vec<Vec<i32>>>,
         fold_grind_nonce: u32,
@@ -153,6 +156,7 @@ impl<F: FieldCore> RingRelationWitness<F> {
         e_folded: RingVec<F>,
         hint: AkitaCommitmentHint<F>,
         role_dims: CommitmentRingDims,
+        compression: CompressionWitnessMaterialization<F>,
     ) -> Self {
         Self {
             fold_grind_nonce,
@@ -164,14 +168,20 @@ impl<F: FieldCore> RingRelationWitness<F> {
                 hint,
                 role_dims,
             )],
+            compression,
         }
     }
 
     /// Construct from already-grouped witnesses.
-    pub fn from_groups(fold_grind_nonce: u32, groups: Vec<RingRelationGroupWitness<F>>) -> Self {
+    pub(crate) fn from_groups(
+        fold_grind_nonce: u32,
+        groups: Vec<RingRelationGroupWitness<F>>,
+        compression: CompressionWitnessMaterialization<F>,
+    ) -> Self {
         Self {
             fold_grind_nonce,
             groups,
+            compression,
         }
     }
 

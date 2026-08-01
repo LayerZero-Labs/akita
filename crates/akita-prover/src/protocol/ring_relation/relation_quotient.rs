@@ -4,6 +4,7 @@ use crate::compute::{
     OperationCtx, RingSwitchProveBackend, RingSwitchQuotientKernel, RingSwitchQuotientPlan,
     RingSwitchRelationKernel, RingSwitchRelationPlan, RuntimeRingSwitchProveBackend,
 };
+use crate::protocol::ring_relation::{CompressionSourceId, CompressionWitnessMaterialization};
 use crate::protocol::ring_switch::PreparedRingSwitchGroup;
 use crate::validation::validate_i8_setup_log_basis;
 use akita_types::{CommittedGroupParams, RingVec};
@@ -418,6 +419,7 @@ pub(crate) fn compute_multi_group_relation_quotient<F, B>(
     group_challenges: &[Challenges],
     e_hat_concat: &DigitBlocks,
     y: &RingVec<F>,
+    compression: &CompressionWitnessMaterialization<F>,
 ) -> Result<RelationQuotientOutput<F>, AkitaError>
 where
     F: FieldCore + CanonicalField + FromPrimitiveInt + HalvingField,
@@ -432,12 +434,14 @@ where
     }
     let backend = ring_switch_ctx.backend();
     let prepared = ring_switch_ctx.prepared();
-    let n_d_active = lp.open_commit_matrix.output_rank();
-    let num_rows = lp.relation_matrix_row_count(opening_batch.num_groups())?;
-    let d_start = num_rows
-        .checked_sub(n_d_active)
-        .ok_or(AkitaError::InvalidProof)?;
     let rhs_layout = akita_types::relation_rhs_layout_for(lp, opening_batch)?;
+    let row_families = rhs_layout.row_families()?;
+    let num_rows = row_families.len();
+    let n_d_active = lp.open_commit_matrix.output_rank();
+    let d_start = row_families
+        .iter()
+        .position(|row| matches!(row, akita_types::RelationRowFamily::Opening { .. }))
+        .ok_or(AkitaError::InvalidProof)?;
     let expected_y_len = akita_types::relation_rhs_coeff_len(&rhs_layout)?;
     if y.coeff_len() != expected_y_len {
         return Err(AkitaError::InvalidSize {
@@ -709,8 +713,45 @@ where
             )
             .ok_or(AkitaError::InvalidProof)?;
     }
-    if y_offset != y.coeff_len() {
+    let compression_rhs = y.coeffs().get(y_offset..).ok_or(AkitaError::InvalidProof)?;
+    if compression_rhs
+        .iter()
+        .any(|coefficient| !coefficient.is_zero())
+    {
         return Err(AkitaError::InvalidProof);
+    }
+    for (row_index, family) in row_families.iter().enumerate() {
+        let (source, map_index, ring_dim) = match *family {
+            akita_types::RelationRowFamily::CompressionF {
+                group_index,
+                map_index,
+                ring_dim,
+            } => (
+                CompressionSourceId::Outer { group_index },
+                map_index,
+                ring_dim,
+            ),
+            akita_types::RelationRowFamily::CompressionH {
+                map_index,
+                ring_dim,
+            } => (CompressionSourceId::Opening, map_index, ring_dim),
+            _ => continue,
+        };
+        let quotient = compression
+            .source(source)?
+            .quotients
+            .get(map_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if quotient.ring_dim() != ring_dim || quotient.coeff_len() != ring_dim {
+            return Err(AkitaError::InvalidSize {
+                expected: ring_dim,
+                actual: quotient.coeff_len(),
+            });
+        }
+        result[row_index] = Some(RelationQuotientRow {
+            ring_dim,
+            coeffs: quotient.coeffs().to_vec(),
+        });
     }
     RelationQuotientOutput::from_slots(result)
 }

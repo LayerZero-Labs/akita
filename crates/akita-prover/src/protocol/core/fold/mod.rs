@@ -96,7 +96,13 @@ pub(super) fn finish_prepared_fold<'a, 'p, F, E, T, Q, C, O, TS, R>(
     args: FinishFoldArgs<'a, 'p, F, E, T, Q, C, O, TS, R>,
 ) -> Result<PreparedFold<F, E>, AkitaError>
 where
-    F: FieldCore + CanonicalField + FromPrimitiveInt + HasWide + RandomSampling + 'static,
+    F: FieldCore
+        + CanonicalField
+        + FromPrimitiveInt
+        + HalvingField
+        + HasWide
+        + RandomSampling
+        + 'static,
     <F as HasWide>::Wide: From<F> + ReduceTo<F> + AdditiveGroup,
     E: FpExtEncoding<F>
         + ExtField<F>

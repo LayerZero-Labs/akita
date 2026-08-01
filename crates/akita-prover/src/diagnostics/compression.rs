@@ -4,7 +4,7 @@ use crate::compute::compression::{
     execute_compression_chains, CompressionExecutionInput, CompressionExecutionReport,
 };
 use crate::compute::{CompressionComputeBackend, OperationCtx};
-use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{field_modulus, CompressionChainPlan, SisModulusProfileId};
 
 /// Origin of one live B/D image.
@@ -27,7 +27,7 @@ pub(crate) fn compute_shadow_compressed_commitments<F, B>(
     sources: &[CompressionDiagnosticSource<'_, F>],
 ) -> Result<CompressionExecutionReport, AkitaError>
 where
-    F: FieldCore + CanonicalField,
+    F: FieldCore + CanonicalField + HalvingField,
     B: CompressionComputeBackend<F>,
 {
     if !profile.matches_modulus(field_modulus::<F>()) {
