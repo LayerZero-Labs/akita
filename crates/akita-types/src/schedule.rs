@@ -971,11 +971,9 @@ fn validate_stage2_successor_capacity(
     // Stage 2 owns the predecessor-derived point. A successor may expose a
     // wider scheduled cube; preparation derives that wider representation by
     // zero-extension. The schedule must reject only points that do not fit.
-    if successor_ring_dimension == 0 || !output_witness_len.is_multiple_of(successor_ring_dimension)
-    {
+    if successor_ring_dimension == 0 || !successor_ring_dimension.is_power_of_two() {
         return Err(AkitaError::InvalidSetup(format!(
-            "{predecessor_name} output witness length {output_witness_len} is not divisible by \
-             successor ring dimension {successor_ring_dimension}"
+            "{predecessor_name} successor ring dimension {successor_ring_dimension} is invalid"
         )));
     }
     let shared_d = predecessor.role_dims().d_d();
@@ -987,7 +985,7 @@ fn validate_stage2_successor_capacity(
         predecessor.role_dims(),
         &precommitted_role_dims,
         successor_ring_dimension,
-        output_witness_len / successor_ring_dimension,
+        output_witness_len,
     )?;
     let stage2_num_vars = geometry.relation_point_variable_count();
     if stage2_num_vars > successor_opening_num_vars {

@@ -84,7 +84,8 @@ impl PrecommittedLevelParams {
         let outer_ring_dimension = self.layout.outer_commit_matrix.ring_dimension();
         if outer_ring_dimension == 0 || !inner_ring_dimension.is_multiple_of(outer_ring_dimension) {
             return Err(AkitaError::InvalidSetup(
-                "current A-width relation witness cannot carry the precommitted B role".to_string(),
+                "precommitted A-native source rings do not decompose into B-native subcolumns"
+                    .to_string(),
             ));
         }
         let outer_projection_ratio = inner_ring_dimension / outer_ring_dimension;
@@ -127,7 +128,7 @@ impl PrecommittedLevelParams {
     /// the caller supplies the consuming level's opening dimension.
     pub fn d_segment_width(&self, opening_ring_dimension: usize) -> Result<usize, AkitaError> {
         let role_dims = self.role_dims(opening_ring_dimension);
-        role_dims.validate_a_carrier()?;
+        role_dims.validate_role_projection()?;
         let inner_ring_dimension = role_dims.d_a();
         let projection_ratio = inner_ring_dimension / opening_ring_dimension;
         self.num_digits_open

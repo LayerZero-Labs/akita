@@ -14,7 +14,7 @@ use crate::protocol::sumcheck::RelationRangeImageProver;
 use crate::protocol::RingRelationProver;
 use crate::{
     PreparedGroupProveOps, PreparedProverGroup, ProverOpeningData, ProverTranscriptGrind,
-    RecursiveCommitmentHintCache, RingRelationInstance, RingRelationWitness,
+    RingRelationInstance, RingRelationWitness,
 };
 use akita_algebra::CyclotomicRing;
 use akita_config::{bind_transcript_instance_descriptor, CommitmentConfig};

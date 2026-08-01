@@ -308,12 +308,12 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
 fn adapters_forward_ring_dimension_candidates() {
     type Base = fp128::MixedDimFp128OneHot;
     assert_eq!(
-        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::ring_dimension_candidates(),
-        Base::ring_dimension_candidates(),
+        <RecursiveCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
     );
     assert_eq!(
-        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::ring_dimension_candidates(),
-        Base::ring_dimension_candidates(),
+        <PrecommittedCommitmentConfig<Base> as CommitmentConfig>::RING_DIMENSION_CANDIDATES,
+        Base::RING_DIMENSION_CANDIDATES,
     );
 }
 
@@ -321,17 +321,15 @@ fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
-        selection_policy: if Cfg::recursive_setup_planning() {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
-        } else if Cfg::ring_dimension_candidates().len() > 1 {
-            SelectionPolicyId::MinSetupMatrixFieldElementsThenProofPayload
-        } else {
-            SelectionPolicyId::MinEstimatedProofPayload
-        },
+        selection_policy: SelectionPolicyId::for_policy(
+            Cfg::recursive_setup_planning(),
+            Cfg::D,
+            Cfg::RING_DIMENSION_CANDIDATES,
+        ),
         max_setup_envelope_field_elements: akita_types::MAX_SETUP_MATRIX_FIELD_ELEMENTS,
         min_offloaded_witness_contraction: 3,
         ring_dimension: Cfg::D,
-        ring_dimension_candidates: Cfg::ring_dimension_candidates(),
+        ring_dimension_candidates: Cfg::RING_DIMENSION_CANDIDATES,
         decomposition: Cfg::decomposition(),
         sis_modulus_profile: Cfg::sis_modulus_profile(),
         sis_security_policy: akita_types::DEFAULT_SIS_SECURITY_POLICY,

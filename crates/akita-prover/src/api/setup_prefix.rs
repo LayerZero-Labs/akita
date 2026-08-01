@@ -1,17 +1,12 @@
 //! Preprocessing helpers for setup-prefix commitment artifacts (slice 02B).
 
-use crate::api::commitment::{
-    commit_inner_block_digit_count, commit_inner_flat_digit_count,
-    validate_commit_outer_input_nonempty,
-};
+use crate::api::commitment::validate_commit_outer_input_nonempty;
 use crate::compute::{CommitmentComputeBackend, DenseCommitInput, DenseCommitRowsPlan};
-use crate::kernels::linear::decompose_rows_i8_into;
+use crate::kernels::linear::decompose_commit_blocks_into;
 use akita_algebra::CyclotomicRing;
-#[cfg(feature = "parallel")]
-use akita_field::parallel::*;
 use akita_field::{AkitaError, CanonicalField, FieldCore, RandomSampling};
 use akita_types::{
-    dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup, DigitBlocks,
+    dispatch_for_field, setup_prefix_slot_id, AkitaCommitmentHint, AkitaExpandedSetup,
     PrecommittedLevelParams, RingVec, SetupPrefixPublicCommitment, SetupPrefixSlot,
 };
 
@@ -95,74 +90,24 @@ where
         },
     )?;
 
-    let block_sizes = recomposed_inner_rows
-        .iter()
-        .map(|_| {
-            commit_inner_block_digit_count(
-                level_params.layout.inner_commit_matrix.output_rank(),
-                level_params.layout.num_digits_outer,
-            )
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut decomposed_inner_rows = DigitBlocks::zeroed(block_sizes, D)?;
-    let dst_blocks = decomposed_inner_rows.split_typed_blocks_mut::<D>()?;
-    #[cfg(feature = "parallel")]
-    cfg_into_iter!(dst_blocks)
-        .zip(cfg_iter!(recomposed_inner_rows))
-        .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.layout.num_digits_outer,
-                level_params.layout.log_basis_outer,
-            );
-            Ok(())
-        })?;
-    #[cfg(not(feature = "parallel"))]
-    dst_blocks
-        .into_iter()
-        .zip(recomposed_inner_rows.iter())
-        .try_for_each(|(dst, rows)| -> Result<(), AkitaError> {
-            decompose_rows_i8_into(
-                rows,
-                dst,
-                level_params.layout.num_digits_outer,
-                level_params.layout.log_basis_outer,
-            );
-            Ok(())
-        })?;
-
-    let b_input_len = commit_inner_flat_digit_count(
-        level_params.layout.num_live_blocks,
-        level_params.layout.inner_commit_matrix.output_rank(),
-        level_params.layout.num_digits_outer,
-    )?;
-    validate_commit_outer_input_nonempty(b_input_len)?;
-    let b_input_flat = decomposed_inner_rows.digits();
-    if b_input_flat.len()
-        != b_input_len.checked_mul(D).ok_or_else(|| {
-            AkitaError::InvalidSetup("setup prefix outer input length overflow".to_string())
-        })?
-    {
-        return Err(AkitaError::InvalidSetup(
-            "setup prefix outer input length does not match inner digit stream".to_string(),
-        ));
-    }
     let n_b = level_params.layout.outer_commit_matrix.output_rank();
     let d_b = level_params.layout.outer_commit_matrix.ring_dimension();
     let commitment_rows =
         dispatch_for_field!(ProtocolDispatchSlot::Role(RingRole::Outer), F, d_b, |D_B| {
-            let (b_input_digits, remainder) = b_input_flat.as_chunks::<D_B>();
-            if !remainder.is_empty() {
-                return Err(AkitaError::InvalidSetup(
-                    "setup prefix digit carrier is not aligned to the outer ring dimension"
-                        .to_string(),
-                ));
-            }
+            let blocks = recomposed_inner_rows
+                .iter()
+                .map(Vec::as_slice)
+                .collect::<Vec<_>>();
+            let decomposed_inner_rows = decompose_commit_blocks_into::<F, D, D_B>(
+                &blocks,
+                level_params.layout.num_digits_outer,
+                level_params.layout.log_basis_outer,
+            )?;
+            validate_commit_outer_input_nonempty(decomposed_inner_rows.total_planes())?;
             let u = backend.digit_rows::<D_B>(
                 prepared,
                 n_b,
-                b_input_digits,
+                decomposed_inner_rows.typed_planes::<D_B>()?,
                 level_params.layout.log_basis_outer,
             )?;
             if u.len() != n_b {
@@ -173,13 +118,20 @@ where
             }
             Ok::<_, AkitaError>(RingVec::from_ring_elems(&u))
         })?;
-
-    // `recomposed_inner_rows` was only needed to decompose into the digit
-    // stream above; the protocol slot stores the D-free decomposed digits and a
-    // D-free flat commitment. Recomposed rows are recomputed on demand
-    // downstream (S5 re-home), not cached on the slot.
-    let _ = &recomposed_inner_rows;
-    let hint = AkitaCommitmentHint::singleton(decomposed_inner_rows);
+    let inner_coefficient_count = recomposed_inner_rows
+        .iter()
+        .map(Vec::len)
+        .sum::<usize>()
+        .checked_mul(D)
+        .ok_or_else(|| AkitaError::InvalidSetup("setup-prefix inner rows overflow".into()))?;
+    let mut inner_coefficients = Vec::with_capacity(inner_coefficient_count);
+    for block in recomposed_inner_rows {
+        for row in block {
+            inner_coefficients.extend_from_slice(row.coefficients());
+        }
+    }
+    let hint =
+        AkitaCommitmentHint::singleton(RingVec::from_coeffs_with_ring_dim(inner_coefficients, D)?)?;
     let id = setup_prefix_slot_id(D, natural_len, level_params.clone());
     Ok(SetupPrefixSlot {
         id,

@@ -1,6 +1,8 @@
 //! Scalar evaluation helpers for cyclotomic ring elements.
 
 use super::CyclotomicRing;
+use crate::AkitaError;
+use akita_field::fft::field_pow;
 use akita_field::unreduced::HasUnreducedOps;
 use akita_field::{FieldCore, MulBase, MulBaseUnreduced, Zero};
 
@@ -13,6 +15,48 @@ pub fn scalar_powers<F: FieldCore>(alpha: F, len: usize) -> Vec<F> {
         power *= alpha;
     }
     out
+}
+
+/// Return `1, alpha^stride, alpha^(2*stride), ...` up to `len` entries.
+///
+/// This is the compact form of taking every `stride`-th entry from
+/// [`scalar_powers`]. It avoids materializing the skipped powers, which is
+/// important when a projection has only one lane.
+///
+/// # Errors
+///
+/// Returns an error when `stride` cannot be represented by the exponentiation
+/// primitive.
+pub fn scalar_powers_with_stride<F: FieldCore>(
+    alpha: F,
+    stride: usize,
+    len: usize,
+) -> Result<Vec<F>, AkitaError> {
+    if len <= 1 {
+        return Ok(scalar_powers(alpha, len));
+    }
+    let exponent = u64::try_from(stride)
+        .map_err(|_| AkitaError::InvalidInput("power stride does not fit u64".into()))?;
+    Ok(scalar_powers(field_pow(alpha, exponent), len))
+}
+
+/// Evaluate the multilinear extension of `[1, base, base², ...]`.
+///
+/// The point uses little-endian coordinate order: `point[i]` selects bit `i`
+/// of the power-sequence index. The power table has length
+/// `2^point.len()`, but this factorization evaluates it in linear time without
+/// materializing the table:
+///
+/// `∏ᵢ ((1 - point[i]) + point[i] * base^(2^i))`.
+#[inline]
+pub fn evaluate_power_sequence_mle<F: FieldCore>(base: F, point: &[F]) -> F {
+    let mut evaluation = F::one();
+    let mut bit_power = base;
+    for &coordinate in point {
+        evaluation *= (F::one() - coordinate) + coordinate * bit_power;
+        bit_power *= bit_power;
+    }
+    evaluation
 }
 
 /// Evaluate a cyclotomic ring element at the scalar `alpha`.
@@ -126,6 +170,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::poly::multilinear_eval;
     use akita_field::Prime128OffsetA7F7;
 
     type F = Prime128OffsetA7F7;
@@ -166,6 +211,40 @@ mod tests {
                 eval_flat_ring_at_pows_fast(ring.coefficients(), &pows),
                 "flat deferred reduction diverged from per-term at seed {seed}"
             );
+        }
+    }
+
+    #[test]
+    fn power_sequence_mle_matches_materialized_table() {
+        let base = F::from_canonical_u128(7);
+        for num_vars in 0..8 {
+            let point = (0..num_vars)
+                .map(|index| F::from_canonical_u128(11 + index as u128))
+                .collect::<Vec<_>>();
+            let table = scalar_powers(base, 1usize << num_vars);
+            assert_eq!(
+                evaluate_power_sequence_mle(base, &point),
+                multilinear_eval(&table, &point).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn strided_scalar_powers_match_materialized_subsequence() {
+        let alpha = F::from_canonical_u128(13);
+        for stride in [1usize, 2, 7, 64] {
+            for len in 0..8usize {
+                let full = scalar_powers(alpha, stride.saturating_mul(len));
+                let expected = full
+                    .into_iter()
+                    .step_by(stride)
+                    .take(len)
+                    .collect::<Vec<_>>();
+                assert_eq!(
+                    scalar_powers_with_stride(alpha, stride, len).unwrap(),
+                    expected
+                );
+            }
         }
     }
 }

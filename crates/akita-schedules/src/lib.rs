@@ -26,3 +26,14 @@ pub use runtime::{
     default_sis_security_policy, suffix_opening_layout, PlannerCostModelId, PlannerPolicy,
     RuntimeSchedulePolicy, SelectionPolicyId,
 };
+
+/// Shared schedule-construction primitives used by offline search and generated-row replay.
+#[doc(hidden)]
+pub mod planner_support {
+    pub use crate::runtime::{
+        checked_power_of_two_vars, grouped_segment_rings, materialize_candidate_schedule,
+        optimize_fold_challenge_shape, planned_next_witness_len,
+        stage3_payload_bytes_for_successor, validate_policy, CandidateFoldStep,
+        CandidateTerminalResponse,
+    };
+}

@@ -273,7 +273,6 @@ pub(crate) fn walk_generated_schedule_entry(
         &terminal_params,
         &mut setup_field_elements,
     )?;
-    let setup_envelope = setup_field_elements.div_ceil(policy.ring_dimension);
     let first_direct_setup_field_len = if policy.recursive_setup_planning {
         folds
             .iter()
@@ -295,7 +294,7 @@ pub(crate) fn walk_generated_schedule_entry(
     };
     let planned_schedule = materialize_candidate_schedule(
         total_bytes,
-        setup_envelope,
+        setup_field_elements,
         policy.ring_dimension,
         first_direct_setup_field_len,
         folds,

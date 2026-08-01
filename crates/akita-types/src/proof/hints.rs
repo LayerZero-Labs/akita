@@ -1,107 +1,92 @@
 use super::*;
 
-/// Prover-side hint for one opening-point commitment bundle.
+/// Prover-side semantic inner rows for one commitment bundle.
 ///
-/// Stores per-polynomial decomposed inner rows for all polynomials bundled into
-/// the single commitment at one opening point.
-///
-/// # S4: D-free split
-///
-/// This type is now D-free (`AkitaCommitmentHint<F>`). It holds only the
-/// protocol-adjacent, serialized part — `decomposed_inner_rows: Vec<DigitBlocks>`.
-/// The former prover-only `recomposed_inner_rows:
-/// Option<Vec<Vec<Vec<CyclotomicRing<F, D>>>>>` field was D-typed and cannot
-/// live in a D-free struct, so it was removed here. S5 reintroduces a private
-/// prover-side home for recomposed rows (recomposition can be redone from the
-/// decomposed digit stream via `CyclotomicRing::gadget_recompose_pow2_i8`).
-#[derive(Debug, Clone)]
+/// One entry belongs to each polynomial in claim order. Every entry stores
+/// `[source block][A row][A coefficient]` in the shared A ring dimension.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AkitaCommitmentHint<F: FieldCore> {
-    /// Per-polynomial digit decompositions of the inner `A * s_i` rows.
-    pub decomposed_inner_rows: Vec<DigitBlocks>,
-    _marker: PhantomData<F>,
+    inner_rows: Vec<RingVec<F>>,
+    ring_dim: usize,
 }
 
 impl<F: FieldCore> AkitaCommitmentHint<F> {
-    /// Construct a new batched hint from per-polynomial digit streams.
-    pub fn new(decomposed_inner_rows: Vec<DigitBlocks>) -> Self {
-        Self {
-            decomposed_inner_rows,
-            _marker: PhantomData,
-        }
-    }
-
-    /// Construct a singleton batched hint from one decomposed digit stream.
-    pub fn singleton(decomposed_inner_rows: DigitBlocks) -> Self {
-        Self::new(vec![decomposed_inner_rows])
-    }
-
-    /// Borrow the per-polynomial decomposed inner rows.
-    pub fn decomposed_inner_rows(&self) -> &[DigitBlocks] {
-        &self.decomposed_inner_rows
-    }
-
-    /// Consume the hint and return the per-polynomial digit rows.
-    pub fn into_parts(self) -> Vec<DigitBlocks> {
-        self.decomposed_inner_rows
-    }
-
-    /// Flatten the batched hint into the ring-switch view over all claims.
-    ///
-    /// All component digit streams must share the same per-plane stride; the
-    /// flattened result inherits it.
+    /// Construct a hint from semantic A-ring rows in polynomial order.
     ///
     /// # Errors
     ///
-    /// Returns an error if the component digit streams have mismatched strides,
-    /// the hint is empty, or the flattened digit planes do not match the
-    /// concatenated block-size metadata.
-    pub fn into_flat_parts(self) -> Result<DigitBlocks, AkitaError> {
-        let mut decomposed_inner_rows = self.decomposed_inner_rows;
-        if decomposed_inner_rows.len() == 1 {
-            return decomposed_inner_rows.pop().ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "cannot flatten an empty commitment hint into ring-switch view".to_string(),
-                )
-            });
+    /// Returns an error for a zero or inconsistent ring dimension, unequal
+    /// per-polynomial coefficient lengths, or storage above repository limits.
+    pub fn new(ring_dim: usize, inner_rows: Vec<RingVec<F>>) -> Result<Self, AkitaError> {
+        let hint = Self {
+            inner_rows,
+            ring_dim,
+        };
+        hint.validate_shape()
+            .map_err(|error| AkitaError::InvalidInput(error.to_string()))?;
+        Ok(hint)
+    }
+
+    /// Construct a one-polynomial hint.
+    pub fn singleton(inner_rows: RingVec<F>) -> Result<Self, AkitaError> {
+        Self::new(inner_rows.ring_dim(), vec![inner_rows])
+    }
+
+    /// Shared A ring dimension.
+    pub fn ring_dim(&self) -> usize {
+        self.ring_dim
+    }
+
+    /// Borrow semantic A rows in polynomial order.
+    pub fn inner_rows(&self) -> &[RingVec<F>] {
+        &self.inner_rows
+    }
+
+    /// Consume the hint and return semantic A rows in polynomial order.
+    pub fn into_rows(self) -> Vec<RingVec<F>> {
+        self.inner_rows
+    }
+
+    fn validate_shape(&self) -> Result<(), SerializationError> {
+        if self.ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "commitment hint A ring dimension must be nonzero".into(),
+            ));
         }
-        let digit_stride = decomposed_inner_rows
-            .first()
-            .map(DigitBlocks::digit_stride)
-            .ok_or_else(|| {
-                AkitaError::InvalidInput(
-                    "cannot flatten an empty commitment hint into ring-switch view".to_string(),
-                )
-            })?;
-        let mut block_sizes = Vec::new();
-        let total_digits: usize = decomposed_inner_rows
-            .iter()
-            .map(|digits| digits.digits().len())
-            .sum();
-        let mut flat_digits = Vec::with_capacity(total_digits);
-        for digits in &decomposed_inner_rows {
-            if digits.digit_stride() != digit_stride {
-                return Err(AkitaError::InvalidInput(
-                    "commitment hint components have mismatched digit strides".to_string(),
+        checked_shape_len(self.inner_rows.len())?;
+        let mut expected_coefficients = None;
+        let mut total_coefficients = 0usize;
+        for rows in &self.inner_rows {
+            if rows.ring_dim() != self.ring_dim || !rows.coeff_len().is_multiple_of(self.ring_dim) {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint row storage disagrees with its A ring dimension".into(),
                 ));
             }
-            block_sizes.extend_from_slice(digits.block_sizes());
-            digits.extend_digits(&mut flat_digits);
+            if expected_coefficients
+                .replace(rows.coeff_len())
+                .is_some_and(|expected| expected != rows.coeff_len())
+            {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint polynomials have inconsistent row lengths".into(),
+                ));
+            }
+            total_coefficients = total_coefficients
+                .checked_add(rows.coeff_len())
+                .ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint coefficient count overflow".into(),
+                    )
+                })?;
+            checked_shape_len(total_coefficients)?;
         }
-        DigitBlocks::new(flat_digits, block_sizes, digit_stride)
+        Ok(())
     }
 }
-
-impl<F: FieldCore> PartialEq for AkitaCommitmentHint<F> {
-    fn eq(&self, other: &Self) -> bool {
-        self.decomposed_inner_rows == other.decomposed_inner_rows
-    }
-}
-
-impl<F: FieldCore> Eq for AkitaCommitmentHint<F> {}
 
 impl<F: FieldCore + Valid> Valid for AkitaCommitmentHint<F> {
     fn check(&self) -> Result<(), SerializationError> {
-        self.decomposed_inner_rows.check()
+        self.validate_shape()?;
+        self.inner_rows.check()
     }
 }
 
@@ -111,12 +96,36 @@ impl<F: FieldCore + AkitaSerialize> AkitaSerialize for AkitaCommitmentHint<F> {
         mut writer: W,
         compress: Compress,
     ) -> Result<(), SerializationError> {
-        self.decomposed_inner_rows
-            .serialize_with_mode(&mut writer, compress)
+        self.validate_shape()?;
+        self.inner_rows
+            .len()
+            .serialize_with_mode(&mut writer, compress)?;
+        self.ring_dim.serialize_with_mode(&mut writer, compress)?;
+        for rows in &self.inner_rows {
+            rows.coeff_len()
+                .serialize_with_mode(&mut writer, compress)?;
+            for coefficient in rows.coeffs() {
+                coefficient.serialize_with_mode(&mut writer, compress)?;
+            }
+        }
+        Ok(())
     }
 
     fn serialized_size(&self, compress: Compress) -> usize {
-        self.decomposed_inner_rows.serialized_size(compress)
+        self.inner_rows.len().serialized_size(compress)
+            + self.ring_dim.serialized_size(compress)
+            + self
+                .inner_rows
+                .iter()
+                .map(|rows| {
+                    rows.coeff_len().serialized_size(compress)
+                        + rows
+                            .coeffs()
+                            .iter()
+                            .map(|coefficient| coefficient.serialized_size(compress))
+                            .sum::<usize>()
+                })
+                .sum::<usize>()
     }
 }
 
@@ -132,15 +141,140 @@ where
         validate: Validate,
         _ctx: &(),
     ) -> Result<Self, SerializationError> {
-        let decomposed_inner_rows =
-            Vec::<DigitBlocks>::deserialize_with_mode(&mut reader, compress, validate, &())?;
-        let out = Self {
-            decomposed_inner_rows,
-            _marker: PhantomData,
-        };
-        if validate == Validate::Yes {
-            out.check()?;
+        let polynomial_count = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        checked_shape_len(polynomial_count)?;
+        let ring_dim = usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+        if ring_dim == 0 {
+            return Err(SerializationError::InvalidData(
+                "commitment hint A ring dimension must be nonzero".into(),
+            ));
         }
-        Ok(out)
+
+        let mut inner_rows = Vec::new();
+        reserve_shape_len(&mut inner_rows, polynomial_count)?;
+        let mut expected_coefficients = None;
+        let mut total_coefficients = 0usize;
+        for _ in 0..polynomial_count {
+            let coefficient_count =
+                usize::deserialize_with_mode(&mut reader, compress, validate, &())?;
+            if !coefficient_count.is_multiple_of(ring_dim) {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint coefficient count is not divisible by its A ring dimension"
+                        .into(),
+                ));
+            }
+            if expected_coefficients
+                .replace(coefficient_count)
+                .is_some_and(|expected| expected != coefficient_count)
+            {
+                return Err(SerializationError::InvalidData(
+                    "commitment hint polynomials have inconsistent row lengths".into(),
+                ));
+            }
+            total_coefficients = total_coefficients
+                .checked_add(coefficient_count)
+                .ok_or_else(|| {
+                    SerializationError::InvalidData(
+                        "commitment hint coefficient count overflow".into(),
+                    )
+                })?;
+            checked_shape_len(total_coefficients)?;
+
+            let mut coefficients = Vec::new();
+            reserve_shape_len(&mut coefficients, coefficient_count)?;
+            for _ in 0..coefficient_count {
+                coefficients.push(F::deserialize_with_mode(
+                    &mut reader,
+                    compress,
+                    validate,
+                    &(),
+                )?);
+            }
+            inner_rows.push(
+                RingVec::from_coeffs_with_ring_dim(coefficients, ring_dim).map_err(|_| {
+                    SerializationError::InvalidData(
+                        "commitment hint row storage is malformed".into(),
+                    )
+                })?,
+            );
+        }
+
+        let hint = Self {
+            inner_rows,
+            ring_dim,
+        };
+        hint.validate_shape()?;
+        if validate == Validate::Yes {
+            hint.check()?;
+        }
+        Ok(hint)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use akita_field::Fp32;
+
+    type F = Fp32<251>;
+
+    fn rows(start: u64, coefficient_count: usize, ring_dim: usize) -> RingVec<F> {
+        RingVec::from_coeffs_with_ring_dim(
+            (0..coefficient_count)
+                .map(|offset| F::from_u64(start + offset as u64))
+                .collect(),
+            ring_dim,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn hint_encoding_is_polynomial_count_shared_dimension_then_field_rows() {
+        let hint = AkitaCommitmentHint::new(4, vec![rows(10, 8, 4), rows(30, 8, 4)]).unwrap();
+        let mut encoded = Vec::new();
+        hint.serialize_uncompressed(&mut encoded).unwrap();
+
+        let mut expected = Vec::new();
+        2usize.serialize_uncompressed(&mut expected).unwrap();
+        4usize.serialize_uncompressed(&mut expected).unwrap();
+        for row in hint.inner_rows() {
+            row.coeff_len()
+                .serialize_uncompressed(&mut expected)
+                .unwrap();
+            for coefficient in row.coeffs() {
+                coefficient.serialize_uncompressed(&mut expected).unwrap();
+            }
+        }
+        assert_eq!(encoded, expected);
+
+        let decoded =
+            AkitaCommitmentHint::<F>::deserialize_uncompressed(&encoded[..], &()).unwrap();
+        assert_eq!(decoded, hint);
+        assert_eq!(decoded.ring_dim(), 4);
+        assert_eq!(decoded.inner_rows()[0].coeffs()[0], F::from_u64(10));
+        assert_eq!(decoded.inner_rows()[1].coeffs()[0], F::from_u64(30));
+    }
+
+    #[test]
+    fn hint_constructor_rejects_inconsistent_semantic_rows() {
+        assert!(AkitaCommitmentHint::<F>::new(0, Vec::new()).is_err());
+        assert!(AkitaCommitmentHint::new(4, vec![rows(1, 8, 4), rows(2, 12, 4)]).is_err());
+        assert!(AkitaCommitmentHint::new(4, vec![rows(1, 8, 4), rows(2, 8, 2)]).is_err());
+    }
+
+    #[test]
+    fn hint_decoder_rejects_nonintegral_and_oversized_shapes() {
+        let mut nonintegral = Vec::new();
+        1usize.serialize_uncompressed(&mut nonintegral).unwrap();
+        4usize.serialize_uncompressed(&mut nonintegral).unwrap();
+        3usize.serialize_uncompressed(&mut nonintegral).unwrap();
+        assert!(AkitaCommitmentHint::<F>::deserialize_uncompressed(&nonintegral[..], &()).is_err());
+
+        let mut oversized = Vec::new();
+        (DEFAULT_MAX_SEQUENCE_LEN + 1)
+            .serialize_uncompressed(&mut oversized)
+            .unwrap();
+        4usize.serialize_uncompressed(&mut oversized).unwrap();
+        assert!(AkitaCommitmentHint::<F>::deserialize_uncompressed(&oversized[..], &()).is_err());
     }
 }

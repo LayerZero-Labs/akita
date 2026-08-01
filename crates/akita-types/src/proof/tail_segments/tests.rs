@@ -67,27 +67,6 @@ fn recompose_and_split_digits_round_trip() {
 }
 
 #[test]
-fn witness_plane_padding_preserves_native_prefix_and_zeros_carrier_tail() {
-    let mut out = vec![9i8; 12];
-    write_witness_plane_padded::<4>(&mut out, 1, &[1, 2]).expect("padded plane");
-    assert_eq!(&out[..4], &[9, 9, 9, 9]);
-    assert_eq!(&out[4..8], &[1, 2, 0, 0]);
-    assert_eq!(&out[8..], &[9, 9, 9, 9]);
-}
-
-#[test]
-fn witness_plane_padding_rejects_source_larger_than_carrier() {
-    let mut out = vec![0i8; 4];
-    assert!(matches!(
-        write_witness_plane_padded::<4>(&mut out, 0, &[1, 2, 3, 4, 5]),
-        Err(AkitaError::InvalidSize {
-            expected: 4,
-            actual: 5
-        })
-    ));
-}
-
-#[test]
 fn terminal_decoder_uses_one_coding_and_admission_cap() {
     let cap = 7;
     let values = [6, -6];

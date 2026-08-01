@@ -42,30 +42,23 @@ impl<E: FieldCore> RoleLaneSpec<'_, E> {
 
 /// Canonical relation-lane weight for one physical setup column.
 ///
-/// `Σ_{l<role_lanes} eq(witness_column·a_ratio + subcolumn·role_lanes + l) ·
+/// `Σ_{l<role_lanes} eq(first_lane + l) ·
 /// role_lane_alpha[l]`.
 #[inline]
 fn canonical_lane_weight<E: FieldCore>(
     eq_window: &OffsetEqWindow<E>,
     opening_source_len: usize,
-    witness_column: usize,
+    first_lane: usize,
     spec: &RoleLaneSpec<'_, E>,
-    subcolumn: usize,
 ) -> Result<E, AkitaError> {
-    // The source index must be a valid opening-source column (same bound the
-    // uniform path enforces through `checked_opening_source_index`).
-    crate::checked_opening_source_index(opening_source_len, witness_column)?;
-    let lane0 = witness_column
-        .checked_mul(spec.a_ratio)
-        .and_then(|base| {
-            subcolumn
-                .checked_mul(spec.role_lanes)
-                .and_then(|offset| base.checked_add(offset))
-        })
-        .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
+    if first_lane >= opening_source_len {
+        return Err(AkitaError::InvalidInput(
+            "relation lane address exceeds opening source".into(),
+        ));
+    }
     let mut weight = E::zero();
     for (lane, &alpha) in spec.role_lane_alpha.iter().enumerate() {
-        let index = lane0
+        let index = first_lane
             .checked_add(lane)
             .ok_or_else(|| AkitaError::InvalidSetup("relation lane address overflow".into()))?;
         weight += eq_window.eval(index) * alpha;
@@ -98,32 +91,42 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
         // Uniform-role fast path: contiguous `eq` fill (unchanged).
         let mut weights = vec![E::zero(); e_cols];
         for claim in 0..num_claims {
-            for unit in &units {
+            for unit in units.clone() {
                 let unit_width =
                     unit.num_live_blocks()
                         .checked_mul(depth_open)
                         .ok_or_else(|| {
                             AkitaError::InvalidSetup("witness E unit width overflow".into())
                         })?;
-                let expected = num_claims
+                let semantic_width = num_claims
                     .checked_mul(unit_width)
                     .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
                 let source_range = unit.e_range();
-                if source_range.len() != expected {
+                let source_ring_dimension = source_range
+                    .len()
+                    .checked_div(semantic_width)
+                    .filter(|&dimension| dimension != 0)
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness E shape overflow".into()))?;
+                if source_range.len() != semantic_width * source_ring_dimension {
                     return Err(AkitaError::InvalidSetup(
                         "witness E shape disagrees with resolved range".into(),
                     ));
                 }
                 let source_start = source_range
                     .start
-                    .checked_add(claim.checked_mul(unit_width).ok_or_else(|| {
-                        AkitaError::InvalidSetup("witness E claim offset overflow".into())
-                    })?)
+                    .checked_add(
+                        claim
+                            .checked_mul(unit_width)
+                            .and_then(|offset| offset.checked_mul(source_ring_dimension))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("witness E claim offset overflow".into())
+                            })?,
+                    )
                     .ok_or_else(|| AkitaError::InvalidSetup("witness E source overflow".into()))?;
                 let source_end = source_start
-                    .checked_add(unit_width)
+                    .checked_add(unit_width * source_ring_dimension)
                     .ok_or_else(|| AkitaError::InvalidSetup("witness E source overflow".into()))?;
-                if source_end > source_range.end || source_end > opening_source_len {
+                if source_end > source_range.end {
                     return Err(AkitaError::InvalidInput(
                         "physical opening interval out of range".into(),
                     ));
@@ -144,7 +147,7 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
                 let destination = weights
                     .get_mut(destination_start..destination_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                eq_window.fill_interval(source_start, destination)?;
+                eq_window.fill_interval(source_start / source_ring_dimension, destination)?;
             }
         }
         return Ok(weights);
@@ -160,29 +163,28 @@ pub(crate) fn setup_e_col_weights<E: FieldCore>(
             let block_claim = t / spec.role_subcolumns;
             let global_block = block_claim % num_live_blocks;
             let claim = block_claim / num_live_blocks;
-            let Some(unit) = units.iter().copied().find(|u| {
+            let Some(unit) = units.clone().find(|u| {
                 let start = u.global_block_start();
                 global_block >= start && global_block - start < u.num_live_blocks()
             }) else {
                 return Ok(E::zero());
             };
-            let block_in_unit = global_block - unit.global_block_start();
-            let unit_width = unit
-                .num_live_blocks()
-                .checked_mul(depth_open)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness E unit width overflow".into()))?;
-            let witness_column = unit
-                .e_range()
-                .start
-                .checked_add(claim * unit_width + block_in_unit * depth_open + digit)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup D source overflow".into()))?;
-            canonical_lane_weight(
-                eq_window,
-                opening_source_len,
-                witness_column,
-                spec,
+            let semantic_count = num_claims * unit.num_live_blocks() * depth_open;
+            let source_ring_dimension = unit.e_range().len() / semantic_count;
+            let base_ring_dimension = source_ring_dimension / spec.a_ratio;
+            let role_ring_dimension = base_ring_dimension * spec.role_lanes;
+            let first_lane = unit.e_coefficient_index(
+                source_ring_dimension,
+                role_ring_dimension,
+                num_claims,
+                depth_open,
+                claim,
+                global_block,
                 subcolumn,
-            )
+                digit,
+                0,
+            )? / base_ring_dimension;
+            canonical_lane_weight(eq_window, opening_source_len, first_lane, spec)
         })
         .collect()
 }
@@ -217,7 +219,7 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
     if spec.is_uniform() {
         let mut weights = vec![E::zero(); num_t_columns];
         for claim in 0..num_claims {
-            for unit in &units {
+            for unit in units.clone() {
                 let unit_width = unit
                     .num_live_blocks()
                     .checked_mul(n_a)
@@ -225,25 +227,35 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
                     .ok_or_else(|| {
                         AkitaError::InvalidSetup("witness T unit width overflow".into())
                     })?;
-                let expected = num_claims
+                let semantic_width = num_claims
                     .checked_mul(unit_width)
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
                 let source_range = unit.t_range();
-                if source_range.len() != expected {
+                let source_ring_dimension = source_range
+                    .len()
+                    .checked_div(semantic_width)
+                    .filter(|&dimension| dimension != 0)
+                    .ok_or_else(|| AkitaError::InvalidSetup("witness T shape overflow".into()))?;
+                if source_range.len() != semantic_width * source_ring_dimension {
                     return Err(AkitaError::InvalidSetup(
                         "witness T shape disagrees with resolved range".into(),
                     ));
                 }
                 let source_start = source_range
                     .start
-                    .checked_add(claim.checked_mul(unit_width).ok_or_else(|| {
-                        AkitaError::InvalidSetup("witness T claim offset overflow".into())
-                    })?)
+                    .checked_add(
+                        claim
+                            .checked_mul(unit_width)
+                            .and_then(|offset| offset.checked_mul(source_ring_dimension))
+                            .ok_or_else(|| {
+                                AkitaError::InvalidSetup("witness T claim offset overflow".into())
+                            })?,
+                    )
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T source overflow".into()))?;
                 let source_end = source_start
-                    .checked_add(unit_width)
+                    .checked_add(unit_width * source_ring_dimension)
                     .ok_or_else(|| AkitaError::InvalidSetup("witness T source overflow".into()))?;
-                if source_end > source_range.end || source_end > opening_source_len {
+                if source_end > source_range.end {
                     return Err(AkitaError::InvalidInput(
                         "physical opening interval out of range".into(),
                     ));
@@ -267,49 +279,46 @@ pub(crate) fn setup_t_col_weights<E: FieldCore>(
                 let destination = weights
                     .get_mut(destination_start..destination_end)
                     .ok_or(AkitaError::InvalidProof)?;
-                eq_window.fill_interval(source_start, destination)?;
+                eq_window.fill_interval(source_start / source_ring_dimension, destination)?;
             }
         }
         return Ok(weights);
     }
-    // Per-role: parallel map over the expanded column index. Physical B column
-    // order is [claim][block][A_row][digit][subcolumn] (subcolumn innermost),
-    // matching the dense native decode.
+    // Per-role: parallel map over `[claim][block][A row][subcolumn][digit]`.
     cfg_into_iter!(0..num_t_columns)
         .map(|col| -> Result<E, AkitaError> {
-            let subcolumn = col % spec.role_subcolumns;
-            let s1 = col / spec.role_subcolumns;
-            let digit = s1 % depth_open;
-            let s2 = s1 / depth_open;
+            let digit = col % depth_open;
+            let s1 = col / depth_open;
+            let subcolumn = s1 % spec.role_subcolumns;
+            let s2 = s1 / spec.role_subcolumns;
             let a_row = s2 % n_a;
             let s3 = s2 / n_a;
             let global_block = s3 % num_live_blocks;
             let claim = s3 / num_live_blocks;
-            let Some(unit) = units.iter().copied().find(|u| {
+            let Some(unit) = units.clone().find(|u| {
                 let start = u.global_block_start();
                 global_block >= start && global_block - start < u.num_live_blocks()
             }) else {
                 return Ok(E::zero());
             };
-            let block_in_unit = global_block - unit.global_block_start();
-            let unit_width = unit
-                .num_live_blocks()
-                .checked_mul(n_a)
-                .and_then(|w| w.checked_mul(depth_open))
-                .ok_or_else(|| AkitaError::InvalidSetup("witness T unit width overflow".into()))?;
-            let local = block_in_unit * n_a * depth_open + a_row * depth_open + digit;
-            let witness_column = unit
-                .t_range()
-                .start
-                .checked_add(claim * unit_width + local)
-                .ok_or_else(|| AkitaError::InvalidSetup("setup B source overflow".into()))?;
-            canonical_lane_weight(
-                eq_window,
-                opening_source_len,
-                witness_column,
-                spec,
+            let semantic_count = num_claims * unit.num_live_blocks() * n_a * depth_open;
+            let source_ring_dimension = unit.t_range().len() / semantic_count;
+            let base_ring_dimension = source_ring_dimension / spec.a_ratio;
+            let role_ring_dimension = base_ring_dimension * spec.role_lanes;
+            let first_lane = unit.t_coefficient_index(
+                source_ring_dimension,
+                role_ring_dimension,
+                num_claims,
+                n_a,
+                depth_open,
+                claim,
+                global_block,
+                a_row,
                 subcolumn,
-            )
+                digit,
+                0,
+            )? / base_ring_dimension;
+            canonical_lane_weight(eq_window, opening_source_len, first_lane, spec)
         })
         .collect()
 }
@@ -357,29 +366,29 @@ where
             let position = column / depth_commit;
             let commit_digit = column % depth_commit;
             let mut weight = E::zero();
-            for unit in &units {
+            for unit in units.clone() {
                 for (fold_digit, &fold) in fold_gadget.iter().enumerate().take(depth_fold) {
-                    let witness_index = unit.z_index(
+                    let semantic_count = num_positions_per_block * depth_commit * depth_fold;
+                    let source_ring_dimension = unit.z_range().len() / semantic_count;
+                    let base_ring_dimension = source_ring_dimension / spec.a_ratio;
+                    let first_lane = unit.z_coefficient_index(
+                        source_ring_dimension,
                         num_positions_per_block,
                         depth_commit,
                         depth_fold,
                         position,
                         commit_digit,
                         fold_digit,
-                    )?;
+                        0,
+                    )? / base_ring_dimension;
                     if spec.is_uniform() {
                         let opening_index =
-                            crate::checked_opening_source_index(opening_source_len, witness_index)?;
+                            crate::checked_opening_source_index(opening_source_len, first_lane)?;
                         weight -= eq_window.eval(opening_index).mul_base(fold);
                     } else {
                         // Per-role: α-lane-summed canonical `eq` (subcolumn 0).
-                        let lane_weight = canonical_lane_weight(
-                            eq_window,
-                            opening_source_len,
-                            witness_index,
-                            spec,
-                            0,
-                        )?;
+                        let lane_weight =
+                            canonical_lane_weight(eq_window, opening_source_len, first_lane, spec)?;
                         weight -= lane_weight.mul_base(fold);
                     }
                 }

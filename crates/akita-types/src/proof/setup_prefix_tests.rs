@@ -346,16 +346,15 @@ fn select_setup_prefix_slot_rejects_missing_registry_entry() {
 
 #[test]
 fn prover_registry_duplicate_insert_does_not_replace_existing_slot() {
-    use crate::proof::DigitBlocks;
     use akita_field::Prime32Offset99 as F;
 
     let commitment_params =
         setup_prefix_precommitted_params(&sample_level_params(), 64).expect("prefix params");
     let id = setup_prefix_slot_id(64, 1, commitment_params);
     let slot = || {
-        // D-free hint: one empty digit block at stride 32 (the former D).
-        let decomposed = DigitBlocks::from_blocks(vec![Vec::new()], 64).expect("digit blocks");
-        let hint = AkitaCommitmentHint::<F>::singleton(decomposed);
+        let inner_rows =
+            RingVec::from_coeffs_with_ring_dim(vec![F::zero(); 64], 64).expect("inner rows");
+        let hint = AkitaCommitmentHint::<F>::singleton(inner_rows).expect("hint");
         SetupPrefixSlot {
             id: id.clone(),
             natural_len: id.natural_len,
