@@ -255,12 +255,9 @@ fn flat_coefficient_decomposition_matches_ring_digit_layout() {
     for (levels, log_basis) in [(128, 1), (64, 2), (32, 4), (16, 8)] {
         let ring_digits = ring.balanced_decompose_pow2_i8(levels, log_basis);
         let mut flat_digits = vec![0i8; D * levels];
-        balanced_decompose_coefficients_pow2_i8_into(
-            &ring.coeffs,
-            &mut flat_digits,
-            levels,
-            log_basis,
-        );
+        let q = (-F128::one()).to_canonical_u128() + 1;
+        let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
+        balanced_decompose_coefficients_pow2_i8_into(&ring.coeffs, &mut flat_digits, &params);
         assert_eq!(flat_digits, ring_digits.as_flattened());
     }
 }

@@ -1,5 +1,6 @@
 use super::*;
 use crate::compute::{OperationCtx, RuntimeRingSwitchProveBackend};
+use crate::kernels::linear::decompose_commit_blocks_into;
 use crate::protocol::ring_relation::validate_chunked_witness_cfg;
 use crate::protocol::ring_relation::RelationQuotientOutput;
 use crate::protocol::ring_relation_witness::{RingRelationGroupWitness, RingRelationWitness};
@@ -7,8 +8,8 @@ use crate::validation::validate_i8_setup_log_basis;
 use akita_algebra::CyclotomicRing;
 use akita_serialization::AkitaSerialize;
 use akita_types::{
-    dispatch_for_field, emit_witness_t_planes, emit_witness_z_planes, CommitmentRingDims,
-    LevelParamsLike, RingRole, RingVec, WitnessLayout,
+    dispatch_for_field, emit_witness_e_planes, emit_witness_t_planes, emit_witness_z_planes,
+    CommitmentRingDims, LevelParamsLike, RingRole, RingVec, WitnessLayout,
 };
 
 pub(crate) struct PreparedRingSwitchGroup<'a, F: FieldCore> {
@@ -51,7 +52,7 @@ fn concat_digit_blocks<'a>(
 }
 
 /// Emit one group's physical Z, E, and T planes through the canonical layout.
-fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
+fn emit_group_witness_segments<F: CanonicalField>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -69,7 +70,7 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
         F,
         group.role_dims.d_a(),
         |D_G| {
-            emit_group_native_a_segments::<F, D, D_G>(
+            emit_group_native_a_segments::<F, D_G>(
                 out,
                 layout,
                 group_id,
@@ -79,20 +80,33 @@ fn emit_group_witness_segments<F: CanonicalField, const D: usize>(
             )
         }
     )?;
-    emit_group_e_planes_padded::<D>(
-        out,
-        layout,
-        group_id,
-        num_claims,
-        group.params.num_digits_open(),
-        &group.e_hat,
-        group.params.num_live_blocks(),
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Inner),
+        F,
         group.role_dims.d_a(),
+        |D_A| {
+            dispatch_for_field!(
+                ProtocolDispatchSlot::Role(RingRole::Opening),
+                F,
+                group.role_dims.d_d(),
+                |D_D| {
+                    emit_witness_e_planes::<D_A, D_D>(
+                        out,
+                        layout,
+                        group_id,
+                        num_claims,
+                        group.params.num_digits_open(),
+                        &group.e_hat,
+                        group.params.num_live_blocks(),
+                    )
+                }
+            )
+        }
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_group_native_a_segments<F: CanonicalField, const D_CARRIER: usize, const D_GROUP: usize>(
+fn emit_group_native_a_segments<F: CanonicalField, const D_GROUP: usize>(
     out: &mut [i8],
     layout: &WitnessLayout,
     group_id: usize,
@@ -100,20 +114,15 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_CARRIER: usize, const
     num_claims: usize,
     num_digits_fold: usize,
 ) -> Result<(), AkitaError> {
-    if D_GROUP > D_CARRIER {
-        return Err(AkitaError::InvalidSize {
-            expected: D_CARRIER,
-            actual: D_GROUP,
-        });
-    }
     let units = layout.units_for_group(group_id)?;
-    if units.len() != group.z_folded_centered_per_chunk.len() {
+    let unit_count = units.clone().count();
+    if unit_count != group.z_folded_centered_per_chunk.len() {
         return Err(AkitaError::InvalidSize {
-            expected: units.len(),
+            expected: unit_count,
             actual: group.z_folded_centered_per_chunk.len(),
         });
     }
-    for (unit, z_centered) in units.into_iter().zip(&group.z_folded_centered_per_chunk) {
+    for (unit, z_centered) in units.zip(&group.z_folded_centered_per_chunk) {
         let typed: Vec<[i32; D_GROUP]> = z_centered
             .iter()
             .map(|row| {
@@ -127,7 +136,7 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_CARRIER: usize, const
             .collect::<Result<_, _>>()?;
         let z_planes =
             decompose_z_folded_planes(&typed, num_digits_fold, group.params.log_basis_open())?;
-        emit_witness_z_planes::<D_CARRIER, D_GROUP>(
+        emit_witness_z_planes::<D_GROUP>(
             out,
             unit,
             group.params.num_positions_per_block(),
@@ -136,106 +145,23 @@ fn emit_group_native_a_segments<F: CanonicalField, const D_CARRIER: usize, const
             &z_planes,
         )?;
     }
-    emit_witness_t_planes::<D_CARRIER, D_GROUP>(
-        out,
-        layout,
-        group_id,
-        num_claims,
-        group.params.a_rows_len(),
-        group.params.num_digits_outer(),
-        group.t_hat.typed_planes::<D_GROUP>()?,
-        group.params.num_live_blocks(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_group_e_planes_padded<const D_A: usize>(
-    out: &mut [i8],
-    layout: &WitnessLayout,
-    group_id: usize,
-    num_claims: usize,
-    depth_open: usize,
-    e_hat: &DigitBlocks,
-    source_num_live_blocks: usize,
-    source_ring_dim: usize,
-) -> Result<(), AkitaError> {
-    if source_ring_dim > D_A
-        || !D_A.is_multiple_of(source_ring_dim)
-        || e_hat.digit_stride() > source_ring_dim
-        || !source_ring_dim.is_multiple_of(e_hat.digit_stride())
-    {
-        return Err(AkitaError::InvalidSize {
-            expected: D_A,
-            actual: source_ring_dim,
-        });
-    }
-    let expected = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(depth_open))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E source length overflow".into()))?;
-    let expected_digits = expected
-        .checked_mul(source_ring_dim)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E digit length overflow".into()))?;
-    if e_hat.digits().len() != expected_digits {
-        return Err(AkitaError::InvalidSize {
-            expected: expected_digits,
-            actual: e_hat.digits().len(),
-        });
-    }
-    let role_ratio = source_ring_dim / e_hat.digit_stride();
-    let expected_blocks = num_claims
-        .checked_mul(source_num_live_blocks)
-        .and_then(|n| n.checked_mul(role_ratio))
-        .ok_or_else(|| AkitaError::InvalidSetup("witness E block count overflow".into()))?;
-    if e_hat.block_count() != expected_blocks {
-        return Err(AkitaError::InvalidProof);
-    }
-    for unit in layout.units_for_group(group_id)? {
-        for claim in 0..num_claims {
-            for global_block in unit.global_block_range() {
-                for digit in 0..depth_open {
-                    let logical_block = claim * source_num_live_blocks + global_block;
-                    let mut plane = [0i8; D_A];
-                    for role_subcol in 0..role_ratio {
-                        let source_block = logical_block * role_ratio + role_subcol;
-                        let source = source_block * depth_open + digit;
-                        let source_plane = e_hat.plane(source).ok_or(AkitaError::InvalidProof)?;
-                        let start = role_subcol * e_hat.digit_stride();
-                        plane[start..start + e_hat.digit_stride()].copy_from_slice(source_plane);
-                    }
-                    write_padded_plane::<D_A>(
-                        out,
-                        unit.e_index(num_claims, depth_open, claim, global_block, digit)?,
-                        &plane,
-                    )?;
-                }
-            }
+    dispatch_for_field!(
+        ProtocolDispatchSlot::Role(RingRole::Outer),
+        F,
+        group.role_dims.d_b(),
+        |D_B| {
+            emit_witness_t_planes::<D_GROUP, D_B>(
+                out,
+                layout,
+                group_id,
+                num_claims,
+                group.params.a_rows_len(),
+                group.params.num_digits_outer(),
+                &group.t_hat,
+                group.params.num_live_blocks(),
+            )
         }
-    }
-    Ok(())
-}
-
-fn write_padded_plane<const D_A: usize>(
-    out: &mut [i8],
-    ring_index: usize,
-    plane: &[i8],
-) -> Result<(), AkitaError> {
-    if plane.len() > D_A {
-        return Err(AkitaError::InvalidSize {
-            expected: D_A,
-            actual: plane.len(),
-        });
-    }
-    let start = ring_index
-        .checked_mul(D_A)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness plane offset overflow".into()))?;
-    let end = start
-        .checked_add(D_A)
-        .ok_or_else(|| AkitaError::InvalidSetup("witness plane end overflow".into()))?;
-    let dst = out.get_mut(start..end).ok_or(AkitaError::InvalidProof)?;
-    dst.fill(0);
-    dst[..plane.len()].copy_from_slice(plane);
-    Ok(())
+    )
 }
 
 /// Build the witness vector `w` from the ring-relation witness.
@@ -266,196 +192,208 @@ where
     B: RuntimeRingSwitchProveBackend<F>,
 {
     let opening_batch = instance.opening_batch();
-    let carrier_ring_dimension = lp.relation_witness_carrier_ring_dimension();
-    dispatch_for_field!(
-        ProtocolDispatchSlot::Role(RingRole::Inner),
-        F,
-        carrier_ring_dimension,
-        |D| {
-            validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
-            let RingRelationWitness {
-                groups,
-                fold_grind_nonce: _,
-            } = witness;
-            if groups.len() != opening_batch.num_groups() {
-                return Err(AkitaError::InvalidInput(
-                    "ring-switch witness count does not match opening batch".to_string(),
-                ));
-            }
-            lp.validate_opening_batch(opening_batch)?;
-            let order = opening_batch.root_group_order()?;
-            let mut owned = Vec::with_capacity(groups.len());
-            for (group_index, group) in groups.into_iter().enumerate() {
-                let group_lp = lp.group_params(opening_batch, group_index)?;
-                let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-                if group.role_dims() != group_dims {
-                    return Err(AkitaError::InvalidInput(format!(
+    validate_i8_setup_log_basis(lp.log_basis_open, "for i8 prover opening decomposition")?;
+    let RingRelationWitness {
+        groups,
+        fold_grind_nonce: _,
+    } = witness;
+    if groups.len() != opening_batch.num_groups() {
+        return Err(AkitaError::InvalidInput(
+            "ring-switch witness count does not match opening batch".to_string(),
+        ));
+    }
+    lp.validate_opening_batch(opening_batch)?;
+    let order = opening_batch.root_group_order()?;
+    let mut owned = Vec::with_capacity(groups.len());
+    for (group_index, group) in groups.into_iter().enumerate() {
+        let group_lp = lp.group_params(opening_batch, group_index)?;
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        if group.role_dims() != group_dims {
+            return Err(AkitaError::InvalidInput(format!(
                         "ring-switch witness group {group_index} role dimensions disagree with level params"
                     )));
-                }
+        }
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D_G| group.ensure_role_dim::<D_G>(RingRole::Inner)
+        )?;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Opening),
+            F,
+            group_dims.d_d(),
+            |D_G| group.ensure_role_dim::<D_G>(RingRole::Opening)
+        )?;
+        let RingRelationGroupWitness {
+            z_folded_rings,
+            z_folded_centered_per_chunk,
+            e_hat,
+            e_folded,
+            hint,
+            ..
+        } = group;
+        if hint.ring_dim() != group_dims.d_a() {
+            return Err(AkitaError::InvalidSize {
+                expected: group_dims.d_a(),
+                actual: hint.ring_dim(),
+            });
+        }
+        let inner_rows_by_polynomial = hint.into_rows();
+        let polynomial_count = opening_batch.group_layout(group_index)?.num_polynomials();
+        if inner_rows_by_polynomial.len() != polynomial_count {
+            return Err(AkitaError::InvalidSize {
+                expected: polynomial_count,
+                actual: inner_rows_by_polynomial.len(),
+            });
+        }
+        let expected_rings_per_polynomial = group_lp
+            .num_live_blocks()
+            .checked_mul(group_lp.a_rows_len())
+            .ok_or_else(|| AkitaError::InvalidSetup("commitment hint row count overflow".into()))?;
+        let t_hat = dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D_G| {
                 dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
+                    ProtocolDispatchSlot::Role(RingRole::Outer),
                     F,
-                    group_dims.d_a(),
-                    |D_G| group.ensure_role_dim::<D_G>(RingRole::Inner)
-                )?;
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Opening),
-                    F,
-                    group_dims.d_d(),
-                    |D_G| group.ensure_role_dim::<D_G>(RingRole::Opening)
-                )?;
-                let RingRelationGroupWitness {
-                    z_folded_rings,
-                    z_folded_centered_per_chunk,
-                    e_hat,
-                    e_folded,
-                    hint,
-                    ..
-                } = group;
-                let t_hat = hint.into_flat_parts()?;
-                if t_hat.digit_stride() != group_dims.d_a() {
-                    return Err(AkitaError::InvalidSize {
-                        expected: group_dims.d_a(),
-                        actual: t_hat.digit_stride(),
-                    });
-                }
-                let recomposed_inner_rows = dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
-                    F,
-                    group_dims.d_a(),
-                    |D_G| {
-                        crate::compute::recompose_inner_rows::<F, D_G>(
-                            &t_hat,
+                    group_dims.d_b(),
+                    |D_B| {
+                        let mut blocks =
+                            Vec::with_capacity(polynomial_count * group_lp.num_live_blocks());
+                        for rows in &inner_rows_by_polynomial {
+                            let typed_rows = rows.as_ring_slice::<D_G>()?;
+                            if typed_rows.len() != expected_rings_per_polynomial {
+                                return Err(AkitaError::InvalidSize {
+                                    expected: expected_rings_per_polynomial,
+                                    actual: typed_rows.len(),
+                                });
+                            }
+                            blocks.extend(typed_rows.chunks_exact(group_lp.a_rows_len()));
+                        }
+                        decompose_commit_blocks_into::<F, D_G, D_B>(
+                            &blocks,
                             group_lp.num_digits_outer(),
                             group_lp.log_basis_outer(),
                         )
-                        .and_then(|blocks| {
-                            let coeff_capacity = blocks
-                                .len()
-                                .checked_mul(group_lp.a_rows_len())
-                                .and_then(|count| count.checked_mul(D_G))
-                                .ok_or_else(|| {
-                                    AkitaError::InvalidInput(
-                                        "recomposed inner-row length overflow".to_string(),
-                                    )
-                                })?;
-                            let mut coeffs = Vec::with_capacity(coeff_capacity);
-                            for rows in blocks {
-                                for row in rows {
-                                    coeffs.extend_from_slice(row.coefficients());
-                                }
-                            }
-                            Ok(RingVec::from_coeffs(coeffs))
-                        })
                     }
-                )?;
-                owned.push(PreparedRingSwitchGroup {
-                    params: group_lp,
-                    role_dims: group_dims,
-                    e_hat,
-                    t_hat,
-                    recomposed_inner_rows,
-                    e_folded,
-                    z_centered: z_folded_rings.centered_coeffs_flat().to_vec(),
-                    z_inf: z_folded_rings.centered_inf_norm,
-                    z_folded_centered_per_chunk,
-                });
+                )
             }
-            validate_chunked_witness_cfg(lp)?;
-            for group_index in 0..opening_batch.num_groups() {
-                let group_dims = lp.group_role_dims(opening_batch, group_index)?;
-                dispatch_for_field!(
-                    ProtocolDispatchSlot::Role(RingRole::Inner),
-                    F,
-                    group_dims.d_a(),
-                    |D_G| {
-                        instance
-                            .group_ring_multiplier_point(group_index)?
-                            .ensure_ring_dim::<D_G>()
-                    }
-                )?;
-            }
-            let witness_layout = instance.segment_layout(lp, None)?;
-
-            // Relation quotient `r`: each group owns a native consistency/A/B
-            // block, while the level owns the shared D tail. One trailing witness
-            // segment carries all quotient rows in canonical relation order.
-            let e_hat_concat_storage;
-            let e_hat_concat = if let [group_index] = order.as_slice() {
-                &owned[*group_index].e_hat
-            } else {
-                e_hat_concat_storage = concat_digit_blocks(
-                    order.iter().map(|&group_index| &owned[group_index].e_hat),
-                )?;
-                &e_hat_concat_storage
-            };
-            let ring_multiplier_points = owned
-                .iter()
-                .enumerate()
-                .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
-                .collect::<Result<Vec<_>, AkitaError>>()?;
-            let r = compute_multi_group_relation_quotient::<F, B>(
-                ring_switch_ctx,
-                lp,
-                opening_batch,
-                &owned,
-                &ring_multiplier_points,
-                instance.group_challenges(),
-                e_hat_concat,
-                instance.rhs(),
-            )
-            .map_err(|err| {
-                AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
+        )?;
+        let expected_coefficients = polynomial_count
+            .checked_mul(expected_rings_per_polynomial)
+            .and_then(|count| count.checked_mul(group_dims.d_a()))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("commitment hint coefficient count overflow".into())
             })?;
-
-            let physical_len = witness_layout
-                .total_len()
-                .checked_mul(D)
-                .ok_or_else(|| AkitaError::InvalidSetup("witness length overflow".to_string()))?;
-            let mut out = vec![0i8; physical_len];
-            for &group_index in &order {
-                let group_layout = opening_batch.group_layout(group_index)?;
-                emit_group_witness_segments::<F, D>(
-                    &mut out,
-                    &witness_layout,
-                    group_index,
-                    &owned[group_index],
-                    lp,
-                    group_layout.num_polynomials(),
-                )?;
-            }
-            let levels = r_decomp_levels::<F>(lp.log_basis_open);
-            emit_r_rows_padded::<F, D>(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
-            let expected = lp.output_witness_len::<F>(opening_batch)?;
-            if out.len() != expected {
-                return Err(AkitaError::InvalidSize {
-                    expected,
-                    actual: out.len(),
-                });
-            }
-
-            // Every segment of the generated witness is balanced, but grouped
-            // roots may mix decomposition bases. The whole-buffer certificate
-            // must therefore carry the widest emitted basis: using only the
-            // root basis could incorrectly trust a later narrower commit.
-            let known_balanced_log_basis = owned
-                .iter()
-                .flat_map(|group| {
-                    [
-                        group.params.log_basis_inner(),
-                        group.params.log_basis_outer(),
-                        group.params.log_basis_open(),
-                    ]
-                })
-                .fold(lp.log_basis_open, u32::max);
-            RecursiveWitnessFlat::from_witness_layout::<D>(
-                out,
-                &witness_layout,
-                known_balanced_log_basis,
-            )
+        let mut inner_rows = inner_rows_by_polynomial.into_iter();
+        let mut inner_coefficients = inner_rows
+            .next()
+            .ok_or(AkitaError::InvalidProof)?
+            .into_coeffs();
+        inner_coefficients.reserve(expected_coefficients - inner_coefficients.len());
+        for rows in inner_rows {
+            inner_coefficients.extend(rows.into_coeffs());
         }
+        let recomposed_inner_rows =
+            RingVec::from_coeffs_with_ring_dim(inner_coefficients, group_dims.d_a())?;
+        owned.push(PreparedRingSwitchGroup {
+            params: group_lp,
+            role_dims: group_dims,
+            e_hat,
+            t_hat,
+            recomposed_inner_rows,
+            e_folded,
+            z_centered: z_folded_rings.centered_coeffs_flat().to_vec(),
+            z_inf: z_folded_rings.centered_inf_norm,
+            z_folded_centered_per_chunk,
+        });
+    }
+    validate_chunked_witness_cfg(lp)?;
+    for group_index in 0..opening_batch.num_groups() {
+        let group_dims = lp.group_role_dims(opening_batch, group_index)?;
+        dispatch_for_field!(
+            ProtocolDispatchSlot::Role(RingRole::Inner),
+            F,
+            group_dims.d_a(),
+            |D_G| {
+                instance
+                    .group_ring_multiplier_point(group_index)?
+                    .ensure_ring_dim::<D_G>()
+            }
+        )?;
+    }
+    let witness_layout = instance.segment_layout(lp, None)?;
+
+    // Relation quotient `r`: each group owns a native consistency/A/B
+    // block, while the level owns the shared D tail. One trailing witness
+    // segment carries all quotient rows in canonical relation order.
+    let e_hat_concat_storage;
+    let e_hat_concat = if let [group_index] = order.as_slice() {
+        &owned[*group_index].e_hat
+    } else {
+        e_hat_concat_storage =
+            concat_digit_blocks(order.iter().map(|&group_index| &owned[group_index].e_hat))?;
+        &e_hat_concat_storage
+    };
+    let ring_multiplier_points = owned
+        .iter()
+        .enumerate()
+        .map(|(group_index, _)| instance.group_ring_multiplier_point(group_index))
+        .collect::<Result<Vec<_>, AkitaError>>()?;
+    let r = compute_multi_group_relation_quotient::<F, B>(
+        ring_switch_ctx,
+        lp,
+        opening_batch,
+        &owned,
+        &ring_multiplier_points,
+        instance.group_challenges(),
+        e_hat_concat,
+        instance.rhs(),
     )
+    .map_err(|err| {
+        AkitaError::InvalidInput(format!("relation quotient preparation failed: {err:?}"))
+    })?;
+
+    let mut out = vec![0i8; witness_layout.live_coeff_len()];
+    for &group_index in &order {
+        let group_layout = opening_batch.group_layout(group_index)?;
+        emit_group_witness_segments::<F>(
+            &mut out,
+            &witness_layout,
+            group_index,
+            &owned[group_index],
+            lp,
+            group_layout.num_polynomials(),
+        )?;
+    }
+    let levels = r_decomp_levels::<F>(lp.log_basis_open);
+    emit_r_rows(&mut out, &witness_layout, &r, levels, lp.log_basis_open)?;
+    let expected = witness_layout.live_coeff_len();
+    if out.len() != expected {
+        return Err(AkitaError::InvalidSize {
+            expected,
+            actual: out.len(),
+        });
+    }
+
+    // Every segment of the generated witness is balanced, but grouped
+    // roots may mix decomposition bases. The whole-buffer certificate
+    // must therefore carry the widest emitted basis: using only the
+    // root basis could incorrectly trust a later narrower commit.
+    let known_balanced_log_basis = owned
+        .iter()
+        .flat_map(|group| {
+            [
+                group.params.log_basis_inner(),
+                group.params.log_basis_outer(),
+                group.params.log_basis_open(),
+            ]
+        })
+        .fold(lp.log_basis_open, u32::max);
+    RecursiveWitnessFlat::from_witness_layout(out, &witness_layout, known_balanced_log_basis)
 }
 
 pub(super) fn balanced_decompose_centered_i32_i8_into<const D: usize>(
@@ -509,24 +447,29 @@ fn decompose_z_folded_planes<const D: usize>(
     Ok(all_planes)
 }
 
-fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
+fn emit_r_rows<F: CanonicalField>(
     out: &mut [i8],
     layout: &WitnessLayout,
     r: &RelationQuotientOutput<F>,
     levels: usize,
     log_basis: u32,
 ) -> Result<(), AkitaError> {
-    let expected_len = r
-        .rows()
-        .len()
-        .checked_mul(levels)
-        .ok_or_else(|| AkitaError::InvalidSetup("R witness width overflow".to_string()))?;
-    if layout.r_range().len() != expected_len {
+    if layout.r_rows().len() != r.rows().len() || layout.quotient_depth() != levels {
         return Err(AkitaError::InvalidProof);
     }
     let q = (-F::one()).to_canonical_u128() + 1;
     let decompose_params = BalancedDecomposePow2Params::new(levels, log_basis, q);
     for (row_index, row) in r.rows().iter().enumerate() {
+        let row_layout = layout
+            .r_rows()
+            .get(row_index)
+            .ok_or(AkitaError::InvalidProof)?;
+        if row_layout.ring_dim() != row.ring_dim() {
+            return Err(AkitaError::InvalidSize {
+                expected: row_layout.ring_dim(),
+                actual: row.ring_dim(),
+            });
+        }
         let digits = match row.ring_dim() {
             16 => decompose_r_row::<F, 16>(row.coeffs(), levels, &decompose_params)?,
             32 => decompose_r_row::<F, 32>(row.coeffs(), levels, &decompose_params)?,
@@ -544,11 +487,14 @@ fn emit_r_rows_padded<F: CanonicalField, const D_A: usize>(
         for digit in 0..levels {
             let start = digit * row.ring_dim();
             let end = start + row.ring_dim();
-            write_padded_plane::<D_A>(
-                out,
-                layout.r_index(levels, row_index, digit)?,
-                &digits[start..end],
-            )?;
+            let destination = layout.r_coefficient_index(row_index, digit, 0)?;
+            let destination_end = destination
+                .checked_add(row.ring_dim())
+                .ok_or_else(|| AkitaError::InvalidSetup("R witness end overflow".into()))?;
+            let plane = out
+                .get_mut(destination..destination_end)
+                .ok_or(AkitaError::InvalidProof)?;
+            plane.copy_from_slice(&digits[start..end]);
         }
     }
     Ok(())

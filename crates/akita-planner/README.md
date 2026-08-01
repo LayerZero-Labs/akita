@@ -19,7 +19,7 @@ Estimates are neither serialized nor Fiat–Shamir bound.
 
 ## Inputs And Outputs
 
-The public search entry point is `find_group_batch_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
+The public search entry point is `find_schedule(&key, &policy, ring_challenge_config, fold_challenge_shape_at_level)`.
 
 `key: AkitaScheduleLookupKey` describes the supported root opening shape.
 Single-group openings store one `PolynomialGroupLayout` in `final_group` and

@@ -1,6 +1,8 @@
 #![cfg_attr(feature = "profile-onehot-fp128-d64", allow(dead_code))]
 
 use crate::report::print_layout;
+#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+use crate::workload::run_recursive_multi_group_onehot_mixed;
 use crate::workload::{
     onehot_k_for_num_vars, run_batched_onehot, run_dense_for, run_onehot,
     run_recursive_multi_group_onehot,
@@ -16,7 +18,7 @@ use akita_field::{
     PseudoMersenneField, RandomSampling,
 };
 #[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
-use akita_pcs::test_support::MixedDConfig;
+use akita_pcs::test_support::{MixedDConfig, RecursiveRingDimensionTransitionConfig};
 use akita_serialization::{AkitaSerialize, Valid};
 use akita_types::{
     AkitaScheduleLookupKey, CommittedGroupParams, FpExtEncoding, MultiChunkProfileId,
@@ -187,6 +189,10 @@ const PROFILE_CI_MODES: &[ProfileMode] = &[
         run: run_profile_onehot_fp128_d64,
     },
     ProfileMode {
+        name: "onehot_fp128_mixed_dim",
+        run: run_profile_onehot_fp128_mixed_dim,
+    },
+    ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive",
         run: run_profile_onehot_fp128_d64_multi_group_recursive,
     },
@@ -237,6 +243,14 @@ const PROFILE_ALL_MODES: &[ProfileMode] = &[
     ProfileMode {
         name: "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
         run: run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2,
+    },
+    ProfileMode {
+        name: "onehot_fp128_mixed_d_multi_group_recursive",
+        run: run_profile_onehot_fp128_mixed_d_multi_group_recursive,
+    },
+    ProfileMode {
+        name: "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
+        run: run_profile_onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2,
     },
     ProfileMode {
         name: "dense_fp128_d128",
@@ -317,6 +331,8 @@ const EXCLUDED_FROM_ALL_SWEEP: &[&str] = &[
     "onehot_fp128_d64_multi_chunk_w8r2",
     "onehot_fp128_d64_multi_group_recursive",
     "onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2",
+    "onehot_fp128_mixed_d_multi_group_recursive",
+    "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
     // D128+ presets are heavy and/or runtime-DP-backed; keep them out of the
     // default `all` smoke sweep (they are still selectable by explicit
     // `AKITA_MODE=` and drive the profile-bench matrix).
@@ -392,6 +408,46 @@ fn run_profile_onehot_fp128_d64(nv: usize, num_polys: usize) {
     run_onehot_mode::<{ Cfg::D }, Cfg>("onehot_fp128_d64", &title, nv, num_polys);
 }
 
+#[cfg(feature = "profile-ci")]
+fn run_profile_onehot_fp128_mixed_dim(nv: usize, num_polys: usize) {
+    type Cfg = fp128::MixedDimFp128OneHot;
+    assert_eq!(nv, 32, "mixed-dimension profile fixes nv=32");
+    assert_singleton_mode("onehot_fp128_mixed_dim", num_polys);
+
+    let schedule = Cfg::runtime_schedule(AkitaScheduleLookupKey::single(
+        PolynomialGroupLayout::singleton(nv),
+    ))
+    .expect("generated mixed-dimension schedule");
+    let selected_dims = std::iter::once(schedule.root.params.final_group.commitment.role_dims())
+        .chain(
+            schedule
+                .recursive_folds
+                .iter()
+                .map(|fold| fold.params.witness.role_dims()),
+        )
+        .collect::<Vec<_>>();
+    tracing::info!(
+        selected_dims = ?selected_dims,
+        "generated mixed-dimension schedule selection"
+    );
+
+    let layout = resolve_layout::<F, Cfg>(nv);
+    tracing::info!(
+        "=== onehot_fp128_mixed_dim (fp128, setup D256, generated per-level dimensions, 1-of-256) ==="
+    );
+    print_layout(&layout, 1, Cfg::decomposition().field_bits());
+    // The catalog row selected here is the same exact row used by the PCS
+    // prover and verifier. The benchmark intentionally does not compare it
+    // against a different uniform-D family.
+    run_onehot::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_mixed_dim",
+        nv,
+        &layout,
+        Some(&schedule),
+        false,
+    );
+}
+
 /// Shared driver for the recursive multi-group profiles. Every such profile
 /// fixes the same shape (two precommitted 16-var singleton groups + a 32-var
 /// main group with 2 polynomials, i.e. `num_polys == 4`); only the base preset
@@ -411,7 +467,7 @@ fn run_recursive_multi_group_mode<
         "{label} opens two precommitted singleton groups plus two main polynomials"
     );
     tracing::info!(
-        "=== {label} (fp128, {}, D=64, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
+        "=== {label} (fp128, {}, setup D={D}, two precommitted 16-var singleton groups + 32-var main group with 2 polynomials, {layout_note}) ===",
         fp128_prime_label()
     );
     run_recursive_multi_group_onehot::<F, D, Cfg>(label, 16, 32, 2);
@@ -440,6 +496,63 @@ fn run_profile_onehot_fp128_d64_multi_group_recursive_multi_chunk_w8r2(
         "recursive setup offloading + W8R2 chunked witness: num_chunks=8 x 2 leading levels",
         nv,
         num_polys,
+    );
+}
+
+#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+fn run_profile_onehot_fp128_mixed_d_multi_group_recursive(nv: usize, num_polys: usize) {
+    type Cfg = RecursiveRingDimensionTransitionConfig<
+        fp128::D256OneHot,
+        fp128::D128OneHot,
+        fp128::D64OneHot,
+        fp128::D64OneHot,
+        128,
+        64,
+    >;
+    assert_eq!(nv, 32, "mixed recursive profile fixes nv=32");
+    assert_eq!(
+        num_polys, 4,
+        "mixed recursive profile fixes four polynomials"
+    );
+    tracing::info!(
+        "=== onehot_fp128_mixed_d_multi_group_recursive (fp128, {}, recursive setup, L0=256/128/128, L1=128/64/64, L2+=64/64/64) ===",
+        fp128_prime_label()
+    );
+    run_recursive_multi_group_onehot_mixed::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_mixed_d_multi_group_recursive",
+        16,
+        32,
+        2,
+    );
+}
+
+#[cfg(all(not(feature = "profile-onehot-fp128-d64"), not(feature = "profile-ci")))]
+fn run_profile_onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2(
+    nv: usize,
+    num_polys: usize,
+) {
+    type Cfg = RecursiveRingDimensionTransitionConfig<
+        fp128::D256OneHot,
+        fp128::D128OneHot,
+        fp128::D64OneHot,
+        fp128::D64OneHotMultiChunk,
+        128,
+        64,
+    >;
+    assert_eq!(nv, 32, "mixed recursive W8R2 profile fixes nv=32");
+    assert_eq!(
+        num_polys, 4,
+        "mixed recursive W8R2 profile fixes four polynomials"
+    );
+    tracing::info!(
+        "=== onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2 (fp128, {}, recursive setup + W8R2, L0=256/128/128, L1=128/64/64, L2+=64/64/64) ===",
+        fp128_prime_label()
+    );
+    run_recursive_multi_group_onehot_mixed::<F, { Cfg::D }, Cfg>(
+        "onehot_fp128_mixed_d_multi_group_recursive_multi_chunk_w8r2",
+        16,
+        32,
+        2,
     );
 }
 

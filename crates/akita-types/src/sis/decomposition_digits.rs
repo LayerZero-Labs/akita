@@ -239,6 +239,22 @@ pub fn decomposed_w_ring_count(
         .checked_mul(num_polynomials)
 }
 
+/// Convert an A-native ring-column count into the physical column count of a
+/// projected B- or D-native role.
+///
+/// The role dimension must divide the source dimension exactly.
+#[inline]
+pub fn projected_role_ring_count(
+    source_dimension: usize,
+    role_dimension: usize,
+    native_ring_count: usize,
+) -> Option<usize> {
+    if role_dimension == 0 || !source_dimension.is_multiple_of(role_dimension) {
+        return None;
+    }
+    native_ring_count.checked_mul(source_dimension / role_dimension)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +341,10 @@ mod tests {
         assert_eq!(decomposed_t_ring_count(2, 3, 4, 5), Some(120));
         assert_eq!(decomposed_w_ring_count(3, 4, 5), Some(60));
         assert_eq!(decomposed_s_block_ring_count(usize::MAX, 2), None);
+        assert_eq!(projected_role_ring_count(256, 64, 7), Some(28));
+        assert_eq!(projected_role_ring_count(256, 128, 7), Some(14));
+        assert_eq!(projected_role_ring_count(128, 256, 7), None);
+        assert_eq!(projected_role_ring_count(256, 0, 7), None);
     }
 
     #[test]

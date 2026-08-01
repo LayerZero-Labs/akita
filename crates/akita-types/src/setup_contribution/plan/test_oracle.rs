@@ -23,6 +23,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 .covering_at_dyn(self.d_rows * self.d_physical_cols, d_d)?;
             let d_view = d_matrix.ring_view_dyn(self.d_rows, self.d_physical_cols, d_d)?;
             for group in &self.groups {
+                let (e_eq_slice, _, _) = group.require_column_eq_slices()?;
                 for (row_idx, &row_weight) in self.d_weights.iter().enumerate() {
                     if row_weight.is_zero() {
                         continue;
@@ -31,7 +32,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                     acc += evaluate_weighted_setup_row::<F, E>(
                         row,
                         group.d_col_range.start,
-                        &group.e_eq_slice,
+                        e_eq_slice,
                         row_weight,
                         alpha_pows_d,
                     )?;
@@ -40,6 +41,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
         }
 
         for group in &self.groups {
+            let (_, t_eq_slice, z_eq_slice) = group.require_column_eq_slices()?;
             let a_matrix = setup
                 .shared_matrix
                 .covering_at_dyn(group.n_a * group.z_cols, d_a)?;
@@ -52,7 +54,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
-                    &group.z_eq_slice,
+                    z_eq_slice,
                     row_weight,
                     alpha_pows_a,
                 )?;
@@ -70,7 +72,7 @@ impl<E: FieldCore> SetupContributionPlan<E> {
                 acc += evaluate_weighted_setup_row::<F, E>(
                     row,
                     0,
-                    &group.t_eq_slice,
+                    t_eq_slice,
                     row_weight,
                     alpha_pows_b,
                 )?;

@@ -170,19 +170,17 @@ impl BalancedDecomposePow2Params {
 ///
 /// # Panics
 ///
-/// Panics if `out.len() != coefficients.len() * levels`, if `log_basis` is
-/// outside `1..=8`, or if the requested digit budget exceeds the supported
-/// field-width guard.
+/// Panics if `out.len() != coefficients.len() * params.levels`, or if the
+/// precomputed parameters use a basis wider than signed `i8` digits.
 #[inline]
 pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
     coefficients: &[F],
     out: &mut [i8],
-    levels: usize,
-    log_basis: u32,
+    params: &BalancedDecomposePow2Params,
 ) {
     let expected_len = coefficients
         .len()
-        .checked_mul(levels)
+        .checked_mul(params.levels)
         .expect("flat digit output length overflow");
     assert_eq!(
         out.len(),
@@ -190,12 +188,10 @@ pub fn balanced_decompose_coefficients_pow2_i8_into<F: CanonicalField>(
         "flat digit output length must match coefficients * levels",
     );
     assert!(
-        log_basis > 0 && log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
+        params.log_basis <= <i8 as BalancedSignedDigit>::MAX_LOG_BASIS,
         "log_basis must be in 1..=8 for i8 output"
     );
-    let q = (-F::one()).to_canonical_u128() + 1;
-    let params = BalancedDecomposePow2Params::new(levels, log_basis, q);
-    balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, &params);
+    balanced_decompose_coefficients_pow2_signed_into_with_params(coefficients, out, params);
 }
 
 #[inline]

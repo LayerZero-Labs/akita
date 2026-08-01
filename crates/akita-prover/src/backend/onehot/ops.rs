@@ -883,13 +883,7 @@ where
             },
         )?;
 
-        let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<F, D>(
-            &t,
-            plan.num_digits_outer,
-            plan.log_basis_outer,
-        )?;
-
-        CommitInnerWitness::from_parts(t, decomposed_inner_rows)
+        Ok(CommitInnerWitness::from_rows(t))
     }
 
     /// Group commit: one fused A pass for every polynomial of the batch.
@@ -918,16 +912,8 @@ where
             })
             .collect::<Result<Vec<_>, AkitaError>>()?;
         let group_t = backend.onehot_commit_rows_multi::<D>(prepared, plans)?;
-        cfg_into_iter!(group_t)
-            .map(|t| {
-                let decomposed_inner_rows = crate::kernels::linear::decompose_commit_blocks_into::<
-                    F,
-                    D,
-                >(
-                    &t, plan.num_digits_outer, plan.log_basis_outer
-                )?;
-                CommitInnerWitness::from_parts(t, decomposed_inner_rows)
-            })
-            .collect()
+        Ok(cfg_into_iter!(group_t)
+            .map(CommitInnerWitness::from_rows::<D>)
+            .collect())
     }
 }

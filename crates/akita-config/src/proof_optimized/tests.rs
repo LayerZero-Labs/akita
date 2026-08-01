@@ -52,7 +52,8 @@ fn setup_envelope_includes_terminal_inner_matrix() {
         PolynomialGroupLayout::singleton(28),
     ))
     .expect("generated fp128 schedule");
-    let envelope = setup_matrix_envelope_for_schedule(&schedule).expect("setup envelope");
+    let envelope =
+        setup_matrix_envelope_for_schedule(&schedule, fp128::D64Dense::D).expect("setup envelope");
     let terminal_a = schedule
         .terminal
         .params

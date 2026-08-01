@@ -30,4 +30,9 @@ pub use akita_types::CommitmentVerifier;
 pub use protocol::{
     batched_verify, prepare_relation_matrix_evaluator, RelationMatrixEvaluator, RingSwitchReplay,
 };
+#[cfg(feature = "benchmark-support")]
+pub use protocol::{
+    relation_evaluator_benchmark_case, relation_evaluator_benchmark_case_with_chunks,
+    RelationEvaluatorBenchmarkCase,
+};
 pub use stages::stage1::AkitaStage1Verifier;
