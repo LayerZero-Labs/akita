@@ -7,7 +7,7 @@
 //! per-preset input is carried by the plain-value [`PlannerPolicy`] plus
 //! the `ring_challenge_config` / `fold_challenge_shape_at_level` closures,
 //! exactly the shape generated catalog emission consumes. This keeps the DP a
-//! pure function of `(policy, key, dimension domain)` for offline table generation.
+//! pure function of `(policy, key)` for offline table generation.
 
 use akita_challenges::{SparseChallengeConfig, TensorChallengeShape};
 use akita_field::AkitaError;
