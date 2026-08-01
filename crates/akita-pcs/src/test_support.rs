@@ -2,7 +2,7 @@
 //!
 //! Relocated from `akita-config`: after the runtime-resolution move (#327),
 //! `akita-planner` depends on `akita-config`, so `akita-config` can no longer
-//! depend on the offline planner ([`akita_planner::plan_optimal_suffix`])
+//! depend on the offline planner ([`akita_planner::test_support::plan_optimal_suffix`])
 //! without a dependency cycle. These builders live here (a crate above both)
 //! and are gated behind the `test-support` Cargo feature, which production
 //! builds never enable.
@@ -243,7 +243,7 @@ where
 /// Fold levels `[0, switch_at_fold)` keep the `EnvelopeCfg` schedule prefix
 /// (its root, and any recursive levels before the switch), at the envelope's
 /// ring dimension. From `switch_at_fold` onward the schedule is a
-/// **proof-size-optimal** continuation planned by [`akita_planner::plan_optimal_suffix`]
+/// **proof-size-optimal** continuation planned by [`akita_planner::test_support::plan_optimal_suffix`]
 /// at `SuffixCfg`'s ring dimension, starting from the envelope prefix's output
 /// witness — not the envelope's own (differently sized) suffix repriced in
 /// place. This is what lets a large-ring-dimension root fold hand off to a
@@ -313,7 +313,7 @@ where
             };
 
             // Optimal small-ring-dimension continuation from the prefix output.
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<SuffixCfg>(),
                 SuffixCfg::ring_challenge_config,
                 SuffixCfg::fold_challenge_shape_at_level,
@@ -534,7 +534,7 @@ pub fn per_matrix_ring_dims_root_schedule<Env: CommitmentConfig>(
                 &opening_layout,
             )?;
             root.output_witness_len = root_out;
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Env>(),
                 Env::ring_challenge_config,
                 Env::fold_challenge_shape_at_level,
@@ -789,7 +789,7 @@ where
 
 /// Convert one planned suffix fold into its wire schedule representation
 /// (mirrors the `mixed_d_per_level_schedule` conversion).
-fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldStep {
+fn planned_fold_step(fold: &akita_planner::test_support::PlannedSuffixFold) -> RecursiveFoldStep {
     let witness_partition = if fold.params.witness_chunk.num_chunks == 1 {
         WitnessPartition::Single
     } else {
@@ -813,7 +813,7 @@ fn planned_fold_step(fold: &akita_planner::PlannedSuffixFold) -> RecursiveFoldSt
 fn finish_schedule(
     root: RootFoldStep,
     mut recursive_folds: Vec<RecursiveFoldStep>,
-    suffix: akita_planner::PlannedSuffix,
+    suffix: akita_planner::test_support::PlannedSuffix,
     opening_layout: &OpeningClaimsLayout,
 ) -> Result<FoldSchedule, AkitaError> {
     recursive_folds.extend(suffix.folds.iter().map(planned_fold_step));
@@ -1021,7 +1021,7 @@ where
 
             // Band 2 (`Mid`): plan an optimal `Mid`-dim continuation from the root
             // output and keep only its first fold as L1.
-            let mid = akita_planner::plan_optimal_suffix(
+            let mid = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Mid>(),
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -1054,7 +1054,7 @@ where
             let l1_lb = l1_step.params.witness.log_basis_open;
 
             // Band 3 (`Suffix`): optimal small-ring continuation from L1's output.
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &policy_of::<Suffix>(),
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,

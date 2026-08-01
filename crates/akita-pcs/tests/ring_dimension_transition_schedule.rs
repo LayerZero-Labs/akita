@@ -48,7 +48,7 @@ fn assert_suffix_matches_plan<Cfg: CommitmentConfig>(
     start_witness_len: usize,
     start_log_basis: u32,
 ) {
-    let suffix = akita_planner::plan_optimal_suffix(
+    let suffix = akita_planner::test_support::plan_optimal_suffix(
         &policy_of::<Cfg>(),
         Cfg::ring_challenge_config,
         Cfg::fold_challenge_shape_at_level,

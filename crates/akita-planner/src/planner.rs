@@ -597,6 +597,7 @@ pub fn find_schedule(
         key: PolynomialGroupLayout::singleton(key.final_group.num_vars()),
         setup_field_budget,
         root_lookup_key: Some(key),
+        level_zero_is_root: true,
     };
     let mut memo = ScheduleMemo::new();
     let suffix = derive_optimal_suffix_schedule(

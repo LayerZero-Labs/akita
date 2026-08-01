@@ -111,7 +111,7 @@ where
             // rebuild its B/D matrices before attaching the setup prefix.
             let mut mid_policy = policy_of::<Mid>().direct_only();
             mid_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let mid = akita_planner::plan_optimal_suffix(
+            let mid = akita_planner::test_support::plan_optimal_suffix(
                 &mid_policy,
                 Mid::ring_challenge_config,
                 Mid::fold_challenge_shape_at_level,
@@ -195,7 +195,7 @@ where
 
             let mut suffix_policy = policy_of::<Suffix>().direct_only();
             suffix_policy.witness_chunk = ChunkCfg::chunked_witness_cfg();
-            let suffix = akita_planner::plan_optimal_suffix(
+            let suffix = akita_planner::test_support::plan_optimal_suffix(
                 &suffix_policy,
                 Suffix::ring_challenge_config,
                 Suffix::fold_challenge_shape_at_level,

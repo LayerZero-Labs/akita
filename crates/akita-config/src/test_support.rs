@@ -14,8 +14,9 @@
 //! and their
 //! config adapters) live in
 //! [`akita_pcs::test_support`]: they call the offline planner
-//! (`akita_planner::plan_optimal_suffix`), which cannot be a dependency of
-//! `akita-config` without a cycle (`akita-planner` depends on `akita-config`).
+//! (`akita_planner::test_support::plan_optimal_suffix`), which cannot be a
+//! dependency of `akita-config` without a cycle (`akita-planner` depends on
+//! `akita-config`).
 
 use akita_field::AkitaError;
 use akita_types::{AkitaScheduleLookupKey, CommittedGroupParams, PolynomialGroupLayout};

@@ -319,9 +319,10 @@ schedule or proof format.
 
 The synthetic builders demonstrate protocol feasibility but are not suitable
 planner architecture. They plan a uniform schedule, mutate or rebuild selected
-matrices, recompute the boundary, and invoke `plan_optimal_suffix` again. A
-native planner must produce the final matrices directly; it must not generate
-a uniform candidate and retarget it after selection.
+matrices, recompute the boundary, and invoke
+`akita_planner::test_support::plan_optimal_suffix` again. A native planner
+must produce the final matrices directly; it must not generate a uniform
+candidate and retarget it after selection.
 
 ### Proposed ring-dimension policy
 
@@ -1037,7 +1038,7 @@ Construction:
 2. Keep the root and exactly the recursive folds before
    `switch_at_fold`.
 3. Read the kept prefix's exact output witness length and opening basis.
-4. Call `akita_planner::plan_optimal_suffix` under the suffix policy.
+4. Call `akita_planner::test_support::plan_optimal_suffix` under the suffix policy.
 5. Convert the planned suffix into `FoldSchedule` wire types and validate the
    result.
 
@@ -1274,7 +1275,7 @@ This is a behavioral test-support fix, not only a test rename.
 Changes:
 
 - Replaced mutation of already-planned suffixes with staged calls to
-  `plan_optimal_suffix`.
+  `akita_planner::test_support::plan_optimal_suffix`.
 - Replaced separate B/D retarget helpers with
   `retarget_commitment_matrices`.
 - Made width derivation use the final A projection source.
