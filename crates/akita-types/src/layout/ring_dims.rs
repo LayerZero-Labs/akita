@@ -188,7 +188,10 @@ pub fn validate_schedule_ring_dims(
         let dims = lp.role_dims();
         validate_role_dims(dims)?;
         validate_role_dims_match_keys(lp)?;
-        if input_witness_len == 0 || !input_witness_len.is_multiple_of(dims.inner) {
+        // The live witness is a compact field-element prefix.  It may end in a
+        // partial A ring; successor preparation supplies the one zero suffix
+        // required to form complete successor rings and the Boolean domain.
+        if input_witness_len == 0 {
             return Err(AkitaError::InvalidSetup(format!(
                 "witness length {} is invalid for fold ring d_a={}",
                 input_witness_len, dims.inner
