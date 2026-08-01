@@ -1,9 +1,5 @@
 //! Reusable bounded-memory compressed-commitment execution.
 
-// The executor is compiled into the production backend before the atomic wire
-// activation slice gives the live protocol its first caller.
-#![cfg_attr(not(any(test, feature = "compression-diagnostics")), allow(dead_code))]
-
 use super::{CompressionComputeBackend, OperationCtx};
 use akita_field::{AkitaError, CanonicalField, FieldCore, HalvingField};
 use akita_types::{
@@ -516,7 +512,7 @@ mod tests {
 
     /// Run with:
     /// `cargo test -p akita-prover --release --no-default-features \
-    /// --features compression-diagnostics compression_execution_bench \
+    /// compression_execution_bench \
     /// -- --ignored --nocapture`
     #[test]
     #[ignore = "release-only compression execution evidence"]

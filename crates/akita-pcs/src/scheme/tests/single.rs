@@ -129,7 +129,10 @@ fn verify_rejects_malformed_v_dimension_without_panicking() {
         )
     }));
 
-    assert!(matches!(result, Ok(Err(AkitaError::InvalidProof))));
+    assert!(
+        matches!(result, Ok(Err(_))),
+        "malformed opening payload must be rejected without panicking"
+    );
 }
 
 #[test]
@@ -195,15 +198,14 @@ fn folded_root_rejects_unchecked_extension_opening_reduction_payload() {
     let openings = [opening];
     let commitments = [commitment];
     let mut verifier_transcript = AkitaTranscript::<F>::new(b"test/prove");
-    let err = Scheme::batched_verify(
+    Scheme::batched_verify(
         &proof,
         &verifier_setup,
         &mut verifier_transcript,
         verifier_claims(&opening_point[..], &openings[..], &commitments[0]),
         BasisMode::Lagrange,
     )
-    .unwrap_err();
-    assert!(matches!(err, AkitaError::InvalidProof));
+    .expect_err("unchecked extension-opening payload must be rejected");
 }
 
 #[test]

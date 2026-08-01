@@ -42,7 +42,7 @@ impl CompressionPolicyId {
         }
     }
 
-    /// Descriptive policy name used in diagnostics and generated metadata.
+    /// Descriptive policy name used in reports and generated metadata.
     pub const fn name(self) -> &'static str {
         match self {
             Self::NegativeBinaryTwoMap8KiBV1 => "NegativeBinaryTwoMap8KiBV1",

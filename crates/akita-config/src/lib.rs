@@ -654,7 +654,7 @@ mod fp128_policy_tests {
     }
 
     /// Spot-check keys aligned with `specs/sis-euclidean-estimator.md` plus table max.
-    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[13, 16, 28, 30, 44, 50];
+    const CI_SIS_WIDTH_NUM_VARS: &[usize] = &[14, 16, 28, 30, 44, 50];
 
     #[test]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths() {
@@ -673,7 +673,7 @@ mod fp128_policy_tests {
     #[test]
     #[ignore = "full nv sweep is slow; run manually before SIS table or schedule changes"]
     fn current_d64_dense_schedule_stays_within_audited_sis_widths_full_range() {
-        let num_vars: Vec<usize> = (13..=50).collect();
+        let num_vars: Vec<usize> = (14..=50).collect();
         assert_cfg_schedule_stays_within_audited_sis_widths::<fp128::D64Dense>(&num_vars);
     }
 

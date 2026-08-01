@@ -110,14 +110,12 @@ where
     }
 }
 
-/// D-free protocol commitment storage: a flat ring-coefficient buffer.
+/// D-free public commitment payload stored as flat field coefficients.
 ///
-/// This is the protocol-facing replacement for the former
-/// `RingCommitment<F, D>` storage. It carries the outer commitment vector
-/// `u in R_q^{n_B}` as raw field coefficients (a [`RingVec`]), with the ring
-/// dimension supplied at runtime from the schedule rather than a const generic.
-/// Transcript absorption goes through the flat coefficient encoder; the bytes
-/// are identical to the former typed path (proven by the S2 byte-identity test).
+/// For a committed polynomial group this carries the terminal compressed
+/// payload `p_F`. Its native compression dimension is derived from the frozen
+/// modulus profile and supplied at the transcript boundary rather than encoded
+/// as a const generic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Commitment<F: FieldCore>(pub RingVec<F>);
 
@@ -142,8 +140,8 @@ impl<F: FieldCore> Commitment<F> {
         self.0
     }
 
-    /// Absorb this commitment into `transcript` using the canonical flat
-    /// coefficient encoding under the schedule-derived `ring_dim`.
+    /// Absorb this payload using its canonical flat coefficient encoding under
+    /// the caller-derived terminal compression `ring_dim`.
     ///
     /// # Errors
     ///
@@ -172,7 +170,7 @@ impl<F: FieldCore> Commitment<F> {
 pub struct CommittedGroup<F: FieldCore> {
     /// Exact public algebraic profile and commitment geometry.
     pub profile: CommittedGroupProfile,
-    /// Outer SIS commitment rows.
+    /// Terminal compressed `p_F` payload.
     pub commitment: Commitment<F>,
 }
 
@@ -190,12 +188,12 @@ impl<F: FieldCore> CommittedGroup<F> {
         &self.profile
     }
 
-    /// Borrow the underlying SIS commitment.
+    /// Borrow the terminal compressed commitment payload.
     pub fn commitment(&self) -> &Commitment<F> {
         &self.commitment
     }
 
-    /// Borrow the underlying flat commitment rows.
+    /// Borrow the terminal payload coefficients.
     pub fn rows(&self) -> &RingVec<F> {
         self.commitment.rows()
     }

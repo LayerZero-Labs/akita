@@ -70,7 +70,6 @@ logging-transcript = [
   "akita-transcript/logging-transcript",
   "akita-prover/logging-transcript",
 ]
-compression-diagnostics = ["akita-prover/compression-diagnostics"]
 # Test/example-only mixed ring-dimension schedule builders (relocated from
 # akita-config, which cannot depend on the offline planner without a cycle).
 # Enabled for this crate's own tests/examples via the self dev-dependency below.

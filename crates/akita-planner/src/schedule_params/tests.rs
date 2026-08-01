@@ -480,7 +480,7 @@ fn mixed_nv36_benchmark_policy_selects_minimum_setup_schedule() {
     );
     assert_eq!(
         selected.estimate.estimated_proof_payload_bytes().unwrap(),
-        85_484
+        96_604
     );
     assert_eq!(rank_one_capped_root.inner_commit_matrix.output_rank(), 3);
     assert_eq!(selected_root.inner_commit_matrix.output_rank(), 1);
@@ -705,6 +705,6 @@ fn preserved_recursive_proof_size_is_documented() {
 
     assert_eq!(
         planned.estimate.estimated_proof_payload_bytes().unwrap(),
-        89_964
+        103_440
     );
 }

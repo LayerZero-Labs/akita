@@ -261,7 +261,7 @@ fn single_dense_nv13() {
 
 #[test]
 fn single_dense_nv15() {
-    run_single_dense(15, 92_840);
+    run_single_dense(15, 89_648);
 }
 
 #[test]
