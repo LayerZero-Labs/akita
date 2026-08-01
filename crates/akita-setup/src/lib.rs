@@ -289,12 +289,10 @@ fn atomic_write_cache(
                 temp_path.display()
             ))
         })?;
-        writer.get_ref().sync_all().map_err(|err| {
-            AkitaError::InvalidSetup(format!(
-                "failed to sync setup cache {}: {err}",
-                temp_path.display()
-            ))
-        })?;
+        // These files are recoverable performance caches: a failed or partial
+        // write is rejected and regenerated on the next load. Flushing before
+        // the atomic rename gives readers a complete file without forcing a
+        // device flush on the setup hot path.
         drop(writer);
         fs::rename(&temp_path, storage_path).map_err(|err| {
             AkitaError::InvalidSetup(format!(
@@ -334,7 +332,9 @@ pub(crate) fn save_prover_setup<
     max_num_vars: usize,
     max_num_batched_polys: usize,
 ) -> Result<(), AkitaError> {
-    validate_cached_matrix::<F>(&setup.expanded)?;
+    // `setup` was just derived inside this crate. Re-deriving and comparing
+    // every field element here would repeat the full setup-generation pass;
+    // untrusted cache bytes are validated on load instead.
     let public_matrix_path =
         get_public_matrix_storage_path::<F>(&setup.expanded.seed().public_matrix_id)?;
     let Some(prefix_registry_path) =
