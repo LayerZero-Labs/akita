@@ -133,7 +133,9 @@ pub fn policy_of<Cfg: CommitmentConfig>() -> PlannerPolicy {
     PlannerPolicy {
         cost_model: akita_schedules::PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: if recursive_setup_planning {
-            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            akita_schedules::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille: selection_payload_slack_permille,
+            }
         } else if selection_payload_slack_permille > 0 {
             akita_schedules::SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
                 slack_permille: selection_payload_slack_permille,

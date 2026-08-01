@@ -44,7 +44,9 @@ pub enum SelectionPolicyId {
     /// within `slack_permille` of the minimum-payload candidate.
     MinRootRankThenPayloadWithinSlack { slack_permille: u32 },
     /// Pick the first direct setup footprint, then payload, within setup support.
-    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+    /// Scalar fallbacks may independently trade `direct_payload_slack_permille`
+    /// proof-payload overhead for a smaller root inner rank.
+    MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { direct_payload_slack_permille: u32 },
 }
 
 impl SelectionPolicyId {
@@ -52,7 +54,7 @@ impl SelectionPolicyId {
     pub const fn tag(self) -> u32 {
         match self {
             Self::MinEstimatedProofPayload => 1,
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 2,
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { .. } => 2,
             Self::MinRootRankThenPayloadWithinSlack { .. } => 3,
         }
     }
@@ -61,8 +63,10 @@ impl SelectionPolicyId {
     pub const fn parameter(self) -> u32 {
         match self {
             Self::MinRootRankThenPayloadWithinSlack { slack_permille } => slack_permille,
-            Self::MinEstimatedProofPayload
-            | Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => 0,
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille,
+            } => direct_payload_slack_permille,
+            Self::MinEstimatedProofPayload => 0,
         }
     }
 
@@ -73,9 +77,11 @@ impl SelectionPolicyId {
             Self::MinRootRankThenPayloadWithinSlack { slack_permille } => {
                 format!("MinRootRankThenPayloadWithinSlack {{ slack_permille: {slack_permille} }}")
             }
-            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => {
-                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope".to_string()
-            }
+            Self::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille,
+            } => format!(
+                "MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {{ direct_payload_slack_permille: {direct_payload_slack_permille} }}"
+            ),
         }
     }
 }
@@ -112,9 +118,20 @@ impl PlannerPolicy {
     /// Direct-only counterpart used when scalar schedules are cataloged under
     /// the non-recursive family identity.
     pub fn direct_only(self) -> Self {
+        let selection_policy = match self.selection_policy {
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille: 0,
+            } => SelectionPolicyId::MinEstimatedProofPayload,
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille,
+            } => SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                slack_permille: direct_payload_slack_permille,
+            },
+            direct_policy => direct_policy,
+        };
         Self {
             recursive_setup_planning: false,
-            selection_policy: SelectionPolicyId::MinEstimatedProofPayload,
+            selection_policy,
             ..self
         }
     }
@@ -166,7 +183,7 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
         (policy.recursive_setup_planning, policy.selection_policy),
         (
             true,
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { .. }
         ) | (false, SelectionPolicyId::MinEstimatedProofPayload)
             | (
                 false,

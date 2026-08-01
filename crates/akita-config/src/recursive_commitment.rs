@@ -71,6 +71,10 @@ impl<Cfg: CommitmentConfig> CommitmentConfig for RecursiveCommitmentConfig<Cfg> 
         true
     }
 
+    fn selection_payload_slack_permille() -> u32 {
+        Cfg::selection_payload_slack_permille()
+    }
+
     fn schedule_catalog() -> Option<akita_schedules::GeneratedScheduleTable> {
         #[cfg(feature = "schedules-fp128-d64-onehot-recursive")]
         {

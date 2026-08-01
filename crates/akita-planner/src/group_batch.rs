@@ -650,7 +650,9 @@ fn find_group_batch_schedule_inner(
                     })
             })
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => suffix
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+            ..
+        } => suffix
             .best_by_first_direct_setup_per_lb
             .values()
             .min_by_key(|candidate| {

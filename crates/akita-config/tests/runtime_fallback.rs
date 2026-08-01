@@ -96,12 +96,34 @@ fn recursive_adapter_delegates_scalar_keys_to_the_ordinary_catalog() {
     assert_schedule_eq("recursive scalar delegation", &ordinary, &recursive);
 }
 
+#[test]
+fn recursive_policy_preserves_rank_aware_scalar_selection() {
+    let mut policy = policy_of::<RecursiveCommitmentConfig<fp128::D64OneHot>>();
+    policy.selection_policy =
+        SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+            direct_payload_slack_permille: 10,
+        };
+
+    let scalar_policy = policy.direct_only();
+    assert!(!scalar_policy.recursive_setup_planning);
+    assert_eq!(
+        scalar_policy.selection_policy,
+        SelectionPolicyId::MinRootRankThenPayloadWithinSlack { slack_permille: 10 }
+    );
+}
+
 fn assert_policy_matches_cfg<Cfg: CommitmentConfig>() {
     let policy = policy_of::<Cfg>();
     let expected = PlannerPolicy {
         cost_model: PlannerCostModelId::ExactPayloadAndSetupEnvelope,
         selection_policy: if Cfg::recursive_setup_planning() {
-            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope
+            SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+                direct_payload_slack_permille: Cfg::selection_payload_slack_permille(),
+            }
+        } else if Cfg::selection_payload_slack_permille() > 0 {
+            SelectionPolicyId::MinRootRankThenPayloadWithinSlack {
+                slack_permille: Cfg::selection_payload_slack_permille(),
+            }
         } else {
             SelectionPolicyId::MinEstimatedProofPayload
         },

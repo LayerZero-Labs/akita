@@ -227,7 +227,7 @@ pub(crate) fn validate_policy(policy: &PlannerPolicy) -> Result<(), AkitaError> 
         (policy.recursive_setup_planning, policy.selection_policy),
         (
             true,
-            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope,
+            crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope { .. },
         ) | (false, crate::SelectionPolicyId::MinEstimatedProofPayload)
             | (
                 false,
@@ -690,7 +690,9 @@ fn find_schedule_inner(
                     })
             })
         }
-        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope => None,
+        crate::SelectionPolicyId::MinFirstDirectSetupThenPayloadWithinSupportedEnvelope {
+            ..
+        } => None,
     };
     let Some(best) = best else {
         return Err(AkitaError::UnsupportedSchedule(format!(
