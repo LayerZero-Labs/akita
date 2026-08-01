@@ -724,25 +724,21 @@ pub fn prepare_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     prepare_ntt_cache_with_tail_prefix(matrix, mode, None, select_crt_ntt_params::<F, D>()?)
 }
 
-/// Prepare the exact-prefix, negacyclic-only cache used by compressed commitments.
+/// Prepare the exact-prefix paired-transform cache used by compressed commitments.
 ///
 /// Uses [`select_compression_crt_ntt_params`] so compression-only ring degrees do
 /// not widen the ordinary protocol NTT selector.
 #[tracing::instrument(
     skip_all,
     name = "prepare_compression_ntt_cache",
-    fields(ring_d = D, rings = matrix.as_slice().len(), width)
+    fields(ring_d = D, rings = matrix.as_slice().len())
 )]
 pub fn prepare_compression_ntt_cache<F: FieldCore + CanonicalField, const D: usize>(
     matrix: RingMatrixView<'_, F, D>,
-    width: usize,
 ) -> Result<PreparedNttCache<D>, AkitaError> {
     prepare_ntt_cache_with_tail_prefix(
         matrix,
-        NttCacheMode::ExactNegacyclic {
-            width,
-            log_basis: 1,
-        },
+        NttCacheMode::BothTransforms,
         None,
         select_compression_crt_ntt_params::<F, D>()?,
     )
@@ -1160,10 +1156,9 @@ mod tests {
             Ok(ProtocolCrtNttParams::Q128(_))
         ));
         let flat = flat_zeros::<Prime128OffsetA7F7, 8>(1);
-        let cache =
-            prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"), 1)
-                .expect("compression-only D8 cache");
-        assert!(!cache.has_cyclic());
+        let cache = prepare_compression_ntt_cache(flat.ring_view::<8>(1, 1).expect("matrix view"))
+            .expect("compression-only D8 cache");
+        assert!(cache.has_cyclic());
         assert!(matches!(
             prepare_ntt_cache(
                 flat.ring_view::<8>(1, 1).expect("matrix view"),

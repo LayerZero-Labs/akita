@@ -146,25 +146,25 @@ mod tests {
             256
         ]);
         let q128_cache =
-            prepare_compression_ntt_cache(q128_d8.ring_view::<8>(1, 256).expect("view"), 256)
+            prepare_compression_ntt_cache(q128_d8.ring_view::<8>(1, 256).expect("view"))
                 .expect("q128/D8 cache");
         assert!(!q128_cache.has_i16_tail());
-        assert!(!q128_cache.has_cyclic());
+        assert!(q128_cache.has_cyclic());
 
         let q64_d16 =
             FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime64Offset59, 16>::zero(); 128]);
         let q64_cache =
-            prepare_compression_ntt_cache(q64_d16.ring_view::<16>(1, 128).expect("view"), 128)
+            prepare_compression_ntt_cache(q64_d16.ring_view::<16>(1, 128).expect("view"))
                 .expect("q64/D16 cache");
         assert!(!q64_cache.has_i16_tail());
-        assert!(!q64_cache.has_cyclic());
+        assert!(q64_cache.has_cyclic());
 
         let q32_d32 =
             FlatMatrix::from_ring_slice(&vec![CyclotomicRing::<Prime32Offset99, 32>::zero(); 64]);
         let q32_cache =
-            prepare_compression_ntt_cache(q32_d32.ring_view::<32>(1, 64).expect("view"), 64)
+            prepare_compression_ntt_cache(q32_d32.ring_view::<32>(1, 64).expect("view"))
                 .expect("q32/D32 cache");
         assert!(!q32_cache.has_i16_tail());
-        assert!(!q32_cache.has_cyclic());
+        assert!(q32_cache.has_cyclic());
     }
 }

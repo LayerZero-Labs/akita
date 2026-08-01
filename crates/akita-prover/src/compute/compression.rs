@@ -1,0 +1,530 @@
+//! Reusable bounded-memory compressed-commitment execution.
+
+// The executor is compiled into the production backend before the atomic wire
+// activation slice gives the live protocol its first caller.
+#![cfg_attr(not(any(test, feature = "compression-diagnostics")), allow(dead_code))]
+
+use super::{CompressionComputeBackend, OperationCtx};
+use akita_field::{AkitaError, CanonicalField, FieldCore};
+use akita_types::{
+    dispatch_for_field, field_modulus, CompressionChainPlan, CompressionChainWitness,
+    CompressionTerminalPayload, PackedNegativeBinary, RingVec,
+};
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+/// Maximum number of expanded right-hand sides in one compression kernel call.
+pub(crate) const MAX_COMPRESSION_RHS_BATCH: usize = 8;
+
+/// One source and checked chain handed to the compression executor.
+pub(crate) struct CompressionExecutionInput<Id, F> {
+    pub(crate) id: Id,
+    pub(crate) plan: CompressionChainPlan,
+    pub(crate) coefficients: Vec<F>,
+}
+
+/// One source's persistent compression result.
+pub(crate) struct CompressionExecutionOutput<Id, F> {
+    pub(crate) id: Id,
+    pub(crate) witness: CompressionChainWitness,
+    pub(crate) terminal: CompressionTerminalPayload<F>,
+}
+
+/// Measurements for one bounded exact-shape kernel batch.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompressionBatchReport {
+    pub(crate) map_index: usize,
+    pub(crate) ring_dimension: usize,
+    pub(crate) input_width: usize,
+    pub(crate) batch_size: usize,
+    pub(crate) input_bytes: usize,
+    pub(crate) output_bytes: usize,
+    pub(crate) packed_bytes: usize,
+    pub(crate) expanded_rhs_bytes: usize,
+    pub(crate) digitization: Duration,
+    /// Includes cold preparation when the exact compression cache slot is absent.
+    pub(crate) kernel_including_prepare: Duration,
+}
+
+/// Aggregate bounded-execution measurements.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CompressionExecutionReport {
+    pub(crate) sources: usize,
+    pub(crate) maps: usize,
+    pub(crate) source_bytes: usize,
+    pub(crate) terminal_bytes: usize,
+    pub(crate) retained_packed_witness_bytes: usize,
+    pub(crate) equivalent_i8_witness_bytes: usize,
+    pub(crate) max_expanded_rhs_bytes: usize,
+    pub(crate) max_current_image_bytes: usize,
+    pub(crate) executor_peak_scratch_bytes: usize,
+    pub(crate) cache_bytes_before: Option<usize>,
+    pub(crate) cache_bytes_after: Option<usize>,
+    pub(crate) digitization: Duration,
+    pub(crate) kernel_including_prepare: Duration,
+    pub(crate) elapsed: Duration,
+    pub(crate) batches: Vec<CompressionBatchReport>,
+}
+
+struct WorkItem<Id, F> {
+    id: Id,
+    plan: CompressionChainPlan,
+    coefficients: Vec<F>,
+    stages: Vec<PackedNegativeBinary>,
+}
+
+fn checked_sum_bytes(
+    lengths: impl IntoIterator<Item = usize>,
+    field_bytes: usize,
+    context: &str,
+) -> Result<usize, AkitaError> {
+    lengths.into_iter().try_fold(0usize, |total, length| {
+        length
+            .checked_mul(field_bytes)
+            .and_then(|bytes| total.checked_add(bytes))
+            .ok_or_else(|| AkitaError::InvalidSetup(format!("{context} overflow")))
+    })
+}
+
+fn execute_chunk<F, B, Id, const D: usize>(
+    ctx: &OperationCtx<'_, F, B>,
+    items: &mut [WorkItem<Id, F>],
+    item_indices: &[usize],
+    map_index: usize,
+) -> Result<CompressionBatchReport, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: CompressionComputeBackend<F>,
+{
+    if item_indices.is_empty() || item_indices.len() > MAX_COMPRESSION_RHS_BATCH {
+        return Err(AkitaError::InvalidSetup(
+            "compression executor received an invalid bounded batch".into(),
+        ));
+    }
+    let first_map = items
+        .get(item_indices[0])
+        .and_then(|item| item.plan.maps().get(map_index))
+        .copied()
+        .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+    if first_map.ring_dimension() != D
+        || item_indices.iter().any(|&item_index| {
+            items
+                .get(item_index)
+                .and_then(|item| item.plan.maps().get(map_index))
+                .is_none_or(|map| {
+                    map.modulus_profile() != first_map.modulus_profile()
+                        || map.ring_dimension() != first_map.ring_dimension()
+                        || map.input_width() != first_map.input_width()
+                        || map.output_rank() != first_map.output_rank()
+                })
+        })
+    {
+        return Err(AkitaError::InvalidSetup(
+            "compression execution batch contains mixed shapes".into(),
+        ));
+    }
+    let field_bytes = items[item_indices[0]].plan.field_bytes();
+    let input_bytes = checked_sum_bytes(
+        item_indices
+            .iter()
+            .map(|&item_index| items[item_index].coefficients.len()),
+        field_bytes,
+        "compression batch input bytes",
+    )?;
+
+    let digitization_started = Instant::now();
+    let packed = item_indices
+        .iter()
+        .map(|&item_index| {
+            let map = items[item_index]
+                .plan
+                .maps()
+                .get(map_index)
+                .copied()
+                .ok_or_else(|| AkitaError::InvalidSetup("compression map is absent".into()))?;
+            PackedNegativeBinary::from_coefficients(map, &items[item_index].coefficients)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let expanded = packed
+        .iter()
+        .map(PackedNegativeBinary::expand_rows::<D>)
+        .collect::<Result<Vec<_>, _>>()?;
+    let digitization = digitization_started.elapsed();
+    let packed_bytes = packed.iter().try_fold(0usize, |total, digits| {
+        total.checked_add(digits.bytes().len()).ok_or_else(|| {
+            AkitaError::InvalidSetup("compression packed batch bytes overflow".into())
+        })
+    })?;
+    let expanded_rhs_bytes = expanded.iter().try_fold(0usize, |total, rows| {
+        rows.len()
+            .checked_mul(D)
+            .and_then(|bytes| total.checked_add(bytes))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression expanded RHS bytes overflow".into())
+            })
+    })?;
+    let views = expanded.iter().map(Vec::as_slice).collect::<Vec<_>>();
+
+    let kernel_started = Instant::now();
+    let outputs = ctx
+        .backend()
+        .compression_rows_products(ctx.prepared(), &views)?;
+    let kernel_including_prepare = kernel_started.elapsed();
+    if outputs.len() != item_indices.len() {
+        return Err(AkitaError::InvalidSetup(
+            "compression backend returned the wrong batch length".into(),
+        ));
+    }
+    for (((&item_index, products), packed_digits), _) in
+        item_indices.iter().zip(outputs).zip(packed).zip(expanded)
+    {
+        if products.negacyclic.len() != first_map.output_rank()
+            || products.cyclic.len() != first_map.output_rank()
+        {
+            return Err(AkitaError::InvalidSetup(
+                "compression backend returned the wrong output rank".into(),
+            ));
+        }
+        let negacyclic_image = RingVec::from_ring_elems(&products.negacyclic)
+            .coeffs()
+            .to_vec();
+        if negacyclic_image.len() != first_map.output_coefficients() {
+            return Err(AkitaError::InvalidSetup(
+                "compression backend returned the wrong image length".into(),
+            ));
+        }
+        items[item_index].coefficients = negacyclic_image;
+        items[item_index].stages.push(packed_digits);
+    }
+    let output_bytes = checked_sum_bytes(
+        item_indices
+            .iter()
+            .map(|&item_index| items[item_index].coefficients.len()),
+        field_bytes,
+        "compression batch output bytes",
+    )?;
+    Ok(CompressionBatchReport {
+        map_index,
+        ring_dimension: D,
+        input_width: first_map.input_width(),
+        batch_size: item_indices.len(),
+        input_bytes,
+        output_bytes,
+        packed_bytes,
+        expanded_rhs_bytes,
+        digitization,
+        kernel_including_prepare,
+    })
+}
+
+fn execute_stage<F, B, Id>(
+    ctx: &OperationCtx<'_, F, B>,
+    items: &mut [WorkItem<Id, F>],
+    map_index: usize,
+) -> Result<Vec<CompressionBatchReport>, AkitaError>
+where
+    F: FieldCore + CanonicalField,
+    B: CompressionComputeBackend<F>,
+{
+    let mut groups = BTreeMap::<(usize, usize, usize), Vec<usize>>::new();
+    for (item_index, item) in items.iter().enumerate() {
+        if let Some(map) = item.plan.maps().get(map_index) {
+            groups
+                .entry((map.ring_dimension(), map.input_width(), map.output_rank()))
+                .or_default()
+                .push(item_index);
+        }
+    }
+    let mut reports = Vec::new();
+    for ((ring_dimension, _, _), item_indices) in groups {
+        for chunk in item_indices.chunks(MAX_COMPRESSION_RHS_BATCH) {
+            let report = dispatch_for_field!(
+                akita_types::ProtocolDispatchSlot::Compression,
+                F,
+                ring_dimension,
+                |D| execute_chunk::<F, B, Id, D>(ctx, items, chunk, map_index)
+            )?;
+            reports.push(report);
+        }
+    }
+    Ok(reports)
+}
+
+/// Execute checked compression chains with bounded expansion scratch.
+pub(crate) fn execute_compression_chains<F, B, Id>(
+    ctx: &OperationCtx<'_, F, B>,
+    inputs: Vec<CompressionExecutionInput<Id, F>>,
+) -> Result<
+    (
+        Vec<CompressionExecutionOutput<Id, F>>,
+        CompressionExecutionReport,
+    ),
+    AkitaError,
+>
+where
+    F: FieldCore + CanonicalField,
+    B: CompressionComputeBackend<F>,
+{
+    let started = Instant::now();
+    let cache_bytes_before = ctx.backend().compression_cache_bytes(ctx.prepared());
+    let mut items = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        if !input
+            .plan
+            .modulus_profile()
+            .matches_modulus(field_modulus::<F>())
+        {
+            return Err(AkitaError::InvalidSetup(
+                "compression plan profile does not match the execution field".into(),
+            ));
+        }
+        if input.coefficients.len() != input.plan.source_coefficients() {
+            return Err(AkitaError::InvalidSize {
+                expected: input.plan.source_coefficients(),
+                actual: input.coefficients.len(),
+            });
+        }
+        items.push(WorkItem {
+            id: input.id,
+            plan: input.plan,
+            coefficients: input.coefficients,
+            stages: Vec::new(),
+        });
+    }
+    let source_bytes = items.iter().try_fold(0usize, |total, item| {
+        item.coefficients
+            .len()
+            .checked_mul(item.plan.field_bytes())
+            .and_then(|bytes| total.checked_add(bytes))
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression source byte total overflow".into())
+            })
+    })?;
+    let map_count = items.iter().try_fold(0usize, |total, item| {
+        total
+            .checked_add(item.plan.maps().len())
+            .ok_or_else(|| AkitaError::InvalidSetup("compression map count overflow".into()))
+    })?;
+    let max_maps = items
+        .iter()
+        .map(|item| item.plan.maps().len())
+        .max()
+        .unwrap_or(0);
+    let mut report = CompressionExecutionReport {
+        sources: items.len(),
+        maps: map_count,
+        source_bytes,
+        cache_bytes_before,
+        ..CompressionExecutionReport::default()
+    };
+    for map_index in 0..max_maps {
+        let current_image_bytes = items.iter().try_fold(0usize, |total, item| {
+            item.coefficients
+                .len()
+                .checked_mul(item.plan.field_bytes())
+                .and_then(|bytes| total.checked_add(bytes))
+                .ok_or_else(|| {
+                    AkitaError::InvalidSetup("compression current image bytes overflow".into())
+                })
+        })?;
+        report.max_current_image_bytes = report.max_current_image_bytes.max(current_image_bytes);
+        for batch in execute_stage(ctx, &mut items, map_index)? {
+            report.digitization += batch.digitization;
+            report.kernel_including_prepare += batch.kernel_including_prepare;
+            report.max_expanded_rhs_bytes =
+                report.max_expanded_rhs_bytes.max(batch.expanded_rhs_bytes);
+            report.batches.push(batch);
+        }
+    }
+    report.executor_peak_scratch_bytes = report
+        .max_expanded_rhs_bytes
+        .checked_add(report.max_current_image_bytes)
+        .ok_or_else(|| AkitaError::InvalidSetup("compression peak scratch overflow".into()))?;
+
+    let mut outputs = Vec::with_capacity(items.len());
+    for item in items {
+        let witness = CompressionChainWitness::new(item.plan.clone(), item.stages)?;
+        report.retained_packed_witness_bytes = report
+            .retained_packed_witness_bytes
+            .checked_add(witness.retained_bytes()?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression retained witness total overflow".into())
+            })?;
+        report.equivalent_i8_witness_bytes = report
+            .equivalent_i8_witness_bytes
+            .checked_add(item.plan.unpacked_witness_bytes()?)
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression i8 witness total overflow".into())
+            })?;
+        let terminal = CompressionTerminalPayload::new(item.plan, item.coefficients)?;
+        report.terminal_bytes = report
+            .terminal_bytes
+            .checked_add(
+                terminal
+                    .coefficients()
+                    .len()
+                    .checked_mul(terminal.plan().field_bytes())
+                    .ok_or_else(|| {
+                        AkitaError::InvalidSetup("compression terminal bytes overflow".into())
+                    })?,
+            )
+            .ok_or_else(|| {
+                AkitaError::InvalidSetup("compression terminal byte total overflow".into())
+            })?;
+        outputs.push(CompressionExecutionOutput {
+            id: item.id,
+            witness,
+            terminal,
+        });
+    }
+    report.cache_bytes_after = ctx.backend().compression_cache_bytes(ctx.prepared());
+    report.elapsed = started.elapsed();
+    Ok((outputs, report))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compute::{ComputeBackendSetup, CpuBackend};
+    use crate::AkitaProverSetup;
+    use akita_field::Prime128OffsetA7F7;
+    use akita_types::{SetupMatrixCapacity, SisModulusProfileId};
+
+    type F = Prime128OffsetA7F7;
+
+    fn prepared_context(
+        max_source_coefficients: usize,
+    ) -> (
+        AkitaProverSetup<F>,
+        <CpuBackend as ComputeBackendSetup<F>>::PreparedSetup,
+    ) {
+        let plan = CompressionChainPlan::for_complete_source(
+            SisModulusProfileId::Q128OffsetA7F7,
+            max_source_coefficients,
+        )
+        .unwrap();
+        let max_flat_coefficients = plan
+            .maps()
+            .iter()
+            .map(|map| map.input_width() * map.ring_dimension())
+            .max()
+            .unwrap();
+        let setup = AkitaProverSetup::<F>::generate_with_capacity(
+            8,
+            1,
+            SetupMatrixCapacity {
+                num_field_elements: max_flat_coefficients,
+            },
+        )
+        .unwrap();
+        let prepared = CpuBackend.prepare_expanded(setup.expanded.clone()).unwrap();
+        (setup, prepared)
+    }
+
+    fn input(id: usize, coefficients: usize) -> CompressionExecutionInput<usize, F> {
+        CompressionExecutionInput {
+            id,
+            plan: CompressionChainPlan::for_complete_source(
+                SisModulusProfileId::Q128OffsetA7F7,
+                coefficients,
+            )
+            .unwrap(),
+            coefficients: (0..coefficients)
+                .map(|index| F::from_u64(index as u64 * 17 + id as u64 + 1))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn sequential_and_batched_execution_match_and_preserve_identity() {
+        let (setup, prepared) = prepared_context(64);
+        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let (batched, report) =
+            execute_compression_chains(&ctx, vec![input(0, 64), input(1, 64)]).unwrap();
+        let (first, _) = execute_compression_chains(&ctx, vec![input(0, 64)]).unwrap();
+        let (second, _) = execute_compression_chains(&ctx, vec![input(1, 64)]).unwrap();
+        assert_eq!(batched[0].id, 0);
+        assert_eq!(batched[1].id, 1);
+        assert_eq!(
+            batched[0].terminal.coefficients(),
+            first[0].terminal.coefficients()
+        );
+        assert_eq!(
+            batched[1].terminal.coefficients(),
+            second[0].terminal.coefficients()
+        );
+        assert_eq!(report.batches.len(), 2);
+        assert!(report.batches.iter().all(|batch| batch.batch_size == 2));
+    }
+
+    #[test]
+    fn mixed_shapes_partition_and_rhs_expansion_is_bounded() {
+        let (setup, prepared) = prepared_context(65);
+        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let mut inputs = (0..MAX_COMPRESSION_RHS_BATCH + 3)
+            .map(|id| input(id, 64))
+            .collect::<Vec<_>>();
+        inputs.push(input(99, 65));
+        let (_, report) = execute_compression_chains(&ctx, inputs).unwrap();
+        assert!(report
+            .batches
+            .iter()
+            .all(|batch| batch.batch_size <= MAX_COMPRESSION_RHS_BATCH));
+        assert!(report.batches.iter().any(|batch| batch.batch_size == 1));
+        assert!(report.max_expanded_rhs_bytes <= 65 * 128 * MAX_COMPRESSION_RHS_BATCH);
+        assert_eq!(
+            report.equivalent_i8_witness_bytes,
+            report.retained_packed_witness_bytes * 8
+        );
+    }
+
+    /// Run with:
+    /// `cargo test -p akita-prover --release --no-default-features \
+    /// --features compression-diagnostics compression_execution_bench \
+    /// -- --ignored --nocapture`
+    #[test]
+    #[ignore = "release-only compression execution evidence"]
+    fn compression_execution_bench() {
+        const SAMPLES: usize = 30;
+        let (setup, prepared) = prepared_context(64);
+        let ctx = OperationCtx::new(&CpuBackend, &prepared, setup.expanded.as_ref()).unwrap();
+        let (_, cold) = execute_compression_chains(&ctx, vec![input(0, 64)]).unwrap();
+        let mut digitization_ns = Vec::with_capacity(SAMPLES);
+        let mut cached_kernel_ns = Vec::with_capacity(SAMPLES);
+        for sample in 0..SAMPLES {
+            let (_, report) =
+                execute_compression_chains(&ctx, vec![input(sample + 1, 64)]).unwrap();
+            digitization_ns.push(report.digitization.as_nanos());
+            cached_kernel_ns.push(report.kernel_including_prepare.as_nanos());
+        }
+        digitization_ns.sort_unstable();
+        cached_kernel_ns.sort_unstable();
+        let median_digitization_ns = digitization_ns[SAMPLES / 2];
+        let median_cached_kernel_ns = cached_kernel_ns[SAMPLES / 2];
+        let inferred_cold_preparation_ns = cold
+            .kernel_including_prepare
+            .as_nanos()
+            .saturating_sub(median_cached_kernel_ns);
+        println!(
+            "compression_execution_bench profile=q128 source_bytes={} samples={SAMPLES} \
+             median_digitization_ns={median_digitization_ns} \
+             cold_kernel_including_prepare_ns={} \
+             median_cached_kernel_ns={median_cached_kernel_ns} \
+             inferred_cold_preparation_ns={inferred_cold_preparation_ns} \
+             terminal_bytes={} retained_packed_witness_bytes={} \
+             equivalent_i8_witness_bytes={} max_expanded_rhs_bytes={} \
+             max_current_image_bytes={} executor_peak_scratch_bytes={} \
+             cache_bytes_before={:?} cache_bytes_after={:?}",
+            cold.source_bytes,
+            cold.kernel_including_prepare.as_nanos(),
+            cold.terminal_bytes,
+            cold.retained_packed_witness_bytes,
+            cold.equivalent_i8_witness_bytes,
+            cold.max_expanded_rhs_bytes,
+            cold.max_current_image_bytes,
+            cold.executor_peak_scratch_bytes,
+            cold.cache_bytes_before,
+            cold.cache_bytes_after,
+        );
+    }
+}

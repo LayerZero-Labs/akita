@@ -660,12 +660,21 @@ impl RingRelationProver {
             tracing::info!(
                 sources = report.sources,
                 maps = report.maps,
-                batch_count = report.batch_count,
+                batch_count = report.batches.len(),
                 source_bytes = report.source_bytes,
                 terminal_bytes = report.terminal_bytes,
+                retained_packed_witness_bytes = report.retained_packed_witness_bytes,
+                equivalent_i8_witness_bytes = report.equivalent_i8_witness_bytes,
+                max_expanded_rhs_bytes = report.max_expanded_rhs_bytes,
+                max_current_image_bytes = report.max_current_image_bytes,
+                executor_peak_scratch_bytes = report.executor_peak_scratch_bytes,
                 cache_bytes_before = report.cache_bytes_before,
                 cache_bytes_after = report.cache_bytes_after,
                 cache_bytes_added,
+                digitization_micros =
+                    u64::try_from(report.digitization.as_micros()).unwrap_or(u64::MAX),
+                kernel_including_prepare_micros =
+                    u64::try_from(report.kernel_including_prepare.as_micros()).unwrap_or(u64::MAX),
                 elapsed_micros = u64::try_from(report.elapsed.as_micros()).unwrap_or(u64::MAX),
                 "computed and discarded shadow compressed commitments"
             );
